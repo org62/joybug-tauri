@@ -1,0 +1,3 @@
+[submodule "external/joybug"]
+	path = external/joybug
+	url = https://github.com/expend20/joybug
