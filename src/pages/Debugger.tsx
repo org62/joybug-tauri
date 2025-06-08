@@ -4,23 +4,29 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Play, Settings } from "lucide-react";
+import { Play, Settings, Rocket } from "lucide-react";
 import { toast } from "sonner";
 
 export default function Debugger() {
   const [serverUrl, setServerUrl] = useState("http://localhost:8080");
+  const [launchCommand, setLaunchCommand] = useState("cmd.exe /c echo Hello World!");
   const [isConnecting, setIsConnecting] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
+  const [isLaunching, setIsLaunching] = useState(false);
 
   const handleCreateClient = async () => {
     try {
       setIsConnecting(true);
       await invoke("create_debug_client", { baseUrl: serverUrl });
+      
+      // Test the connection by pinging the server
+      await invoke("ping");
       setIsConnected(true);
-      toast.success("Debug client created successfully");
+      toast.success("Debug client connected successfully");
     } catch (error) {
-      console.error("Failed to create debug client:", error);
-      toast.error(`Failed to create debug client: ${error}`);
+      console.error("Failed to connect to debug server:", error);
+      toast.error(`Failed to connect to debug server: ${error}`);
+      setIsConnected(false);
     } finally {
       setIsConnecting(false);
     }
@@ -29,7 +35,7 @@ export default function Debugger() {
   const handlePing = async () => {
     try {
       setIsConnecting(true);
-      await invoke("ping_debug_server");
+      await invoke("ping");
       toast.success("Debug server ping successful");
     } catch (error) {
       console.error("Ping failed:", error);
@@ -39,12 +45,31 @@ export default function Debugger() {
     }
   };
 
-  const handlePlayClick = async () => {
-    if (!isConnected) {
-      await handleCreateClient();
-      if (!isConnected) return;
+  const handleLaunch = async () => {
+    try {
+      setIsLaunching(true);
+      
+      // Always connect first before launching
+      try {
+        await invoke("create_debug_client", { baseUrl: serverUrl });
+        await invoke("ping");
+        setIsConnected(true);
+        toast.success("Debug client connected successfully");
+      } catch (error) {
+        console.error("Failed to connect to debug server:", error);
+        toast.error(`Failed to connect to debug server: ${error}`);
+        setIsConnected(false);
+        return; // Don't proceed with launch if connection fails
+      }
+      
+      await invoke("launch", { command: launchCommand });
+      toast.success("Process launched successfully");
+    } catch (error) {
+      console.error("Failed to launch process:", error);
+      toast.error(`Failed to launch process: ${error}`);
+    } finally {
+      setIsLaunching(false);
     }
-    await handlePing();
   };
 
   return (
@@ -65,18 +90,37 @@ export default function Debugger() {
                 value={serverUrl}
                 onChange={(e: React.ChangeEvent<HTMLInputElement>) => setServerUrl(e.target.value)}
                 placeholder="http://localhost:8080"
-                disabled={isConnecting}
+                disabled={isConnecting || isLaunching}
               />
             </div>
-            <div className="flex gap-2">
+            <div className="space-y-2">
+              <Label htmlFor="launchCommand">Launch Command</Label>
+              <Input
+                id="launchCommand"
+                value={launchCommand}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setLaunchCommand(e.target.value)}
+                placeholder="npm run debug-server"
+                disabled={isConnecting || isLaunching}
+              />
+            </div>
+            <div className="flex gap-2 flex-wrap">
               <Button 
-                onClick={handleCreateClient}
-                disabled={isConnecting || isConnected}
+                onClick={handleLaunch}
+                disabled={isConnecting || isLaunching || !launchCommand.trim()}
+                variant="default"
+                className="flex items-center gap-2"
+              >
+                <Rocket className="h-4 w-4" />
+                {isLaunching ? "Launching..." : "Launch process"}
+              </Button>
+              <Button 
+                onClick={handlePing}
+                disabled={isConnecting || isLaunching}
                 variant="outline"
                 className="flex items-center gap-2"
               >
                 <Settings className="h-4 w-4" />
-                {isConnected ? "Connected" : "Connect"}
+                {isConnecting ? "Checking..." : "Check connection"}
               </Button>
               {isConnected && (
                 <div className="flex items-center text-sm text-green-600 dark:text-green-400">
@@ -87,33 +131,6 @@ export default function Debugger() {
           </CardContent>
         </Card>
 
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-2xl">Debugger</CardTitle>
-            <CardDescription>
-              Debug and test your application functionality
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-6">
-            <div className="flex justify-center">
-              <Button 
-                onClick={handlePlayClick}
-                size="lg"
-                className="flex items-center gap-2 px-8 py-4 text-lg"
-                disabled={isConnecting}
-              >
-                <Play className="h-6 w-6" />
-                {isConnecting ? "Connecting..." : "Ping Server"}
-              </Button>
-            </div>
-            
-            {isConnected && (
-              <div className="text-center text-sm text-gray-600 dark:text-gray-400">
-                Debug client is connected to {serverUrl}
-              </div>
-            )}
-          </CardContent>
-        </Card>
       </div>
     </div>
   );

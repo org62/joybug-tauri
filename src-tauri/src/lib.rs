@@ -62,7 +62,7 @@ async fn create_debug_client(
 }
 
 #[tauri::command]
-async fn ping_debug_server(
+async fn ping(
     client_state: State<'_, DebugClientState>,
     logs_state: State<'_, LogsState>,
 ) -> Result<String, String> {
@@ -89,16 +89,85 @@ async fn ping_debug_server(
         Ok(()) => {
             info!("Ping successful");
             let mut logs = logs_state.lock().unwrap();
-            logs.push(LogEntry::new("success", "✓ Debug server ping successful"));
+            logs.push(LogEntry::new("success", "Debug server ping successful"));
             Ok("Ping successful".to_string())
         }
         Err(e) => {
             error!("Ping failed: {}", e);
             let mut logs = logs_state.lock().unwrap();
-            logs.push(LogEntry::new("error", &format!("✗ Debug server ping failed: {}", e)));
+            logs.push(LogEntry::new("error", &format!("Debug server ping failed: {}", e)));
             Err(format!("Ping failed: {}", e))
         }
     }
+}
+
+#[tauri::command]
+async fn launch(
+    command: String,
+    client_state: State<'_, DebugClientState>,
+    logs_state: State<'_, LogsState>,
+) -> Result<String, String> {
+    info!("Launching process via debug server with command: {}", command);
+    
+    {
+        let mut logs = logs_state.lock().unwrap();
+        logs.push(LogEntry::new("info", &format!("Launching process: {}", command)));
+    }
+    
+    // Get the base URL to recreate the client without holding the lock
+    let base_url = {
+        let client_guard = client_state.lock().unwrap();
+        match &client_guard.base_url {
+            Some(url) => url.clone(),
+            None => {
+                let mut logs = logs_state.lock().unwrap();
+                logs.push(LogEntry::new("error", "No debug client connected"));
+                return Err("No debug client connected".to_string());
+            },
+        }
+    };
+    
+    // Create a temporary client and use its launch method
+    let mut temp_client = AsyncDebugClient::new(base_url);
+    
+    let process_info = temp_client.launch(&command).await.map_err(|e| {
+        error!("Failed to launch process: {}", e);
+        format!("Launch failed: {e}")
+    })?;
+
+    // Store the client with the session
+    {
+        let mut client_guard = client_state.lock().unwrap();
+        client_guard.client = Some(temp_client);
+    }
+
+    // Get session ID from the client after launch
+    let session_id = {
+        let client_guard = client_state.lock().unwrap();
+        client_guard.client.as_ref()
+            .and_then(|c| c.get_session_id())
+            .cloned()
+            .unwrap_or_else(|| "unknown".to_string())
+    };
+
+    info!(
+        "Process launched successfully. Session: {}, PID: {}, TID: {}, Command: {}",
+        session_id, process_info.process_id, process_info.thread_id, command
+    );
+
+    let mut logs = logs_state.lock().unwrap();
+    logs.push(LogEntry::new(
+        "success",
+        &format!(
+            "Process launched successfully - Session: {}, PID: {}, TID: {}, Command: {}",
+            session_id, process_info.process_id, process_info.thread_id, command
+        )
+    ));
+
+    Ok(format!(
+        "Process launched successfully. Session: {}, PID: {}, TID: {}, Command: {}",
+        session_id, process_info.process_id, process_info.thread_id, command
+    ))
 }
 
 #[tauri::command]
@@ -128,7 +197,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             greet,
             create_debug_client,
-            ping_debug_server,
+            ping,
+            launch,
             get_logs,
             clear_logs
         ])
