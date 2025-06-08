@@ -42,7 +42,7 @@ export default function Header() {
       <div className="container mx-auto px-4 h-16 flex items-center justify-between">
         <div className="flex items-center space-x-8">
           <Link to="/" className="font-bold text-xl text-gray-900 dark:text-neutral-100">
-            Tauri App
+            Joybug
           </Link>
           
           {/* Desktop Navigation */}

@@ -1,7 +1,13 @@
-# Tauri + React + Typescript
+joybug-tauri (UI client)
 
-This template should help get you started developing with Tauri, React and Typescript in Vite.
+Dev run
 
-## Recommended IDE Setup
+```
+npm run tauri dev
+```
 
-- [VS Code](https://code.visualstudio.com/) + [Tauri](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode) + [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer)
+Build installer
+
+```
+npm run tauri build
+```

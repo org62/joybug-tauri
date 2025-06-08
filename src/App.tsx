@@ -5,6 +5,7 @@ import Debugger from "@/pages/Debugger";
 import Logs from "@/pages/Logs";
 import Settings from "@/pages/Settings";
 import About from "@/pages/About";
+import { Toaster } from "@/components/ui/sonner";
 import "./App.css";
 
 function App() {
@@ -21,6 +22,7 @@ function App() {
             <Route path="/about" element={<About />} />
           </Routes>
         </main>
+        <Toaster />
       </div>
     </Router>
   );

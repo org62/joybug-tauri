@@ -20,7 +20,7 @@ export default function Home() {
                 📋 Logs
               </CardTitle>
               <CardDescription>
-                View application logs and debug information
+                View Debug Server Configuration and debug information
               </CardDescription>
             </CardHeader>
             <CardContent>
