@@ -1,13 +1,14 @@
 use std::sync::Mutex;
 use tauri::State;
-use joybug::debug_client::AsyncDebugClient;
 use serde::{Deserialize, Serialize};
 use tracing::{info, error};
+use joybug::debug_client::DebugClient;
+use joybug::debugger_interface::Debugger;
 
 // State management for the debug client and server URL
 #[derive(Default)]
 struct DebugState {
-    client: Option<AsyncDebugClient>,
+    client: Option<DebugClient>,
     base_url: Option<String>,
 }
 
@@ -38,14 +39,14 @@ fn greet(name: &str) -> String {
 }
 
 #[tauri::command]
-async fn create_debug_client(
+fn create_debug_client(
     base_url: String,
     client_state: State<'_, DebugClientState>,
     logs_state: State<'_, LogsState>,
 ) -> Result<String, String> {
     info!("Creating debug client with URL: {}", base_url);
     
-    let client = AsyncDebugClient::new(base_url.clone());
+    let client = DebugClient::new(base_url.clone());
     
     {
         let mut client_guard = client_state.lock().unwrap();
@@ -62,7 +63,7 @@ async fn create_debug_client(
 }
 
 #[tauri::command]
-async fn ping(
+fn ping(
     client_state: State<'_, DebugClientState>,
     logs_state: State<'_, LogsState>,
 ) -> Result<String, String> {
@@ -83,9 +84,9 @@ async fn ping(
     };
     
     // Create a temporary client to avoid holding the mutex across await
-    let temp_client = AsyncDebugClient::new(base_url);
+    let temp_client = DebugClient::new(base_url);
     
-    match temp_client.ping().await {
+    match temp_client.ping() {
         Ok(()) => {
             info!("Ping successful");
             let mut logs = logs_state.lock().unwrap();
@@ -102,7 +103,7 @@ async fn ping(
 }
 
 #[tauri::command]
-async fn launch(
+fn launch(
     command: String,
     client_state: State<'_, DebugClientState>,
     logs_state: State<'_, LogsState>,
@@ -128,9 +129,9 @@ async fn launch(
     };
     
     // Create a temporary client and use its launch method
-    let mut temp_client = AsyncDebugClient::new(base_url);
+    let mut temp_client = DebugClient::new(base_url);
     
-    let process_info = temp_client.launch(&command).await.map_err(|e| {
+    let process_info = temp_client.launch(&command).map_err(|e| {
         error!("Failed to launch process: {}", e);
         format!("Launch failed: {e}")
     })?;
@@ -171,16 +172,84 @@ async fn launch(
 }
 
 #[tauri::command]
-async fn get_logs(logs_state: State<'_, LogsState>) -> Result<Vec<LogEntry>, String> {
+fn get_logs(logs_state: State<'_, LogsState>) -> Result<Vec<LogEntry>, String> {
     let logs = logs_state.lock().unwrap();
     Ok(logs.clone())
 }
 
 #[tauri::command]
-async fn clear_logs(logs_state: State<'_, LogsState>) -> Result<(), String> {
+fn clear_logs(logs_state: State<'_, LogsState>) -> Result<(), String> {
     let mut logs = logs_state.lock().unwrap();
     logs.clear();
     Ok(())
+}
+
+#[tauri::command]
+fn list_running_sessions(
+    server_url: String,
+    client_state: State<'_, DebugClientState>,
+    logs_state: State<'_, LogsState>,
+) -> Result<Vec<String>, String> {
+    info!("Listing running debug sessions from server: {}", server_url);
+    
+    {
+        let mut logs = logs_state.lock().unwrap();
+        logs.push(LogEntry::new("info", &format!("Requesting list of running debug sessions from {}", server_url)));
+    }
+    
+    // Create a temporary client with the provided server URL
+    let temp_client = DebugClient::new(server_url.clone());
+    
+    match temp_client.list_sessions() {
+        Ok(sessions) => {
+            info!("Retrieved {} running sessions from {}", sessions.len(), server_url);
+            let mut logs = logs_state.lock().unwrap();
+            logs.push(LogEntry::new("success", &format!("Retrieved {} running debug sessions from {}", sessions.len(), server_url)));
+            Ok(sessions)
+        }
+        Err(e) => {
+            error!("Failed to list sessions from {}: {}", server_url, e);
+            let mut logs = logs_state.lock().unwrap();
+            logs.push(LogEntry::new("error", &format!("Failed to list debug sessions from {}: {}", server_url, e)));
+            Err(format!("Failed to list sessions: {}", e))
+        }
+    }
+}
+
+#[tauri::command]
+fn terminate_session(
+    server_url: String,
+    session_id: String,
+    logs_state: State<'_, LogsState>,
+) -> Result<String, String> {
+    info!("Terminating debug session {} on server: {}", session_id, server_url);
+    
+    {
+        let mut logs = logs_state.lock().unwrap();
+        logs.push(LogEntry::new("info", &format!("Terminating debug session {} on {}", session_id, server_url)));
+    }
+    
+    // Create a temporary client with the provided server URL and session ID
+    let mut temp_client = DebugClient::new(server_url.clone());
+    temp_client.set_session_id(session_id.clone());
+    
+    // For now, we'll use a default process ID of 0 and exit code of 0
+    // In a real implementation, you might want to track process IDs or 
+    // add a terminate_by_session method to the debug server
+    match Debugger::terminate(&mut temp_client, 0, 0) {
+        Ok(()) => {
+            info!("Successfully terminated session {} on {}", session_id, server_url);
+            let mut logs = logs_state.lock().unwrap();
+            logs.push(LogEntry::new("success", &format!("Successfully terminated debug session {} on {}", session_id, server_url)));
+            Ok(format!("Session {} terminated successfully", session_id))
+        }
+        Err(e) => {
+            error!("Failed to terminate session {} on {}: {}", session_id, server_url, e);
+            let mut logs = logs_state.lock().unwrap();
+            logs.push(LogEntry::new("error", &format!("Failed to terminate debug session {} on {}: {}", session_id, server_url, e)));
+            Err(format!("Failed to terminate session: {}", e))
+        }
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -200,7 +269,9 @@ pub fn run() {
             ping,
             launch,
             get_logs,
-            clear_logs
+            clear_logs,
+            list_running_sessions,
+            terminate_session
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
