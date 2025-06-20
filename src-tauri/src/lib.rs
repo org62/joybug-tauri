@@ -4,6 +4,9 @@ use serde::{Deserialize, Serialize};
 use tracing::{info, error};
 use joybug::debug_client::DebugClient;
 use joybug::debugger_interface::Debugger;
+use joybug::debugger_interface::{DebugEvent, ContinueDecision};
+use joybug::arch::Architecture;
+use joybug::disassembler::DisassemblyResult;
 
 // State management for the debug client and server URL
 #[derive(Default)]
@@ -252,6 +255,144 @@ fn terminate_session(
     }
 }
 
+#[tauri::command]
+fn wait_for_event(
+    session_id: String,
+    server_url: String,
+    logs_state: State<'_, LogsState>,
+) -> Result<DebugEvent, String> {
+    info!("Waiting for debug event in session: {}", session_id);
+    
+    {
+        let mut logs = logs_state.lock().unwrap();
+        logs.push(LogEntry::new("info", &format!("Waiting for debug event in session {}", session_id)));
+    }
+    
+    // Create a temporary client with the session ID
+    let mut temp_client = DebugClient::new(server_url.clone());
+    temp_client.set_session_id(session_id.clone());
+    
+    match temp_client.wait_for_event() {
+        Ok(event) => {
+            info!("Received debug event in session {}: {:?}", session_id, event);
+            let mut logs = logs_state.lock().unwrap();
+            logs.push(LogEntry::new("success", &format!("Received debug event in session {}", session_id)));
+            Ok(event)
+        }
+        Err(e) => {
+            error!("Failed to wait for event in session {}: {}", session_id, e);
+            let mut logs = logs_state.lock().unwrap();
+            logs.push(LogEntry::new("error", &format!("Failed to wait for event in session {}: {}", session_id, e)));
+            Err(format!("Failed to wait for event: {}", e))
+        }
+    }
+}
+
+#[tauri::command]
+fn continue_event(
+    session_id: String,
+    server_url: String,
+    process_id: u32,
+    thread_id: u32,
+    decision: String, // "continue", "handled", or "unhandled"
+    logs_state: State<'_, LogsState>,
+) -> Result<String, String> {
+    info!("Continuing debug event in session: {} with decision: {}", session_id, decision);
+    
+    {
+        let mut logs = logs_state.lock().unwrap();
+        logs.push(LogEntry::new("info", &format!("Continuing debug event in session {} with decision: {}", session_id, decision)));
+    }
+    
+    // Convert string decision to ContinueDecision enum
+    let continue_decision = match decision.as_str() {
+        "continue" => ContinueDecision::Continue,
+        "handled" => ContinueDecision::HandledException,
+        "unhandled" => ContinueDecision::UnhandledException,
+        _ => {
+            let err_msg = format!("Invalid continue decision: {}", decision);
+            error!("{}", err_msg);
+            let mut logs = logs_state.lock().unwrap();
+            logs.push(LogEntry::new("error", &err_msg));
+            return Err(err_msg);
+        }
+    };
+    
+    // Create a temporary client with the session ID
+    let mut temp_client = DebugClient::new(server_url.clone());
+    temp_client.set_session_id(session_id.clone());
+    
+    match temp_client.continue_event(process_id, thread_id, continue_decision) {
+        Ok(()) => {
+            info!("Successfully continued debug event in session {}", session_id);
+            let mut logs = logs_state.lock().unwrap();
+            logs.push(LogEntry::new("success", &format!("Successfully continued debug event in session {}", session_id)));
+            Ok("Event continued successfully".to_string())
+        }
+        Err(e) => {
+            error!("Failed to continue event in session {}: {}", session_id, e);
+            let mut logs = logs_state.lock().unwrap();
+            logs.push(LogEntry::new("error", &format!("Failed to continue event in session {}: {}", session_id, e)));
+            Err(format!("Failed to continue event: {}", e))
+        }
+    }
+}
+
+#[tauri::command]
+fn disassemble(
+    session_id: String,
+    server_url: String,
+    process_id: u32,
+    address: String, // hex string like "0x1000"
+    size: usize,
+    max_instructions: Option<usize>,
+    logs_state: State<'_, LogsState>,
+) -> Result<DisassemblyResult, String> {
+    info!("Disassembling in session: {} at address: {}", session_id, address);
+    
+    {
+        let mut logs = logs_state.lock().unwrap();
+        logs.push(LogEntry::new("info", &format!("Disassembling in session {} at address {}", session_id, address)));
+    }
+    
+    // Parse the address from hex string
+    let addr = if address.starts_with("0x") || address.starts_with("0X") {
+        usize::from_str_radix(&address[2..], 16)
+    } else {
+        address.parse::<usize>()
+    };
+    
+    let addr = match addr {
+        Ok(a) => a,
+        Err(e) => {
+            let err_msg = format!("Invalid address format '{}': {}", address, e);
+            error!("{}", err_msg);
+            let mut logs = logs_state.lock().unwrap();
+            logs.push(LogEntry::new("error", &err_msg));
+            return Err(err_msg);
+        }
+    };
+    
+    // Create a temporary client with the session ID
+    let mut temp_client = DebugClient::new(server_url.clone());
+    temp_client.set_session_id(session_id.clone());
+    
+    match temp_client.disassemble(process_id, addr, size, max_instructions, Some(Architecture::X64)) {
+        Ok(result) => {
+            info!("Successfully disassembled {} instructions in session {}", result.instructions.len(), session_id);
+            let mut logs = logs_state.lock().unwrap();
+            logs.push(LogEntry::new("success", &format!("Successfully disassembled {} instructions in session {}", result.instructions.len(), session_id)));
+            Ok(result)
+        }
+        Err(e) => {
+            error!("Failed to disassemble in session {}: {}", session_id, e);
+            let mut logs = logs_state.lock().unwrap();
+            logs.push(LogEntry::new("error", &format!("Failed to disassemble in session {}: {}", session_id, e)));
+            Err(format!("Failed to disassemble: {}", e))
+        }
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Initialize logging
@@ -271,7 +412,10 @@ pub fn run() {
             get_logs,
             clear_logs,
             list_running_sessions,
-            terminate_session
+            terminate_session,
+            wait_for_event,
+            continue_event,
+            disassemble
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

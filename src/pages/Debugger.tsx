@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -6,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
-import { Settings, Rocket, Plus, Trash2, RefreshCw, Play, Square } from "lucide-react";
+import { Settings, Rocket, Plus, Trash2, RefreshCw, Play, Square, ExternalLink } from "lucide-react";
 import { toast } from "sonner";
 
 interface LaunchConfiguration {
@@ -20,6 +21,7 @@ interface LaunchConfiguration {
 }
 
 export default function Debugger() {
+  const navigate = useNavigate();
   const [configs, setConfigs] = useState<LaunchConfiguration[]>([]);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingConfig, setEditingConfig] = useState<LaunchConfiguration | null>(null);
@@ -435,11 +437,14 @@ export default function Debugger() {
           ) : (
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
               {runningSessions.map((sessionId, index) => (
-                <Card key={sessionId}>
+                <Card key={sessionId} className="hover:shadow-lg transition-shadow cursor-pointer">
                   <CardHeader className="pb-3">
                     <div className="flex items-center justify-between">
-                      <div>
-                        <CardTitle className="text-lg">Session {index + 1}</CardTitle>
+                      <div onClick={() => navigate(`/session/${sessionId}`)} className="flex-1">
+                        <CardTitle className="text-lg flex items-center gap-2">
+                          Session {index + 1}
+                          <ExternalLink className="h-4 w-4 text-muted-foreground" />
+                        </CardTitle>
                         <CardDescription className="text-xs font-mono">
                           {sessionId}
                         </CardDescription>
@@ -454,16 +459,30 @@ export default function Debugger() {
                     <div className="text-sm text-muted-foreground mb-3">
                       <strong>Session ID:</strong> {sessionId}
                     </div>
-                    <Button
-                      onClick={() => handleTerminateSession(sessionId)}
-                      disabled={terminatingSessions.has(sessionId)}
-                      variant="destructive"
-                      size="sm"
-                      className="flex items-center gap-2"
-                    >
-                      <Square className="h-4 w-4" />
-                      {terminatingSessions.has(sessionId) ? "Terminating..." : "Terminate"}
-                    </Button>
+                    <div className="flex gap-2">
+                      <Button
+                        onClick={() => navigate(`/session/${sessionId}`)}
+                        variant="outline"
+                        size="sm"
+                        className="flex items-center gap-2"
+                      >
+                        <ExternalLink className="h-4 w-4" />
+                        Debug
+                      </Button>
+                      <Button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleTerminateSession(sessionId);
+                        }}
+                        disabled={terminatingSessions.has(sessionId)}
+                        variant="destructive"
+                        size="sm"
+                        className="flex items-center gap-2"
+                      >
+                        <Square className="h-4 w-4" />
+                        {terminatingSessions.has(sessionId) ? "Terminating..." : "Terminate"}
+                      </Button>
+                    </div>
                   </CardContent>
                 </Card>
               ))}

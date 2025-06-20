@@ -13,8 +13,8 @@
     "windows": [
       {
         "title": "Joybug UI",
-        "width": 800,
-        "height": 600
+        "width": 900,
+        "height": 1000
       }
     ],
     "security": {
