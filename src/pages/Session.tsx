@@ -52,7 +52,7 @@ export default function Session() {
   const [isWaitingForEvent, setIsWaitingForEvent] = useState(false);
   const [isContinuing, setIsContinuing] = useState(false);
   const [isDisassembling, setIsDisassembling] = useState(false);
-  const [serverUrl] = useState("http://localhost:8080"); // Get from config or props
+  const [serverUrl] = useState("http://localhost:9000"); // Get from config or props
   const [currentProcessId, setCurrentProcessId] = useState<number>(0);
   const [currentThreadId, setCurrentThreadId] = useState<number>(0);
 

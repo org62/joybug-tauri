@@ -26,13 +26,8 @@ export default function Debugger() {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingConfig, setEditingConfig] = useState<LaunchConfiguration | null>(null);
   
-  // Running sessions state
-  const [runningSessions, setRunningSessions] = useState<string[]>([]);
-  const [isLoadingSessions, setIsLoadingSessions] = useState(false);
-  const [terminatingSessions, setTerminatingSessions] = useState<Set<string>>(new Set());
-  
   // Form state for dialog
-  const [formServerUrl, setFormServerUrl] = useState("http://localhost:8080");
+  const [formServerUrl, setFormServerUrl] = useState("http://localhost:9000");
   const [formLaunchCommand, setFormLaunchCommand] = useState("cmd.exe /c echo Hello World!");
   const [formConfigName, setFormConfigName] = useState("");
 
@@ -66,24 +61,6 @@ export default function Debugger() {
     }
   }, [configs]);
 
-  const handlePing = async (sessionId: string) => {
-    try {
-      setConfigs(prev => prev.map(s => 
-        s.id === sessionId ? { ...s, isConnecting: true } : s
-      ));
-      
-      await invoke("ping");
-      toast.success("Debug server ping successful");
-    } catch (error) {
-      console.error("Ping failed:", error);
-      toast.error(`Ping failed: ${error}`);
-    } finally {
-      setConfigs(prev => prev.map(s => 
-        s.id === sessionId ? { ...s, isConnecting: false } : s
-      ));
-    }
-  };
-
   const handleLaunch = async (sessionId: string) => {
     const session = configs.find(s => s.id === sessionId);
     if (!session) return;
@@ -96,7 +73,6 @@ export default function Debugger() {
       // Always connect first before launching
       try {
         await invoke("create_debug_client", { baseUrl: session.serverUrl });
-        await invoke("ping");
         
         setConfigs(prev => prev.map(s => 
           s.id === sessionId ? { ...s, isConnected: true } : s
@@ -116,8 +92,6 @@ export default function Debugger() {
       await invoke("launch", { command: session.launchCommand });
       toast.success("Process launched successfully");
       
-      // Refresh running sessions after successful launch
-      fetchRunningSessions();
     } catch (error) {
       console.error("Failed to launch process:", error);
       toast.error(`Failed to launch process: ${error}`);
@@ -131,7 +105,7 @@ export default function Debugger() {
   const handleAddSession = () => {
     setEditingConfig(null);
     setFormConfigName("");
-    setFormServerUrl("http://localhost:8080");
+    setFormServerUrl("http://localhost:9000");
     setFormLaunchCommand("cmd.exe /c echo Hello World!");
     setIsDialogOpen(true);
   };
@@ -185,80 +159,6 @@ export default function Debugger() {
     }
   };
 
-  const handleDeleteSession = (sessionId: string) => {
-    setConfigs(prev => prev.filter(s => s.id !== sessionId));
-    toast.success("Configuration deleted");
-  };
-
-  const fetchRunningSessions = async () => {
-    // Get the server URL from the first configuration, or use default
-    const serverUrl = configs.length > 0 ? configs[0].serverUrl : "http://localhost:8080";
-    
-    try {
-      setIsLoadingSessions(true);
-      const sessions = await invoke<string[]>("list_running_sessions", { serverUrl });
-      setRunningSessions(sessions);
-      if (sessions.length > 0) {
-        toast.success(`Found ${sessions.length} running sessions`);
-      }
-    } catch (error) {
-      console.error("Failed to fetch running sessions:", error);
-      toast.error(`Failed to fetch running sessions: ${error}`);
-      setRunningSessions([]);
-    } finally {
-      setIsLoadingSessions(false);
-    }
-  };
-
-  const handleTerminateSession = async (sessionId: string) => {
-    // Get the server URL from the first configuration, or use default
-    const serverUrl = configs.length > 0 ? configs[0].serverUrl : "http://localhost:8080";
-    
-    try {
-      setTerminatingSessions(prev => new Set(prev).add(sessionId));
-      
-      await invoke("terminate_session", { 
-        serverUrl, 
-        sessionId 
-      });
-      
-      toast.success(`Session ${sessionId} terminated successfully`);
-      
-      // Refresh the sessions list after termination
-      await fetchRunningSessions();
-    } catch (error) {
-      console.error("Failed to terminate session:", error);
-      toast.error(`Failed to terminate session: ${error}`);
-    } finally {
-      setTerminatingSessions(prev => {
-        const newSet = new Set(prev);
-        newSet.delete(sessionId);
-        return newSet;
-      });
-    }
-  };
-
-  // Auto-refresh disabled - users can manually refresh using the button
-  // useEffect(() => {
-  //   if (configs.length === 0) return;
-
-  //   const interval = setInterval(() => {
-  //     fetchRunningSessions();
-  //   }, 5000);
-
-  //   // Initial fetch
-  //   fetchRunningSessions();
-
-  //   return () => clearInterval(interval);
-  // }, [configs.length]);
-
-  // Fetch sessions when component mounts and when configs change
-  useEffect(() => {
-    if (configs.length > 0) {
-      fetchRunningSessions();
-    }
-  }, [configs.length]);
-
   return (
     <div className="container mx-auto px-4 py-8">
       <div className="max-w-4xl mx-auto space-y-6">
@@ -300,7 +200,7 @@ export default function Debugger() {
                     id="serverUrl"
                     value={formServerUrl}
                     onChange={(e) => setFormServerUrl(e.target.value)}
-                    placeholder="http://localhost:8080"
+                    placeholder="http://localhost:9000"
                   />
                 </div>
                 <div className="space-y-2">
@@ -361,13 +261,6 @@ export default function Debugger() {
                       >
                         <Settings className="h-4 w-4" />
                       </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => handleDeleteSession(session.id)}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
                     </div>
                   </div>
                 </CardHeader>
@@ -382,15 +275,7 @@ export default function Debugger() {
                       <Rocket className="h-4 w-4" />
                       {session.isLaunching ? "Launching..." : "Launch"}
                     </Button>
-                    <Button 
-                      onClick={() => handlePing(session.id)}
-                      disabled={session.isConnecting || session.isLaunching}
-                      variant="outline"
-                      className="flex items-center gap-2"
-                    >
-                      <Settings className="h-4 w-4" />
-                      {session.isConnecting ? "Checking..." : "Ping"}
-                    </Button>
+
                   </div>
                   {session.launchCommand && (
                     <div className="mt-3 text-sm text-muted-foreground">
@@ -410,84 +295,10 @@ export default function Debugger() {
               <div>
                 <h2 className="text-2xl font-bold">Running Debug Sessions</h2>
                 <p className="text-muted-foreground">
-                  Currently active debug sessions on server: {configs[0]?.serverUrl || "http://localhost:8080"}
+                  Currently active debug sessions on server: {configs[0]?.serverUrl || "http://localhost:9000"}
                 </p>
               </div>
-              <Button
-                onClick={fetchRunningSessions}
-                disabled={isLoadingSessions}
-                variant="outline"
-                size="sm"
-                className="flex items-center gap-2"
-              >
-                <RefreshCw className={`h-4 w-4 ${isLoadingSessions ? 'animate-spin' : ''}`} />
-                {isLoadingSessions ? 'Refreshing...' : 'Refresh'}
-              </Button>
             </div>
-
-          {runningSessions.length === 0 ? (
-            <Card>
-              <CardContent className="flex flex-col items-center justify-center py-8 text-center">
-                <div className="text-muted-foreground text-base mb-2">No active debug sessions</div>
-                <p className="text-sm text-muted-foreground">
-                  Launch a configuration to create debug sessions
-                </p>
-              </CardContent>
-            </Card>
-          ) : (
-            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-              {runningSessions.map((sessionId, index) => (
-                <Card key={sessionId} className="hover:shadow-lg transition-shadow cursor-pointer">
-                  <CardHeader className="pb-3">
-                    <div className="flex items-center justify-between">
-                      <div onClick={() => navigate(`/session/${sessionId}`)} className="flex-1">
-                        <CardTitle className="text-lg flex items-center gap-2">
-                          Session {index + 1}
-                          <ExternalLink className="h-4 w-4 text-muted-foreground" />
-                        </CardTitle>
-                        <CardDescription className="text-xs font-mono">
-                          {sessionId}
-                        </CardDescription>
-                      </div>
-                      <Badge variant="default" className="bg-green-600">
-                        <Play className="h-3 w-3 mr-1" />
-                        Active
-                      </Badge>
-                    </div>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="text-sm text-muted-foreground mb-3">
-                      <strong>Session ID:</strong> {sessionId}
-                    </div>
-                    <div className="flex gap-2">
-                      <Button
-                        onClick={() => navigate(`/session/${sessionId}`)}
-                        variant="outline"
-                        size="sm"
-                        className="flex items-center gap-2"
-                      >
-                        <ExternalLink className="h-4 w-4" />
-                        Debug
-                      </Button>
-                      <Button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleTerminateSession(sessionId);
-                        }}
-                        disabled={terminatingSessions.has(sessionId)}
-                        variant="destructive"
-                        size="sm"
-                        className="flex items-center gap-2"
-                      >
-                        <Square className="h-4 w-4" />
-                        {terminatingSessions.has(sessionId) ? "Terminating..." : "Terminate"}
-                      </Button>
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
-                         </div>
-           )}
           </div>
         )}
       </div>
