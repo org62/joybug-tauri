@@ -23,6 +23,8 @@ fn emit_session_update(
     }
 }
 
+
+
 // Tauri commands
 #[tauri::command]
 pub fn greet(name: &str) -> String {
@@ -252,4 +254,71 @@ pub fn clear_logs(logs_state: State<'_, LogsState>) -> Result<()> {
     let mut logs = logs_state.lock().unwrap();
     logs.clear();
     Ok(())
+}
+
+#[tauri::command]
+pub fn get_session_modules(
+    session_id: String,
+    session_states: State<'_, SessionStatesMap>,
+) -> Result<Vec<ModuleData>> {
+    let sessions = session_states.lock().unwrap();
+    
+    if let Some(session_arc) = sessions.get(&session_id) {
+        let session = session_arc.lock().unwrap();
+        
+        let modules: Vec<ModuleData> = session.modules.iter().map(|module| {
+            ModuleData {
+                name: module.name.clone(),
+                base_address: format!("0x{:X}", module.base),
+                size: module.size.unwrap_or(0),
+                path: module.name.clone(), // Use name as path for now
+            }
+        }).collect();
+        
+        info!("Retrieved {} modules for session {}", modules.len(), session_id);
+        Ok(modules)
+    } else {
+        Err(Error::SessionNotFound(session_id))
+    }
+}
+
+#[tauri::command]
+pub fn get_session_threads(
+    session_id: String,
+    session_states: State<'_, SessionStatesMap>,
+) -> Result<Vec<ThreadData>> {
+    let sessions = session_states.lock().unwrap();
+    
+    if let Some(session_arc) = sessions.get(&session_id) {
+        let session = session_arc.lock().unwrap();
+        
+        let threads: Vec<ThreadData> = session.threads.iter().map(|thread| {
+            ThreadData {
+                id: thread.tid,
+                status: "Running".to_string(), // ThreadInfo doesn't have status, default to Running
+                start_address: format!("0x{:X}", thread.start_address),
+            }
+        }).collect();
+        
+        info!("Retrieved {} threads for session {}", threads.len(), session_id);
+        Ok(threads)
+    } else {
+        Err(Error::SessionNotFound(session_id))
+    }
+}
+
+// Data structures for frontend communication
+#[derive(serde::Serialize)]
+pub struct ModuleData {
+    pub name: String,
+    pub base_address: String,
+    pub size: u64,
+    pub path: String,
+}
+
+#[derive(serde::Serialize)]
+pub struct ThreadData {
+    pub id: u32,
+    pub status: String,
+    pub start_address: String,
 } 

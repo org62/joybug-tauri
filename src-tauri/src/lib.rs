@@ -28,6 +28,8 @@ pub fn run() {
             commands::stop_debug_session,
             commands::get_logs,
             commands::clear_logs,
+            commands::get_session_modules,
+            commands::get_session_threads,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
