@@ -1,0 +1,255 @@
+use crate::error::{Error, Result};
+use crate::session::run_debug_session;
+use crate::state::{
+    DebugSession, LogEntry, LogsState, SessionState, SessionStatesMap, SessionStatus,
+};
+use std::sync::{Arc, Mutex};
+use std::thread;
+use tauri::{State, Emitter};
+use tracing::{error, info};
+
+// Helper function to emit session-updated event
+fn emit_session_update(
+    session_state: &Arc<Mutex<SessionState>>,
+    app_handle: &tauri::AppHandle,
+) {
+    let debug_session = {
+        let state = session_state.lock().unwrap();
+        state.to_debug_session()
+    };
+    
+    if let Err(e) = app_handle.emit("session-updated", &debug_session) {
+        error!("Failed to emit session-updated event: {}", e);
+    }
+}
+
+// Tauri commands
+#[tauri::command]
+pub fn greet(name: &str) -> String {
+    format!("Hello, {}! You've been greeted from Rust!", name)
+}
+
+#[tauri::command]
+pub fn create_debug_session(
+    name: String,
+    server_url: String,
+    launch_command: String,
+    session_states: State<'_, SessionStatesMap>,
+    app_handle: tauri::AppHandle,
+) -> Result<String> {
+    let session_id = format!("session_{}", chrono::Utc::now().timestamp_millis());
+
+    // Create new session state
+    let session_state = Arc::new(Mutex::new(SessionState::new(
+        session_id.clone(),
+        name,
+        server_url,
+        launch_command,
+    )));
+
+    // Store session state
+    {
+        let mut states = session_states.lock().unwrap();
+        states.insert(session_id.clone(), session_state.clone());
+    }
+
+    // Log session creation
+    crate::ui_logger::log_info(
+        &app_handle,
+        &format!("Debug session created: {}", session_id),
+        Some(session_id.clone()),
+    );
+
+    // Emit session-updated event for the new session
+    emit_session_update(&session_state, &app_handle);
+
+    info!("Created debug session: {}", session_id);
+    Ok(session_id)
+}
+
+#[tauri::command]
+pub fn get_debug_sessions(
+    session_states: State<'_, SessionStatesMap>,
+) -> Result<Vec<DebugSession>> {
+    let states = session_states.lock().unwrap();
+    
+    let sessions: Vec<DebugSession> = states
+        .values()
+        .map(|session_state| {
+            let state = session_state.lock().unwrap();
+            state.to_debug_session()
+        })
+        .collect();
+
+    Ok(sessions)
+}
+
+#[tauri::command]
+pub fn get_debug_session(
+    session_id: String,
+    session_states: State<'_, SessionStatesMap>,
+) -> Result<Option<DebugSession>> {
+    let states = session_states.lock().unwrap();
+    
+    if let Some(session_state) = states.get(&session_id) {
+        let state = session_state.lock().unwrap();
+        Ok(Some(state.to_debug_session()))
+    } else {
+        Ok(None)
+    }
+}
+
+#[tauri::command]
+pub fn start_debug_session(
+    session_id: String,
+    session_states: State<'_, SessionStatesMap>,
+    app_handle: tauri::AppHandle,
+) -> Result<()> {
+    let session_state = {
+        let states = session_states.lock().unwrap();
+        states
+            .get(&session_id)
+            .cloned()
+            .ok_or_else(|| Error::SessionNotFound(session_id.clone()))?
+    };
+
+    // Update status to Connecting
+    {
+        let mut state = session_state.lock().unwrap();
+        state.status = SessionStatus::Connecting;
+    }
+
+    // Emit session-updated event for the status change to Connecting
+    emit_session_update(&session_state, &app_handle);
+
+    // Log session start
+    crate::ui_logger::log_info(
+        &app_handle,
+        &format!("Starting debug session: {}", session_id),
+        Some(session_id.clone()),
+    );
+
+    // Start debug session in background thread
+    let session_state_for_thread = session_state.clone();
+    let app_handle_for_thread = app_handle.clone();
+    let session_id_for_thread = session_id.clone();
+    
+    thread::spawn(move || {
+        let result = run_debug_session(session_state_for_thread.clone(), Some(app_handle_for_thread.clone()));
+
+        // Update final status based on result
+        {
+            let mut state = session_state_for_thread.lock().unwrap();
+            match &result {
+                Ok(_) => {
+                    if !matches!(state.status, SessionStatus::Finished) {
+                        state.status = SessionStatus::Finished;
+                    }
+                    info!("Debug session {} completed successfully", session_id_for_thread);
+                }
+                Err(e) => {
+                    state.status = SessionStatus::Error(e.to_string());
+                    let error_message = format!("Debug session {} failed: {}", session_id_for_thread, e);
+                    error!("{}", &error_message);
+                    crate::ui_logger::log_error(
+                        &app_handle_for_thread,
+                        &error_message,
+                        Some(session_id_for_thread.clone()),
+                    );
+                }
+            }
+            state.debug_result = Some(result.map_err(|e| e.to_string()));
+        }
+    });
+
+    Ok(())
+}
+
+#[tauri::command]
+pub fn step_debug_session(
+    session_id: String,
+    session_states: State<'_, SessionStatesMap>,
+) -> Result<()> {
+    let session_state = {
+        let states = session_states.lock().unwrap();
+        states
+            .get(&session_id)
+            .cloned()
+            .ok_or_else(|| Error::SessionNotFound(session_id.clone()))?
+    };
+
+    let step_sender = {
+        let state = session_state.lock().unwrap();
+        
+        // Verify session can be stepped
+        if !matches!(state.status, SessionStatus::Paused) {
+            return Err(Error::InvalidSessionState(
+                "Session must be paused to step".to_string()
+            ));
+        }
+        
+        state
+            .step_sender
+            .as_ref()
+            .ok_or_else(|| Error::InternalCommunication("Session step sender not available".to_string()))?
+            .clone()
+    };
+
+    // Send step signal - let session thread handle status updates
+    step_sender
+        .send(true)
+        .map_err(|e| Error::InternalCommunication(format!("Failed to send step signal: {}", e)))?;
+
+    Ok(())
+}
+
+#[tauri::command]
+pub fn stop_debug_session(
+    session_id: String,
+    session_states: State<'_, SessionStatesMap>,
+) -> Result<()> {
+    let session_state = {
+        let states = session_states.lock().unwrap();
+        states
+            .get(&session_id)
+            .cloned()
+            .ok_or_else(|| Error::SessionNotFound(session_id.clone()))?
+    };
+
+    let step_sender = {
+        let state = session_state.lock().unwrap();
+        
+        // Verify session can be stopped
+        if matches!(state.status, SessionStatus::Finished | SessionStatus::Error(_)) {
+            return Err(Error::InvalidSessionState(
+                "Session is already finished".to_string()
+            ));
+        }
+        
+        state
+            .step_sender
+            .as_ref()
+            .ok_or_else(|| Error::InternalCommunication("Session step sender not available".to_string()))?
+            .clone()
+    };
+
+    // Send stop signal - let session thread handle status updates
+    step_sender
+        .send(false)
+        .map_err(|e| Error::InternalCommunication(format!("Failed to send stop signal: {}", e)))?;
+
+    Ok(())
+}
+
+#[tauri::command]
+pub fn get_logs(logs_state: State<'_, LogsState>) -> Result<Vec<LogEntry>> {
+    let logs = logs_state.lock().unwrap();
+    Ok(logs.clone())
+}
+
+#[tauri::command]
+pub fn clear_logs(logs_state: State<'_, LogsState>) -> Result<()> {
+    let mut logs = logs_state.lock().unwrap();
+    logs.clear();
+    Ok(())
+} 

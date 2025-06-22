@@ -7,200 +7,238 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
-import { Settings, Rocket, Plus, Trash2, RefreshCw, Play, Square, ExternalLink } from "lucide-react";
+import { Plus, Play, Eye } from "lucide-react";
 import { toast } from "sonner";
 
-interface LaunchConfiguration {
+interface DebugSession {
   id: string;
   name: string;
-  serverUrl: string;
-  launchCommand: string;
-  isConnected: boolean;
-  isConnecting: boolean;
-  isLaunching: boolean;
+  server_url: string;
+  launch_command: string;
+  status: SessionStatus;
+  current_event: DebugEventInfo | null;
+  created_at: string;
 }
+
+interface DebugEventInfo {
+  event_type: string;
+  process_id: number;
+  thread_id: number;
+  details: string;
+  can_continue: boolean;
+}
+
+type SessionStatus = 
+  | "Created"
+  | "Connecting" 
+  | "Connected"
+  | "Running"
+  | "Paused"
+  | "Finished"
+  | { Error: string };
 
 export default function Debugger() {
   const navigate = useNavigate();
-  const [configs, setConfigs] = useState<LaunchConfiguration[]>([]);
+  const [sessions, setSessions] = useState<DebugSession[]>([]);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
-  const [editingConfig, setEditingConfig] = useState<LaunchConfiguration | null>(null);
   
   // Form state for dialog
-  const [formServerUrl, setFormServerUrl] = useState("http://localhost:9000");
+  const [formName, setFormName] = useState("");
+  const [formServerUrl, setFormServerUrl] = useState("127.0.0.1:9000");
   const [formLaunchCommand, setFormLaunchCommand] = useState("cmd.exe /c echo Hello World!");
-  const [formConfigName, setFormConfigName] = useState("");
 
-  // Load configs from localStorage on component mount
-  useEffect(() => {
-    const savedConfigs = localStorage.getItem('savedConfigs');
-    if (savedConfigs) {
-      try {
-        const parsedConfigs = JSON.parse(savedConfigs);
-        // Reset connection states since they shouldn't persist
-        const cleanedConfigs = parsedConfigs.map((config: LaunchConfiguration) => ({
-          ...config,
-          isConnected: false,
-          isConnecting: false,
-          isLaunching: false,
-        }));
-        setConfigs(cleanedConfigs);
-      } catch (error) {
-        console.error('Failed to parse saved configs:', error);
-        localStorage.removeItem('savedConfigs');
-      }
+  // Load sessions from backend
+  const loadSessions = async () => {
+    try {
+      const sessionList = await invoke<DebugSession[]>("get_debug_sessions");
+      setSessions(sessionList);
+    } catch (error) {
+      console.error("Failed to load debug sessions:", error);
+      toast.error(`Failed to load debug sessions: ${error}`);
     }
+  };
+
+  // Initial load
+  useEffect(() => {
+    loadSessions();
   }, []);
 
-  // Save sessions to localStorage whenever sessions change
+  // Auto-refresh sessions every 1 second
   useEffect(() => {
-    if (configs.length > 0) {
-      localStorage.setItem('savedConfigs', JSON.stringify(configs));
-    } else {
-      localStorage.removeItem('savedConfigs');
-    }
-  }, [configs]);
+    const interval = setInterval(loadSessions, 1000);
+    return () => clearInterval(interval);
+  }, []);
 
-  const handleLaunch = async (sessionId: string) => {
-    const session = configs.find(s => s.id === sessionId);
-    if (!session) return;
+  // Handle Ctrl+O to open new session dialog
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      // Use metaKey for Command key on macOS
+      if ((event.ctrlKey || event.metaKey) && event.key === 'o') {
+        event.preventDefault();
+        setIsDialogOpen(true);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, []); // Empty dependency array ensures this runs only once
+
+  const handleCreateSession = async () => {
+    const sessionName = formName.trim() || `Session ${Date.now()}`;
 
     try {
-      setConfigs(prev => prev.map(s => 
-        s.id === sessionId ? { ...s, isLaunching: true } : s
-      ));
-      
-      // Always connect first before launching
-      try {
-        await invoke("create_debug_client", { baseUrl: session.serverUrl });
-        
-        setConfigs(prev => prev.map(s => 
-          s.id === sessionId ? { ...s, isConnected: true } : s
-        ));
-        
-        toast.success("Debug client connected successfully");
-      } catch (error) {
-        console.error("Failed to connect to debug server:", error);
-        toast.error(`Failed to connect to debug server: ${error}`);
-        
-        setConfigs(prev => prev.map(s => 
-          s.id === sessionId ? { ...s, isConnected: false, isLaunching: false } : s
-        ));
-        return;
-      }
-      
-      await invoke("launch", { command: session.launchCommand });
-      toast.success("Process launched successfully");
-      
-    } catch (error) {
-      console.error("Failed to launch process:", error);
-      toast.error(`Failed to launch process: ${error}`);
-    } finally {
-      setConfigs(prev => prev.map(s => 
-        s.id === sessionId ? { ...s, isLaunching: false } : s
-      ));
-    }
-  };
-
-  const handleAddSession = () => {
-    setEditingConfig(null);
-    setFormConfigName("");
-    setFormServerUrl("http://localhost:9000");
-    setFormLaunchCommand("cmd.exe /c echo Hello World!");
-    setIsDialogOpen(true);
-  };
-
-  const handleEditSession = (session: LaunchConfiguration) => {
-    setEditingConfig(session);
-    setFormConfigName(session.name);
-    setFormServerUrl(session.serverUrl);
-    setFormLaunchCommand(session.launchCommand);
-    setIsDialogOpen(true);
-  };
-
-  const handleSaveSession = () => {
-    const sessionName = formConfigName.trim() || `Config ${Date.now()}`;
-
-    if (editingConfig) {
-      // Update existing session
-      setConfigs(prev => prev.map(s => 
-        s.id === editingConfig.id 
-          ? { 
-              ...s, 
-              name: sessionName,
-              serverUrl: formServerUrl,
-              launchCommand: formLaunchCommand 
-            }
-          : s
-      ));
-      toast.success("Configuration updated successfully");
-      setIsDialogOpen(false);
-    } else {
-      // Add new session
-      const newSessionId = Date.now().toString();
-      const newSession: LaunchConfiguration = {
-        id: newSessionId,
+      const sessionId = await invoke<string>("create_debug_session", {
         name: sessionName,
         serverUrl: formServerUrl,
         launchCommand: formLaunchCommand,
-        isConnected: false,
-        isConnecting: false,
-        isLaunching: false,
-      };
-      
-      setConfigs(prev => [...prev, newSession]);
-      toast.success("Configuration created successfully");
+      });
+
+      toast.success("Debug session created successfully");
       setIsDialogOpen(false);
       
-      // Automatically launch the new session
-      setTimeout(() => {
-        handleLaunch(newSessionId);
-      }, 100); // Small delay to ensure state is updated
+      // Clear form
+      setFormName("");
+      setFormServerUrl("127.0.0.1:9000");
+      setFormLaunchCommand("cmd.exe /c echo Hello World!");
+      
+      // Note: Auto-refresh will pick up the new session within 2 seconds
+      
+      return sessionId;
+    } catch (error) {
+      console.error("Failed to create debug session:", error);
+      toast.error(`Failed to create debug session: ${error}`);
+      throw error;
     }
+  };
+
+  const handleStartSession = async (sessionId: string) => {
+    try {
+      await invoke("start_debug_session", { sessionId });
+      toast.success("Debug session started");
+      // Note: Auto-refresh will pick up the status change within 2 seconds
+    } catch (error) {
+      console.error("Failed to start debug session:", error);
+      toast.error(`Failed to start debug session: ${error}`);
+    }
+  };
+
+  const handleCreateAndStart = async () => {
+    try {
+      const sessionId = await handleCreateSession();
+      // Small delay to ensure session is created
+      setTimeout(() => {
+        handleStartSession(sessionId);
+      }, 100);
+    } catch (error) {
+      // Error already handled in handleCreateSession
+    }
+  };
+
+  const handleViewSession = (sessionId: string) => {
+    navigate(`/session/${sessionId}`);
+  };
+
+  const getStatusBadge = (status: SessionStatus) => {
+    if (typeof status === "string") {
+      switch (status) {
+        case "Created":
+          return <Badge variant="secondary">Created</Badge>;
+        case "Connecting":
+          return <Badge variant="outline" className="animate-pulse">Connecting...</Badge>;
+        case "Connected":
+          return <Badge variant="default" className="bg-blue-600">Connected</Badge>;
+        case "Running":
+          return <Badge variant="default" className="bg-green-600 animate-pulse">Running</Badge>;
+        case "Paused":
+          return <Badge variant="default" className="bg-yellow-600">Paused</Badge>;
+        case "Finished":
+          return <Badge variant="outline">Finished</Badge>;
+        default:
+          return <Badge variant="secondary">{status}</Badge>;
+      }
+    } else {
+      // Error case
+      return <Badge variant="destructive">Error</Badge>;
+    }
+  };
+
+  const getStatusDescription = (status: SessionStatus) => {
+    if (typeof status === "string") {
+      switch (status) {
+        case "Created":
+          return "Session created, ready to start";
+        case "Connecting":
+          return "Connecting to debug server...";
+        case "Connected":
+          return "Connected to debug server";
+        case "Running":
+          return "Debug session is running";
+        case "Paused":
+          return "Debug session is paused on an event";
+        case "Finished":
+          return "Debug session has finished";
+        default:
+          return status;
+      }
+    } else {
+      return `Error: ${status.Error}`;
+    }
+  };
+
+  const canStart = (status: SessionStatus) => {
+    return typeof status === "string" && status === "Created";
+  };
+
+  const canView = (status: SessionStatus) => {
+    if (typeof status === "string") {
+      return ["Connected", "Running", "Paused"].includes(status);
+    }
+    return false;
   };
 
   return (
     <div className="container mx-auto px-4 py-8">
-      <div className="max-w-4xl mx-auto space-y-6">
-                 <div className="flex items-center justify-between">
-           <div>
-             <h1 className="text-3xl font-bold">Launch Configurations</h1>
-             <p className="text-muted-foreground">Manage your debug launch configurations</p>
-           </div>
-           
-           <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-             <DialogTrigger asChild>
-               <Button onClick={handleAddSession} className="flex items-center gap-2">
-                 <Plus className="h-4 w-4" />
-                 New Configuration
-               </Button>
-             </DialogTrigger>
+      <div className="max-w-6xl mx-auto space-y-6">
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-3xl font-bold">Debug Sessions</h1>
+            <p className="text-muted-foreground">Manage your debug sessions</p>
+          </div>
+          
+          <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+            <DialogTrigger asChild>
+              <Button className="flex items-center gap-2">
+                <Plus className="h-4 w-4" />
+                New Session
+              </Button>
+            </DialogTrigger>
             <DialogContent className="sm:max-w-[425px]">
-                             <DialogHeader>
-                 <DialogTitle>
-                   {editingConfig ? "Edit Launch Configuration" : "New Launch Configuration"}
-                 </DialogTitle>
-                 <DialogDescription>
-                   Configure the debug server connection settings
-                 </DialogDescription>
-               </DialogHeader>
+              <DialogHeader>
+                <DialogTitle>Create New Debug Session</DialogTitle>
+                <DialogDescription>
+                  Configure a new debug session with server connection and launch command
+                </DialogDescription>
+              </DialogHeader>
               <div className="space-y-4 py-4">
-                                 <div className="space-y-2">
-                   <Label htmlFor="sessionName">Configuration Name</Label>
-                   <Input
-                     id="sessionName"
-                     value={formConfigName}
-                     onChange={(e) => setFormConfigName(e.target.value)}
-                     placeholder="My Launch Configuration"
-                   />
-                 </div>
+                <div className="space-y-2">
+                  <Label htmlFor="sessionName">Session Name</Label>
+                  <Input
+                    id="sessionName"
+                    value={formName}
+                    onChange={(e) => setFormName(e.target.value)}
+                    placeholder="My Debug Session"
+                  />
+                </div>
                 <div className="space-y-2">
                   <Label htmlFor="serverUrl">Debug Server URL</Label>
                   <Input
                     id="serverUrl"
                     value={formServerUrl}
                     onChange={(e) => setFormServerUrl(e.target.value)}
-                    placeholder="http://localhost:9000"
+                    placeholder="127.0.0.1:9000"
                   />
                 </div>
                 <div className="space-y-2">
@@ -217,88 +255,94 @@ export default function Debugger() {
                 <Button variant="outline" onClick={() => setIsDialogOpen(false)}>
                   Cancel
                 </Button>
-                                 <Button onClick={handleSaveSession}>
-                   {editingConfig ? "Update" : "Create"} Configuration
-                 </Button>
+                <Button onClick={handleCreateSession}>
+                  Create Session
+                </Button>
+                <Button onClick={handleCreateAndStart} variant="default">
+                  Create & Start
+                </Button>
               </div>
             </DialogContent>
           </Dialog>
         </div>
 
-                 {configs.length === 0 ? (
-           <Card>
-             <CardContent className="flex flex-col items-center justify-center py-12 text-center">
-               <div className="text-muted-foreground text-lg mb-4">No launch configurations yet</div>
-               <p className="text-sm text-muted-foreground mb-6">
-                 Create your first launch configuration to get started
-               </p>
-               <Button onClick={handleAddSession} className="flex items-center gap-2">
-                 <Plus className="h-4 w-4" />
-                 Create Configuration
-               </Button>
-             </CardContent>
-           </Card>
+        {sessions.length === 0 ? (
+          <Card>
+            <CardContent className="flex flex-col items-center justify-center py-12 text-center">
+              <div className="text-muted-foreground text-lg mb-4">No debug sessions yet</div>
+              <p className="text-sm text-muted-foreground mb-6">
+                Create your first debug session to get started
+              </p>
+              <Button onClick={() => setIsDialogOpen(true)} className="flex items-center gap-2">
+                <Plus className="h-4 w-4" />
+                Create Session
+              </Button>
+            </CardContent>
+          </Card>
         ) : (
-          <div className="space-y-4">
-            {configs.map((session) => (
-              <Card key={session.id}>
+          <div className="grid gap-4">
+            {sessions
+              .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+              .map((session) => (
+              <Card key={session.id} className="hover:shadow-md transition-shadow">
                 <CardHeader>
                   <div className="flex items-center justify-between">
-                    <div>
-                      <CardTitle className="text-xl">{session.name}</CardTitle>
-                      <CardDescription>{session.serverUrl}</CardDescription>
+                    <div className="flex-1">
+                      <div className="flex items-center gap-3">
+                        <CardTitle className="text-xl">{session.name}</CardTitle>
+                        {getStatusBadge(session.status)}
+                      </div>
+                      <CardDescription className="mt-1">
+                        {getStatusDescription(session.status)}
+                      </CardDescription>
                     </div>
                     <div className="flex items-center gap-2">
-                      {session.isConnected && (
-                        <Badge variant="default" className="bg-green-600">
-                          Connected
-                        </Badge>
+                      {canView(session.status) && (
+                        <Button
+                          variant="default"
+                          size="sm"
+                          onClick={() => handleViewSession(session.id)}
+                        >
+                          <Eye className="h-4 w-4 mr-1" />
+                          View
+                        </Button>
                       )}
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => handleEditSession(session)}
-                      >
-                        <Settings className="h-4 w-4" />
-                      </Button>
+                      {canStart(session.status) && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleStartSession(session.id)}
+                        >
+                          <Play className="h-4 w-4 mr-1" />
+                          Start
+                        </Button>
+                      )}
                     </div>
                   </div>
                 </CardHeader>
                 <CardContent>
-                  <div className="flex gap-2 flex-wrap">
-                    <Button 
-                      onClick={() => handleLaunch(session.id)}
-                      disabled={session.isConnecting || session.isLaunching || !session.launchCommand.trim()}
-                      variant="default"
-                      className="flex items-center gap-2"
-                    >
-                      <Rocket className="h-4 w-4" />
-                      {session.isLaunching ? "Launching..." : "Launch"}
-                    </Button>
-
-                  </div>
-                  {session.launchCommand && (
-                    <div className="mt-3 text-sm text-muted-foreground">
-                      <strong>Command:</strong> {session.launchCommand}
+                  <div className="space-y-2 text-sm">
+                    <div>
+                      <strong>Server:</strong> {session.server_url}
                     </div>
-                  )}
+                    <div>
+                      <strong>Command:</strong> {session.launch_command}
+                    </div>
+                    <div>
+                      <strong>Created:</strong> {session.created_at}
+                    </div>
+                    {session.current_event && (
+                      <div className="mt-3 p-3 bg-gray-50 dark:bg-gray-900 rounded-md">
+                        <div className="font-medium">Current Event:</div>
+                        <div className="text-sm text-muted-foreground">
+                          {session.current_event.event_type} - {session.current_event.details}
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 </CardContent>
               </Card>
             ))}
-          </div>
-        )}
-
-        {/* Running Sessions Section */}
-        {configs.length > 0 && (
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <h2 className="text-2xl font-bold">Running Debug Sessions</h2>
-                <p className="text-muted-foreground">
-                  Currently active debug sessions on server: {configs[0]?.serverUrl || "http://localhost:9000"}
-                </p>
-              </div>
-            </div>
           </div>
         )}
       </div>

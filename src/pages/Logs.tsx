@@ -4,7 +4,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Trash2, RefreshCw, Filter } from "lucide-react";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Trash2, Filter } from "lucide-react";
 import { toast } from "sonner";
 
 interface LogEntry {
@@ -15,20 +16,16 @@ interface LogEntry {
 
 export default function Logs() {
   const [logs, setLogs] = useState<LogEntry[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
   const [levelFilter, setLevelFilter] = useState<string>("all");
   const [searchFilter, setSearchFilter] = useState<string>("");
 
   const fetchLogs = async () => {
     try {
-      setIsLoading(true);
       const fetchedLogs = await invoke<LogEntry[]>("get_logs");
       setLogs(fetchedLogs);
     } catch (error) {
       console.error("Failed to fetch logs:", error);
       toast.error(`Failed to fetch logs: ${error}`);
-    } finally {
-      setIsLoading(false);
     }
   };
 
@@ -52,12 +49,14 @@ export default function Logs() {
 
   const getLogIcon = (level: string) => {
     switch (level.toLowerCase()) {
-      case 'success':
-        return '✓';
-      case 'error':
-        return '✗';
+      case 'debug':
+        return '🐛';
       case 'info':
         return 'ℹ';
+      case 'warning':
+        return '⚠️';
+      case 'error':
+        return '✗';
       default:
         return '•';
     }
@@ -65,12 +64,14 @@ export default function Logs() {
 
   const getLogColor = (level: string) => {
     switch (level.toLowerCase()) {
-      case 'success':
-        return 'text-green-600 dark:text-green-400';
-      case 'error':
-        return 'text-red-600 dark:text-red-400';
+      case 'debug':
+        return 'text-gray-500 dark:text-gray-400';
       case 'info':
         return 'text-blue-600 dark:text-blue-400';
+      case 'warning':
+        return 'text-yellow-500 dark:text-yellow-400';
+      case 'error':
+        return 'text-red-600 dark:text-red-400';
       default:
         return 'text-gray-600 dark:text-gray-400';
     }
@@ -91,16 +92,6 @@ export default function Logs() {
           <div className="flex justify-between items-center">
             <CardTitle className="text-2xl">Application Logs</CardTitle>
             <div className="flex gap-2">
-              <Button
-                onClick={fetchLogs}
-                disabled={isLoading}
-                variant="outline"
-                size="sm"
-                className="flex items-center gap-2"
-              >
-                <RefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
-                Refresh
-              </Button>
               <Button
                 onClick={clearLogs}
                 variant="outline"
@@ -123,9 +114,10 @@ export default function Logs() {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All Levels</SelectItem>
-                <SelectItem value="success">Success</SelectItem>
-                <SelectItem value="error">Error</SelectItem>
+                <SelectItem value="debug">Debug</SelectItem>
                 <SelectItem value="info">Info</SelectItem>
+                <SelectItem value="warning">Warning</SelectItem>
+                <SelectItem value="error">Error</SelectItem>
               </SelectContent>
             </Select>
             <Input
@@ -140,28 +132,30 @@ export default function Logs() {
           <div className="mb-4 text-sm text-gray-500 dark:text-gray-400">
             Showing {filteredLogs.length} of {logs.length} logs
           </div>
-          <div className="space-y-4">
-            {logs.length === 0 ? (
-              <div className="text-center text-gray-500 dark:text-gray-400 py-8">
-                No logs available. Try using the debugger to generate some logs.
-              </div>
-            ) : filteredLogs.length === 0 ? (
-              <div className="text-center text-gray-500 dark:text-gray-400 py-8">
-                No logs match the current filters.
-              </div>
-            ) : (
-              filteredLogs.map((log, index) => (
-                <div key={index} className="p-4 bg-gray-100 dark:bg-neutral-800 rounded-lg">
-                  <div className="text-sm text-gray-500 dark:text-neutral-400">
-                    {log.timestamp}
-                  </div>
-                  <div className={getLogColor(log.level)}>
-                    {log.message.match(/^[✓✗ℹ•]/) ? log.message : `${getLogIcon(log.level)} ${log.message}`}
-                  </div>
+          <ScrollArea className="h-[500px] w-full rounded-md border">
+            <div className="p-4 space-y-4">
+              {logs.length === 0 ? (
+                <div className="text-center text-gray-500 dark:text-gray-400 py-8">
+                  No logs available. Try using the debugger to generate some logs.
                 </div>
-              ))
-            )}
-          </div>
+              ) : filteredLogs.length === 0 ? (
+                <div className="text-center text-gray-500 dark:text-gray-400 py-8">
+                  No logs match the current filters.
+                </div>
+              ) : (
+                filteredLogs.slice().reverse().map((log, index) => (
+                  <div key={index} className="p-4 bg-gray-100 dark:bg-neutral-800 rounded-lg">
+                    <div className="text-sm text-gray-500 dark:text-neutral-400">
+                      {log.timestamp}
+                    </div>
+                    <div className={getLogColor(log.level)}>
+                      {log.message.match(/^[✓✗ℹ•]/) ? log.message : `${getLogIcon(log.level)} ${log.message}`}
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </ScrollArea>
         </CardContent>
       </Card>
     </div>

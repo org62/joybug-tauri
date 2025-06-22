@@ -1,4 +1,5 @@
-import { BrowserRouter as Router, Routes, Route } from "react-router-dom";
+import { BrowserRouter as Router, Routes, Route, useNavigate } from "react-router-dom";
+import { useEffect } from "react";
 import Header from "@/components/Header";
 import Home from "@/pages/Home";
 import Debugger from "@/pages/Debugger";
@@ -9,23 +10,53 @@ import About from "@/pages/About";
 import { Toaster } from "@/components/ui/sonner";
 import "./App.css";
 
+function AppContent() {
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.ctrlKey || event.metaKey) {
+        switch (event.key) {
+          case 'd':
+            event.preventDefault();
+            navigate('/debugger');
+            break;
+          case 'l':
+            event.preventDefault();
+            navigate('/logs');
+            break;
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [navigate]);
+
+  return (
+    <div className="min-h-screen bg-gray-50 dark:bg-neutral-900">
+      <Header />
+      <main>
+        <Routes>
+          <Route path="/" element={<Home />} />
+          <Route path="/debugger" element={<Debugger />} />
+          <Route path="/session/:sessionId" element={<Session />} />
+          <Route path="/logs" element={<Logs />} />
+          <Route path="/settings" element={<Settings />} />
+          <Route path="/about" element={<About />} />
+        </Routes>
+      </main>
+      <Toaster />
+    </div>
+  );
+}
+
 function App() {
   return (
     <Router>
-      <div className="min-h-screen bg-gray-50 dark:bg-neutral-900">
-        <Header />
-        <main>
-          <Routes>
-            <Route path="/" element={<Home />} />
-            <Route path="/debugger" element={<Debugger />} />
-            <Route path="/session/:sessionId" element={<Session />} />
-            <Route path="/logs" element={<Logs />} />
-            <Route path="/settings" element={<Settings />} />
-            <Route path="/about" element={<About />} />
-          </Routes>
-        </main>
-        <Toaster />
-      </div>
+      <AppContent />
     </Router>
   );
 }
