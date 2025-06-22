@@ -9,6 +9,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ArrowLeft, Square, ChevronRight, AlertCircle, Layers, Cpu } from "lucide-react";
 import { toast } from "sonner";
 import { AssemblyView } from "@/components/AssemblyView";
+import { RegisterView, SerializableThreadContext } from "@/components/RegisterView";
 
 interface DebugSession {
   id: string;
@@ -27,6 +28,7 @@ interface DebugEventInfo {
   details: string;
   can_continue: boolean;
   address?: number;
+  context?: SerializableThreadContext;
 }
 
 interface Module {
@@ -71,7 +73,7 @@ export default function Session() {
   const [activeTab, setActiveTab] = useState("overview");
   
   // Refs for cleanup
-  const unlistenRef = useRef<(() => void) | null>(null);
+  const unlistenSessionRef = useRef<(() => void) | null>(null);
 
   const loadSession = async () => {
     if (!sessionId) return;
@@ -144,11 +146,11 @@ export default function Session() {
       
       // Set up event listener for session updates
       try {
-        const unlisten = await listen<DebugSession | SessionUpdatePayload>("session-updated", (event) => {
+        const unlistenSession = await listen<DebugSession | SessionUpdatePayload>("session-updated", (event) => {
           console.log("Received session update:", event.payload);
           handleSessionUpdate(event.payload);
         });
-        unlistenRef.current = unlisten;
+        unlistenSessionRef.current = unlistenSession;
       } catch (error) {
         console.error("Failed to set up session update listener:", error);
         toast.error("Failed to set up real-time updates");
@@ -161,9 +163,9 @@ export default function Session() {
 
     // Cleanup on unmount
     return () => {
-      if (unlistenRef.current) {
-        unlistenRef.current();
-        unlistenRef.current = null;
+      if (unlistenSessionRef.current) {
+        unlistenSessionRef.current();
+        unlistenSessionRef.current = null;
       }
     };
   }, [sessionId]);
@@ -201,7 +203,7 @@ export default function Session() {
     try {
       setIsStepping(true);
       await invoke("step_debug_session", { sessionId });
-      toast.success("Debug step sent");
+      //toast.success("Debug step sent");
       
       // No need to manually refresh - the backend will emit an event
     } catch (error) {
@@ -553,9 +555,13 @@ export default function Session() {
             </Card>
 
             {/* Disassembly View */}
-            <h1>Disassembly</h1>
             {session.current_event?.address && (
               <AssemblyView sessionId={session.id} address={session.current_event.address} />
+            )}
+
+            {/* Register View */}
+            {session.current_event?.context && (
+                <RegisterView context={session.current_event.context} />
             )}
 
             {/* Controls Help */}

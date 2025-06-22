@@ -1,5 +1,5 @@
 use crate::state::{LogEntry, LogsState};
-use tauri::Manager;
+use tauri::{Manager, Emitter};
 
 #[allow(dead_code)]
 pub enum LogLevel {
@@ -66,4 +66,16 @@ pub fn log_error<R: tauri::Runtime>(
     session_id: Option<String>,
 ) {
     log(app, LogLevel::Error, message, session_id);
+}
+
+#[allow(dead_code)]
+pub fn toast_info(app: &tauri::AppHandle, message: &str) {
+    if let Err(e) = app.emit("show-toast", message) {
+        log(
+            app,
+            LogLevel::Error,
+            &format!("Failed to emit show-toast event: {}", e),
+            None,
+        );
+    }
 } 

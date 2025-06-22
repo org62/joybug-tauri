@@ -1,5 +1,7 @@
 import { BrowserRouter as Router, Routes, Route, useNavigate } from "react-router-dom";
 import { useEffect } from "react";
+import { listen } from "@tauri-apps/api/event";
+import { toast } from "sonner";
 import Header from "@/components/Header";
 import Home from "@/pages/Home";
 import Debugger from "@/pages/Debugger";
@@ -30,8 +32,15 @@ function AppContent() {
     };
 
     window.addEventListener('keydown', handleKeyDown);
+
+    // Global toast listener
+    const unlisten = listen<string>("show-toast", (event) => {
+      toast.info(event.payload);
+    });
+
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
+      unlisten.then(f => f());
     };
   }, [navigate]);
 

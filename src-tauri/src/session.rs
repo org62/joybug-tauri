@@ -117,17 +117,60 @@ pub fn run_debug_session(
                                 &format!("Received debug event: {}", event),
                                 Some(session_id.clone()),
                             );
+
+                            // Send toast notification to the frontend
+                            let toast_message = match &event {
+                                joybug2::protocol_io::DebugEvent::DllLoaded { dll_name, .. } => {
+                                    format!("DLL Loaded: {}", dll_name.as_deref().unwrap_or("Unknown"))
+                                }
+                                _ => {
+                                    let event_info = crate::events::debug_event_to_info(&event);
+                                    format!("Received: {}", event_info.event_type)
+                                }
+                            };
+                            crate::ui_logger::toast_info(handle, &toast_message);
                         }
 
                         // Store current event in session state and populate modules/threads
-                        {
+                        let aux_client_arc = {
                             let mut state = session_state.lock().unwrap();
                             state.current_event = Some(event.clone());
                             state.events.push(event.clone());
                             state.status = SessionStatus::Paused; // Always pause on every event
+                            
+                            // Clear previous context before fetching new one
+                            state.current_context = None;
 
                             // Populate modules and threads from events
                             update_session_from_event(&mut state, &event);
+                            
+                            // Clone the Arc, not the client itself
+                            state.aux_client.clone()
+                        };
+                        
+                        // Fetch thread context for paused events that have a valid thread
+                        if let Some(aux_client_mutex) = aux_client_arc {
+                            let pid = event.pid();
+                            let tid = event.tid();
+
+                            if pid != 0 && tid != 0 {
+                                let req = joybug2::protocol::DebuggerRequest::GetThreadContext { pid, tid };
+                                let mut aux_client = aux_client_mutex.lock().unwrap();
+                                
+                                match aux_client.send_and_receive(&req) {
+                                    Ok(joybug2::protocol::DebuggerResponse::ThreadContext { context: raw_context }) => {
+                                        // Lock state again to update the context
+                                        let mut state = session_state.lock().unwrap();
+                                        state.current_context = Some(crate::events::convert_raw_context_to_serializable(raw_context));
+                                    }
+                                    Ok(other_resp) => {
+                                        warn!("Expected ThreadContext response, got {:?}", other_resp);
+                                    }
+                                    Err(e) => {
+                                        error!("Failed to get thread context: {}", e);
+                                    }
+                                }
+                            }
                         }
 
                         // Emit session update for new debug event

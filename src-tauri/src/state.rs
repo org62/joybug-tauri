@@ -26,6 +26,23 @@ pub enum SessionStatus {
     Error(String),
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct Serializablex64ThreadContext {
+    pub rax: String, pub rbx: String, pub rcx: String, pub rdx: String,
+    pub rsi: String, pub rdi: String, pub rbp: String, pub rsp: String,
+    pub rip: String,
+    pub r8: String, pub r9: String, pub r10: String, pub r11: String,
+    pub r12: String, pub r13: String, pub r14: String, pub r15: String,
+    pub eflags: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "arch")]
+pub enum SerializableThreadContext {
+    X64(Serializablex64ThreadContext),
+    Arm64, // Placeholder for future use
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DebugEventInfo {
     pub event_type: String,
@@ -34,6 +51,7 @@ pub struct DebugEventInfo {
     pub details: String,
     pub can_continue: bool,
     pub address: Option<u64>,
+    pub context: Option<SerializableThreadContext>,
 }
 
 // Session state - the single source of truth for each session
@@ -51,6 +69,7 @@ pub struct SessionState {
     pub modules: Vec<joybug2::protocol_io::ModuleInfo>,
     pub threads: Vec<joybug2::protocol_io::ThreadInfo>,
     pub current_event: Option<joybug2::protocol_io::DebugEvent>,
+    pub current_context: Option<SerializableThreadContext>,
     pub step_sender: Option<mpsc::Sender<bool>>, // Send true to continue, false to stop
     pub step_receiver: Option<mpsc::Receiver<bool>>,
     pub debug_result: Option<Result<(), String>>, // Track if debug session succeeded or failed
@@ -78,6 +97,7 @@ impl SessionState {
             modules: Vec::new(),
             threads: Vec::new(),
             current_event: None,
+            current_context: None,
             step_sender: Some(step_sender),
             step_receiver: Some(step_receiver),
             debug_result: None,
@@ -94,7 +114,18 @@ impl SessionState {
             launch_command: self.launch_command.clone(),
             status: self.status.clone(),
             current_event: self.current_event.as_ref().map(|event| {
-                crate::events::debug_event_to_info(event)
+                let mut info = crate::events::debug_event_to_info(event);
+                info.context = self.current_context.clone();
+                
+                // If address is missing from the event, try to get it from the context's RIP
+                if info.address.is_none() {
+                    if let Some(SerializableThreadContext::X64(ref ctx)) = self.current_context {
+                        if let Ok(rip) = u64::from_str_radix(&ctx.rip.trim_start_matches("0x"), 16) {
+                            info.address = Some(rip);
+                        }
+                    }
+                }
+                info
             }),
             created_at: self.created_at.clone(),
         }
