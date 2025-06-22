@@ -25,6 +25,7 @@ pub fn debug_event_to_info(event: &joybug2::protocol_io::DebugEvent) -> DebugEve
                     .unwrap_or_else(|| "Unknown".to_string())
             ),
             can_continue: true,
+            address: None,
         },
         DebugEvent::ProcessExited { pid, exit_code } => DebugEventInfo {
             event_type: "ProcessExited".to_string(),
@@ -32,6 +33,7 @@ pub fn debug_event_to_info(event: &joybug2::protocol_io::DebugEvent) -> DebugEve
             thread_id: 0, // ProcessExited doesn't have a tid field
             details: format!("Process exited: PID={}, Exit Code={}", pid, exit_code),
             can_continue: false,
+            address: None,
         },
         DebugEvent::ThreadCreated {
             pid,
@@ -46,6 +48,7 @@ pub fn debug_event_to_info(event: &joybug2::protocol_io::DebugEvent) -> DebugEve
                 pid, tid, start_address
             ),
             can_continue: true,
+            address: Some(*start_address),
         },
         DebugEvent::ThreadExited {
             pid,
@@ -60,6 +63,7 @@ pub fn debug_event_to_info(event: &joybug2::protocol_io::DebugEvent) -> DebugEve
                 pid, tid, exit_code
             ),
             can_continue: true,
+            address: None,
         },
         DebugEvent::DllLoaded {
             pid,
@@ -82,6 +86,7 @@ pub fn debug_event_to_info(event: &joybug2::protocol_io::DebugEvent) -> DebugEve
                     .unwrap_or_else(|| "Unknown".to_string())
             ),
             can_continue: true,
+            address: None,
         },
         DebugEvent::DllUnloaded {
             pid,
@@ -96,6 +101,7 @@ pub fn debug_event_to_info(event: &joybug2::protocol_io::DebugEvent) -> DebugEve
                 pid, tid, base_of_dll
             ),
             can_continue: true,
+            address: None,
         },
         DebugEvent::Breakpoint { pid, tid, address } => DebugEventInfo {
             event_type: "Breakpoint".to_string(),
@@ -106,6 +112,7 @@ pub fn debug_event_to_info(event: &joybug2::protocol_io::DebugEvent) -> DebugEve
                 pid, tid, address
             ),
             can_continue: true,
+            address: Some(*address),
         },
         DebugEvent::Exception {
             pid,
@@ -123,6 +130,7 @@ pub fn debug_event_to_info(event: &joybug2::protocol_io::DebugEvent) -> DebugEve
                 pid, tid, code, address, first_chance
             ),
             can_continue: true,
+            address: Some(*address),
         },
         DebugEvent::Output { pid, tid, output } => DebugEventInfo {
             event_type: "Output".to_string(),
@@ -130,6 +138,7 @@ pub fn debug_event_to_info(event: &joybug2::protocol_io::DebugEvent) -> DebugEve
             thread_id: *tid,
             details: format!("Debug output: PID={}, TID={}, Output={}", pid, tid, output),
             can_continue: true,
+            address: None,
         },
         DebugEvent::RipEvent {
             pid,
@@ -145,6 +154,7 @@ pub fn debug_event_to_info(event: &joybug2::protocol_io::DebugEvent) -> DebugEve
                 pid, tid, error, event_type
             ),
             can_continue: true,
+            address: None,
         },
         DebugEvent::Unknown => DebugEventInfo {
             event_type: "Unknown".to_string(),
@@ -152,6 +162,7 @@ pub fn debug_event_to_info(event: &joybug2::protocol_io::DebugEvent) -> DebugEve
             thread_id: 0,
             details: "Unknown debug event".to_string(),
             can_continue: true,
+            address: None,
         },
     }
 } 

@@ -256,6 +256,102 @@ pub fn clear_logs(logs_state: State<'_, LogsState>) -> Result<()> {
     Ok(())
 }
 
+#[derive(serde::Serialize)]
+pub struct SerializableInstruction {
+    pub address: String,
+    pub symbol: String,
+    pub bytes: String,
+    pub mnemonic: String,
+    pub op_str: String,
+}
+
+#[tauri::command]
+pub fn get_disassembly(
+    session_id: String,
+    address: u64,
+    count: usize,
+    session_states: State<'_, SessionStatesMap>,
+) -> Result<Vec<SerializableInstruction>> {
+    let session_state = {
+        let states = session_states.lock().unwrap();
+        states
+            .get(&session_id)
+            .cloned()
+            .ok_or_else(|| Error::SessionNotFound(session_id.clone()))?
+    };
+
+    let (aux_client, pid) = {
+        let state = session_state.lock().unwrap();
+
+        let pid = match state.status {
+            SessionStatus::Paused => {
+                if let Some(event) = &state.current_event {
+                    event.pid()
+                } else {
+                    return Err(Error::InvalidSessionState(
+                        "Session is paused but has no current event".to_string(),
+                    ));
+                }
+            }
+            _ => {
+                return Err(Error::InvalidSessionState(
+                    "Session must be paused to get disassembly".to_string(),
+                ));
+            }
+        };
+
+        let client = state
+            .aux_client
+            .as_ref()
+            .cloned()
+            .ok_or_else(|| Error::InternalCommunication("Auxiliary client not available".to_string()))?;
+
+        (client, pid)
+    };
+
+    // Assuming x64 for now, this should ideally be part of session info
+    let arch = joybug2::interfaces::Architecture::X64;
+
+    let mut client = aux_client.lock().unwrap();
+    let req = joybug2::protocol::DebuggerRequest::DisassembleMemory { pid, address, count, arch };
+    let resp = client.send_and_receive(&req).map_err(|e| Error::InternalCommunication(e.to_string()))?;
+
+    if let joybug2::protocol::DebuggerResponse::Instructions { instructions } = resp {
+        let serializable_instructions = instructions
+            .iter()
+            .map(|inst| {
+                let address_str = if let Some(ref sym) = inst.symbol_info {
+                    format!("{}!{}+0x{:x}", sym.module_name, sym.symbol_name, sym.offset)
+                } else {
+                    format!("{:#X}", inst.address)
+                };
+
+                let op_str = inst.symbolized_op_str.as_ref().unwrap_or(&inst.op_str);
+
+                SerializableInstruction {
+                    address: format!("{:#X}", inst.address),
+                    symbol: address_str,
+                    bytes: inst
+                        .bytes
+                        .iter()
+                        .map(|b| format!("{:02X}", b))
+                        .collect::<Vec<String>>()
+                        .join(" "),
+                    mnemonic: inst.mnemonic.clone(),
+                    op_str: op_str.clone(),
+                }
+            })
+            .collect();
+
+        Ok(serializable_instructions)
+    } else {
+        Err(Error::InternalCommunication(format!(
+            "Unexpected response from debug server for DisassembleMemory: {:?}",
+            resp
+        )))
+    }
+}
+
 #[tauri::command]
 pub fn get_session_modules(
     session_id: String,

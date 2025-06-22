@@ -75,12 +75,17 @@ pub fn run_debug_session(
     let mut client = joybug2::protocol_io::DebugClient::connect(Some(&server_url))
         .map_err(|e| Error::ConnectionFailed(e.to_string()))?;
 
+    // Connect auxiliary client
+    let aux_client = joybug2::protocol_io::DebugClient::connect(Some(&server_url))
+        .map_err(|e| Error::ConnectionFailed(e.to_string()))?;
+
     info!("Successfully connected to debug server");
 
-    // Mark as successfully connected (so UI can update status)
+    // Mark as successfully connected and store aux_client
     {
         let mut state = session_state.lock().unwrap();
         state.status = SessionStatus::Connected;
+        state.aux_client = Some(Arc::new(Mutex::new(aux_client)));
     }
 
     // Emit session update for Connected status

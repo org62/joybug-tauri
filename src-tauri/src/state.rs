@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{mpsc, Arc, Mutex};
+use joybug2::protocol_io::DebugClient;
 
 // Serializable snapshot of session state for frontend communication
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -32,6 +33,7 @@ pub struct DebugEventInfo {
     pub thread_id: u32,
     pub details: String,
     pub can_continue: bool,
+    pub address: Option<u64>,
 }
 
 // Session state - the single source of truth for each session
@@ -52,6 +54,9 @@ pub struct SessionState {
     pub step_sender: Option<mpsc::Sender<bool>>, // Send true to continue, false to stop
     pub step_receiver: Option<mpsc::Receiver<bool>>,
     pub debug_result: Option<Result<(), String>>, // Track if debug session succeeded or failed
+    
+    // Auxiliary client for one-off commands
+    pub aux_client: Option<Arc<Mutex<DebugClient>>>,
 }
 
 impl SessionState {
@@ -76,6 +81,7 @@ impl SessionState {
             step_sender: Some(step_sender),
             step_receiver: Some(step_receiver),
             debug_result: None,
+            aux_client: None,
         }
     }
 

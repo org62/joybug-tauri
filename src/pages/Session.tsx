@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ArrowLeft, Square, ChevronRight, AlertCircle, Layers, Cpu } from "lucide-react";
 import { toast } from "sonner";
+import { AssemblyView } from "@/components/AssemblyView";
 
 interface DebugSession {
   id: string;
@@ -25,6 +26,7 @@ interface DebugEventInfo {
   thread_id: number;
   details: string;
   can_continue: boolean;
+  address?: number;
 }
 
 interface Module {
@@ -549,6 +551,12 @@ export default function Session() {
                 )}
               </CardContent>
             </Card>
+
+            {/* Disassembly View */}
+            <h1>Disassembly</h1>
+            {session.current_event?.address && (
+              <AssemblyView sessionId={session.id} address={session.current_event.address} />
+            )}
 
             {/* Controls Help */}
             <Card>
