@@ -2,6 +2,7 @@ import { BrowserRouter as Router, Routes, Route, useNavigate } from "react-route
 import { useEffect } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { toast } from "sonner";
+import { useTheme } from "next-themes";
 import Header from "@/components/Header";
 import Home from "@/pages/Home";
 import Debugger from "@/pages/Debugger";
@@ -14,6 +15,7 @@ import "./App.css";
 
 function AppContent() {
   const navigate = useNavigate();
+  const { resolvedTheme, setTheme } = useTheme();
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -26,6 +28,10 @@ function AppContent() {
           case 'l':
             event.preventDefault();
             navigate('/logs');
+            break;
+          case 't':
+            event.preventDefault();
+            setTheme(resolvedTheme === 'light' ? 'dark' : 'light');
             break;
         }
       }
@@ -42,7 +48,7 @@ function AppContent() {
       window.removeEventListener('keydown', handleKeyDown);
       unlisten.then(f => f());
     };
-  }, [navigate]);
+  }, [navigate, resolvedTheme, setTheme]);
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-neutral-900">
