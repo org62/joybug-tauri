@@ -11,6 +11,7 @@ import { Menu } from "lucide-react";
 
 const navigationItems = [
   { name: "Debugger", path: "/debugger" },
+  { name: "RcDock", path: "/rcdock" },
   { name: "Logs", path: "/logs" },
   { name: "Settings", path: "/settings" },
   { name: "About", path: "/about" },
@@ -38,15 +39,22 @@ export default function Header() {
   );
 
   return (
-    <header className="border-b bg-white dark:bg-neutral-800 shadow-sm">
+    <header
+      className="border-b bg-white dark:bg-neutral-800 shadow-sm"
+      data-tauri-drag-region
+    >
       <div className="container mx-auto px-4 h-16 flex items-center justify-between">
         <div className="flex items-center space-x-8">
-          <Link to="/" className="font-bold text-xl text-gray-900 dark:text-neutral-100">
+          <Link
+            to="/"
+            data-tauri-drag-region="none"
+            className="font-bold text-xl text-gray-900 dark:text-neutral-100"
+          >
             Joybug
           </Link>
           
           {/* Desktop Navigation */}
-          <nav className="hidden md:flex space-x-6">
+          <nav className="hidden md:flex space-x-6" data-tauri-drag-region="none">
             <NavLinks />
           </nav>
         </div>
@@ -54,8 +62,8 @@ export default function Header() {
         {/* Mobile Navigation */}
         <div className="md:hidden">
           <Sheet>
-            <SheetTrigger asChild>
-              <Button variant="ghost" size="sm">
+            <SheetTrigger asChild data-tauri-drag-region="none">
+              <Button variant="ghost" size="sm" data-tauri-drag-region="none">
                 <Menu className="h-5 w-5" />
               </Button>
             </SheetTrigger>

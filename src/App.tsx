@@ -10,6 +10,7 @@ import Session from "@/pages/Session";
 import Logs from "@/pages/Logs";
 import Settings from "@/pages/Settings";
 import About from "@/pages/About";
+import RcDock from "@/pages/RcDock";
 import { Toaster } from "@/components/ui/sonner";
 import "./App.css";
 
@@ -58,6 +59,7 @@ function AppContent() {
           <Route path="/" element={<Home />} />
           <Route path="/debugger" element={<Debugger />} />
           <Route path="/session/:sessionId" element={<Session />} />
+          <Route path="/rcdock" element={<RcDock />} />
           <Route path="/logs" element={<Logs />} />
           <Route path="/settings" element={<Settings />} />
           <Route path="/about" element={<About />} />

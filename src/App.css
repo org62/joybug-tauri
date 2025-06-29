@@ -136,4 +136,45 @@
   body {
     @apply bg-background text-foreground;
   }
-} 
+}
+
+/* Overrides for rc-dock */
+/* Light Theme Tab Colors */
+
+/* Dark Theme Overrides */
+.dark .dock-layout,
+.dark .dock-layout .dock-panel,
+.dark .dock-layout .dock-bar,
+.dark .dock-layout .dock-tab,
+.dark .dock-layout .dock-drop-layer .dock-drop-square {
+  background-color: #18181b; /* zinc-900 */
+  color: #d4d4d4; /* neutral-300 */
+  border-color: #3f3f46 !important; /* zinc-700 */
+}
+
+.dark .dock-layout .dock-tab-active,
+.dark .dock-layout .dock-tab:hover {
+  background-color: #27272a; /* zinc-800 */
+}
+
+.dock-tab:not(.dock-tab-active) > .dock-tab-title {
+  color: #4b5563;
+}
+.dock-ink-bar {
+  background-color: #2563eb;
+}
+
+.dark .dock-ink-bar {
+  background-color: #f59e0b;
+}
+
+/* make tabs rounded */
+.dock-layout {
+  border-radius: 0.75rem;
+}
+.dock-panel {
+  border-radius: 0.75rem;
+}
+.dock-top {
+  border-radius: 0.75rem;
+}
