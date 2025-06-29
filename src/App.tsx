@@ -13,6 +13,7 @@ import About from "@/pages/About";
 import RcDock from "@/pages/RcDock";
 import { Toaster } from "@/components/ui/sonner";
 import "./App.css";
+import RcDockThemeLoader from "./components/RcDockThemeLoader";
 
 function AppContent() {
   const navigate = useNavigate();
@@ -53,6 +54,7 @@ function AppContent() {
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-neutral-900">
+      <RcDockThemeLoader />
       <Header />
       <main>
         <Routes>
