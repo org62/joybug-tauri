@@ -15,6 +15,8 @@ export const TabContentRegistry: Record<string, React.ReactElement> = {
   memory: <div>Memory View</div>,
   console: <div>Console Output</div>,
   stack: <div>Stack View</div>,
+  modules: <div>Modules View</div>,
+  threads: <div>Threads View</div>,
 };
 
 // Predefined layouts
@@ -46,31 +48,22 @@ export const DebuggerLayout: LayoutData = {
     children: [
       {
         mode: "vertical" as const,
-        size: 300,
+        size: 80,
         children: [
           {
-            tabs: [{ id: "registers" } as TabData],
+            tabs: [{ id: "modules" } as TabData],
           },
           {
-            tabs: [{ id: "stack" } as TabData],
+            tabs: [{ id: "threads" } as TabData],
           },
         ],
       },
       {
-        mode: "vertical" as const,
-        children: [
-          {
-            tabs: [{ id: "disassembly" } as TabData],
-          },
-          {
-            size: 200,
-            tabs: [{ id: "console" } as TabData],
-          },
-        ],
+        tabs: [{ id: "disassembly" } as TabData],
       },
       {
-        size: 300,
-        tabs: [{ id: "memory" } as TabData],
+        size: 50,
+        tabs: [{ id: "registers" } as TabData],
       },
     ],
   },
@@ -121,6 +114,18 @@ export const DebuggerTabContents: { [key: string]: TabData } = {
     id: "registers",
     title: "Registers",
     content: TabContentRegistry.registers,
+    closable: true,
+  },
+  modules: {
+    id: "modules",
+    title: "Modules",
+    content: TabContentRegistry.modules,
+    closable: true,
+  },
+  threads: {
+    id: "threads",
+    title: "Threads",
+    content: TabContentRegistry.threads,
     closable: true,
   },
   memory: {

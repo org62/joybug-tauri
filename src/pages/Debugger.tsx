@@ -141,6 +141,10 @@ export default function Debugger() {
     navigate(`/session/${sessionId}`);
   };
 
+  const handleViewSessionDocked = (sessionId: string) => {
+    navigate(`/session-docked/${sessionId}`);
+  };
+
   const getStatusBadge = (status: SessionStatus) => {
     if (typeof status === "string") {
       switch (status) {
@@ -305,6 +309,16 @@ export default function Debugger() {
                         >
                           <Eye className="h-4 w-4 mr-1" />
                           View
+                        </Button>
+                      )}
+                      {canView(session.status) && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleViewSessionDocked(session.id)}
+                        >
+                          <Eye className="h-4 w-4 mr-1" />
+                          View2
                         </Button>
                       )}
                       {canStart(session.status) && (

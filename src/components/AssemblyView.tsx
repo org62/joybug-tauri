@@ -1,6 +1,5 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { toast } from "sonner";
 import { ScrollArea } from "./ui/scroll-area";
 
@@ -33,7 +32,7 @@ export function AssemblyView({ sessionId, address }: AssemblyViewProps) {
         const result = await invoke<Instruction[]>("get_disassembly", {
           sessionId,
           address,
-          count: 30, // Show 30 instructions
+          count: 0x100
         });
         setInstructions(result);
       } catch (err) {
@@ -50,39 +49,42 @@ export function AssemblyView({ sessionId, address }: AssemblyViewProps) {
     fetchDisassembly();
   }, [sessionId, address]);
 
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center h-full">
+        <div className="flex items-center">
+          <div className="animate-spin h-6 w-6 border-2 border-current border-t-transparent rounded-full" />
+          <span className="ml-2">Loading disassembly...</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="flex items-center justify-center h-full text-red-500">
+        <div className="text-center">
+          <p>Error loading disassembly:</p>
+          <p className="text-sm mt-1 font-mono">{error}</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Disassembly</CardTitle>
-      </CardHeader>
-      <CardContent>
-        {isLoading ? (
-          <div className="flex items-center justify-center py-8">
-            <div className="animate-spin h-6 w-6 border-2 border-current border-t-transparent rounded-full" />
-            <span className="ml-2">Loading disassembly...</span>
-          </div>
-        ) : error ? (
-          <div className="text-center py-8 text-red-500">
-            <p>Error loading disassembly:</p>
-            <p className="text-sm mt-1 font-mono">{error}</p>
-          </div>
-        ) : (
-          <ScrollArea className="h-72 w-full">
-            <div className="font-mono text-sm bg-gray-50 dark:bg-gray-900 p-4 rounded-md">
-              <pre>
-                {instructions.map((inst, index) => (
-                  <div key={index} className="flex items-center">
-                    <span className="text-muted-foreground w-64">{inst.symbol}</span>
-                    <span className="w-40 text-gray-500">{inst.bytes.padEnd(24)}</span>
-                    <span className="w-24 text-blue-500">{inst.mnemonic}</span>
-                    <span>{inst.op_str}</span>
-                  </div>
-                ))}
-              </pre>
+    <ScrollArea className="h-full w-full">
+      <div className="font-mono text-sm bg-gray-50 dark:bg-gray-900 p-4">
+        <pre>
+          {instructions.map((inst, index) => (
+            <div key={index} className="flex items-center hover:bg-muted/50 px-1 py-0.5 rounded-sm">
+              <span className="text-muted-foreground w-64 shrink-0">{inst.symbol}</span>
+              <span className="w-40 text-gray-500 shrink-0">{inst.bytes.padEnd(24)}</span>
+              <span className="w-24 text-blue-500 shrink-0">{inst.mnemonic}</span>
+              <span>{inst.op_str}</span>
             </div>
-          </ScrollArea>
-        )}
-      </CardContent>
-    </Card>
+          ))}
+        </pre>
+      </div>
+    </ScrollArea>
   );
 } 

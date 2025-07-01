@@ -1,4 +1,4 @@
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { ScrollArea } from "@/components/ui/scroll-area";
 
 interface Serializablex64ThreadContext {
   arch: "X64";
@@ -19,9 +19,9 @@ interface RegisterViewProps {
 }
 
 const RegisterPair = ({ name, value }: { name: string, value: string }) => (
-    <div className="flex items-center">
-        <span className="w-12 font-semibold text-muted-foreground">{name}</span>
-        <span className="font-mono text-sm">{value}</span>
+    <div className="flex items-center py-0.5 px-1 hover:bg-muted/50 rounded-sm text-xs">
+        <span className="w-8 font-semibold text-muted-foreground min-w-0 shrink-0">{name}</span>
+        <span className="font-mono ml-1">{value}</span>
     </div>
 );
 
@@ -30,12 +30,15 @@ export function RegisterView({ context }: RegisterViewProps) {
     const registers = context;
 
     return (
-      <Card>
-        <CardHeader>
-          <CardTitle>CPU Registers (x64)</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-x-6 gap-y-2">
+      <ScrollArea className="h-full w-full">
+        <div className="p-1">
+          <div 
+            className="gap-0.5"
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))'
+            }}
+          >
               <RegisterPair name="RAX" value={registers.rax} />
               <RegisterPair name="RBX" value={registers.rbx} />
               <RegisterPair name="RCX" value={registers.rcx} />
@@ -53,34 +56,28 @@ export function RegisterView({ context }: RegisterViewProps) {
               <RegisterPair name="R13" value={registers.r13} />
               <RegisterPair name="R14" value={registers.r14} />
               <RegisterPair name="R15" value={registers.r15} />
-              <RegisterPair name="EFLAGS" value={registers.eflags} />
+              <RegisterPair name="EFL" value={registers.eflags} />
           </div>
-        </CardContent>
-      </Card>
+        </div>
+      </ScrollArea>
     );
   }
   
   if (context.arch === "Arm64") {
     return (
-      <Card>
-        <CardHeader>
-          <CardTitle>CPU Registers</CardTitle>
-        </CardHeader>
-        <CardContent>
+      <ScrollArea className="h-full w-full">
+        <div className="p-4 text-center text-muted-foreground">
           <p>Register view for Arm64 is not yet implemented.</p>
-        </CardContent>
-      </Card>
+        </div>
+      </ScrollArea>
     );
   }
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>CPU Registers</CardTitle>
-      </CardHeader>
-      <CardContent>
+    <ScrollArea className="h-full w-full">
+      <div className="p-4 text-center text-muted-foreground">
         <p>Unknown or unsupported register context format.</p>
-      </CardContent>
-    </Card>
+      </div>
+    </ScrollArea>
   );
 } 

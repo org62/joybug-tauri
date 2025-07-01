@@ -7,6 +7,7 @@ import Header from "@/components/Header";
 import Home from "@/pages/Home";
 import Debugger from "@/pages/Debugger";
 import Session from "@/pages/Session";
+import SessionDocked from "@/pages/SessionDocked";
 import Logs from "@/pages/Logs";
 import Settings from "@/pages/Settings";
 import About from "@/pages/About";
@@ -62,6 +63,7 @@ function AppContent() {
           <Route path="/" element={<Home />} />
           <Route path="/debugger" element={<Debugger />} />
           <Route path="/session/:sessionId" element={<Session />} />
+          <Route path="/session-docked/:sessionId" element={<SessionDocked />} />
 
           <Route path="/logs" element={<Logs />} />
           <Route path="/settings" element={<Settings />} />
