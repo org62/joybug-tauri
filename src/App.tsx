@@ -11,6 +11,7 @@ import Logs from "@/pages/Logs";
 import Settings from "@/pages/Settings";
 import About from "@/pages/About";
 import RcDock from "@/pages/RcDock";
+import DebuggerExample from "@/pages/DebuggerExample";
 import { Toaster } from "@/components/ui/sonner";
 import "./App.css";
 import RcDockThemeLoader from "./components/RcDockThemeLoader";
@@ -21,17 +22,17 @@ function AppContent() {
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.ctrlKey || event.metaKey) {
+      if ((event.ctrlKey || event.metaKey) && event.shiftKey) {
         switch (event.key) {
-          case 'd':
+          case 'D':
             event.preventDefault();
             navigate('/debugger');
             break;
-          case 'l':
+          case 'L':
             event.preventDefault();
             navigate('/logs');
             break;
-          case 't':
+          case 'T':
             event.preventDefault();
             setTheme(resolvedTheme === 'light' ? 'dark' : 'light');
             break;
@@ -65,6 +66,7 @@ function AppContent() {
           <Route path="/logs" element={<Logs />} />
           <Route path="/settings" element={<Settings />} />
           <Route path="/about" element={<About />} />
+          <Route path="/debugger-example" element={<DebuggerExample />} />
         </Routes>
       </main>
       <Toaster />
