@@ -11,7 +11,7 @@ import { Menu } from "lucide-react";
 
 const navigationItems = [
   { name: "Debugger", path: "/debugger" },
-  { name: "RcDock", path: "/rcdock" },
+
   { name: "Logs", path: "/logs" },
   { name: "Settings", path: "/settings" },
   { name: "About", path: "/about" },
