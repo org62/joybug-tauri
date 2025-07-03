@@ -54,6 +54,12 @@ fn update_session_from_event(state: &mut SessionState, event: &joybug2::protocol
             state.modules.retain(|m| m.base != *base_of_dll);
             info!("Removed module at 0x{:X}", base_of_dll);
         }
+        joybug2::protocol_io::DebugEvent::ProcessExited { .. } => {
+            // Process has exited, clear all modules and threads
+            state.modules.clear();
+            state.threads.clear();
+            info!("Process exited, cleared all modules and threads.");
+        }
         _ => {
             // Other events don't affect modules/threads
         }

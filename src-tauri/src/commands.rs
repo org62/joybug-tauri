@@ -234,6 +234,9 @@ pub fn start_debug_session(
             }
             state.debug_result = Some(result.map_err(|e| e.to_string()));
         }
+
+        // Emit final session-updated event to notify the frontend
+        emit_session_update(&session_state_for_thread, &app_handle_for_thread);
     });
 
     Ok(())

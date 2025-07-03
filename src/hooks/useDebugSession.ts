@@ -1,23 +1,16 @@
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { toast } from 'sonner';
-import { DebugSession, SessionStatus, DebugEventInfo, Module, Thread } from '@/contexts/SessionContext';
+import { DebugSession, SessionStatus, Module, Thread } from '@/contexts/SessionContext';
 
-interface SessionUpdatePayload {
-  session_id: string;
-  status: SessionStatus;
-  current_event?: DebugEventInfo | null;
-}
-
-export const useDebugSession = (sessionId: string | undefined) => {
+export function useDebugSession(sessionId: string | undefined) {
   const [session, setSession] = useState<DebugSession | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isStepping, setIsStepping] = useState(false);
   const [isStopping, setIsStopping] = useState(false);
   const [modules, setModules] = useState<Module[]>([]);
   const [threads, setThreads] = useState<Thread[]>([]);
-  const unlistenSessionRef = useRef<(() => void) | null>(null);
 
   const canStep = useMemo(() => session?.status === "Paused", [session]);
   const canStop = useMemo(() => {
@@ -29,71 +22,101 @@ export const useDebugSession = (sessionId: string | undefined) => {
     return ["Created", "Finished"].includes(session.status);
   }, [session]);
 
-  const loadSession = useCallback(async () => {
-    if (!sessionId) return;
-    try {
-      const sessionData = await invoke<DebugSession | null>("get_debug_session", { sessionId });
-      setSession(sessionData);
-    } catch (error) {
-      console.error("Failed to load debug session:", error);
-      toast.error(`Failed to load debug session: ${error}`);
-    }
-  }, [sessionId]);
-
   const loadModules = useCallback(async () => {
-    if (!sessionId) return;
+    if (!sessionId) return [];
     try {
-      const moduleData = await invoke<Module[]>("get_session_modules", { sessionId });
-      setModules(moduleData);
+      return await invoke<Module[]>("get_session_modules", { sessionId });
     } catch (error) {
-      console.error("Failed to load modules:", error);
       toast.error(`Failed to load modules: ${error}`);
+      return [];
     }
   }, [sessionId]);
 
   const loadThreads = useCallback(async () => {
-    if (!sessionId) return;
+    if (!sessionId) return [];
     try {
-      const threadData = await invoke<Thread[]>("get_session_threads", { sessionId });
-      setThreads(threadData);
+      return await invoke<Thread[]>("get_session_threads", { sessionId });
     } catch (error) {
-      console.error("Failed to load threads:", error);
       toast.error(`Failed to load threads: ${error}`);
+      return [];
     }
   }, [sessionId]);
 
-  const handleSessionUpdate = useCallback((sessionData: DebugSession | SessionUpdatePayload) => {
+  const loadSession = useCallback(async () => {
     if (!sessionId) return;
-
-    const updateSessionId = 'session_id' in sessionData ? sessionData.session_id : sessionData.id;
-    if (updateSessionId !== sessionId) return;
-
-    setSession(currentSession => {
-      if (!currentSession) return currentSession;
-      if ('session_id' in sessionData) {
-        return {
-          ...currentSession,
-          status: sessionData.status,
-          current_event: sessionData.current_event !== undefined ? sessionData.current_event : currentSession.current_event
-        };
-      }
-      return sessionData as DebugSession;
-    });
+    try {
+      const result = await invoke<DebugSession>("get_debug_session", { sessionId });
+      setSession(result);
+    } catch (error) {
+      toast.error(`Failed to load session: ${error}`);
+      setSession(null);
+    } finally {
+      setIsLoading(false);
+    }
   }, [sessionId]);
 
-  const handleStep = useCallback(async () => {
-    if (!sessionId || !session || !canStep) return;
+  const handleSessionUpdate = useCallback((newSession: DebugSession) => {
+    setSession(newSession);
+  }, []);
 
+  useEffect(() => {
+    loadSession();
+
+    const listenToSessionUpdates = async () => {
+      const unlisten = await listen<DebugSession>(
+        "session-updated",
+        (event) => {
+          if (event.payload.id === sessionId) {
+            handleSessionUpdate(event.payload);
+          }
+        }
+      );
+      return unlisten;
+    };
+
+    const unlistenPromise = listenToSessionUpdates();
+
+    return () => {
+      unlistenPromise.then(unlisten => {
+        if (unlisten) unlisten();
+      });
+    };
+  }, [sessionId, loadSession, handleSessionUpdate]);
+
+  useEffect(() => {
+    let isCancelled = false;
+
+    if (session?.status === "Paused") {
+      const fetchData = async () => {
+        const [mods, thrs] = await Promise.all([loadModules(), loadThreads()]);
+        if (!isCancelled) {
+          setModules(mods);
+          setThreads(thrs);
+        }
+      };
+      fetchData();
+    } else if (session?.status === "Finished" || typeof session?.status === 'object') {
+      setModules([]);
+      setThreads([]);
+    }
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [session, loadModules, loadThreads]);
+
+  const handleStep = useCallback(async () => {
+    if (!sessionId || !canStep) return;
+    setIsStepping(true);
     try {
-      setIsStepping(true);
       await invoke("step_debug_session", { sessionId });
+      // The session-updated event will refresh the state
     } catch (error) {
-      console.error("Failed to step debug session:", error);
-      toast.error(`Failed to step debug session: ${error}`);
+      toast.error(`Failed to step session: ${error}`);
     } finally {
       setIsStepping(false);
     }
-  }, [sessionId, session, canStep]);
+  }, [sessionId, canStep]);
 
   const handleStart = useCallback(async () => {
     if (!sessionId || !canStart) return;
@@ -112,43 +135,13 @@ export const useDebugSession = (sessionId: string | undefined) => {
     try {
       await invoke("stop_debug_session", { sessionId });
       toast.success("Debug session stopped");
+      // The session-updated event will refresh the state
     } catch (error) {
-      console.error("Failed to stop debug session:", error);
-      toast.error(`Failed to stop debug session: ${error}`);
+      toast.error(`Failed to stop session: ${error}`);
     } finally {
       setIsStopping(false);
     }
   }, [sessionId, canStop]);
-
-  useEffect(() => {
-    const setupSession = async () => {
-      setIsLoading(true);
-      await loadSession();
-      try {
-        const unlistenSession = await listen<DebugSession | SessionUpdatePayload>("session-updated", (event) => {
-          handleSessionUpdate(event.payload);
-        });
-        unlistenSessionRef.current = unlistenSession;
-      } catch (error) {
-        console.error("Failed to set up session update listener:", error);
-        toast.error("Failed to set up real-time updates");
-      }
-      setIsLoading(false);
-    };
-
-    if (sessionId) {
-      setupSession();
-    } else {
-      setIsLoading(false);
-    }
-
-    return () => {
-      if (unlistenSessionRef.current) {
-        unlistenSessionRef.current();
-        unlistenSessionRef.current = null;
-      }
-    };
-  }, [sessionId, loadSession, handleSessionUpdate]);
 
   return {
     session,
@@ -166,4 +159,4 @@ export const useDebugSession = (sessionId: string | undefined) => {
     canStop,
     canStart,
   };
-}; 
+} 
