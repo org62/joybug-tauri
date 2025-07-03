@@ -5,10 +5,21 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
-import { Plus, Play, Eye } from "lucide-react";
+import { Plus, Play, Eye, Pencil, Trash2, XSquare } from "lucide-react";
 import { toast } from "sonner";
+
+const DEFAULT_SESSION_NAME = "Unnamed Session";
 
 interface DebugSession {
   id: string;
@@ -40,7 +51,8 @@ type SessionStatus =
 export default function Debugger() {
   const navigate = useNavigate();
   const [sessions, setSessions] = useState<DebugSession[]>([]);
-  const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [sessionToEdit, setSessionToEdit] = useState<DebugSession | null>(null);
+  const [isSessionDialogOpen, setIsSessionDialogOpen] = useState(false);
   
   // Form state for dialog
   const [formName, setFormName] = useState("");
@@ -75,7 +87,7 @@ export default function Debugger() {
       // Use metaKey for Command key on macOS
       if ((event.ctrlKey || event.metaKey) && event.key === 'o') {
         event.preventDefault();
-        setIsDialogOpen(true);
+        handleOpenNewSessionDialog();
       }
     };
 
@@ -86,8 +98,24 @@ export default function Debugger() {
     };
   }, []); // Empty dependency array ensures this runs only once
 
+  const handleOpenNewSessionDialog = () => {
+    setSessionToEdit(null);
+    setFormName("");
+    setFormServerUrl("127.0.0.1:9000");
+    setFormLaunchCommand("cmd.exe /c echo Hello World!");
+    setIsSessionDialogOpen(true);
+  };
+
+  const handleOpenEditSessionDialog = (session: DebugSession) => {
+    setSessionToEdit(session);
+    setFormName(session.name === DEFAULT_SESSION_NAME ? "" : session.name);
+    setFormServerUrl(session.server_url);
+    setFormLaunchCommand(session.launch_command);
+    setIsSessionDialogOpen(true);
+  };
+
   const handleCreateSession = async () => {
-    const sessionName = formName.trim() || `Session ${Date.now()}`;
+    const sessionName = formName.trim() || DEFAULT_SESSION_NAME;
 
     try {
       const sessionId = await invoke<string>("create_debug_session", {
@@ -97,7 +125,7 @@ export default function Debugger() {
       });
 
       toast.success("Debug session created successfully");
-      setIsDialogOpen(false);
+      setIsSessionDialogOpen(false);
       
       // Clear form
       setFormName("");
@@ -109,7 +137,31 @@ export default function Debugger() {
       return sessionId;
     } catch (error) {
       console.error("Failed to create debug session:", error);
-      toast.error(`Failed to create debug session: ${error}`);
+      toast.error(error as string);
+      throw error;
+    }
+  };
+
+  const handleUpdateSession = async () => {
+    if (!sessionToEdit) return;
+
+    const sessionName = formName.trim() || DEFAULT_SESSION_NAME;
+
+    try {
+      await invoke("update_debug_session", {
+        sessionId: sessionToEdit.id,
+        name: sessionName,
+        serverUrl: formServerUrl,
+        launchCommand: formLaunchCommand,
+      });
+
+      toast.success("Debug session updated successfully");
+      setIsSessionDialogOpen(false);
+      setSessionToEdit(null);
+      // Auto-refresh will pick up changes
+    } catch (error) {
+      console.error("Failed to update debug session:", error);
+      toast.error(error as string);
       throw error;
     }
   };
@@ -122,6 +174,26 @@ export default function Debugger() {
     } catch (error) {
       console.error("Failed to start debug session:", error);
       toast.error(`Failed to start debug session: ${error}`);
+    }
+  };
+
+  const handleStopSession = async (sessionId: string) => {
+    try {
+      await invoke("stop_debug_session", { sessionId });
+      toast.success("Debug session stopped");
+    } catch (error) {
+      console.error("Failed to stop debug session:", error);
+      toast.error(error as string);
+    }
+  };
+
+  const handleDeleteSession = async (sessionId: string) => {
+    try {
+      await invoke("delete_debug_session", { sessionId });
+      toast.success("Debug session deleted");
+    } catch (error) {
+      console.error("Failed to delete debug session:", error);
+      toast.error(error as string);
     }
   };
 
@@ -193,7 +265,13 @@ export default function Debugger() {
   };
 
   const canStart = (status: SessionStatus) => {
-    return typeof status === "string" && status === "Created";
+    if (typeof status !== "string") return false;
+    return ["Created", "Finished"].includes(status);
+  };
+
+  const canEdit = (status: SessionStatus) => {
+    if (typeof status !== "string") return false;
+    return ["Created", "Finished"].includes(status);
   };
 
   const canView = (status: SessionStatus) => {
@@ -201,6 +279,18 @@ export default function Debugger() {
       return ["Connected", "Running", "Paused"].includes(status);
     }
     return false;
+  };
+
+  const canStop = (status: SessionStatus) => {
+    if (typeof status === "string") {
+      return ["Connecting", "Connected", "Running", "Paused"].includes(status);
+    }
+    return false;
+  };
+
+  const canDelete = (status: SessionStatus) => {
+    if (typeof status !== "string") return false;
+    return ["Created", "Finished"].includes(status);
   };
 
   return (
@@ -212,18 +302,21 @@ export default function Debugger() {
             <p className="text-muted-foreground">Manage your debug sessions</p>
           </div>
           
-          <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+          <Dialog open={isSessionDialogOpen} onOpenChange={setIsSessionDialogOpen}>
             <DialogTrigger asChild>
-              <Button className="flex items-center gap-2">
+              <Button className="flex items-center gap-2" onClick={handleOpenNewSessionDialog}>
                 <Plus className="h-4 w-4" />
                 New Session
               </Button>
             </DialogTrigger>
             <DialogContent className="sm:max-w-[425px]">
               <DialogHeader>
-                <DialogTitle>Create New Debug Session</DialogTitle>
+                <DialogTitle>{sessionToEdit ? "Edit Debug Session" : "Create New Debug Session"}</DialogTitle>
                 <DialogDescription>
-                  Configure a new debug session with server connection and launch command
+                  {sessionToEdit 
+                    ? "Update the details for this debug session."
+                    : "Configure a new debug session with server connection and launch command"
+                  }
                 </DialogDescription>
               </DialogHeader>
               <div className="space-y-4 py-4">
@@ -256,15 +349,21 @@ export default function Debugger() {
                 </div>
               </div>
               <div className="flex justify-end gap-2">
-                <Button variant="outline" onClick={() => setIsDialogOpen(false)}>
+                <Button variant="outline" onClick={() => setIsSessionDialogOpen(false)}>
                   Cancel
                 </Button>
-                <Button onClick={handleCreateSession}>
-                  Create Session
-                </Button>
-                <Button onClick={handleCreateAndStart} variant="default">
-                  Create & Start
-                </Button>
+                {sessionToEdit ? (
+                  <Button onClick={() => handleUpdateSession().catch(() => {})}>Update Session</Button>
+                ) : (
+                  <>
+                    <Button onClick={() => handleCreateSession().catch(() => { /* error already toasted */})}>
+                      Create Session
+                    </Button>
+                    <Button onClick={handleCreateAndStart} variant="default">
+                      Create & Start
+                    </Button>
+                  </>
+                )}
               </div>
             </DialogContent>
           </Dialog>
@@ -277,7 +376,7 @@ export default function Debugger() {
               <p className="text-sm text-muted-foreground mb-6">
                 Create your first debug session to get started
               </p>
-              <Button onClick={() => setIsDialogOpen(true)} className="flex items-center gap-2">
+              <Button onClick={handleOpenNewSessionDialog} className="flex items-center gap-2">
                 <Plus className="h-4 w-4" />
                 Create Session
               </Button>
@@ -301,6 +400,26 @@ export default function Debugger() {
                       </CardDescription>
                     </div>
                     <div className="flex items-center gap-2">
+                      {canStop(session.status) && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleStopSession(session.id)}
+                        >
+                          <XSquare className="h-4 w-4 mr-1" />
+                          Stop
+                        </Button>
+                      )}
+                      {canEdit(session.status) && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleOpenEditSessionDialog(session)}
+                        >
+                          <Pencil className="h-4 w-4 mr-1" />
+                          Edit
+                        </Button>
+                      )}
                       {canView(session.status) && (
                         <Button
                           variant="default"
@@ -330,6 +449,36 @@ export default function Debugger() {
                           <Play className="h-4 w-4 mr-1" />
                           Start
                         </Button>
+                      )}
+                      {canDelete(session.status) && (
+                        <Dialog>
+                          <DialogTrigger asChild>
+                            <Button variant="destructive" size="sm">
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </DialogTrigger>
+                          <DialogContent>
+                            <DialogHeader>
+                              <DialogTitle>Are you sure?</DialogTitle>
+                              <DialogDescription>
+                                This action will permanently delete the session "{session.name}".
+                              </DialogDescription>
+                            </DialogHeader>
+                            <DialogFooter>
+                              <DialogClose asChild>
+                                <Button variant="outline">Cancel</Button>
+                              </DialogClose>
+                              <DialogClose asChild>
+                                <Button
+                                  variant="destructive"
+                                  onClick={() => handleDeleteSession(session.id)}
+                                >
+                                  Delete
+                                </Button>
+                              </DialogClose>
+                            </DialogFooter>
+                          </DialogContent>
+                        </Dialog>
                       )}
                     </div>
                   </div>

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { toast } from 'sonner';
@@ -18,6 +18,16 @@ export const useDebugSession = (sessionId: string | undefined) => {
   const [modules, setModules] = useState<Module[]>([]);
   const [threads, setThreads] = useState<Thread[]>([]);
   const unlistenSessionRef = useRef<(() => void) | null>(null);
+
+  const canStep = useMemo(() => session?.status === "Paused", [session]);
+  const canStop = useMemo(() => {
+    if (!session || typeof session.status !== "string") return false;
+    return ["Connecting", "Connected", "Running", "Paused"].includes(session.status);
+  }, [session]);
+  const canStart = useMemo(() => {
+    if (!session || typeof session.status !== "string") return false;
+    return ["Created", "Finished"].includes(session.status);
+  }, [session]);
 
   const loadSession = useCallback(async () => {
     if (!sessionId) return;
@@ -71,22 +81,8 @@ export const useDebugSession = (sessionId: string | undefined) => {
     });
   }, [sessionId]);
 
-  const canStep = useCallback((status: SessionStatus, currentEvent: DebugEventInfo | null) => {
-    if (typeof status === "string") {
-      return status === "Paused" && currentEvent?.can_continue === true;
-    }
-    return false;
-  }, []);
-
-  const canStop = useCallback((status: SessionStatus) => {
-    if (typeof status === "string") {
-      return ["Connected", "Running", "Paused"].includes(status);
-    }
-    return false;
-  }, []);
-
   const handleStep = useCallback(async () => {
-    if (!sessionId || !session || !canStep(session.status, session.current_event)) return;
+    if (!sessionId || !session || !canStep) return;
 
     try {
       setIsStepping(true);
@@ -97,13 +93,23 @@ export const useDebugSession = (sessionId: string | undefined) => {
     } finally {
       setIsStepping(false);
     }
-  }, [sessionId, session]);
+  }, [sessionId, session, canStep]);
+
+  const handleStart = useCallback(async () => {
+    if (!sessionId || !canStart) return;
+    try {
+      await invoke("start_debug_session", { sessionId });
+      toast.success("Debug session started");
+      // The session-updated event will refresh the state
+    } catch (error) {
+      toast.error(`Failed to start session: ${error}`);
+    }
+  }, [sessionId, canStart]);
 
   const handleStop = useCallback(async () => {
-    if (!sessionId) return;
-
+    if (!sessionId || !canStop) return;
+    setIsStopping(true);
     try {
-      setIsStopping(true);
       await invoke("stop_debug_session", { sessionId });
       toast.success("Debug session stopped");
     } catch (error) {
@@ -112,7 +118,7 @@ export const useDebugSession = (sessionId: string | undefined) => {
     } finally {
       setIsStopping(false);
     }
-  }, [sessionId]);
+  }, [sessionId, canStop]);
 
   useEffect(() => {
     const setupSession = async () => {
@@ -155,7 +161,9 @@ export const useDebugSession = (sessionId: string | undefined) => {
     loadThreads,
     handleStep,
     handleStop,
+    handleStart,
     canStep,
     canStop,
+    canStart,
   };
 }; 

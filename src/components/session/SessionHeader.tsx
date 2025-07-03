@@ -2,7 +2,7 @@ import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { ArrowLeft, Square, ChevronRight } from 'lucide-react';
+import { ArrowLeft, Square, ChevronRight, Play } from 'lucide-react';
 import { DebugSession, SessionStatus, DebugEventInfo } from '@/contexts/SessionContext';
 
 interface SessionHeaderProps {
@@ -11,8 +11,10 @@ interface SessionHeaderProps {
   isStopping: boolean;
   handleStep: () => void;
   handleStop: () => void;
-  canStep: (status: SessionStatus, currentEvent: DebugEventInfo | null) => boolean;
-  canStop: (status: SessionStatus) => boolean;
+  handleStart: () => void;
+  canStep: boolean;
+  canStop: boolean;
+  canStart: boolean;
   dockingRef: React.RefObject<any>; // rc-dock doesn't export DockingLayoutRef type properly
   getStatusBadge: (status: SessionStatus) => React.ReactNode;
 }
@@ -23,8 +25,10 @@ export const SessionHeader: React.FC<SessionHeaderProps> = ({
   isStopping,
   handleStep,
   handleStop,
+  handleStart,
   canStep,
   canStop,
+  canStart,
   dockingRef,
   getStatusBadge,
 }) => {
@@ -44,7 +48,17 @@ export const SessionHeader: React.FC<SessionHeaderProps> = ({
       </div>
       
       <div className="flex items-center gap-2">
-        {canStep(session.status, session.current_event) && (
+        {canStart && (
+          <Button
+            onClick={handleStart}
+            size="sm"
+            variant="outline"
+          >
+            <Play className="h-4 w-4 mr-2" />
+            Start
+          </Button>
+        )}
+        {canStep && (
           <Button
             onClick={handleStep}
             disabled={isStepping}
@@ -56,7 +70,7 @@ export const SessionHeader: React.FC<SessionHeaderProps> = ({
           </Button>
         )}
         
-        {canStop(session.status) && (
+        {canStop && (
           <Button
             onClick={handleStop}
             disabled={isStopping}

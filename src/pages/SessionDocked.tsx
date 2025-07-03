@@ -2,11 +2,11 @@ import React, { useRef, useMemo, useEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { ArrowLeft, Square, ChevronRight, AlertCircle } from "lucide-react";
+import { ArrowLeft, AlertCircle } from "lucide-react";
 import DockingLayout, { DockingLayoutRef } from "@/components/DockingLayout";
 import { DebuggerDockingConfig } from "@/lib/dockingConfigs";
 import { TabData } from "rc-dock";
-import { SessionContext, SessionStatus, DebugEventInfo } from "@/contexts/SessionContext";
+import { SessionContext, SessionStatus } from "@/contexts/SessionContext";
 import { ContextAssemblyView } from "@/components/session/ContextAssemblyView";
 import { ContextRegisterView } from "@/components/session/ContextRegisterView";
 import { ContextModulesView } from "@/components/session/ContextModulesView";
@@ -30,8 +30,10 @@ export default function SessionDocked() {
     loadThreads,
     handleStep,
     handleStop,
+    handleStart,
     canStep,
     canStop,
+    canStart,
   } = useDebugSession(sessionId);
 
   // Hotkey handlers
@@ -190,8 +192,10 @@ export default function SessionDocked() {
           isStopping={isStopping}
           handleStep={handleStep}
           handleStop={handleStop}
+          handleStart={handleStart}
           canStep={canStep}
           canStop={canStop}
+          canStart={canStart}
           dockingRef={dockingRef}
           getStatusBadge={getStatusBadge}
         />

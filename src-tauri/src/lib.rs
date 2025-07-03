@@ -26,11 +26,13 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::greet,
             commands::create_debug_session,
+            commands::update_debug_session,
             commands::get_debug_sessions,
             commands::get_debug_session,
             commands::start_debug_session,
             commands::step_debug_session,
             commands::stop_debug_session,
+            commands::delete_debug_session,
             commands::get_disassembly,
             commands::get_logs,
             commands::clear_logs,

@@ -38,11 +38,21 @@ pub fn create_debug_session(
     launch_command: String,
     session_states: State<'_, SessionStatesMap>,
     app_handle: tauri::AppHandle,
-) -> Result<String> {
+) -> std::result::Result<String, String> {
+    let mut states = session_states.lock().unwrap();
+
+    // Check for duplicate session
+    for session_state in states.values() {
+        let state = session_state.lock().unwrap();
+        if state.server_url == server_url && state.launch_command == launch_command {
+            return Err(Error::SessionAlreadyExists.to_string());
+        }
+    }
+
     let session_id = format!("session_{}", chrono::Utc::now().timestamp_millis());
 
     // Create new session state
-    let session_state = Arc::new(Mutex::new(SessionState::new(
+    let session_state_arc = Arc::new(Mutex::new(SessionState::new(
         session_id.clone(),
         name,
         server_url,
@@ -50,10 +60,10 @@ pub fn create_debug_session(
     )));
 
     // Store session state
-    {
-        let mut states = session_states.lock().unwrap();
-        states.insert(session_id.clone(), session_state.clone());
-    }
+    states.insert(session_id.clone(), session_state_arc.clone());
+    
+    // an explicit drop to show when we are releasing the lock on states
+    drop(states);
 
     // Log session creation
     crate::ui_logger::log_info(
@@ -63,10 +73,64 @@ pub fn create_debug_session(
     );
 
     // Emit session-updated event for the new session
-    emit_session_update(&session_state, &app_handle);
+    emit_session_update(&session_state_arc, &app_handle);
 
     info!("Created debug session: {}", session_id);
     Ok(session_id)
+}
+
+#[tauri::command]
+pub fn update_debug_session(
+    session_id: String,
+    name: String,
+    server_url: String,
+    launch_command: String,
+    session_states: State<'_, SessionStatesMap>,
+    app_handle: tauri::AppHandle,
+) -> std::result::Result<(), String> {
+    let states = session_states.lock().unwrap();
+
+    // Check for duplicate session (excluding the current one)
+    for (id, session_state) in states.iter() {
+        if id != &session_id {
+            let state = session_state.lock().unwrap();
+            if state.server_url == server_url && state.launch_command == launch_command {
+                return Err(Error::SessionAlreadyExists.to_string());
+            }
+        }
+    }
+
+    if let Some(session_state) = states.get(&session_id) {
+        let mut state = session_state.lock().unwrap();
+
+        // only allow editing for created or finished sessions
+        if !matches!(state.status, SessionStatus::Created | SessionStatus::Finished) {
+            return Err("Session can only be edited when in 'Created' or 'Finished' state.".to_string());
+        }
+
+        state.name = name;
+        state.server_url = server_url;
+        state.launch_command = launch_command;
+
+        let session_state_arc = session_state.clone();
+
+        drop(state);
+        drop(states);
+
+        // Log session update
+        crate::ui_logger::log_info(
+            &app_handle,
+            &format!("Debug session updated: {}", session_id),
+            Some(session_id.clone()),
+        );
+
+        emit_session_update(&session_state_arc, &app_handle);
+
+        info!("Updated debug session: {}", session_id);
+        Ok(())
+    } else {
+        Err(Error::SessionNotFound(session_id).to_string())
+    }
 }
 
 #[tauri::command]
@@ -114,6 +178,14 @@ pub fn start_debug_session(
             .cloned()
             .ok_or_else(|| Error::SessionNotFound(session_id.clone()))?
     };
+
+    // Reset state if session is being restarted
+    {
+        let mut state = session_state.lock().unwrap();
+        if matches!(state.status, SessionStatus::Finished | SessionStatus::Error(_)) {
+            state.reset();
+        }
+    }
 
     // Update status to Connecting
     {
@@ -210,37 +282,39 @@ pub fn stop_debug_session(
     session_id: String,
     session_states: State<'_, SessionStatesMap>,
 ) -> Result<()> {
-    let session_state = {
-        let states = session_states.lock().unwrap();
-        states
-            .get(&session_id)
-            .cloned()
-            .ok_or_else(|| Error::SessionNotFound(session_id.clone()))?
-    };
-
-    let step_sender = {
-        let state = session_state.lock().unwrap();
-        
-        // Verify session can be stopped
-        if matches!(state.status, SessionStatus::Finished | SessionStatus::Error(_)) {
-            return Err(Error::InvalidSessionState(
-                "Session is already finished".to_string()
-            ));
+    if let Some(session_state) = session_states.lock().unwrap().get(&session_id) {
+        let mut state = session_state.lock().unwrap();
+        if let Some(sender) = state.step_sender.take() {
+            // Dropping sender will cause recv() to fail in the debug loop, stopping it
+            info!("Stopping session by dropping the step_sender.");
         }
-        
-        state
-            .step_sender
-            .as_ref()
-            .ok_or_else(|| Error::InternalCommunication("Session step sender not available".to_string()))?
-            .clone()
-    };
-
-    // Send stop signal - let session thread handle status updates
-    step_sender
-        .send(false)
-        .map_err(|e| Error::InternalCommunication(format!("Failed to send stop signal: {}", e)))?;
-
+        // Also handle the case where a session is connecting but not yet in the debug loop
+        if matches!(state.status, SessionStatus::Connecting) {
+            state.status = SessionStatus::Finished;
+        }
+    }
+    // Always return Ok, as the goal is to stop the session, and if it's not found, it's already "stopped"
     Ok(())
+}
+
+#[tauri::command]
+pub fn delete_debug_session(
+    session_id: String,
+    session_states: State<'_, SessionStatesMap>,
+) -> Result<()> {
+    // Attempt to stop the session first. We ignore the result because even if stopping fails,
+    // we want to proceed with deletion.
+    let _ = stop_debug_session(session_id.clone(), session_states.clone());
+
+    // Remove the session from the state map.
+    if session_states.lock().unwrap().remove(&session_id).is_some() {
+        info!("Successfully deleted session: {}", session_id);
+        Ok(())
+    } else {
+        // If the session was not found, it's already gone, so we can consider this a success.
+        info!("Attempted to delete a session that was not found: {}", session_id);
+        Ok(())
+    }
 }
 
 #[tauri::command]

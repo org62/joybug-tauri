@@ -13,6 +13,8 @@ pub enum Error {
     InternalCommunication(String),
     #[error("Invalid session state: {0}")]
     InvalidSessionState(String),
+    #[error("A session with the same server and command already exists")]
+    SessionAlreadyExists,
 }
 
 pub type Result<T> = std::result::Result<T, Error>; 

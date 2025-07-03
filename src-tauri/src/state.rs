@@ -105,6 +105,22 @@ impl SessionState {
         }
     }
 
+    // Reset the state of a session to be ready for a new run
+    pub fn reset(&mut self) {
+        self.status = SessionStatus::Created;
+        self.events.clear();
+        self.modules.clear();
+        self.threads.clear();
+        self.current_event = None;
+        self.current_context = None;
+        self.debug_result = None;
+        self.aux_client = None;
+
+        let (step_sender, step_receiver) = mpsc::channel();
+        self.step_sender = Some(step_sender);
+        self.step_receiver = Some(step_receiver);
+    }
+
     // Create a serializable snapshot of this session state
     pub fn to_debug_session(&self) -> DebugSession {
         DebugSession {
