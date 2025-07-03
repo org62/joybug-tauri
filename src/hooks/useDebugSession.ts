@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { toast } from 'sonner';
-import { DebugSession, SessionStatus, Module, Thread } from '@/contexts/SessionContext';
+import { DebugSession, Module, Thread } from '@/contexts/SessionContext';
 
 export function useDebugSession(sessionId: string | undefined) {
   const [session, setSession] = useState<DebugSession | null>(null);

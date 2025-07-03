@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import { useEffect } from 'react';
 import { useSessionContext } from '@/contexts/SessionContext';
 import { Badge } from '@/components/ui/badge';
 import { Cpu } from 'lucide-react';

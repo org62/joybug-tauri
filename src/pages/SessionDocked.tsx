@@ -1,4 +1,4 @@
-import React, { useRef, useMemo, useEffect } from "react";
+import { useRef, useMemo, useEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -74,8 +74,8 @@ export default function SessionDocked() {
     session,
     modules,
     threads,
-    loadModules,
-    loadThreads
+    loadModules: async () => { await loadModules(); },
+    loadThreads: async () => { await loadThreads(); }
   }), [session, modules, threads, loadModules, loadThreads]);
   
   // Static tab content - components will update via context

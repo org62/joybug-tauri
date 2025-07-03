@@ -1,4 +1,3 @@
-import React from 'react';
 import { useSessionContext } from '@/contexts/SessionContext';
 import { AssemblyView } from '@/components/AssemblyView';
 import { AlertCircle } from 'lucide-react';

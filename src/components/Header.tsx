@@ -15,7 +15,6 @@ const navigationItems = [
   { name: "Logs", path: "/logs" },
   { name: "Settings", path: "/settings" },
   { name: "About", path: "/about" },
-  { name: "Debugger Example", path: "/debugger-example" },
 ];
 
 export default function Header() {

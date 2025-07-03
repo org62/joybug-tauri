@@ -1,18 +1,18 @@
 import { BrowserRouter as Router, Routes, Route, useNavigate } from "react-router-dom";
-import { useEffect } from "react";
+import React, { Suspense, useEffect } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { toast } from "sonner";
 import { useTheme } from "next-themes";
 import Header from "@/components/Header";
-import Home from "@/pages/Home";
-import Debugger from "@/pages/Debugger";
-import Session from "@/pages/Session";
-import SessionDocked from "@/pages/SessionDocked";
-import Logs from "@/pages/Logs";
-import Settings from "@/pages/Settings";
-import About from "@/pages/About";
 
-import DebuggerExample from "@/pages/DebuggerExample";
+// Lazy load pages for code splitting
+const Home = React.lazy(() => import("@/pages/Home"));
+const Debugger = React.lazy(() => import("@/pages/Debugger"));
+const SessionDocked = React.lazy(() => import("@/pages/SessionDocked"));
+const Logs = React.lazy(() => import("@/pages/Logs"));
+const Settings = React.lazy(() => import("@/pages/Settings"));
+const About = React.lazy(() => import("@/pages/About"));
+
 import { Toaster } from "@/components/ui/sonner";
 import "./App.css";
 import RcDockThemeLoader from "./components/RcDockThemeLoader";
@@ -59,17 +59,20 @@ function AppContent() {
       <RcDockThemeLoader />
       <Header />
       <main>
-        <Routes>
-          <Route path="/" element={<Home />} />
-          <Route path="/debugger" element={<Debugger />} />
-          <Route path="/session/:sessionId" element={<Session />} />
-          <Route path="/session-docked/:sessionId" element={<SessionDocked />} />
-
-          <Route path="/logs" element={<Logs />} />
-          <Route path="/settings" element={<Settings />} />
-          <Route path="/about" element={<About />} />
-          <Route path="/debugger-example" element={<DebuggerExample />} />
-        </Routes>
+        <Suspense fallback={
+          <div className="flex justify-center items-center h-64">
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-gray-900 dark:border-gray-100"></div>
+          </div>
+        }>
+          <Routes>
+            <Route path="/" element={<Home />} />
+            <Route path="/debugger" element={<Debugger />} />
+            <Route path="/session/:sessionId" element={<SessionDocked />} />
+            <Route path="/logs" element={<Logs />} />
+            <Route path="/settings" element={<Settings />} />
+            <Route path="/about" element={<About />} />
+          </Routes>
+        </Suspense>
       </main>
       <Toaster />
     </div>

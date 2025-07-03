@@ -13,9 +13,7 @@ export interface DockingOperations {
   resetLayout: () => void;
   toggleTab: (tabId: string) => void;
   onLayoutChange: (
-    newLayout: LayoutBase,
-    currentTabId?: string,
-    direction?: "left" | "right" | "top" | "bottom" | "middle"
+    newLayout: LayoutBase
   ) => void;
 }
 
@@ -195,13 +193,11 @@ export function useDocking(config: DockingConfig): DockingState & DockingOperati
     setLayout((currentLayout) => {
       let tabExists = false;
       let isActiveTab = false;
-      let tabPanel: any = null;
 
       const findTab = (box: any) => {
         if (tabExists || !box) return;
         if (box.tabs?.some((t: TabData) => t.id === tabId)) {
           tabExists = true;
-          tabPanel = box;
           isActiveTab = box.activeId === tabId;
         }
         if (box.children) {
@@ -288,43 +284,44 @@ export function useDocking(config: DockingConfig): DockingState & DockingOperati
     });
   }, [LAYOUT_STORAGE_KEY]);
 
-  const onLayoutChange = React.useCallback((
-    newLayout: LayoutBase,
-    currentTabId?: string,
-    direction?: "left" | "right" | "top" | "bottom" | "middle"
-  ) => {
-    const serializableLayout = getSerializableLayout(newLayout);
-    localStorage.setItem(LAYOUT_STORAGE_KEY, JSON.stringify(serializableLayout));
+  const onLayoutChange = React.useCallback(
+    (
+      newLayout: LayoutBase
+    ) => {
+      const serializableLayout = getSerializableLayout(newLayout);
+      localStorage.setItem(LAYOUT_STORAGE_KEY, JSON.stringify(serializableLayout));
 
-    const newLayoutData = newLayout as LayoutData;
+      const newLayoutData = newLayout as LayoutData;
 
-    const activeTabIds = new Set<string>();
-    const findTabIds = (box: any) => {
-      if (box.tabs) {
-        box.tabs.forEach((tab: TabData) => {
-          if (tab.id) {
-            activeTabIds.add(tab.id);
-          }
-        });
-      }
-      if (box.children) {
-        box.children.forEach(findTabIds);
-      }
-    };
-    findTabIds(newLayoutData.dockbox);
-
-    setLayout(newLayoutData);
-
-    setTabContents((currentTabs) => {
-      const newTabs: { [key: string]: TabData } = {};
-      for (const tabId of activeTabIds) {
-        if (currentTabs[tabId]) {
-          newTabs[tabId] = currentTabs[tabId];
+      const activeTabIds = new Set<string>();
+      const findTabIds = (box: any) => {
+        if (box.tabs) {
+          box.tabs.forEach((tab: TabData) => {
+            if (tab.id) {
+              activeTabIds.add(tab.id);
+            }
+          });
         }
-      }
-      return newTabs;
-    });
-  }, [LAYOUT_STORAGE_KEY]);
+        if (box.children) {
+          box.children.forEach(findTabIds);
+        }
+      };
+      findTabIds(newLayoutData.dockbox);
+
+      setLayout(newLayoutData);
+
+      setTabContents((currentTabs) => {
+        const newTabs: { [key: string]: TabData } = {};
+        for (const tabId of activeTabIds) {
+          if (currentTabs[tabId]) {
+            newTabs[tabId] = currentTabs[tabId];
+          }
+        }
+        return newTabs;
+      });
+    },
+    [LAYOUT_STORAGE_KEY]
+  );
 
   return {
     layout,

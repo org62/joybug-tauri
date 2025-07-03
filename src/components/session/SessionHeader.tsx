@@ -1,9 +1,8 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
 import { ArrowLeft, Square, ChevronRight, Play } from 'lucide-react';
-import { DebugSession, SessionStatus, DebugEventInfo } from '@/contexts/SessionContext';
+import { DebugSession, SessionStatus } from '@/contexts/SessionContext';
 
 interface SessionHeaderProps {
   session: DebugSession;

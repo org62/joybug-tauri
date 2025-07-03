@@ -16,7 +16,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
-import { Plus, Play, Eye, Pencil, Trash2, XSquare } from "lucide-react";
+import { Plus, Play, Eye, Pencil, Trash2, XSquare, FileCode2 } from "lucide-react";
 import { toast } from "sonner";
 
 const DEFAULT_SESSION_NAME = "Unnamed Session";
@@ -213,10 +213,6 @@ export default function Debugger() {
     navigate(`/session/${sessionId}`);
   };
 
-  const handleViewSessionDocked = (sessionId: string) => {
-    navigate(`/session-docked/${sessionId}`);
-  };
-
   const getStatusBadge = (status: SessionStatus) => {
     if (typeof status === "string") {
       switch (status) {
@@ -304,7 +300,7 @@ export default function Debugger() {
           
           <Dialog open={isSessionDialogOpen} onOpenChange={setIsSessionDialogOpen}>
             <DialogTrigger asChild>
-              <Button className="flex items-center gap-2" onClick={handleOpenNewSessionDialog}>
+              <Button variant={sessions.length > 0 ? "default" : "outline"} className="flex items-center gap-2" onClick={handleOpenNewSessionDialog}>
                 <Plus className="h-4 w-4" />
                 New Session
               </Button>
@@ -371,8 +367,9 @@ export default function Debugger() {
 
         {sessions.length === 0 ? (
           <Card>
-            <CardContent className="flex flex-col items-center justify-center py-12 text-center">
-              <div className="text-muted-foreground text-lg mb-4">No debug sessions yet</div>
+            <CardContent className="flex flex-col items-center justify-center text-center">
+              <FileCode2 className="h-12 w-12 mb-4 text-muted-foreground opacity-40" />
+              <h2 className="text-xl font-semibold text-muted-foreground mb-2">No debug sessions yet</h2>
               <p className="text-sm text-muted-foreground mb-6">
                 Create your first debug session to get started
               </p>
@@ -400,86 +397,48 @@ export default function Debugger() {
                       </CardDescription>
                     </div>
                     <div className="flex items-center gap-2">
-                      {canStop(session.status) && (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => handleStopSession(session.id)}
-                        >
-                          <XSquare className="h-4 w-4 mr-1" />
-                          Stop
-                        </Button>
-                      )}
-                      {canEdit(session.status) && (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => handleOpenEditSessionDialog(session)}
-                        >
-                          <Pencil className="h-4 w-4 mr-1" />
-                          Edit
-                        </Button>
-                      )}
-                      {canView(session.status) && (
-                        <Button
-                          variant="default"
-                          size="sm"
-                          onClick={() => handleViewSession(session.id)}
-                        >
-                          <Eye className="h-4 w-4 mr-1" />
-                          View
-                        </Button>
-                      )}
-                      {canView(session.status) && (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => handleViewSessionDocked(session.id)}
-                        >
-                          <Eye className="h-4 w-4 mr-1" />
-                          View2
-                        </Button>
-                      )}
-                      {canStart(session.status) && (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => handleStartSession(session.id)}
-                        >
-                          <Play className="h-4 w-4 mr-1" />
-                          Start
-                        </Button>
-                      )}
-                      {canDelete(session.status) && (
-                        <Dialog>
-                          <DialogTrigger asChild>
-                            <Button variant="destructive" size="sm">
+                      <Button variant="ghost" size="icon" onClick={() => handleStartSession(session.id)} disabled={!canStart(session.status)} title="Start">
+                        <Play className="h-4 w-4" />
+                      </Button>
+                      <Button variant="ghost" size="icon" onClick={() => handleStopSession(session.id)} disabled={!canStop(session.status)} title="Stop">
+                        <XSquare className="h-4 w-4" />
+                      </Button>
+                      <Button variant="ghost" size="icon" onClick={() => handleOpenEditSessionDialog(session)} disabled={!canEdit(session.status)} title="Edit">
+                        <Pencil className="h-4 w-4" />
+                      </Button>
+                      <Button variant={canView(session.status) ? "default" : "ghost"} size="icon" onClick={() => handleViewSession(session.id)} disabled={!canView(session.status)} title="View">
+                        <Eye className="h-4 w-4" />
+                      </Button>
+                      <Dialog>
+                        <DialogTrigger asChild>
+                          <span tabIndex={canDelete(session.status) ? 0 : -1}>
+                            <Button variant="ghost" size="icon" disabled={!canDelete(session.status)} title="Delete">
                               <Trash2 className="h-4 w-4" />
                             </Button>
-                          </DialogTrigger>
-                          <DialogContent>
-                            <DialogHeader>
-                              <DialogTitle>Are you sure?</DialogTitle>
-                              <DialogDescription>
-                                This action will permanently delete the session "{session.name}".
-                              </DialogDescription>
-                            </DialogHeader>
-                            <DialogFooter>
-                              <DialogClose asChild>
-                                <Button variant="outline">Cancel</Button>
-                              </DialogClose>
-                              <DialogClose asChild>
-                                <Button
-                                  variant="destructive"
-                                  onClick={() => handleDeleteSession(session.id)}
-                                >
-                                  Delete
-                                </Button>
-                              </DialogClose>
-                            </DialogFooter>
-                          </DialogContent>
-                        </Dialog>
-                      )}
+                          </span>
+                        </DialogTrigger>
+                        <DialogContent>
+                          <DialogHeader>
+                            <DialogTitle>Are you sure?</DialogTitle>
+                            <DialogDescription>
+                              This action will permanently delete the session "{session.name}".
+                            </DialogDescription>
+                          </DialogHeader>
+                          <DialogFooter>
+                            <DialogClose asChild>
+                              <Button variant="outline">Cancel</Button>
+                            </DialogClose>
+                            <DialogClose asChild>
+                              <Button
+                                variant="destructive"
+                                onClick={() => handleDeleteSession(session.id)}
+                              >
+                                Delete
+                              </Button>
+                            </DialogClose>
+                          </DialogFooter>
+                        </DialogContent>
+                      </Dialog>
                     </div>
                   </div>
                 </CardHeader>

@@ -287,7 +287,7 @@ pub fn stop_debug_session(
 ) -> Result<()> {
     if let Some(session_state) = session_states.lock().unwrap().get(&session_id) {
         let mut state = session_state.lock().unwrap();
-        if let Some(sender) = state.step_sender.take() {
+        if let Some(_sender) = state.step_sender.take() {
             // Dropping sender will cause recv() to fail in the debug loop, stopping it
             info!("Stopping session by dropping the step_sender.");
         }
