@@ -1,31 +1,91 @@
-use crate::state::{DebugEventInfo, SerializableThreadContext, Serializablex64ThreadContext};
+use crate::state::{DebugEventInfo, SerializableThreadContext};
+
+#[cfg(target_arch = "x86_64")]
+use crate::state::Serializablex64ThreadContext;
+
+#[cfg(target_arch = "aarch64")]
+use crate::state::SerializableArm64ThreadContext;
 
 pub fn convert_raw_context_to_serializable(
     raw_context: joybug2::protocol::ThreadContext,
 ) -> SerializableThreadContext {
     match raw_context {
         joybug2::protocol::ThreadContext::Win32RawContext(ctx) => {
-            // This assumes x64 context
-            SerializableThreadContext::X64(Serializablex64ThreadContext {
-                rax: format!("{:#018x}", ctx.Rax),
-                rbx: format!("{:#018x}", ctx.Rbx),
-                rcx: format!("{:#018x}", ctx.Rcx),
-                rdx: format!("{:#018x}", ctx.Rdx),
-                rsi: format!("{:#018x}", ctx.Rsi),
-                rdi: format!("{:#018x}", ctx.Rdi),
-                rbp: format!("{:#018x}", ctx.Rbp),
-                rsp: format!("{:#018x}", ctx.Rsp),
-                rip: format!("{:#018x}", ctx.Rip),
-                r8: format!("{:#018x}", ctx.R8),
-                r9: format!("{:#018x}", ctx.R9),
-                r10: format!("{:#018x}", ctx.R10),
-                r11: format!("{:#018x}", ctx.R11),
-                r12: format!("{:#018x}", ctx.R12),
-                r13: format!("{:#018x}", ctx.R13),
-                r14: format!("{:#018x}", ctx.R14),
-                r15: format!("{:#018x}", ctx.R15),
-                eflags: format!("{:#010x}", ctx.EFlags),
-            })
+            // Check target architecture at compile time
+            #[cfg(target_arch = "x86_64")]
+            {
+                // x64 architecture - access x64 registers
+                SerializableThreadContext::X64(Serializablex64ThreadContext {
+                    rax: format!("{:#018x}", ctx.Rax),
+                    rbx: format!("{:#018x}", ctx.Rbx),
+                    rcx: format!("{:#018x}", ctx.Rcx),
+                    rdx: format!("{:#018x}", ctx.Rdx),
+                    rsi: format!("{:#018x}", ctx.Rsi),
+                    rdi: format!("{:#018x}", ctx.Rdi),
+                    rbp: format!("{:#018x}", ctx.Rbp),
+                    rsp: format!("{:#018x}", ctx.Rsp),
+                    rip: format!("{:#018x}", ctx.Rip),
+                    r8: format!("{:#018x}", ctx.R8),
+                    r9: format!("{:#018x}", ctx.R9),
+                    r10: format!("{:#018x}", ctx.R10),
+                    r11: format!("{:#018x}", ctx.R11),
+                    r12: format!("{:#018x}", ctx.R12),
+                    r13: format!("{:#018x}", ctx.R13),
+                    r14: format!("{:#018x}", ctx.R14),
+                    r15: format!("{:#018x}", ctx.R15),
+                    eflags: format!("{:#010x}", ctx.EFlags),
+                })
+            }
+            
+            #[cfg(target_arch = "aarch64")]
+            {
+                // ARM64 architecture - access ARM64 registers through Anonymous union
+                unsafe {
+                    SerializableThreadContext::Arm64(SerializableArm64ThreadContext {
+                        // ARM64 CONTEXT struct has X0-X30 registers accessed via Anonymous.X array
+                        x0: format!("{:#018x}", ctx.Anonymous.X[0]),
+                        x1: format!("{:#018x}", ctx.Anonymous.X[1]),
+                        x2: format!("{:#018x}", ctx.Anonymous.X[2]),
+                        x3: format!("{:#018x}", ctx.Anonymous.X[3]),
+                        x4: format!("{:#018x}", ctx.Anonymous.X[4]),
+                        x5: format!("{:#018x}", ctx.Anonymous.X[5]),
+                        x6: format!("{:#018x}", ctx.Anonymous.X[6]),
+                        x7: format!("{:#018x}", ctx.Anonymous.X[7]),
+                        x8: format!("{:#018x}", ctx.Anonymous.X[8]),
+                        x9: format!("{:#018x}", ctx.Anonymous.X[9]),
+                        x10: format!("{:#018x}", ctx.Anonymous.X[10]),
+                        x11: format!("{:#018x}", ctx.Anonymous.X[11]),
+                        x12: format!("{:#018x}", ctx.Anonymous.X[12]),
+                        x13: format!("{:#018x}", ctx.Anonymous.X[13]),
+                        x14: format!("{:#018x}", ctx.Anonymous.X[14]),
+                        x15: format!("{:#018x}", ctx.Anonymous.X[15]),
+                        x16: format!("{:#018x}", ctx.Anonymous.X[16]),
+                        x17: format!("{:#018x}", ctx.Anonymous.X[17]),
+                        x18: format!("{:#018x}", ctx.Anonymous.X[18]),
+                        x19: format!("{:#018x}", ctx.Anonymous.X[19]),
+                        x20: format!("{:#018x}", ctx.Anonymous.X[20]),
+                        x21: format!("{:#018x}", ctx.Anonymous.X[21]),
+                        x22: format!("{:#018x}", ctx.Anonymous.X[22]),
+                        x23: format!("{:#018x}", ctx.Anonymous.X[23]),
+                        x24: format!("{:#018x}", ctx.Anonymous.X[24]),
+                        x25: format!("{:#018x}", ctx.Anonymous.X[25]),
+                        x26: format!("{:#018x}", ctx.Anonymous.X[26]),
+                        x27: format!("{:#018x}", ctx.Anonymous.X[27]),
+                        x28: format!("{:#018x}", ctx.Anonymous.X[28]),
+                        x29: format!("{:#018x}", ctx.Anonymous.X[29]),  // Frame Pointer
+                        x30: format!("{:#018x}", ctx.Anonymous.X[30]),  // Link Register
+                        sp: format!("{:#018x}", ctx.Sp),
+                        pc: format!("{:#018x}", ctx.Pc),
+                        cpsr: format!("{:#010x}", ctx.Cpsr),
+                    })
+                }
+            }
+            
+            #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+            {
+                // Fallback for unsupported architectures
+                compile_error!("Unsupported target architecture. Only x86_64 and aarch64 are supported.");
+            }
         }
     }
 }

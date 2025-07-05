@@ -36,11 +36,31 @@ pub struct Serializablex64ThreadContext {
     pub eflags: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct SerializableArm64ThreadContext {
+    // General purpose registers
+    pub x0: String, pub x1: String, pub x2: String, pub x3: String,
+    pub x4: String, pub x5: String, pub x6: String, pub x7: String,
+    pub x8: String, pub x9: String, pub x10: String, pub x11: String,
+    pub x12: String, pub x13: String, pub x14: String, pub x15: String,
+    pub x16: String, pub x17: String, pub x18: String, pub x19: String,
+    pub x20: String, pub x21: String, pub x22: String, pub x23: String,
+    pub x24: String, pub x25: String, pub x26: String, pub x27: String,
+    pub x28: String, pub x29: String, pub x30: String,
+    
+    // Stack pointer and program counter
+    pub sp: String,
+    pub pc: String,
+    
+    // Processor state
+    pub cpsr: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "arch")]
 pub enum SerializableThreadContext {
     X64(Serializablex64ThreadContext),
-    Arm64, // Placeholder for future use
+    Arm64(SerializableArm64ThreadContext),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -133,12 +153,20 @@ impl SessionState {
                 let mut info = crate::events::debug_event_to_info(event);
                 info.context = self.current_context.clone();
                 
-                // If address is missing from the event, try to get it from the context's RIP
+                // If address is missing from the event, try to get it from the context's instruction pointer
                 if info.address.is_none() {
-                    if let Some(SerializableThreadContext::X64(ref ctx)) = self.current_context {
-                        if let Ok(rip) = u64::from_str_radix(&ctx.rip.trim_start_matches("0x"), 16) {
-                            info.address = Some(rip);
+                    match &self.current_context {
+                        Some(SerializableThreadContext::X64(ref ctx)) => {
+                            if let Ok(rip) = u64::from_str_radix(&ctx.rip.trim_start_matches("0x"), 16) {
+                                info.address = Some(rip);
+                            }
                         }
+                        Some(SerializableThreadContext::Arm64(ref ctx)) => {
+                            if let Ok(pc) = u64::from_str_radix(&ctx.pc.trim_start_matches("0x"), 16) {
+                                info.address = Some(pc);
+                            }
+                        }
+                        None => {}
                     }
                 }
                 info
