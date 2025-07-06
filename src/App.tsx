@@ -27,14 +27,17 @@ function AppContent() {
         switch (event.key) {
           case 'D':
             event.preventDefault();
+            event.stopPropagation();
             navigate('/debugger');
             break;
           case 'L':
             event.preventDefault();
+            event.stopPropagation();
             navigate('/logs');
             break;
           case 'T':
             event.preventDefault();
+            event.stopPropagation();
             setTheme(resolvedTheme === 'light' ? 'dark' : 'light');
             break;
         }

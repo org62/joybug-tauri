@@ -41,26 +41,35 @@ export default function SessionDocked() {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'F8') {
         event.preventDefault();
+        event.stopPropagation();
         handleStep();
+        return;
       }
       
       if (!event.ctrlKey) return;
 
+      // Only handle single Ctrl+key combinations (not Ctrl+Shift+key)
+      if (event.shiftKey) return;
+
       switch (event.key.toLowerCase()) {
         case 'd':
           event.preventDefault();
+          event.stopPropagation();
           dockingRef.current?.toggleTab("disassembly");
           break;
         case 'r':
           event.preventDefault();
+          event.stopPropagation();
           dockingRef.current?.toggleTab("registers");
           break;
         case 'm':
           event.preventDefault();
+          event.stopPropagation();
           dockingRef.current?.toggleTab("modules");
           break;
         case 't':
           event.preventDefault();
+          event.stopPropagation();
           dockingRef.current?.toggleTab("threads");
           break;
       }
