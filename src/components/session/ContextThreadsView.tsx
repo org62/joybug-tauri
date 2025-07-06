@@ -29,37 +29,37 @@ export const ContextThreadsView = () => {
   };
 
   return (
-    <div className="h-full overflow-auto p-4">
+    <div className="h-full overflow-auto">
       {sessionData?.threads && sessionData.threads.length > 0 ? (
-        <div className="space-y-4">
+        <div className="space-y-1">
           {sessionData.threads.map((thread, index) => (
             <div 
               key={index}
-              className="flex items-center justify-between p-4 border rounded-lg hover:bg-gray-50 dark:hover:bg-gray-900"
+              className="flex items-center justify-between px-2 py-1 border-b hover:bg-gray-50 dark:hover:bg-gray-900"
             >
-              <div className="flex-1">
+              <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 mb-1">
-                  <h3 className="font-semibold">Thread {thread.id}</h3>
+                  <h3 className="font-medium text-sm">Thread {thread.id}</h3>
                   <Badge 
                     variant="outline" 
-                    className={`${getThreadStatusColor(thread.status)} border text-xs`}
+                    className={`${getThreadStatusColor(thread.status)} border text-xs px-1 py-0`}
                   >
                     {thread.status}
                   </Badge>
                 </div>
-                <p className="text-sm text-muted-foreground">
-                  Start Address: <span className="font-mono">{thread.start_address}</span>
+                <p className="text-xs text-muted-foreground truncate">
+                  Start: <span className="font-mono">{thread.start_address}</span>
                 </p>
               </div>
             </div>
           ))}
         </div>
       ) : (
-        <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
+        <div className="flex flex-col items-center justify-center h-full text-muted-foreground p-4">
           <div className="text-center">
             <Cpu className="h-12 w-12 mx-auto mb-4 opacity-50" />
             <p className="text-base font-medium">No threads found</p>
-            <p className="text-sm mt-1">Threads will appear here as they are created during debugging</p>
+            <p className="text-sm mt-1">Threads will appear here during debugging</p>
           </div>
         </div>
       )}
