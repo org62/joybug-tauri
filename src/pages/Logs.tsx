@@ -133,7 +133,7 @@ export default function Logs() {
             Showing {filteredLogs.length} of {logs.length} logs
           </div>
           <ScrollArea className="h-[500px] w-full rounded-md border">
-            <div className="p-4 space-y-4">
+            <div className="p-0">
               {logs.length === 0 ? (
                 <div className="text-center text-gray-500 dark:text-gray-400 py-8">
                   No logs available. Try using the debugger to generate some logs.
@@ -144,11 +144,11 @@ export default function Logs() {
                 </div>
               ) : (
                 filteredLogs.slice().reverse().map((log, index) => (
-                  <div key={index} className="p-4 bg-gray-100 dark:bg-neutral-800 rounded-lg">
-                    <div className="text-sm text-gray-500 dark:text-neutral-400">
+                  <div key={index} className="flex items-start gap-2 px-3 py-2 border-b hover:bg-gray-50 dark:hover:bg-gray-900">
+                    <div className="text-xs text-gray-500 dark:text-neutral-400 font-mono shrink-0 min-w-0">
                       {log.timestamp}
                     </div>
-                    <div className={getLogColor(log.level)}>
+                    <div className={`text-sm ${getLogColor(log.level)} min-w-0 flex-1`}>
                       {log.message.match(/^[✓✗ℹ•]/) ? log.message : `${getLogIcon(log.level)} ${log.message}`}
                     </div>
                   </div>
