@@ -14,7 +14,7 @@ export default function About() {
           <CardContent className="space-y-6">
             <div>
               <p className="text-center text-lg text-gray-700 dark:text-neutral-300">
-                This project was crafted with a simple philosophy: to enjoy its design, development, and support. The author hopes you'll love using it as much as they loved creating it.
+                This project was crafted with a simple philosophy: to enjoy its design, development, and maintenance. The author hopes you'll love using it as much as they loved creating it.
               </p>
             </div>
 

@@ -25,18 +25,22 @@ export const DebuggerDockingConfig: DockingConfig = {
           children: [
             {
               tabs: [{ id: "modules" }],
+              activeId: "modules",
             },
             {
               tabs: [{ id: "threads" }],
+              activeId: "threads",
             },
           ],
         },
         {
           tabs: [{ id: "disassembly" }],
+          activeId: "disassembly",
         },
         {
           size: 50,
           tabs: [{ id: "registers" }],
+          activeId: "registers",
         },
       ],
     },
