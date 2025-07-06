@@ -31,7 +31,7 @@ fn update_session_from_event(state: &mut SessionState, event: &joybug2::protocol
                 info!("Added thread: {} at 0x{:X}", tid, start_address);
             }
         }
-        joybug2::protocol_io::DebugEvent::ProcessCreated { image_file_name, base_of_image, size_of_image, .. } => {
+        joybug2::protocol_io::DebugEvent::ProcessCreated { pid, tid, image_file_name, base_of_image, size_of_image, .. } => {
             // Add the main executable as a module
             let module_name = image_file_name.clone().unwrap_or_else(|| "main.exe".to_string());
             let module = joybug2::protocol_io::ModuleInfo {
@@ -42,6 +42,16 @@ fn update_session_from_event(state: &mut SessionState, event: &joybug2::protocol
             if !state.modules.iter().any(|m| m.base == *base_of_image) {
                 state.modules.push(module);
                 info!("Added main executable module: {} at 0x{:X}", module_name, base_of_image);
+            }
+            
+            // Add the initial thread for the process
+            let thread = joybug2::protocol_io::ThreadInfo {
+                tid: *tid,
+                start_address: *base_of_image, // Use the base address of the main executable as the start address
+            };
+            if !state.threads.iter().any(|t| t.tid == thread.tid) {
+                state.threads.push(thread);
+                info!("Added initial thread: {} for process {} at 0x{:X}", tid, pid, base_of_image);
             }
         }
         joybug2::protocol_io::DebugEvent::ThreadExited { tid, .. } => {
