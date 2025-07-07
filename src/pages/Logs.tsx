@@ -1,6 +1,5 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -78,7 +77,22 @@ export default function Logs() {
   };
 
   const filteredLogs = logs.filter(log => {
-    const matchesLevel = levelFilter === "all" || log.level.toLowerCase() === levelFilter.toLowerCase();
+    // Priority-based level filtering
+    const levelPriority: Record<string, number> = {
+      'debug': 0,
+      'info': 1,
+      'warning': 2,
+      'error': 3
+    };
+    
+    const logLevel = log.level.toLowerCase();
+    const selectedLevel = levelFilter.toLowerCase();
+    
+    const matchesLevel = levelFilter === "all" || 
+      (levelPriority[logLevel] !== undefined && 
+       levelPriority[selectedLevel] !== undefined &&
+       levelPriority[logLevel] >= levelPriority[selectedLevel]);
+    
     const matchesSearch = searchFilter === "" || 
       log.message.toLowerCase().includes(searchFilter.toLowerCase()) ||
       log.timestamp.toLowerCase().includes(searchFilter.toLowerCase());
@@ -86,12 +100,34 @@ export default function Logs() {
   });
 
   return (
-    <div className="container mx-auto p-6">
-      <Card>
-        <CardHeader>
+    <div className="h-[calc(100vh-4.1rem)] flex flex-col p-6">
+      <div className="flex-1 flex flex-col min-h-0">
+        <div className="flex-shrink-0 mb-6">
           <div className="flex justify-between items-center">
-            <CardTitle className="text-2xl">Application Logs</CardTitle>
-            <div className="flex gap-2">
+            <h1 className="text-2xl font-bold">Application Logs</h1>
+            <div className="flex items-center gap-4">
+              <div className="flex items-center gap-2">
+                <Filter className="h-4 w-4" />
+                <span className="text-sm font-medium">Filters:</span>
+              </div>
+              <Select value={levelFilter} onValueChange={setLevelFilter}>
+                <SelectTrigger className="w-32">
+                  <SelectValue placeholder="Level" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Levels</SelectItem>
+                  <SelectItem value="debug">Debug</SelectItem>
+                  <SelectItem value="info">Info</SelectItem>
+                  <SelectItem value="warning">Warning</SelectItem>
+                  <SelectItem value="error">Error</SelectItem>
+                </SelectContent>
+              </Select>
+              <Input
+                placeholder="Search logs..."
+                value={searchFilter}
+                onChange={(e) => setSearchFilter(e.target.value)}
+                className="w-64"
+              />
               <Button
                 onClick={clearLogs}
                 variant="outline"
@@ -103,36 +139,12 @@ export default function Logs() {
               </Button>
             </div>
           </div>
-          <div className="flex gap-4 mt-4">
-            <div className="flex items-center gap-2">
-              <Filter className="h-4 w-4" />
-              <span className="text-sm font-medium">Filters:</span>
-            </div>
-            <Select value={levelFilter} onValueChange={setLevelFilter}>
-              <SelectTrigger className="w-32">
-                <SelectValue placeholder="Level" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Levels</SelectItem>
-                <SelectItem value="debug">Debug</SelectItem>
-                <SelectItem value="info">Info</SelectItem>
-                <SelectItem value="warning">Warning</SelectItem>
-                <SelectItem value="error">Error</SelectItem>
-              </SelectContent>
-            </Select>
-            <Input
-              placeholder="Search logs..."
-              value={searchFilter}
-              onChange={(e) => setSearchFilter(e.target.value)}
-              className="w-64"
-            />
-          </div>
-        </CardHeader>
-        <CardContent>
-          <div className="mb-4 text-sm text-gray-500 dark:text-gray-400">
+        </div>
+        <div className="flex-1 flex flex-col min-h-0">
+          <div className="mb-4 text-sm text-gray-500 dark:text-gray-400 flex-shrink-0">
             Showing {filteredLogs.length} of {logs.length} logs
           </div>
-          <ScrollArea className="h-[500px] w-full rounded-md border">
+          <ScrollArea className="flex-1 w-full rounded-md border min-h-0">
             <div className="p-0">
               {logs.length === 0 ? (
                 <div className="text-center text-gray-500 dark:text-gray-400 py-8">
@@ -156,8 +168,8 @@ export default function Logs() {
               )}
             </div>
           </ScrollArea>
-        </CardContent>
-      </Card>
+        </div>
+      </div>
     </div>
   );
 } 
