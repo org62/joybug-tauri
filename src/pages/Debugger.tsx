@@ -18,6 +18,14 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Plus, Play, Eye, Pencil, Trash2, XSquare, FileCode2 } from "lucide-react";
 import { toast } from "sonner";
+import { 
+  loadSessionsFromStorage, 
+  addSessionToStorage, 
+  updateSessionInStorage, 
+  removeSessionFromStorage,
+  sessionToConfig,
+  syncSessionsToStorage 
+} from "@/lib/sessionStorage";
 
 const DEFAULT_SESSION_NAME = "Unnamed Session";
 
@@ -59,20 +67,57 @@ export default function Debugger() {
   const [formServerUrl, setFormServerUrl] = useState("127.0.0.1:9000");
   const [formLaunchCommand, setFormLaunchCommand] = useState("cmd.exe /c echo Hello World!");
 
-  // Load sessions from backend
+  // Load sessions from backend with storage restoration
   const loadSessions = async () => {
     try {
       const sessionList = await invoke<DebugSession[]>("get_debug_sessions");
       setSessions(sessionList);
+      
+      // Sync storage with current sessions
+      const sessionConfigs = sessionList.map(sessionToConfig);
+      syncSessionsToStorage(sessionConfigs);
     } catch (error) {
       console.error("Failed to load debug sessions:", error);
       toast.error(`Failed to load debug sessions: ${error}`);
     }
   };
 
-  // Initial load
+  // Restore sessions from storage on app startup
+  const restoreSessionsFromStorage = async () => {
+    try {
+      const storedSessions = loadSessionsFromStorage();
+      
+      // First, get existing sessions from backend
+      const existingSessions = await invoke<DebugSession[]>("get_debug_sessions");
+      const existingIds = new Set(existingSessions.map(s => s.id));
+      
+      // Create sessions in backend from stored configs that don't already exist
+      for (const config of storedSessions) {
+        if (!existingIds.has(config.id)) {
+          try {
+            await invoke("create_debug_session", {
+              name: config.name,
+              serverUrl: config.server_url,
+              launchCommand: config.launch_command,
+            });
+          } catch (error) {
+            console.warn(`Failed to restore session ${config.name}:`, error);
+          }
+        }
+      }
+      
+      // Load current state from backend
+      await loadSessions();
+    } catch (error) {
+      console.error("Failed to restore sessions from storage:", error);
+      // Fall back to just loading current sessions
+      await loadSessions();
+    }
+  };
+
+  // Initial load - restore sessions from storage
   useEffect(() => {
-    loadSessions();
+    restoreSessionsFromStorage();
   }, []);
 
   // Auto-refresh sessions every 1 second
@@ -124,6 +169,15 @@ export default function Debugger() {
         launchCommand: formLaunchCommand,
       });
 
+      // Save session config to storage
+      addSessionToStorage({
+        id: sessionId,
+        name: sessionName,
+        server_url: formServerUrl,
+        launch_command: formLaunchCommand,
+        created_at: new Date().toISOString(),
+      });
+
       toast.success("Debug session created successfully");
       setIsSessionDialogOpen(false);
       
@@ -153,6 +207,15 @@ export default function Debugger() {
         name: sessionName,
         serverUrl: formServerUrl,
         launchCommand: formLaunchCommand,
+      });
+
+      // Update session config in storage
+      updateSessionInStorage({
+        id: sessionToEdit.id,
+        name: sessionName,
+        server_url: formServerUrl,
+        launch_command: formLaunchCommand,
+        created_at: sessionToEdit.created_at,
       });
 
       toast.success("Debug session updated successfully");
@@ -190,6 +253,10 @@ export default function Debugger() {
   const handleDeleteSession = async (sessionId: string) => {
     try {
       await invoke("delete_debug_session", { sessionId });
+      
+      // Remove session from storage
+      removeSessionFromStorage(sessionId);
+      
       toast.success("Debug session deleted");
     } catch (error) {
       console.error("Failed to delete debug session:", error);
