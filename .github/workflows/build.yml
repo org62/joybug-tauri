@@ -13,7 +13,7 @@ jobs:
   build:
     strategy:
       matrix:
-        os: [windows-latest]
+        os: [windows-latest, windows-11-arm]
     runs-on: ${{ matrix.os }}
     steps:
     - uses: actions/checkout@v4
@@ -27,10 +27,12 @@ jobs:
         cache: 'npm'
     
     - name: Install Rust toolchain
-      uses: actions-rust-lang/setup-rust-toolchain@v1
+      uses: dtolnay/rust-toolchain@stable
+    
+    - name: Rust cache
+      uses: swatinem/rust-cache@v2
       with:
-        toolchain: stable
-        override: true
+        workspaces: './src-tauri -> target'
     
     - name: Install frontend dependencies
       run: npm ci
