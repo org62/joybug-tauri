@@ -386,8 +386,27 @@ pub fn get_disassembly(
         (client, pid)
     };
 
-    // Assuming x64 for now, this should ideally be part of session info
-    let arch = joybug2::interfaces::Architecture::X64;
+    // Determine architecture from current thread context or fallback to compile-time detection
+    let arch = {
+        let state = session_state.lock().unwrap();
+        match &state.current_context {
+            Some(crate::state::SerializableThreadContext::X64(_)) => joybug2::interfaces::Architecture::X64,
+            Some(crate::state::SerializableThreadContext::Arm64(_)) => joybug2::interfaces::Architecture::Arm64,
+            None => {
+                // Fallback to compile-time architecture detection
+                #[cfg(target_arch = "x86_64")]
+                { joybug2::interfaces::Architecture::X64 }
+                #[cfg(target_arch = "aarch64")]
+                { joybug2::interfaces::Architecture::Arm64 }
+                #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+                {
+                    return Err(Error::InvalidSessionState(
+                        "Unsupported target architecture for disassembly".to_string(),
+                    ));
+                }
+            }
+        }
+    };
 
     let mut client = aux_client.lock().unwrap();
     let req = joybug2::protocol::DebuggerRequest::DisassembleMemory { pid, address, count, arch };
