@@ -40,8 +40,17 @@ jobs:
     - name: Build Tauri app
       run: npm run tauri build
     
+    - name: Rename executable for architecture
+      run: |
+        if ("${{ matrix.os }}" -eq "windows-latest") {
+          Rename-Item -Path "src-tauri/target/release/joybug-tauri.exe" -NewName "joybug-tauri-x64.exe"
+        } elseif ("${{ matrix.os }}" -eq "windows-11-arm") {
+          Rename-Item -Path "src-tauri/target/release/joybug-tauri.exe" -NewName "joybug-tauri-aarch64.exe"
+        }
+      shell: powershell
+    
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
       with:
         name: tauri-app-${{ matrix.os }}
-        path: src-tauri/target/release/*.exe
+        path: src-tauri/target/release/joybug-tauri-*.exe
