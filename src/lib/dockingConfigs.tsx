@@ -38,9 +38,18 @@ export const DebuggerDockingConfig: DockingConfig = {
           activeId: "disassembly",
         },
         {
-          size: 50,
-          tabs: [{ id: "registers" }],
-          activeId: "registers",
+          mode: "vertical" as const,
+          size: 80,
+          children: [
+            {
+              tabs: [{ id: "registers" }],
+              activeId: "registers",
+            },
+            {
+              tabs: [{ id: "callstack" }],
+              activeId: "callstack",
+            },
+          ],
         },
       ],
     },
@@ -50,6 +59,7 @@ export const DebuggerDockingConfig: DockingConfig = {
     registers: { id: "registers", title: "Registers", content: <StaticRegisterView context={mockContext} /> },
     modules: { id: "modules", title: "Modules", content: <div>Modules placeholder</div> },
     threads: { id: "threads", title: "Threads", content: <div>Threads placeholder</div> },
+    callstack: { id: "callstack", title: "Call Stack", content: <div>Call Stack placeholder</div> },
   } as { [key: string]: TabData },
   tabContentMap: {
     registers: <StaticRegisterView context={mockContext} />,

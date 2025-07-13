@@ -11,6 +11,7 @@ import { ContextAssemblyView } from "@/components/session/ContextAssemblyView";
 import { ContextRegisterView } from "@/components/session/ContextRegisterView";
 import { ContextModulesView } from "@/components/session/ContextModulesView";
 import { ContextThreadsView } from "@/components/session/ContextThreadsView";
+import { ContextCallStackView } from "@/components/session/ContextCallStackView";
 import { useDebugSession } from "@/hooks/useDebugSession";
 import { SessionHeader } from "@/components/session/SessionHeader";
 
@@ -72,6 +73,11 @@ export default function SessionDocked() {
           event.stopPropagation();
           dockingRef.current?.toggleTab("threads");
           break;
+        case 'c':
+          event.preventDefault();
+          event.stopPropagation();
+          dockingRef.current?.toggleTab("callstack");
+          break;
       }
     };
 
@@ -93,6 +99,7 @@ export default function SessionDocked() {
     registers: <ContextRegisterView />,
     modules: <ContextModulesView />,
     threads: <ContextThreadsView />,
+    callstack: <ContextCallStackView />,
   }), []);
 
   // Create docking configuration with dynamic content  
@@ -120,6 +127,12 @@ export default function SessionDocked() {
         id: "threads",
         title: "Threads",
         content: dynamicTabContent.threads,
+        closable: true,
+      },
+      callstack: {
+        id: "callstack",
+        title: "Call Stack",
+        content: dynamicTabContent.callstack,
         closable: true,
       },
     };

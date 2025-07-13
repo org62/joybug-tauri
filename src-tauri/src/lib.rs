@@ -38,6 +38,7 @@ pub fn run() {
             commands::clear_logs,
             commands::get_session_modules,
             commands::get_session_threads,
+            commands::get_session_callstack,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

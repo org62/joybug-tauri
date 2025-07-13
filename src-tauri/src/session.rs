@@ -315,6 +315,10 @@ pub fn run_debug_session(
                         info!("Received instructions");
                         true
                     }
+                    DebuggerResponse::CallStack { frames } => {
+                        info!("Received call stack with {} frames", frames.len());
+                        true
+                    }
                 }
             },
         )

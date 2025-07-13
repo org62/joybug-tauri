@@ -499,6 +499,8 @@ pub fn get_session_threads(
     }
 }
 
+
+
 // Data structures for frontend communication
 #[derive(serde::Serialize)]
 pub struct ModuleData {
@@ -513,4 +515,90 @@ pub struct ThreadData {
     pub id: u32,
     pub status: String,
     pub start_address: String,
+}
+
+#[derive(serde::Serialize)]
+pub struct CallStackData {
+    pub frame_number: usize,
+    pub instruction_pointer: String,
+    pub stack_pointer: String,
+    pub frame_pointer: String,
+    pub symbol_info: Option<String>,
+}
+
+#[tauri::command]
+pub fn get_session_callstack(
+    session_id: String,
+    session_states: State<'_, SessionStatesMap>,
+) -> Result<Vec<CallStackData>> {
+    let session_state = {
+        let states = session_states.lock().unwrap();
+        states
+            .get(&session_id)
+            .cloned()
+            .ok_or_else(|| Error::SessionNotFound(session_id.clone()))?
+    };
+
+    let (aux_client, pid, tid) = {
+        let state = session_state.lock().unwrap();
+
+        let (pid, tid) = match state.status {
+            SessionStatus::Paused => {
+                if let Some(event) = &state.current_event {
+                    (event.pid(), event.tid())
+                } else {
+                    return Err(Error::InvalidSessionState(
+                        "Session is paused but has no current event".to_string(),
+                    ));
+                }
+            }
+            _ => {
+                return Err(Error::InvalidSessionState(
+                    "Session must be paused to get call stack".to_string(),
+                ));
+            }
+        };
+
+        let client = state
+            .aux_client
+            .as_ref()
+            .cloned()
+            .ok_or_else(|| Error::InternalCommunication("Auxiliary client not available".to_string()))?;
+
+        (client, pid, tid)
+    };
+
+    // Send request to get call stack
+    let request = joybug2::protocol::DebuggerRequest::GetCallStack { pid, tid };
+    let mut client = aux_client.lock().unwrap();
+    
+    match client.send_and_receive(&request) {
+        Ok(joybug2::protocol::DebuggerResponse::CallStack { frames }) => {
+            // Convert to CallStackData for frontend
+            let call_stack: Vec<CallStackData> = frames.iter().enumerate().map(|(i, frame)| {
+                CallStackData {
+                    frame_number: i,
+                    instruction_pointer: format!("0x{:016x}", frame.instruction_pointer),
+                    stack_pointer: format!("0x{:016x}", frame.stack_pointer),
+                    frame_pointer: format!("0x{:016x}", frame.frame_pointer),
+                    symbol_info: frame.symbol.as_ref().map(|sym| {
+                        format!("{}!{}+0x{:x}", sym.module_name, sym.symbol_name, sym.offset)
+                    }),
+                }
+            }).collect();
+            
+            info!("Fetched {} call stack frames for session {}", call_stack.len(), session_id);
+            Ok(call_stack)
+        }
+        Ok(response) => {
+            Err(Error::InternalCommunication(format!(
+                "Expected CallStack response, got {:?}",
+                response
+            )))
+        }
+        Err(e) => Err(Error::InternalCommunication(format!(
+            "Failed to fetch call stack: {}",
+            e
+        ))),
+    }
 } 
