@@ -94,6 +94,9 @@ export const SessionHeader: React.FC<SessionHeaderProps> = ({
           <Button variant="outline" size="sm" onClick={() => dockingRef.current?.toggleTab("threads")} title="Show Threads (Ctrl+T)">
             T
           </Button>
+          <Button variant="outline" size="sm" onClick={() => dockingRef.current?.toggleTab("callstack")} title="Show Call Stack (Ctrl+C)">
+            C
+          </Button>
           <Button variant="outline" size="sm" onClick={() => dockingRef.current?.resetLayout()} title="Reset Layout">
             Reset
           </Button>
