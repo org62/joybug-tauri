@@ -38,6 +38,7 @@ pub fn run() {
             commands::clear_logs,
             commands::get_session_modules,
             commands::get_session_threads,
+            commands::search_session_symbols,
             commands::get_session_callstack,
         ])
         .run(tauri::generate_context!())

@@ -12,6 +12,7 @@ import { ContextRegisterView } from "@/components/session/ContextRegisterView";
 import { ContextModulesView } from "@/components/session/ContextModulesView";
 import { ContextThreadsView } from "@/components/session/ContextThreadsView";
 import { ContextCallStackView } from "@/components/session/ContextCallStackView";
+import { ContextSymbolsView } from "@/components/session/ContextSymbolsView";
 import { useDebugSession } from "@/hooks/useDebugSession";
 import { SessionHeader } from "@/components/session/SessionHeader";
 
@@ -29,6 +30,7 @@ export default function SessionDocked() {
     threads,
     loadModules,
     loadThreads,
+    searchSymbols,
     handleStep,
     handleStop,
     handleStart,
@@ -78,6 +80,11 @@ export default function SessionDocked() {
           event.stopPropagation();
           dockingRef.current?.toggleTab("callstack");
           break;
+        case 's':
+          event.preventDefault();
+          event.stopPropagation();
+          dockingRef.current?.toggleTab("symbols");
+          break;
       }
     };
 
@@ -90,8 +97,9 @@ export default function SessionDocked() {
     modules,
     threads,
     loadModules: async () => { await loadModules(); },
-    loadThreads: async () => { await loadThreads(); }
-  }), [session, modules, threads, loadModules, loadThreads]);
+    loadThreads: async () => { await loadThreads(); },
+    searchSymbols: async (pattern: string, limit?: number) => { return await searchSymbols(pattern, limit); }
+  }), [session, modules, threads, loadModules, loadThreads, searchSymbols]);
   
   // Static tab content - components will update via context
   const dynamicTabContent = useMemo(() => ({
@@ -100,6 +108,7 @@ export default function SessionDocked() {
     modules: <ContextModulesView />,
     threads: <ContextThreadsView />,
     callstack: <ContextCallStackView />,
+    symbols: <ContextSymbolsView />,
   }), []);
 
   // Create docking configuration with dynamic content  
@@ -133,6 +142,12 @@ export default function SessionDocked() {
         id: "callstack",
         title: "Call Stack",
         content: dynamicTabContent.callstack,
+        closable: true,
+      },
+      symbols: {
+        id: "symbols",
+        title: "Symbols",
+        content: dynamicTabContent.symbols,
         closable: true,
       },
     };

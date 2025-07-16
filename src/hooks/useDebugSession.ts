@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { toast } from 'sonner';
-import { DebugSession, Module, Thread } from '@/contexts/SessionContext';
+import { DebugSession, Module, Thread, Symbol } from '@/contexts/SessionContext';
 
 export function useDebugSession(sessionId: string | undefined) {
   const [session, setSession] = useState<DebugSession | null>(null);
@@ -38,6 +38,20 @@ export function useDebugSession(sessionId: string | undefined) {
       return await invoke<Thread[]>("get_session_threads", { sessionId });
     } catch (error) {
       toast.error(`Failed to load threads: ${error}`);
+      return [];
+    }
+  }, [sessionId]);
+
+  const searchSymbols = useCallback(async (pattern: string, limit?: number) => {
+    if (!sessionId) return [];
+    try {
+      return await invoke<Symbol[]>("search_session_symbols", { 
+        sessionId, 
+        pattern, 
+        limit: limit || 30 
+      });
+    } catch (error) {
+      toast.error(`Failed to search symbols: ${error}`);
       return [];
     }
   }, [sessionId]);
@@ -152,6 +166,7 @@ export function useDebugSession(sessionId: string | undefined) {
     threads,
     loadModules,
     loadThreads,
+    searchSymbols,
     handleStep,
     handleStop,
     handleStart,

@@ -37,6 +37,14 @@ export interface Thread {
   start_address: string;
 }
 
+export interface Symbol {
+  name: string;
+  module_name: string;
+  rva: number;
+  va: string;
+  display_name: string;
+}
+
 export type SessionStatus = 
   | "Created"
   | "Connecting" 
@@ -53,6 +61,7 @@ export interface SessionContextData {
   threads: Thread[];
   loadModules: () => Promise<void>;
   loadThreads: () => Promise<void>;
+  searchSymbols: (pattern: string, limit?: number) => Promise<Symbol[]>;
 }
 
 export const SessionContext = createContext<SessionContextData | null>(null);
