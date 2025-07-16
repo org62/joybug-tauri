@@ -319,6 +319,10 @@ pub fn run_debug_session(
                         info!("Received call stack with {} frames", frames.len());
                         true
                     }
+                    DebuggerResponse::ResolvedSymbolList { symbols } => {
+                        info!("Received resolved symbol list with {} symbols", symbols.len());
+                        true
+                    }
                 }
             },
         )

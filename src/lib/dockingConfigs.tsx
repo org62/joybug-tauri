@@ -31,6 +31,10 @@ export const DebuggerDockingConfig: DockingConfig = {
               tabs: [{ id: "threads" }],
               activeId: "threads",
             },
+            {
+              tabs: [{ id: "symbols" }],
+              activeId: "symbols",
+            },
           ],
         },
         {
@@ -60,6 +64,7 @@ export const DebuggerDockingConfig: DockingConfig = {
     modules: { id: "modules", title: "Modules", content: <div>Modules placeholder</div> },
     threads: { id: "threads", title: "Threads", content: <div>Threads placeholder</div> },
     callstack: { id: "callstack", title: "Call Stack", content: <div>Call Stack placeholder</div> },
+    symbols: { id: "symbols", title: "Symbols", content: <div>Symbols placeholder</div> },
   } as { [key: string]: TabData },
   tabContentMap: {
     registers: <StaticRegisterView context={mockContext} />,

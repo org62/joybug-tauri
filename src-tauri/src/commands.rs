@@ -499,6 +499,72 @@ pub fn get_session_threads(
     }
 }
 
+#[tauri::command]
+pub fn search_session_symbols(
+    session_id: String,
+    pattern: String,
+    limit: Option<usize>,
+    session_states: State<'_, SessionStatesMap>,
+) -> Result<Vec<SymbolData>> {
+    let sessions = session_states.lock().unwrap();
+    let limit = limit.unwrap_or(30);
+    
+    if let Some(session_arc) = sessions.get(&session_id) {
+        let session = session_arc.lock().unwrap();
+        
+        if let Some(aux_client) = &session.aux_client {
+            // Use the new FindSymbol request to search across all modules
+            let mut client = aux_client.lock().unwrap();
+            let req = joybug2::protocol::DebuggerRequest::FindSymbol { 
+                symbol_name: pattern.clone(),
+                max_results: limit,
+            };
+            
+            match client.send_and_receive(&req) {
+                Ok(joybug2::protocol::DebuggerResponse::ResolvedSymbolList { symbols: resolved_symbols }) => {
+                    // Convert ResolvedSymbol to SymbolData
+                    let symbols: Vec<SymbolData> = resolved_symbols.iter().map(|resolved_symbol| {
+                        // Extract just the symbol name from the full "module!symbol" format
+                        let symbol_name = if let Some(pos) = resolved_symbol.name.find('!') {
+                            resolved_symbol.name[pos + 1..].to_string()
+                        } else {
+                            resolved_symbol.name.clone()
+                        };
+                        
+                        SymbolData {
+                            name: symbol_name,
+                            module_name: resolved_symbol.module_name.clone(),
+                            rva: resolved_symbol.rva,
+                            va: format!("0x{:X}", resolved_symbol.va),
+                            display_name: resolved_symbol.name.clone(), // Use the full name which is already "module!symbol"
+                        }
+                    }).collect();
+                    
+                    info!("Retrieved {} symbols matching '{}' for session {}", symbols.len(), pattern, session_id);
+                    Ok(symbols)
+                }
+                Ok(joybug2::protocol::DebuggerResponse::Error { message }) => {
+                    error!("Failed to find symbols for pattern '{}': {}", pattern, message);
+                    Err(Error::InternalCommunication(format!("Symbol search failed: {}", message)))
+                }
+                Ok(_) => {
+                    let error_msg = "Unexpected response for FindSymbol request";
+                    error!("{}", error_msg);
+                    Err(Error::InternalCommunication(error_msg.to_string()))
+                }
+                Err(e) => {
+                    error!("Failed to communicate with debug client for symbol search: {}", e);
+                    Err(Error::InternalCommunication(format!("Communication failed: {}", e)))
+                }
+            }
+        } else {
+            Err(Error::InternalCommunication("Auxiliary client not available".to_string()))
+        }
+    } else {
+        Err(Error::SessionNotFound(session_id))
+    }
+}
+
 
 
 // Data structures for frontend communication
@@ -524,6 +590,15 @@ pub struct CallStackData {
     pub stack_pointer: String,
     pub frame_pointer: String,
     pub symbol_info: Option<String>,
+}
+
+#[derive(serde::Serialize)]
+pub struct SymbolData {
+    pub name: String,
+    pub module_name: String,
+    pub rva: u32,
+    pub va: String, // Virtual address (base_address + rva)
+    pub display_name: String, // Format: "module!symbol_name"
 }
 
 #[tauri::command]
