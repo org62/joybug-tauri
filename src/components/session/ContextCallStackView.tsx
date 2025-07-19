@@ -46,6 +46,13 @@ export function ContextCallStackView() {
     }
   }, [sessionData?.session?.status, sessionData?.session?.current_event]);
 
+  // Fetch call stack when component first mounts if session is already paused
+  useEffect(() => {
+    if (sessionData?.session?.status === 'Paused' && sessionData?.session?.id) {
+      fetchCallStack();
+    }
+  }, [sessionData?.session?.id]); // Run when session ID is available
+
   // Track if component is visible (mounted)
   useEffect(() => {
     isOpenRef.current = true;
