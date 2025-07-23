@@ -18,7 +18,6 @@ interface AssemblyViewProps {
 
 export function AssemblyView({ sessionId, address }: AssemblyViewProps) {
   const [instructions, setInstructions] = useState<Instruction[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [lastFetchedAddress, setLastFetchedAddress] = useState<number | null>(null);
 
@@ -26,7 +25,6 @@ export function AssemblyView({ sessionId, address }: AssemblyViewProps) {
     const fetchDisassembly = async () => {
       if (!sessionId || !address || address === lastFetchedAddress) return;
 
-      setIsLoading(true);
       setError(null);
 
       try {
@@ -44,7 +42,6 @@ export function AssemblyView({ sessionId, address }: AssemblyViewProps) {
         toast.error(`Failed to fetch disassembly: ${errorMessage}`);
         setError(errorMessage);
       } finally {
-        setIsLoading(false);
       }
     };
 

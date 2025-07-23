@@ -1,6 +1,5 @@
 import { useSessionContext } from '@/contexts/SessionContext';
 import { AssemblyView } from '@/components/AssemblyView';
-import { AlertCircle } from 'lucide-react';
 
 export const ContextAssemblyView = () => {
   const sessionData = useSessionContext();
