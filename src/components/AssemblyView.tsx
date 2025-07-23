@@ -12,18 +12,19 @@ interface Instruction {
 }
 
 interface AssemblyViewProps {
-  sessionId: string;
-  address: number;
+  sessionId?: string;
+  address?: number;
 }
 
 export function AssemblyView({ sessionId, address }: AssemblyViewProps) {
   const [instructions, setInstructions] = useState<Instruction[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [lastFetchedAddress, setLastFetchedAddress] = useState<number | null>(null);
 
   useEffect(() => {
     const fetchDisassembly = async () => {
-      if (!sessionId || !address) return;
+      if (!sessionId || !address || address === lastFetchedAddress) return;
 
       setIsLoading(true);
       setError(null);
@@ -32,9 +33,10 @@ export function AssemblyView({ sessionId, address }: AssemblyViewProps) {
         const result = await invoke<Instruction[]>("get_disassembly", {
           sessionId,
           address,
-          count: 0x100
+          count: 0x10
         });
         setInstructions(result);
+        setLastFetchedAddress(address);
       } catch (err) {
         const errorMessage =
           err instanceof Error ? err.message : String(err);
@@ -47,14 +49,14 @@ export function AssemblyView({ sessionId, address }: AssemblyViewProps) {
     };
 
     fetchDisassembly();
-  }, [sessionId, address]);
+  }, [sessionId, address, lastFetchedAddress]);
 
-  if (isLoading) {
+  if (!sessionId || !address) {
     return (
-      <div className="flex items-center justify-center h-full">
-        <div className="flex items-center">
-          <div className="animate-spin h-6 w-6 border-2 border-current border-t-transparent rounded-full" />
-          <span className="ml-2">Loading disassembly...</span>
+      <div className="flex flex-col items-center justify-center h-full text-muted-foreground p-4">
+        <div className="text-center">
+          <p className="text-base font-medium">No disassembly available</p>
+          <p className="text-sm mt-1">Address information will appear here when debugging</p>
         </div>
       </div>
     );

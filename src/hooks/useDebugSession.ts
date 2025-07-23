@@ -7,7 +7,8 @@ import { DebugSession, Module, Thread, Symbol } from '@/contexts/SessionContext'
 export function useDebugSession(sessionId: string | undefined) {
   const [session, setSession] = useState<DebugSession | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [isStepping, setIsStepping] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [isSteppingIn, setIsSteppingIn] = useState(false);
   const [isStopping, setIsStopping] = useState(false);
   const [modules, setModules] = useState<Module[]>([]);
   const [threads, setThreads] = useState<Thread[]>([]);
@@ -27,7 +28,9 @@ export function useDebugSession(sessionId: string | undefined) {
     try {
       return await invoke<Module[]>("get_session_modules", { sessionId });
     } catch (error) {
-      toast.error(`Failed to load modules: ${error}`);
+      const errorMessage = `Failed to load modules: ${error}`;
+      toast.error(errorMessage);
+      console.error(errorMessage);
       return [];
     }
   }, [sessionId]);
@@ -37,7 +40,9 @@ export function useDebugSession(sessionId: string | undefined) {
     try {
       return await invoke<Thread[]>("get_session_threads", { sessionId });
     } catch (error) {
-      toast.error(`Failed to load threads: ${error}`);
+      const errorMessage = `Failed to load threads: ${error}`;
+      toast.error(errorMessage);
+      console.error(errorMessage);
       return [];
     }
   }, [sessionId]);
@@ -51,7 +56,9 @@ export function useDebugSession(sessionId: string | undefined) {
         limit: limit || 30 
       });
     } catch (error) {
-      toast.error(`Failed to search symbols: ${error}`);
+      const errorMessage = `Failed to search symbols: ${error}`;
+      toast.error(errorMessage);
+      console.error(errorMessage);
       return [];
     }
   }, [sessionId]);
@@ -62,7 +69,9 @@ export function useDebugSession(sessionId: string | undefined) {
       const result = await invoke<DebugSession>("get_debug_session", { sessionId });
       setSession(result);
     } catch (error) {
-      toast.error(`Failed to load session: ${error}`);
+      const errorMessage = `Failed to load session: ${error}`;
+      toast.error(errorMessage);
+      console.error(errorMessage);
       setSession(null);
     } finally {
       setIsLoading(false);
@@ -119,16 +128,33 @@ export function useDebugSession(sessionId: string | undefined) {
     };
   }, [session, loadModules, loadThreads]);
 
-  const handleStep = useCallback(async () => {
+  const handleGo = useCallback(async () => {
     if (!sessionId || !canStep) return;
-    setIsStepping(true);
+    setIsProcessing(true);
     try {
       await invoke("step_debug_session", { sessionId });
       // The session-updated event will refresh the state
     } catch (error) {
-      toast.error(`Failed to step session: ${error}`);
+      const errorMessage = `Failed to step session: ${error}`;
+      toast.error(errorMessage);
+      console.error(errorMessage);
     } finally {
-      setIsStepping(false);
+      setIsProcessing(false);
+    }
+  }, [sessionId, canStep]);
+
+  const handleStepIn = useCallback(async () => {
+    if (!sessionId || !canStep) return;
+    setIsSteppingIn(true);
+    try {
+      await invoke("step_in_debug_session", { sessionId });
+      // The session-updated event will refresh the state
+    } catch (error) {
+      const errorMessage = `Failed to step in session: ${error}`;
+      toast.error(errorMessage);
+      console.error(errorMessage);
+    } finally {
+      setIsSteppingIn(false);
     }
   }, [sessionId, canStep]);
 
@@ -137,9 +163,10 @@ export function useDebugSession(sessionId: string | undefined) {
     try {
       await invoke("start_debug_session", { sessionId });
       toast.success("Debug session started");
-      // The session-updated event will refresh the state
     } catch (error) {
-      toast.error(`Failed to start session: ${error}`);
+      const errorMessage = `Failed to start session: ${error}`;
+      toast.error(errorMessage);
+      console.error(errorMessage);
     }
   }, [sessionId, canStart]);
 
@@ -149,9 +176,10 @@ export function useDebugSession(sessionId: string | undefined) {
     try {
       await invoke("stop_debug_session", { sessionId });
       toast.success("Debug session stopped");
-      // The session-updated event will refresh the state
     } catch (error) {
-      toast.error(`Failed to stop session: ${error}`);
+      const errorMessage = `Failed to stop session: ${error}`;
+      toast.error(errorMessage);
+      console.error(errorMessage);
     } finally {
       setIsStopping(false);
     }
@@ -160,14 +188,16 @@ export function useDebugSession(sessionId: string | undefined) {
   return {
     session,
     isLoading,
-    isStepping,
+    isProcessing,
+    isSteppingIn,
     isStopping,
     modules,
     threads,
     loadModules,
     loadThreads,
     searchSymbols,
-    handleStep,
+    handleGo,
+    handleStepIn,
     handleStop,
     handleStart,
     canStep,

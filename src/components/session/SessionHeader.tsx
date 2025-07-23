@@ -6,9 +6,11 @@ import { DebugSession, SessionStatus } from '@/contexts/SessionContext';
 
 interface SessionHeaderProps {
   session: DebugSession;
-  isStepping: boolean;
+  isProcessing: boolean;
+  isSteppingIn: boolean;
   isStopping: boolean;
-  handleStep: () => void;
+  handleGo: () => void;
+  handleStepIn: () => void;
   handleStop: () => void;
   handleStart: () => void;
   canStep: boolean;
@@ -20,9 +22,11 @@ interface SessionHeaderProps {
 
 export const SessionHeader: React.FC<SessionHeaderProps> = ({
   session,
-  isStepping,
+  isProcessing,
+  isSteppingIn,
   isStopping,
-  handleStep,
+  handleGo,
+  handleStepIn,
   handleStop,
   handleStart,
   canStep,
@@ -59,13 +63,24 @@ export const SessionHeader: React.FC<SessionHeaderProps> = ({
         )}
         {canStep && (
           <Button
-            onClick={handleStep}
-            disabled={isStepping}
+            onClick={handleGo}
+            disabled={isProcessing}
             size="sm"
             variant="default"
           >
             <ChevronRight className="h-4 w-4 mr-2" />
-            {isStepping ? "Stepping..." : "Step (F8)"}
+            {isProcessing ? "Processing..." : "Go (F8)"}
+          </Button>
+        )}
+        {canStep && (
+          <Button
+            onClick={handleStepIn}
+            disabled={isSteppingIn}
+            size="sm"
+            variant="default"
+          >
+            <ChevronRight className="h-4 w-4 mr-2" />
+            {isSteppingIn ? "Stepping..." : "Step In (F7)"}
           </Button>
         )}
         

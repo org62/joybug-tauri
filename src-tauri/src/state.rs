@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{mpsc, Arc, Mutex};
 use joybug2::protocol_io::DebugClient;
+use crate::session::StepCommand;
 
 // Serializable snapshot of session state for frontend communication
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -90,8 +91,8 @@ pub struct SessionState {
     pub threads: Vec<joybug2::protocol_io::ThreadInfo>,
     pub current_event: Option<joybug2::protocol_io::DebugEvent>,
     pub current_context: Option<SerializableThreadContext>,
-    pub step_sender: Option<mpsc::Sender<bool>>, // Send true to continue, false to stop
-    pub step_receiver: Option<mpsc::Receiver<bool>>,
+    pub step_sender: Option<mpsc::Sender<StepCommand>>, // Send true to continue, false to stop
+    pub step_receiver: Option<mpsc::Receiver<StepCommand>>,
     pub debug_result: Option<Result<(), String>>, // Track if debug session succeeded or failed
     
     // Auxiliary client for one-off commands

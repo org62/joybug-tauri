@@ -3,6 +3,14 @@ use crate::state::{SessionState, SessionStatus};
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter};
 use tracing::{error, info, warn};
+use joybug2::protocol::request_response::StepKind;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StepCommand {
+    Go,
+    StepIn,
+    Stop,
+}
 
 /// Updates session state (modules and threads) based on debug events
 fn update_session_from_event(state: &mut SessionState, event: &joybug2::protocol_io::DebugEvent) {
@@ -115,218 +123,41 @@ pub fn run_debug_session(
         state.step_receiver.take().unwrap()
     };
 
-    // Launch process with debug loop
-    client
-        .launch(
-            launch_command.clone(),
-            &mut (),
-            |_client, _state, resp| {
-                use joybug2::protocol_io::DebuggerResponse;
+    // Launch process and manually manage the debug loop
+    let launch_req = joybug2::protocol::DebuggerRequest::Launch { command: launch_command.clone() };
+    if let Err(e) = client.send(&launch_req) {
+        let mut state = session_state.lock().unwrap();
+        state.status = SessionStatus::Error(e.to_string());
+        emit_session_event(&session_state, app_handle.as_ref().unwrap());
+        return Err(Error::DebugLoop(e.to_string()));
+    }
 
-                match resp {
-                    DebuggerResponse::Event { event } => {
-                        info!("Debug event: {}", event);
-
-                        if let Some(ref handle) = app_handle {
-                            crate::ui_logger::log_debug(
-                                handle,
-                                &format!("Received debug event: {}", event),
-                                Some(session_id.clone()),
-                            );
-
-                            // Send toast notification to the frontend
-                            let toast_message = match &event {
-                                joybug2::protocol_io::DebugEvent::DllLoaded { dll_name, .. } => {
-                                    format!("DLL Loaded: {}", dll_name.as_deref().unwrap_or("Unknown"))
-                                }
-                                _ => {
-                                    let event_info = crate::events::debug_event_to_info(&event);
-                                    format!("Received: {}", event_info.event_type)
-                                }
-                            };
-                            crate::ui_logger::toast_info(handle, &toast_message);
-                        }
-
-                        // Store current event in session state and populate modules/threads
-                        let aux_client_arc = {
-                            let mut state = session_state.lock().unwrap();
-                            state.current_event = Some(event.clone());
-                            state.events.push(event.clone());
-                            state.status = SessionStatus::Paused; // Always pause on every event
-                            
-                            // Clear previous context before fetching new one
-                            state.current_context = None;
-
-                            // Populate modules and threads from events
-                            update_session_from_event(&mut state, &event);
-                            
-                            // Clone the Arc, not the client itself
-                            state.aux_client.clone()
-                        };
-                        
-                        // Fetch thread context for paused events that have a valid thread
-                        if let Some(aux_client_mutex) = aux_client_arc {
-                            let pid = event.pid();
-                            let tid = event.tid();
-
-                            if pid != 0 && tid != 0 {
-                                let req = joybug2::protocol::DebuggerRequest::GetThreadContext { pid, tid };
-                                let mut aux_client = aux_client_mutex.lock().unwrap();
-                                
-                                match aux_client.send_and_receive(&req) {
-                                    Ok(joybug2::protocol::DebuggerResponse::ThreadContext { context: raw_context }) => {
-                                        // Lock state again to update the context
-                                        let mut state = session_state.lock().unwrap();
-                                        state.current_context = Some(crate::events::convert_raw_context_to_serializable(raw_context));
-                                    }
-                                    Ok(other_resp) => {
-                                        warn!("Expected ThreadContext response, got {:?}", other_resp);
-                                    }
-                                    Err(e) => {
-                                        error!("Failed to get thread context: {}", e);
-                                    }
-                                }
-                            }
-                        }
-
-                        // Emit session update for new debug event
-                        if let Some(ref handle) = app_handle {
-                            emit_session_event(&session_state, handle);
-                        }
-
-                        info!("Debug event received, waiting for user command");
-
-                        // Wait for user input to continue or stop
-                        match step_receiver.recv() {
-                            Ok(should_continue) => {
-                                info!("Received step signal: {}", should_continue);
-
-                                if should_continue {
-                                    // User chose to continue - update status to Running
-                                    {
-                                        let mut state = session_state.lock().unwrap();
-                                        state.status = SessionStatus::Running;
-                                        state.current_event = None;
-                                    }
-                                    
-                                    // Emit session update for Running status
-                                    if let Some(ref handle) = app_handle {
-                                        emit_session_event(&session_state, handle);
-                                    }
-                                } else {
-                                    // User chose to stop - update status to Finished
-                                    {
-                                        let mut state = session_state.lock().unwrap();
-                                        state.status = SessionStatus::Finished;
-                                        state.current_event = None;
-                                    }
-                                    
-                                    // Emit final session update
-                                    if let Some(ref handle) = app_handle {
-                                        emit_session_event(&session_state, handle);
-                                    }
-                                }
-
-                                should_continue
-                            }
-                            Err(_) => {
-                                warn!("Debug session {} receiver disconnected", session_id);
-                                // Update session status to finished when disconnected
-                                {
-                                    let mut state = session_state.lock().unwrap();
-                                    state.status = SessionStatus::Finished;
-                                }
-                                
-                                // Emit final session update
-                                if let Some(ref handle) = app_handle {
-                                    emit_session_event(&session_state, handle);
-                                }
-                                
-                                false // Stop debug loop
-                            }
-                        }
-                    }
-                    DebuggerResponse::Ack => {
-                        info!("Received ACK");
-                        true
-                    }
-                    DebuggerResponse::Error { message } => {
-                        error!("Debug server error: {}", message);
-                        // Update session status to error
-                        {
-                            let mut state = session_state.lock().unwrap();
-                            state.status = SessionStatus::Error(message.clone());
-                        }
-                        
-                        // Emit session update for error
-                        if let Some(ref handle) = app_handle {
-                            emit_session_event(&session_state, handle);
-                        }
-                        
-                        false // Stop debug loop on error
-                    }
-                    DebuggerResponse::ProcessList { processes } => {
-                        info!("Process list: {:?}", processes);
-                        true
-                    }
-                    DebuggerResponse::ModuleList { modules } => {
-                        {
-                            let mut state = session_state.lock().unwrap();
-                            state.modules.extend(modules);
-                        }
-                        true
-                    }
-                    DebuggerResponse::ThreadList { threads } => {
-                        {
-                            let mut state = session_state.lock().unwrap();
-                            state.threads.extend(threads);
-                        }
-                        true
-                    }
-                    DebuggerResponse::MemoryData { .. } => {
-                        info!("Received memory data");
-                        true
-                    }
-                    DebuggerResponse::WriteAck => {
-                        info!("Received write acknowledgment");
-                        true
-                    }
-                    DebuggerResponse::ThreadContext { .. } => {
-                        info!("Received thread context");
-                        true
-                    }
-                    DebuggerResponse::SetContextAck => {
-                        info!("Received set context acknowledgment");
-                        true
-                    }
-                    DebuggerResponse::Symbol { .. } => {
-                        info!("Received symbol");
-                        true
-                    }
-                    DebuggerResponse::SymbolList { .. } => {
-                        info!("Received symbol list");
-                        true
-                    }
-                    DebuggerResponse::AddressSymbol { .. } => {
-                        info!("Received address symbol");
-                        true
-                    }
-                    DebuggerResponse::Instructions { .. } => {
-                        info!("Received instructions");
-                        true
-                    }
-                    DebuggerResponse::CallStack { frames } => {
-                        info!("Received call stack with {} frames", frames.len());
-                        true
-                    }
-                    DebuggerResponse::ResolvedSymbolList { symbols } => {
-                        info!("Received resolved symbol list with {} symbols", symbols.len());
-                        true
-                    }
+    loop {
+        match client.receive() {
+            Ok(resp) => {
+                let should_break = handle_debugger_response(
+                    resp,
+                    &session_state,
+                    &step_receiver,
+                    app_handle.as_ref(),
+                    &mut client,
+                );
+                if should_break {
+                    break;
                 }
-            },
-        )
-        .map_err(|e| Error::DebugLoop(e.to_string()))?;
+            }
+            Err(e) => {
+                error!("Failed to receive from debug server: {}", e);
+                let mut state = session_state.lock().unwrap();
+                state.status = SessionStatus::Error(e.to_string());
+                if let Some(handle) = app_handle.as_ref() {
+                    emit_session_event(&session_state, handle);
+                }
+                break;
+            }
+        }
+    }
+
 
     // Mark session as finished
     {
@@ -343,6 +174,116 @@ pub fn run_debug_session(
     info!("Debug session {} finished", session_id);
     Ok(())
 }
+
+fn handle_debugger_response(
+    resp: joybug2::protocol::DebuggerResponse,
+    session_state: &Arc<Mutex<SessionState>>,
+    step_receiver: &std::sync::mpsc::Receiver<StepCommand>,
+    app_handle: Option<&AppHandle>,
+    client: &mut joybug2::protocol_io::DebugClient,
+) -> bool {
+    use joybug2::protocol::{DebuggerRequest, DebuggerResponse};
+
+    match resp {
+        DebuggerResponse::Event { event } => {
+            info!("Debug event: {}", event);
+
+            if let Some(handle) = app_handle {
+                crate::ui_logger::log_debug(
+                    handle,
+                    &format!("Received debug event: {}", event),
+                    Some(session_state.lock().unwrap().id.clone()),
+                );
+            }
+
+            let aux_client_arc = {
+                let mut state = session_state.lock().unwrap();
+                state.current_event = Some(event.clone());
+                state.events.push(event.clone());
+                state.status = SessionStatus::Paused;
+                state.current_context = None;
+                update_session_from_event(&mut state, &event);
+                state.aux_client.clone()
+            };
+
+            if let Some(aux_client_mutex) = aux_client_arc {
+                let pid = event.pid();
+                let tid = event.tid();
+
+                if pid != 0 && tid != 0 {
+                    let req = DebuggerRequest::GetThreadContext { pid, tid };
+                    if let Ok(mut aux_client) = aux_client_mutex.lock() {
+                        match aux_client.send_and_receive(&req) {
+                            Ok(DebuggerResponse::ThreadContext { context: raw_context }) => {
+                                let mut state = session_state.lock().unwrap();
+                                state.current_context = Some(crate::events::convert_raw_context_to_serializable(raw_context));
+                            }
+                            Ok(other_resp) => warn!("Expected ThreadContext response, got {:?}", other_resp),
+                            Err(e) => error!("Failed to get thread context: {}", e),
+                        }
+                    }
+                }
+            }
+
+            if let Some(handle) = app_handle {
+                emit_session_event(session_state, handle);
+            }
+
+            info!("Debug event received, waiting for user command");
+
+            match step_receiver.recv() {
+                Ok(command) => {
+                    info!("Received step command: {:?}", command);
+                    let pid = event.pid();
+                    let tid = event.tid();
+
+                    let maybe_req = match command {
+                        StepCommand::Go => Some(DebuggerRequest::Continue { pid, tid }),
+                        StepCommand::StepIn => Some(DebuggerRequest::Step { pid, tid, kind: StepKind::Into }),
+                        StepCommand::Stop => None,
+                    };
+
+                    if let Some(req) = maybe_req {
+                        if pid != 0 && tid != 0 {
+                             {
+                                let mut state = session_state.lock().unwrap();
+                                state.status = SessionStatus::Running;
+                            }
+                            if let Some(handle) = app_handle {
+                                emit_session_event(session_state, handle);
+                            }
+                            if let Err(e) = client.send(&req) {
+                                error!("Failed to send command to debug server: {}", e);
+                                return true; // break loop
+                            }
+                        }
+                    } else {
+                        // Stop command
+                        return true; // break loop
+                    }
+                }
+                Err(_) => {
+                    warn!("Debug session receiver disconnected");
+                    return true; // break loop
+                }
+            }
+        }
+        DebuggerResponse::Error { message } => {
+            error!("Debug server error: {}", message);
+            let mut state = session_state.lock().unwrap();
+            state.status = SessionStatus::Error(message.clone());
+            if let Some(handle) = app_handle {
+                emit_session_event(session_state, handle);
+            }
+            return true; // break loop on error
+        }
+        _ => {
+            // Handle other responses if needed, but don't break loop
+        }
+    }
+    false // continue loop
+}
+
 
 // Helper function to emit session-updated events
 fn emit_session_event(

@@ -14,14 +14,12 @@ interface CallStackFrame {
 export function ContextCallStackView() {
   const sessionData = useSessionContext();
   const [callStack, setCallStack] = useState<CallStackFrame[]>([]);
-  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const isOpenRef = useRef(false);
 
   const fetchCallStack = async () => {
     if (!sessionData?.session?.id) return;
     
-    setLoading(true);
     setError(null);
     
     try {
@@ -35,7 +33,6 @@ export function ContextCallStackView() {
       setError(errorMessage);
       setCallStack([]); // Clear old call stack data on error
     } finally {
-      setLoading(false);
     }
   };
 
@@ -79,19 +76,7 @@ export function ContextCallStackView() {
 
   return (
     <div className="h-full overflow-auto">
-      {error || sessionData.session.status !== 'Paused' ? (
-        <div className="flex flex-col items-center justify-center h-full text-muted-foreground p-4">
-          <div className="text-center">
-            <AlertCircle className="h-12 w-12 mx-auto mb-4 opacity-50" />
-            <p className="text-base font-medium">
-              {error || "Session must be paused to fetch call stack"}
-            </p>
-            {sessionData.session.status === 'Paused' && error && (
-              <p className="text-sm mt-1">Call stack will retry automatically on next step</p>
-            )}
-          </div>
-        </div>
-      ) : callStack.length > 0 ? (
+      {callStack.length > 0 ? (
         <div className="space-y-1">
           {callStack.map((frame) => (
             <div 
@@ -114,16 +99,28 @@ export function ContextCallStackView() {
             </div>
           ))}
         </div>
+      ) : error ? (
+        <div className="flex flex-col items-center justify-center h-full text-muted-foreground p-4">
+          <div className="text-center">
+            <AlertCircle className="h-12 w-12 mx-auto mb-4 opacity-50" />
+            <p className="text-base font-medium">{error}</p>
+            <p className="text-sm mt-1">Call stack will retry automatically on next step</p>
+          </div>
+        </div>
+      ) : sessionData.session.status !== 'Paused' ? (
+        <div className="flex flex-col items-center justify-center h-full text-muted-foreground p-4">
+          <div className="text-center">
+            <AlertCircle className="h-12 w-12 mx-auto mb-4 opacity-50" />
+            <p className="text-base font-medium">Session must be paused to fetch call stack</p>
+          </div>
+        </div>
       ) : (
         <div className="flex flex-col items-center justify-center h-full text-muted-foreground p-4">
           <div className="text-center">
             <List className="h-12 w-12 mx-auto mb-4 opacity-50" />
             <p className="text-base font-medium">No call stack data available</p>
-            {sessionData.session.status === 'Paused' && !loading && (
+            {sessionData.session.status === 'Paused' && (
               <p className="text-sm mt-1">Call stack will be fetched automatically</p>
-            )}
-            {loading && (
-              <p className="text-sm mt-1">Loading call stack...</p>
             )}
           </div>
         </div>

@@ -24,14 +24,16 @@ export default function SessionDocked() {
   const {
     session,
     isLoading,
-    isStepping,
+    isProcessing,
+    isSteppingIn,
     isStopping,
     modules,
     threads,
     loadModules,
     loadThreads,
     searchSymbols,
-    handleStep,
+    handleGo,
+    handleStepIn,
     handleStop,
     handleStart,
     canStep,
@@ -42,10 +44,16 @@ export default function SessionDocked() {
   // Hotkey handlers
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'F7') {
+        event.preventDefault();
+        event.stopPropagation();
+        handleStepIn();
+        return;
+      }
       if (event.key === 'F8') {
         event.preventDefault();
         event.stopPropagation();
-        handleStep();
+        handleGo();
         return;
       }
       
@@ -90,7 +98,7 @@ export default function SessionDocked() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [handleStep]);
+  }, [handleGo, handleStepIn]);
 
   const contextValue = useMemo(() => ({
     session,
@@ -225,9 +233,11 @@ export default function SessionDocked() {
       >
         <SessionHeader
           session={session}
-          isStepping={isStepping}
+          isProcessing={isProcessing}
+          isSteppingIn={isSteppingIn}
           isStopping={isStopping}
-          handleStep={handleStep}
+          handleGo={handleGo}
+          handleStepIn={handleStepIn}
           handleStop={handleStop}
           handleStart={handleStart}
           canStep={canStep}

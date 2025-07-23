@@ -3,6 +3,7 @@ use crate::session::run_debug_session;
 use crate::state::{
     DebugSession, LogEntry, LogsState, SessionState, SessionStatesMap, SessionStatus,
 };
+use crate::session::StepCommand;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use tauri::{State, Emitter};
@@ -274,8 +275,44 @@ pub fn step_debug_session(
 
     // Send step signal - let session thread handle status updates
     step_sender
-        .send(true)
+        .send(StepCommand::Go)
         .map_err(|e| Error::InternalCommunication(format!("Failed to send step signal: {}", e)))?;
+
+    Ok(())
+}
+
+#[tauri::command]
+pub fn step_in_debug_session(
+    session_id: String,
+    session_states: State<'_, SessionStatesMap>,
+) -> Result<()> {
+    let session_state = {
+        let states = session_states.lock().unwrap();
+        states
+            .get(&session_id)
+            .cloned()
+            .ok_or_else(|| Error::SessionNotFound(session_id.clone()))?
+    };
+
+    let step_sender = {
+        let state = session_state.lock().unwrap();
+        
+        if !matches!(state.status, SessionStatus::Paused) {
+            return Err(Error::InvalidSessionState(
+                "Session must be paused to step in".to_string()
+            ));
+        }
+        
+        state
+            .step_sender
+            .as_ref()
+            .ok_or_else(|| Error::InternalCommunication("Session step sender not available".to_string()))?
+            .clone()
+    };
+
+    step_sender
+        .send(StepCommand::StepIn)
+        .map_err(|e| Error::InternalCommunication(format!("Failed to send step in signal: {}", e)))?;
 
     Ok(())
 }
@@ -287,9 +324,11 @@ pub fn stop_debug_session(
 ) -> Result<()> {
     if let Some(session_state) = session_states.lock().unwrap().get(&session_id) {
         let mut state = session_state.lock().unwrap();
-        if let Some(_sender) = state.step_sender.take() {
+        if let Some(sender) = state.step_sender.take() {
             // Dropping sender will cause recv() to fail in the debug loop, stopping it
             info!("Stopping session by dropping the step_sender.");
+            // Send stop command to ensure immediate exit if loop is waiting
+            let _ = sender.send(StepCommand::Stop);
         }
         // Also handle the case where a session is connecting but not yet in the debug loop
         if matches!(state.status, SessionStatus::Connecting) {
