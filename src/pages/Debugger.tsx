@@ -328,12 +328,12 @@ export default function Debugger() {
   };
 
   const canStart = (status: SessionStatus) => {
-    if (typeof status !== "string") return false;
+    if (typeof status !== "string") return true; // Allow to retry on error
     return ["Created", "Finished"].includes(status);
   };
 
   const canEdit = (status: SessionStatus) => {
-    if (typeof status !== "string") return false;
+    if (typeof status !== "string") return true; // Allow to edit on error
     return ["Created", "Finished"].includes(status);
   };
 
@@ -352,7 +352,7 @@ export default function Debugger() {
   };
 
   const canDelete = (status: SessionStatus) => {
-    if (typeof status !== "string") return false;
+    if (typeof status !== "string") return true; // Allow to delete on error
     return ["Created", "Finished"].includes(status);
   };
 

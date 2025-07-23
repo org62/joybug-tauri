@@ -40,6 +40,9 @@ export function ContextCallStackView() {
   useEffect(() => {
     if (sessionData?.session?.status === 'Paused' && isOpenRef.current) {
       fetchCallStack();
+    } else if (sessionData?.session?.status !== 'Paused') {
+      setCallStack([]);
+      setError(null);
     }
   }, [sessionData?.session?.status, sessionData?.session?.current_event]);
 

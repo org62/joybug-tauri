@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
 import { ScrollArea } from "./ui/scroll-area";
+import { Cpu } from "lucide-react";
 
 interface Instruction {
   address: string;
@@ -52,6 +53,7 @@ export function AssemblyView({ sessionId, address }: AssemblyViewProps) {
     return (
       <div className="flex flex-col items-center justify-center h-full text-muted-foreground p-4">
         <div className="text-center">
+          <Cpu className="h-12 w-12 mx-auto mb-4 opacity-50" />
           <p className="text-base font-medium">No disassembly available</p>
           <p className="text-sm mt-1">Address information will appear here when debugging</p>
         </div>
