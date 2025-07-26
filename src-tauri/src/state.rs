@@ -127,7 +127,6 @@ impl SessionStateUI {
 
     // Reset the state of a session to be ready for a new run
     pub fn reset(&mut self) {
-        self.status = SessionStatusUI::Created;
         self.events.clear();
         self.modules.clear();
         self.threads.clear();

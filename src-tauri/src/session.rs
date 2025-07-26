@@ -76,7 +76,8 @@ fn update_session_from_event(state: &mut SessionStateUI, event: &joybug2::protoc
             // Process has exited, clear all modules and threads
             state.modules.clear();
             state.threads.clear();
-            info!("Process exited, cleared all modules and threads.");
+            state.status = SessionStatusUI::Finished;
+            info!("Process exited, session finished.");
         }
         _ => {
             // Other events don't affect modules/threads
@@ -162,7 +163,10 @@ pub fn run_debug_session(
     // Mark session as finished
     {
         let mut state = session_state.lock().unwrap();
-        state.status = SessionStatusUI::Finished;
+        if !matches!(state.status, SessionStatusUI::Error(_)) {
+            state.status = SessionStatusUI::Finished;
+            state.reset();
+        }
         state.current_event = None;
     }
 
@@ -194,6 +198,8 @@ fn handle_debugger_response(
                     &format!("Received debug event: {}", event),
                     Some(session_state.lock().unwrap().id.clone()),
                 );
+                // toast the event
+                crate::ui_logger::toast_info(handle, &format!("{}", event));
             }
 
             let aux_client_arc = {

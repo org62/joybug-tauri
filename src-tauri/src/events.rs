@@ -94,7 +94,30 @@ pub fn debug_event_to_info(event: &joybug2::protocol_io::DebugEvent) -> DebugEve
     use joybug2::protocol_io::DebugEvent;
 
     match event {
-        &DebugEvent::InitialBreakpoint { .. } | &DebugEvent::SingleShotBreakpoint { .. } => todo!(),
+        DebugEvent::InitialBreakpoint { pid, tid, address } => DebugEventInfo {
+            event_type: "InitialBreakpoint".to_string(),
+            process_id: *pid,
+            thread_id: *tid,
+            details: format!(
+                "Initial breakpoint hit: PID={}, TID={}, Address=0x{:X}",
+                pid, tid, address
+            ),
+            can_continue: true,
+            address: Some(*address),
+            context: None,
+        },
+        DebugEvent::SingleShotBreakpoint { pid, tid, address } => DebugEventInfo {
+            event_type: "SingleShotBreakpoint".to_string(),
+            process_id: *pid,
+            thread_id: *tid,
+            details: format!(
+                "Single shot breakpoint hit: PID={}, TID={}, Address=0x{:X}",
+                pid, tid, address
+            ),
+            can_continue: true,
+            address: Some(*address),
+            context: None,
+        },
         DebugEvent::ProcessCreated {
             pid,
             tid,
