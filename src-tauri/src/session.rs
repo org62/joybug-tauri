@@ -1,5 +1,5 @@
 use crate::error::{Error, Result};
-use crate::state::{SessionState, SessionStatus};
+use crate::state::{SessionStateUI, SessionStatusUI};
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter};
 use tracing::{error, info, warn};
@@ -13,7 +13,7 @@ pub enum StepCommand {
 }
 
 /// Updates session state (modules and threads) based on debug events
-fn update_session_from_event(state: &mut SessionState, event: &joybug2::protocol_io::DebugEvent) {
+fn update_session_from_event(state: &mut SessionStateUI, event: &joybug2::protocol_io::DebugEvent) {
     match event {
         joybug2::protocol_io::DebugEvent::DllLoaded { dll_name, base_of_dll, size_of_dll, .. } => {
             let module_name = dll_name.clone().unwrap_or_else(|| format!("Unknown_0x{:X}", base_of_dll));
@@ -85,7 +85,7 @@ fn update_session_from_event(state: &mut SessionState, event: &joybug2::protocol
 }
 
 pub fn run_debug_session(
-    session_state: Arc<Mutex<SessionState>>,
+    session_state: Arc<Mutex<SessionStateUI>>,
     app_handle: Option<AppHandle>,
 ) -> Result<()> {
     let (session_id, server_url, launch_command) = {
@@ -96,11 +96,11 @@ pub fn run_debug_session(
     info!("Starting debug session: {}", session_id);
 
     // Connect to debug server
-    let mut client = joybug2::protocol_io::DebugClient::connect(Some(&server_url))
+    let mut client = joybug2::protocol_io::DebugSession::new((), Some(&server_url))
         .map_err(|e| Error::ConnectionFailed(e.to_string()))?;
 
     // Connect auxiliary client
-    let aux_client = joybug2::protocol_io::DebugClient::connect(Some(&server_url))
+    let aux_client = joybug2::protocol_io::DebugSession::new((), Some(&server_url))
         .map_err(|e| Error::ConnectionFailed(e.to_string()))?;
 
     info!("Successfully connected to debug server");
@@ -108,7 +108,7 @@ pub fn run_debug_session(
     // Mark as successfully connected and store aux_client
     {
         let mut state = session_state.lock().unwrap();
-        state.status = SessionStatus::Connected;
+        state.status = SessionStatusUI::Connected;
         state.aux_client = Some(Arc::new(Mutex::new(aux_client)));
     }
 
@@ -127,7 +127,7 @@ pub fn run_debug_session(
     let launch_req = joybug2::protocol::DebuggerRequest::Launch { command: launch_command.clone() };
     if let Err(e) = client.send(&launch_req) {
         let mut state = session_state.lock().unwrap();
-        state.status = SessionStatus::Error(e.to_string());
+        state.status = SessionStatusUI::Error(e.to_string());
         emit_session_event(&session_state, app_handle.as_ref().unwrap());
         return Err(Error::DebugLoop(e.to_string()));
     }
@@ -149,7 +149,7 @@ pub fn run_debug_session(
             Err(e) => {
                 error!("Failed to receive from debug server: {}", e);
                 let mut state = session_state.lock().unwrap();
-                state.status = SessionStatus::Error(e.to_string());
+                state.status = SessionStatusUI::Error(e.to_string());
                 if let Some(handle) = app_handle.as_ref() {
                     emit_session_event(&session_state, handle);
                 }
@@ -162,7 +162,7 @@ pub fn run_debug_session(
     // Mark session as finished
     {
         let mut state = session_state.lock().unwrap();
-        state.status = SessionStatus::Finished;
+        state.status = SessionStatusUI::Finished;
         state.current_event = None;
     }
 
@@ -177,10 +177,10 @@ pub fn run_debug_session(
 
 fn handle_debugger_response(
     resp: joybug2::protocol::DebuggerResponse,
-    session_state: &Arc<Mutex<SessionState>>,
+    session_state: &Arc<Mutex<SessionStateUI>>,
     step_receiver: &std::sync::mpsc::Receiver<StepCommand>,
     app_handle: Option<&AppHandle>,
-    client: &mut joybug2::protocol_io::DebugClient,
+    client: &mut joybug2::protocol_io::DebugSession<()>,
 ) -> bool {
     use joybug2::protocol::{DebuggerRequest, DebuggerResponse};
 
@@ -200,7 +200,7 @@ fn handle_debugger_response(
                 let mut state = session_state.lock().unwrap();
                 state.current_event = Some(event.clone());
                 state.events.push(event.clone());
-                state.status = SessionStatus::Paused;
+                state.status = SessionStatusUI::Paused;
                 state.current_context = None;
                 update_session_from_event(&mut state, &event);
                 state.aux_client.clone()
@@ -247,7 +247,7 @@ fn handle_debugger_response(
                         if pid != 0 && tid != 0 {
                              {
                                 let mut state = session_state.lock().unwrap();
-                                state.status = SessionStatus::Running;
+                                state.status = SessionStatusUI::Running;
                             }
                             if let Some(handle) = app_handle {
                                 emit_session_event(session_state, handle);
@@ -271,7 +271,7 @@ fn handle_debugger_response(
         DebuggerResponse::Error { message } => {
             error!("Debug server error: {}", message);
             let mut state = session_state.lock().unwrap();
-            state.status = SessionStatus::Error(message.clone());
+            state.status = SessionStatusUI::Error(message.clone());
             if let Some(handle) = app_handle {
                 emit_session_event(session_state, handle);
             }
@@ -287,7 +287,7 @@ fn handle_debugger_response(
 
 // Helper function to emit session-updated events
 fn emit_session_event(
-    session_state: &Arc<Mutex<SessionState>>,
+    session_state: &Arc<Mutex<SessionStateUI>>,
     app_handle: &AppHandle,
 ) {
     // Create a DebugSession snapshot from SessionState

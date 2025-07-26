@@ -94,6 +94,7 @@ pub fn debug_event_to_info(event: &joybug2::protocol_io::DebugEvent) -> DebugEve
     use joybug2::protocol_io::DebugEvent;
 
     match event {
+        &DebugEvent::InitialBreakpoint { .. } | &DebugEvent::SingleShotBreakpoint { .. } => todo!(),
         DebugEvent::ProcessCreated {
             pid,
             tid,

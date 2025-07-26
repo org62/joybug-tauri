@@ -1,7 +1,7 @@
 use crate::error::{Error, Result};
 use crate::session::run_debug_session;
 use crate::state::{
-    DebugSession, LogEntry, LogsState, SessionState, SessionStatesMap, SessionStatus,
+    DebugSessionUI, LogEntry, LogsState, SessionStateUI, SessionStatesMap, SessionStatusUI,
 };
 use crate::session::StepCommand;
 use std::sync::{Arc, Mutex};
@@ -11,7 +11,7 @@ use tracing::{error, info};
 
 // Helper function to emit session-updated event
 fn emit_session_update(
-    session_state: &Arc<Mutex<SessionState>>,
+    session_state: &Arc<Mutex<SessionStateUI>>,
     app_handle: &tauri::AppHandle,
 ) {
     let debug_session = {
@@ -23,8 +23,6 @@ fn emit_session_update(
         error!("Failed to emit session-updated event: {}", e);
     }
 }
-
-
 
 // Tauri commands
 #[tauri::command]
@@ -53,7 +51,7 @@ pub fn create_debug_session(
     let session_id = format!("session_{}", chrono::Utc::now().timestamp_millis());
 
     // Create new session state
-    let session_state_arc = Arc::new(Mutex::new(SessionState::new(
+    let session_state_arc = Arc::new(Mutex::new(SessionStateUI::new(
         session_id.clone(),
         name,
         server_url,
@@ -105,7 +103,7 @@ pub fn update_debug_session(
         let mut state = session_state.lock().unwrap();
 
         // only allow editing for created or finished sessions
-        if !matches!(state.status, SessionStatus::Created | SessionStatus::Finished) {
+        if !matches!(state.status, SessionStatusUI::Created | SessionStatusUI::Finished) {
             return Err("Session can only be edited when in 'Created' or 'Finished' state.".to_string());
         }
 
@@ -137,10 +135,10 @@ pub fn update_debug_session(
 #[tauri::command]
 pub fn get_debug_sessions(
     session_states: State<'_, SessionStatesMap>,
-) -> Result<Vec<DebugSession>> {
+) -> Result<Vec<DebugSessionUI>> {
     let states = session_states.lock().unwrap();
     
-    let sessions: Vec<DebugSession> = states
+    let sessions: Vec<DebugSessionUI> = states
         .values()
         .map(|session_state| {
             let state = session_state.lock().unwrap();
@@ -155,7 +153,7 @@ pub fn get_debug_sessions(
 pub fn get_debug_session(
     session_id: String,
     session_states: State<'_, SessionStatesMap>,
-) -> Result<Option<DebugSession>> {
+) -> Result<Option<DebugSessionUI>> {
     let states = session_states.lock().unwrap();
     
     if let Some(session_state) = states.get(&session_id) {
@@ -183,7 +181,7 @@ pub fn start_debug_session(
     // Reset state if session is being restarted
     {
         let mut state = session_state.lock().unwrap();
-        if matches!(state.status, SessionStatus::Finished | SessionStatus::Error(_)) {
+        if matches!(state.status, SessionStatusUI::Finished | SessionStatusUI::Error(_)) {
             state.reset();
         }
     }
@@ -191,7 +189,7 @@ pub fn start_debug_session(
     // Update status to Connecting
     {
         let mut state = session_state.lock().unwrap();
-        state.status = SessionStatus::Connecting;
+        state.status = SessionStatusUI::Connecting;
     }
 
     // Emit session-updated event for the status change to Connecting
@@ -217,13 +215,13 @@ pub fn start_debug_session(
             let mut state = session_state_for_thread.lock().unwrap();
             match &result {
                 Ok(_) => {
-                    if !matches!(state.status, SessionStatus::Finished) {
-                        state.status = SessionStatus::Finished;
+                    if !matches!(state.status, SessionStatusUI::Finished) {
+                        state.status = SessionStatusUI::Finished;
                     }
                     info!("Debug session {} completed successfully", session_id_for_thread);
                 }
                 Err(e) => {
-                    state.status = SessionStatus::Error(e.to_string());
+                    state.status = SessionStatusUI::Error(e.to_string());
                     let error_message = format!("Debug session {} failed: {}", session_id_for_thread, e);
                     error!("{}", &error_message);
                     crate::ui_logger::log_error(
@@ -260,7 +258,7 @@ pub fn step_debug_session(
         let state = session_state.lock().unwrap();
         
         // Verify session can be stepped
-        if !matches!(state.status, SessionStatus::Paused) {
+        if !matches!(state.status, SessionStatusUI::Paused) {
             return Err(Error::InvalidSessionState(
                 "Session must be paused to step".to_string()
             ));
@@ -297,7 +295,7 @@ pub fn step_in_debug_session(
     let step_sender = {
         let state = session_state.lock().unwrap();
         
-        if !matches!(state.status, SessionStatus::Paused) {
+        if !matches!(state.status, SessionStatusUI::Paused) {
             return Err(Error::InvalidSessionState(
                 "Session must be paused to step in".to_string()
             ));
@@ -331,8 +329,8 @@ pub fn stop_debug_session(
             let _ = sender.send(StepCommand::Stop);
         }
         // Also handle the case where a session is connecting but not yet in the debug loop
-        if matches!(state.status, SessionStatus::Connecting) {
-            state.status = SessionStatus::Finished;
+        if matches!(state.status, SessionStatusUI::Connecting) {
+            state.status = SessionStatusUI::Finished;
         }
     }
     // Always return Ok, as the goal is to stop the session, and if it's not found, it's already "stopped"
@@ -400,7 +398,7 @@ pub fn get_disassembly(
         let state = session_state.lock().unwrap();
 
         let pid = match state.status {
-            SessionStatus::Paused => {
+            SessionStatusUI::Paused => {
                 if let Some(event) = &state.current_event {
                     event.pid()
                 } else {
@@ -657,7 +655,7 @@ pub fn get_session_callstack(
         let state = session_state.lock().unwrap();
 
         let (pid, tid) = match state.status {
-            SessionStatus::Paused => {
+            SessionStatusUI::Paused => {
                 if let Some(event) = &state.current_event {
                     (event.pid(), event.tid())
                 } else {
