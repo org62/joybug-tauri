@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{mpsc, Arc, Mutex};
-use crate::session::StepCommand;
+use crate::session::UICommand;
 
 // Serializable snapshot of session state for frontend communication
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -13,6 +13,9 @@ pub struct DebugSessionUI {
     pub status: SessionStatusUI,
     pub current_event: Option<DebugEventInfo>,
     pub created_at: String,
+    pub disassembly_window_open: bool,
+    pub registers_window_open: bool,
+    pub callstack_window_open: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -90,12 +93,14 @@ pub struct SessionStateUI {
     pub threads: Vec<joybug2::protocol_io::ThreadInfo>,
     pub current_event: Option<joybug2::protocol_io::DebugEvent>,
     pub current_context: Option<SerializableThreadContext>,
-    pub step_sender: Option<mpsc::Sender<StepCommand>>, // Send true to continue, false to stop
-    pub step_receiver: Option<mpsc::Receiver<StepCommand>>,
+    pub ui_sender: Option<mpsc::Sender<UICommand>>, // Send true to continue, false to stop
+    pub ui_receiver: Option<mpsc::Receiver<UICommand>>,
     pub debug_result: Option<Result<(), String>>, // Track if debug session succeeded or failed
     
-    // Auxiliary client for one-off commands
-    pub aux_client: Option<Arc<Mutex<joybug2::protocol_io::DebugSession<()>>>>,
+    // Window/Tab states
+    pub is_disassembly_window_open: bool,
+    pub is_registers_window_open: bool,
+    pub is_callstack_window_open: bool,
 }
 
 impl SessionStateUI {
@@ -118,10 +123,12 @@ impl SessionStateUI {
             threads: Vec::new(),
             current_event: None,
             current_context: None,
-            step_sender: Some(step_sender),
-            step_receiver: Some(step_receiver),
+            ui_sender: Some(step_sender),
+            ui_receiver: Some(step_receiver),
             debug_result: None,
-            aux_client: None,
+            is_disassembly_window_open: false,
+            is_registers_window_open: false,
+            is_callstack_window_open: false,
         }
     }
 
@@ -133,11 +140,15 @@ impl SessionStateUI {
         self.current_event = None;
         self.current_context = None;
         self.debug_result = None;
-        self.aux_client = None;
+
+        // Reset window states
+        self.is_disassembly_window_open = false;
+        self.is_registers_window_open = false;
+        self.is_callstack_window_open = false;
 
         let (step_sender, step_receiver) = mpsc::channel();
-        self.step_sender = Some(step_sender);
-        self.step_receiver = Some(step_receiver);
+        self.ui_sender = Some(step_sender);
+        self.ui_receiver = Some(step_receiver);
     }
 
     // Create a serializable snapshot of this session state
@@ -171,6 +182,9 @@ impl SessionStateUI {
                 info
             }),
             created_at: self.created_at.clone(),
+            disassembly_window_open: self.is_disassembly_window_open,
+            registers_window_open: self.is_registers_window_open,
+            callstack_window_open: self.is_callstack_window_open,
         }
     }
 }

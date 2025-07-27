@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { toast } from "sonner";
 import { ScrollArea } from "./ui/scroll-area";
 import { Cpu } from "lucide-react";
@@ -21,33 +22,76 @@ export function AssemblyView({ sessionId, address }: AssemblyViewProps) {
   const [instructions, setInstructions] = useState<Instruction[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [lastFetchedAddress, setLastFetchedAddress] = useState<number | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
 
   useEffect(() => {
-    const fetchDisassembly = async () => {
+    const requestDisassembly = async () => {
       if (!sessionId || !address || address === lastFetchedAddress) return;
 
       setError(null);
+      setIsLoading(true);
 
       try {
-        const result = await invoke<Instruction[]>("get_disassembly", {
+        await invoke("request_disassembly", {
           sessionId,
           address,
           count: 0x10
         });
-        setInstructions(result);
         setLastFetchedAddress(address);
       } catch (err) {
-        const errorMessage =
-          err instanceof Error ? err.message : String(err);
-        console.error("Failed to fetch disassembly:", errorMessage);
-        toast.error(`Failed to fetch disassembly: ${errorMessage}`);
+        let errorMessage: string;
+        if (err instanceof Error) {
+          errorMessage = err.message;
+        } else if (typeof err === 'string') {
+          errorMessage = err;
+        } else if (err && typeof err === 'object') {
+          // Handle Tauri error objects which might have message property
+          errorMessage = (err as any).message || JSON.stringify(err);
+        } else {
+          errorMessage = String(err);
+        }
+        console.error("Failed to request disassembly:", err);
+        toast.error(`Failed to request disassembly: ${errorMessage}`);
         setError(errorMessage);
-      } finally {
+        setIsLoading(false);
       }
     };
 
-    fetchDisassembly();
+    requestDisassembly();
   }, [sessionId, address, lastFetchedAddress]);
+
+  useEffect(() => {
+    if (!sessionId) return;
+
+    // Listen for disassembly results
+    const unlistenDisassembly = listen<{session_id: string, address: number, instructions: Instruction[]}>(
+      "disassembly-updated",
+      (event) => {
+        if (event.payload.session_id === sessionId && event.payload.address === address) {
+          setInstructions(event.payload.instructions);
+          setIsLoading(false);
+          setError(null);
+        }
+      }
+    );
+
+    // Listen for disassembly errors
+    const unlistenError = listen<{session_id: string, address: number, error: string}>(
+      "disassembly-error", 
+      (event) => {
+        if (event.payload.session_id === sessionId && event.payload.address === address) {
+          setError(event.payload.error);
+          setIsLoading(false);
+          toast.error(`Disassembly failed: ${event.payload.error}`);
+        }
+      }
+    );
+
+    return () => {
+      unlistenDisassembly.then(unlisten => unlisten());
+      unlistenError.then(unlisten => unlisten());
+    };
+  }, [sessionId, address]);
 
   if (!sessionId || !address) {
     return (
@@ -67,6 +111,17 @@ export function AssemblyView({ sessionId, address }: AssemblyViewProps) {
         <div className="text-center">
           <p>Error loading disassembly:</p>
           <p className="text-sm mt-1 font-mono">{error}</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center h-full text-muted-foreground">
+        <div className="text-center">
+          <Cpu className="h-8 w-8 mx-auto mb-2 animate-pulse" />
+          <p>Loading disassembly...</p>
         </div>
       </div>
     );

@@ -6,6 +6,7 @@ export interface DockingConfig {
   initialLayout: LayoutData;
   initialTabContents: { [key: string]: TabData };
   tabContentMap: Record<string, React.ReactElement>;
+  onTabsChanged?: (activeTabIds: string[]) => void;
 }
 
 export interface DockingOperations {
@@ -57,6 +58,7 @@ export function useDocking(config: DockingConfig): DockingState & DockingOperati
     initialLayout,
     initialTabContents,
     tabContentMap,
+    onTabsChanged,
   } = config;
 
   const LAYOUT_STORAGE_KEY = `${storagePrefix}.layout`;
@@ -187,7 +189,28 @@ export function useDocking(config: DockingConfig): DockingState & DockingOperati
     tabIdCounterRef.current = initialCounter;
     localStorage.setItem(TAB_ID_COUNTER_STORAGE_KEY, initialCounter.toString());
     localStorage.setItem(LAYOUT_STORAGE_KEY, JSON.stringify(initialLayout));
-  }, [initialLayout, initialTabContents, LAYOUT_STORAGE_KEY, TAB_ID_COUNTER_STORAGE_KEY]);
+    
+    // Trigger onTabsChanged callback immediately after reset
+    if (onTabsChanged) {
+      const activeTabIds = new Set<string>();
+      const findTabIds = (box: any) => {
+        if (box.tabs) {
+          box.tabs.forEach((tab: any) => {
+            if (tab.id) {
+              activeTabIds.add(tab.id);
+            }
+          });
+        }
+        if (box.children) {
+          box.children.forEach(findTabIds);
+        }
+      };
+      findTabIds(initialLayout.dockbox);
+      
+      // Call immediately - no timeout needed
+      onTabsChanged(Array.from(activeTabIds));
+    }
+  }, [initialLayout, initialTabContents, LAYOUT_STORAGE_KEY, TAB_ID_COUNTER_STORAGE_KEY, onTabsChanged]);
 
   const toggleTab = React.useCallback((tabId: string) => {
     setLayout((currentLayout) => {
@@ -280,9 +303,31 @@ export function useDocking(config: DockingConfig): DockingState & DockingOperati
       }
 
       localStorage.setItem(LAYOUT_STORAGE_KEY, JSON.stringify(newLayout));
+      
+      // Trigger onTabsChanged callback immediately after layout update
+      if (onTabsChanged) {
+        const activeTabIds = new Set<string>();
+        const findTabIds = (box: any) => {
+          if (box.tabs) {
+            box.tabs.forEach((tab: any) => {
+              if (tab.id) {
+                activeTabIds.add(tab.id);
+              }
+            });
+          }
+          if (box.children) {
+            box.children.forEach(findTabIds);
+          }
+        };
+        findTabIds(newLayout.dockbox);
+        
+        // Call immediately - no timeout needed
+        onTabsChanged(Array.from(activeTabIds));
+      }
+      
       return newLayout;
     });
-  }, [LAYOUT_STORAGE_KEY]);
+  }, [LAYOUT_STORAGE_KEY, onTabsChanged]);
 
   const onLayoutChange = React.useCallback(
     (
@@ -319,8 +364,12 @@ export function useDocking(config: DockingConfig): DockingState & DockingOperati
         }
         return newTabs;
       });
+
+      if (onTabsChanged) {
+        onTabsChanged(Array.from(activeTabIds));
+      }
     },
-    [LAYOUT_STORAGE_KEY]
+    [LAYOUT_STORAGE_KEY, onTabsChanged]
   );
 
   return {

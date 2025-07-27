@@ -18,6 +18,8 @@ interface SessionHeaderProps {
   canStart: boolean;
   dockingRef: React.RefObject<any>; // rc-dock doesn't export DockingLayoutRef type properly
   getStatusBadge: (status: SessionStatus) => React.ReactNode;
+  toggleTab: (tabId: string) => void;
+  resetLayout: () => void;
 }
 
 export const SessionHeader: React.FC<SessionHeaderProps> = ({
@@ -32,8 +34,9 @@ export const SessionHeader: React.FC<SessionHeaderProps> = ({
   canStep,
   canStop,
   canStart,
-  dockingRef,
   getStatusBadge,
+  toggleTab,
+  resetLayout,
 }) => {
   const navigate = useNavigate();
 
@@ -97,25 +100,25 @@ export const SessionHeader: React.FC<SessionHeaderProps> = ({
         )}
 
         <div className="ml-2 flex gap-1">
-          <Button variant="outline" size="sm" onClick={() => dockingRef.current?.toggleTab("disassembly")} title="Show Disassembly (Ctrl+D)">
+          <Button variant="outline" size="sm" onClick={() => toggleTab("disassembly")} title="Show Disassembly (Ctrl+D)">
             D
           </Button>
-          <Button variant="outline" size="sm" onClick={() => dockingRef.current?.toggleTab("registers")} title="Show Registers (Ctrl+R)">
+          <Button variant="outline" size="sm" onClick={() => toggleTab("registers")} title="Show Registers (Ctrl+R)">
             R
           </Button>
-          <Button variant="outline" size="sm" onClick={() => dockingRef.current?.toggleTab("modules")} title="Show Modules (Ctrl+M)">
+          <Button variant="outline" size="sm" onClick={() => toggleTab("modules")} title="Show Modules (Ctrl+M)">
             M
           </Button>
-          <Button variant="outline" size="sm" onClick={() => dockingRef.current?.toggleTab("threads")} title="Show Threads (Ctrl+T)">
+          <Button variant="outline" size="sm" onClick={() => toggleTab("threads")} title="Show Threads (Ctrl+T)">
             T
           </Button>
-          <Button variant="outline" size="sm" onClick={() => dockingRef.current?.toggleTab("callstack")} title="Show Call Stack (Ctrl+C)">
+          <Button variant="outline" size="sm" onClick={() => toggleTab("callstack")} title="Show Call Stack (Ctrl+C)">
             C
           </Button>
-          <Button variant="outline" size="sm" onClick={() => dockingRef.current?.toggleTab("symbols")} title="Show Symbols (Ctrl+S)">
+          <Button variant="outline" size="sm" onClick={() => toggleTab("symbols")} title="Show Symbols (Ctrl+S)">
             S
           </Button>
-          <Button variant="outline" size="sm" onClick={() => dockingRef.current?.resetLayout()} title="Reset Layout">
+          <Button variant="outline" size="sm" onClick={resetLayout} title="Reset Layout">
             Reset
           </Button>
         </div>

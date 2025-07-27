@@ -34,13 +34,14 @@ pub fn run() {
             commands::step_in_debug_session,
             commands::stop_debug_session,
             commands::delete_debug_session,
-            commands::get_disassembly,
+            commands::request_disassembly,
             commands::get_logs,
             commands::clear_logs,
             commands::get_session_modules,
             commands::get_session_threads,
             commands::search_session_symbols,
-            commands::get_session_callstack,
+            commands::request_session_callstack,
+            commands::update_window_state,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

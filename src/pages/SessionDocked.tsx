@@ -1,5 +1,6 @@
-import { useRef, useMemo, useEffect } from "react";
+import { useRef, useMemo, useEffect, useState, useLayoutEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
+import { invoke } from "@tauri-apps/api/core";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ArrowLeft, AlertCircle } from "lucide-react";
@@ -20,6 +21,7 @@ export default function SessionDocked() {
   const { sessionId } = useParams<{ sessionId: string }>();
   const navigate = useNavigate();
   const dockingRef = useRef<DockingLayoutRef>(null);
+  const [isDockingReady, setIsDockingReady] = useState(false);
 
   const {
     session,
@@ -40,6 +42,85 @@ export default function SessionDocked() {
     canStop,
     canStart,
   } = useDebugSession(sessionId);
+
+  // Function to sync window states with backend
+  const syncWindowStates = async (activeTabIds: string[]) => {
+    if (!sessionId) return;
+    
+    const isDisassemblyOpen = activeTabIds.includes("disassembly");
+    const isRegistersOpen = activeTabIds.includes("registers");
+    const isCallstackOpen = activeTabIds.includes("callstack");
+
+    console.log("Syncing window states:", {
+      sessionId,
+      activeTabIds,
+      disassembly: isDisassemblyOpen,
+      registers: isRegistersOpen,
+      callstack: isCallstackOpen
+    });
+
+    try {
+      await Promise.all([
+        invoke("update_window_state", {
+          sessionId,
+          windowType: "disassembly",
+          isOpen: isDisassemblyOpen,
+        }),
+        invoke("update_window_state", {
+          sessionId,
+          windowType: "registers", 
+          isOpen: isRegistersOpen,
+        }),
+        invoke("update_window_state", {
+          sessionId,
+          windowType: "callstack",
+          isOpen: isCallstackOpen,
+        }),
+      ]);
+    } catch (error) {
+      console.error("Failed to sync window states:", error);
+    }
+  };
+
+  // Handle tab changes (opens/closes)
+  const handleTabsChanged = async (activeTabIds: string[]) => {
+    // Mark docking as ready on first callback
+    if (!isDockingReady) {
+      setIsDockingReady(true);
+    }
+    await syncWindowStates(activeTabIds);
+  };
+
+  // Simple toggle function - onTabsChanged will handle backend sync
+  const toggleTabWithBackendUpdate = (tabId: string) => {
+    dockingRef.current?.toggleTab(tabId);
+  };
+
+  // Simple reset function - onTabsChanged will handle backend sync
+  const handleResetLayout = () => {
+    dockingRef.current?.resetLayout();
+  };
+
+  // Initial state detection - sync when docking becomes ready
+  useEffect(() => {
+    if (!sessionId || !isDockingReady || !dockingRef.current) return;
+    
+    // Sync initial state immediately when docking is ready
+    const activeTabIds = dockingRef.current.getActiveTabs();
+    syncWindowStates(activeTabIds);
+  }, [sessionId, isDockingReady]); // Trigger when docking becomes ready
+
+  // Fallback: Check if docking is ready after layout updates
+  useLayoutEffect(() => {
+    if (!sessionId || isDockingReady || !dockingRef.current) return;
+    
+    // If docking ref is available but not marked as ready, sync now
+    const activeTabIds = dockingRef.current.getActiveTabs();
+    if (activeTabIds.length > 0 || dockingRef.current) {
+      setIsDockingReady(true);
+      syncWindowStates(activeTabIds);
+    }
+  }, [sessionId, isDockingReady]); // Check after each layout update
 
   // Hotkey handlers
   useEffect(() => {
@@ -66,39 +147,39 @@ export default function SessionDocked() {
         case 'd':
           event.preventDefault();
           event.stopPropagation();
-          dockingRef.current?.toggleTab("disassembly");
+          toggleTabWithBackendUpdate("disassembly");
           break;
         case 'r':
           event.preventDefault();
           event.stopPropagation();
-          dockingRef.current?.toggleTab("registers");
+          toggleTabWithBackendUpdate("registers");
           break;
         case 'm':
           event.preventDefault();
           event.stopPropagation();
-          dockingRef.current?.toggleTab("modules");
+          toggleTabWithBackendUpdate("modules");
           break;
         case 't':
           event.preventDefault();
           event.stopPropagation();
-          dockingRef.current?.toggleTab("threads");
+          toggleTabWithBackendUpdate("threads");
           break;
         case 'c':
           event.preventDefault();
           event.stopPropagation();
-          dockingRef.current?.toggleTab("callstack");
+          toggleTabWithBackendUpdate("callstack");
           break;
         case 's':
           event.preventDefault();
           event.stopPropagation();
-          dockingRef.current?.toggleTab("symbols");
+          toggleTabWithBackendUpdate("symbols");
           break;
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [handleGo, handleStepIn]);
+  }, [handleGo, handleStepIn, toggleTabWithBackendUpdate]);
 
   const contextValue = useMemo(() => ({
     session,
@@ -245,6 +326,8 @@ export default function SessionDocked() {
           canStart={canStart}
           dockingRef={dockingRef}
           getStatusBadge={getStatusBadge}
+          toggleTab={toggleTabWithBackendUpdate}
+          resetLayout={handleResetLayout}
         />
 
         {/* Docking Layout */}
@@ -253,6 +336,7 @@ export default function SessionDocked() {
             ref={dockingRef}
             {...dockingConfig}
             className="absolute inset-0"
+            onTabsChanged={handleTabsChanged}
           />
         </div>
       </div>

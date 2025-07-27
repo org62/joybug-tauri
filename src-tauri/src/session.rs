@@ -2,14 +2,16 @@ use crate::error::{Error, Result};
 use crate::state::{SessionStateUI, SessionStatusUI};
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter};
-use tracing::{error, info, warn};
-use joybug2::protocol::request_response::StepKind;
+use tracing::{debug, error, info, warn};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum StepCommand {
+#[derive(Debug, Clone)]
+pub enum UICommand {
     Go,
     StepIn,
     Stop,
+    Disassembly{ arch: joybug2::interfaces::Architecture, address: u64, count: u32 },
+    GetCallStack,
+    SearchSymbols{ pattern: String, limit: u32 },
 }
 
 /// Updates session state (modules and threads) based on debug events
@@ -85,6 +87,330 @@ fn update_session_from_event(state: &mut SessionStateUI, event: &joybug2::protoc
     }
 }
 
+/// Processes a disassembly request and emits results to the frontend
+fn process_disassembly_request(
+    session: &mut joybug2::protocol_io::DebugSession<Arc<Mutex<SessionStateUI>>>,
+    app_handle_clone: &Option<AppHandle>,
+    event: &joybug2::protocol_io::DebugEvent,
+    arch: joybug2::interfaces::Architecture,
+    address: u64,
+    count: u32,
+) {
+    let pid = event.pid();
+    debug!("📤 Processing disassembly request: pid={}, address=0x{:X}, count={}", pid, address, count);
+    match session.disassemble_memory(pid, address, count as usize, arch) {
+        Ok(instructions) => {
+            debug!("📥 Received {} instructions from disassemble_memory", instructions.len());
+            
+            // Convert to serializable format and emit event
+            let serializable_instructions: Vec<crate::commands::SerializableInstruction> = instructions
+                .iter()
+                .map(|inst| {
+                    let address_str = if let Some(ref sym) = inst.symbol_info {
+                        format!("{}!{}+0x{:x}", sym.module_name, sym.symbol_name, sym.offset)
+                    } else {
+                        format!("{:#X}", inst.address)
+                    };
+
+                    let op_str = inst.symbolized_op_str.as_ref().unwrap_or(&inst.op_str);
+
+                    crate::commands::SerializableInstruction {
+                        address: format!("{:#X}", inst.address),
+                        symbol: address_str,
+                        bytes: inst
+                            .bytes
+                            .iter()
+                            .map(|b| format!("{:02X}", b))
+                            .collect::<Vec<String>>()
+                            .join(" "),
+                        mnemonic: inst.mnemonic.clone(),
+                        op_str: op_str.clone(),
+                    }
+                })
+                .collect();
+
+            // Emit disassembly results to frontend
+            if let Some(ref handle) = app_handle_clone {
+                let session_id = {
+                    let state = session.state.lock().unwrap();
+                    state.id.clone()
+                };
+                
+                #[derive(serde::Serialize)]
+                struct DisassemblyResult {
+                    session_id: String,
+                    address: u64,
+                    instructions: Vec<crate::commands::SerializableInstruction>,
+                }
+                
+                let result = DisassemblyResult {
+                    session_id,
+                    address,
+                    instructions: serializable_instructions,
+                };
+                
+                if let Err(e) = handle.emit("disassembly-updated", &result) {
+                    error!("Failed to emit disassembly-updated event: {}", e);
+                } else {
+                    debug!("📡 Emitted disassembly-updated event for address 0x{:X}", address);
+                }
+            }
+        }
+        Err(e) => {
+            error!("Failed to disassemble memory: {}", e);
+            
+            // Emit error event
+            if let Some(ref handle) = app_handle_clone {
+                let session_id = {
+                    let state = session.state.lock().unwrap();
+                    state.id.clone()
+                };
+                
+                #[derive(serde::Serialize)]
+                struct DisassemblyError {
+                    session_id: String,
+                    address: u64,
+                    error: String,
+                }
+                
+                let error_result = DisassemblyError {
+                    session_id,
+                    address,
+                    error: e.to_string(),
+                };
+                
+                if let Err(emit_err) = handle.emit("disassembly-error", &error_result) {
+                    error!("Failed to emit disassembly-error event: {}", emit_err);
+                }
+            }
+        }
+    }
+}
+
+/// Processes a callstack request and emits results to the frontend
+fn process_callstack_request(
+    session: &mut joybug2::protocol_io::DebugSession<Arc<Mutex<SessionStateUI>>>,
+    app_handle_clone: &Option<AppHandle>,
+    event: &joybug2::protocol_io::DebugEvent,
+) {
+    let pid = event.pid();
+    let tid = event.tid();
+    debug!("📤 Processing callstack request: pid={}, tid={}", pid, tid);
+
+    match session.get_call_stack(pid, tid) {
+        Ok(frames) => {
+            debug!("📥 Received {} frames from get_call_stack", frames.len());
+
+            // Convert to serializable format
+            let call_stack: Vec<crate::commands::CallStackData> = frames.iter().enumerate().map(|(i, frame)| {
+                crate::commands::CallStackData {
+                    frame_number: i,
+                    instruction_pointer: format!("0x{:016x}", frame.instruction_pointer),
+                    stack_pointer: format!("0x{:016x}", frame.stack_pointer),
+                    frame_pointer: format!("0x{:016x}", frame.frame_pointer),
+                    symbol_info: frame.symbol.as_ref().map(|sym| {
+                        format!("{}!{}+0x{:x}", sym.module_name, sym.symbol_name, sym.offset)
+                    }),
+                }
+            }).collect();
+
+            // Emit callstack results to frontend
+            if let Some(ref handle) = app_handle_clone {
+                let session_id = {
+                    let state = session.state.lock().unwrap();
+                    state.id.clone()
+                };
+
+                #[derive(serde::Serialize, Clone)]
+                struct CallStackResult<'a> {
+                    session_id: String,
+                    frames: &'a Vec<crate::commands::CallStackData>,
+                }
+
+                let result = CallStackResult {
+                    session_id,
+                    frames: &call_stack,
+                };
+
+                if let Err(e) = handle.emit("callstack-updated", &result) {
+                    error!("Failed to emit callstack-updated event: {}", e);
+                } else {
+                    debug!("📡 Emitted callstack-updated event for pid {}, tid {}", pid, tid);
+                }
+            }
+        }
+        Err(e) => {
+            error!("Failed to get call stack: {}", e);
+            
+            // Emit error event
+            if let Some(ref handle) = app_handle_clone {
+                let session_id = {
+                    let state = session.state.lock().unwrap();
+                    state.id.clone()
+                };
+                
+                #[derive(serde::Serialize, Clone)]
+                struct CallStackError {
+                    session_id: String,
+                    error: String,
+                }
+                
+                let error_result = CallStackError {
+                    session_id,
+                    error: e.to_string(),
+                };
+                
+                if let Err(emit_err) = handle.emit("callstack-error", &error_result) {
+                    error!("Failed to emit callstack-error event: {}", emit_err);
+                }
+            }
+        }
+    }
+}
+
+/// Processes a symbol search request and emits results to the frontend
+fn process_symbol_search(
+    session: &mut joybug2::protocol_io::DebugSession<Arc<Mutex<SessionStateUI>>>,
+    app_handle_clone: &Option<AppHandle>,
+    event: &joybug2::protocol_io::DebugEvent,
+    pattern: &str,
+    limit: u32,
+) {
+    let pid = event.pid();
+    debug!("📤 Processing symbol search request: pid={}, pattern='{}', limit={}", pid, pattern, limit);
+
+    match session.find_symbols(pattern, limit as usize) {
+        Ok(resolved_symbols) => {
+            debug!("📥 Received {} symbols from find_symbols", resolved_symbols.len());
+            
+            // Convert to serializable format
+            let symbols: Vec<crate::commands::SymbolData> = resolved_symbols.iter().map(|resolved_symbol| {
+                // Extract just the symbol name from the full "module!symbol" format
+                let symbol_name = if let Some(pos) = resolved_symbol.name.find('!') {
+                    resolved_symbol.name[pos + 1..].to_string()
+                } else {
+                    resolved_symbol.name.clone()
+                };
+                
+                crate::commands::SymbolData {
+                    name: symbol_name,
+                    module_name: resolved_symbol.module_name.clone(),
+                    rva: resolved_symbol.rva,
+                    va: format!("0x{:X}", resolved_symbol.va),
+                    display_name: resolved_symbol.name.clone(), // Use the full name which is already "module!symbol"
+                }
+            }).collect();
+
+            // Emit symbol search results to frontend
+            if let Some(ref handle) = app_handle_clone {
+                let session_id = {
+                    let state = session.state.lock().unwrap();
+                    state.id.clone()
+                };
+                
+                #[derive(serde::Serialize)]
+                struct SymbolSearchResult<'a> {
+                    session_id: String,
+                    pattern: &'a str,
+                    symbols: &'a Vec<crate::commands::SymbolData>,
+                }
+                
+                let result = SymbolSearchResult {
+                    session_id,
+                    pattern,
+                    symbols: &symbols,
+                };
+                
+                if let Err(e) = handle.emit("symbols-updated", &result) {
+                    error!("Failed to emit symbols-updated event: {}", e);
+                } else {
+                    debug!("📡 Emitted symbols-updated event for pattern '{}'", pattern);
+                }
+            }
+        }
+        Err(e) => {
+            error!("Failed to find symbols for pattern '{}': {}", pattern, e);
+            
+            // Emit error event
+            if let Some(ref handle) = app_handle_clone {
+                let session_id = {
+                    let state = session.state.lock().unwrap();
+                    state.id.clone()
+                };
+                
+                #[derive(serde::Serialize)]
+                struct SymbolSearchError<'a> {
+                    session_id: String,
+                    pattern: &'a str,
+                    error: String,
+                }
+                
+                let error_result = SymbolSearchError {
+                    session_id,
+                    pattern,
+                    error: e.to_string(),
+                };
+                
+                if let Err(emit_err) = handle.emit("symbols-error", &error_result) {
+                    error!("Failed to emit symbols-error event: {}", emit_err);
+                }
+            }
+        }
+    }
+}
+
+/// Handles UI commands in a loop, returns true to continue execution, false to stop session
+fn handle_ui_commands(
+    ui_receiver: &std::sync::mpsc::Receiver<UICommand>,
+    session: &mut joybug2::protocol_io::DebugSession<Arc<Mutex<SessionStateUI>>>,
+    app_handle_clone: &Option<AppHandle>,
+    event: &joybug2::protocol_io::DebugEvent,
+) -> Result<bool> {
+    loop {
+        match ui_receiver.recv() {
+            Ok(command) => {
+                info!("Received UI command: {:?}", command);
+
+                match command {
+                    UICommand::Go => {
+                        debug!("📤 Go command - continuing execution");
+                        return Ok(true); // Continue execution
+                    }
+                    UICommand::StepIn => {
+                        todo!("StepIn");
+                    }
+                    UICommand::Disassembly { arch, address, count } => {
+                        // Handle disassembly request
+                        process_disassembly_request(session, app_handle_clone, event, arch, address, count);
+                        // Continue in loop waiting for next command (Go or Stop)
+                    }
+                    UICommand::GetCallStack => {
+                        process_callstack_request(session, app_handle_clone, event);
+                        // Continue in loop waiting for next command (Go or Stop)
+                    }
+                    UICommand::SearchSymbols { ref pattern, limit } => {
+                        process_symbol_search(session, app_handle_clone, event, pattern, limit);
+                        // Continue in loop waiting for next command (Go or Stop)
+                    }
+                    UICommand::Stop => {
+                        info!("Stop command received, terminating session");
+                        let mut state = session.state.lock().unwrap();
+                        state.status = SessionStatusUI::Finished;
+                        return Ok(false); // Stop session
+                    }
+                }
+            }
+            Err(_) => {
+                debug!("❌ Debug session receiver disconnected");
+                warn!("Debug session receiver disconnected");
+                let mut state = session.state.lock().unwrap();
+                state.status = SessionStatusUI::Error("Step receiver disconnected".to_string());
+                return Ok(false); // Stop session
+            }
+        }
+    }
+}
+
 pub fn run_debug_session(
     session_state: Arc<Mutex<SessionStateUI>>,
     app_handle: Option<AppHandle>,
@@ -96,21 +422,16 @@ pub fn run_debug_session(
 
     info!("Starting debug session: {}", session_id);
 
-    // Connect to debug server
-    let mut client = joybug2::protocol_io::DebugSession::new((), Some(&server_url))
-        .map_err(|e| Error::ConnectionFailed(e.to_string()))?;
+    // Get step receiver from session state
+    let ui_receiver = {
+        let mut state = session_state.lock().unwrap();
+        state.ui_receiver.take().unwrap()
+    };
 
-    // Connect auxiliary client
-    let aux_client = joybug2::protocol_io::DebugSession::new((), Some(&server_url))
-        .map_err(|e| Error::ConnectionFailed(e.to_string()))?;
-
-    info!("Successfully connected to debug server");
-
-    // Mark as successfully connected and store aux_client
+    // Mark as connected
     {
         let mut state = session_state.lock().unwrap();
         state.status = SessionStatusUI::Connected;
-        state.aux_client = Some(Arc::new(Mutex::new(aux_client)));
     }
 
     // Emit session update for Connected status
@@ -118,47 +439,93 @@ pub fn run_debug_session(
         emit_session_event(&session_state, handle);
     }
 
-    // Get step receiver from session state
-    let step_receiver = {
-        let mut state = session_state.lock().unwrap();
-        state.step_receiver.take().unwrap()
-    };
+    // Create app handle clone for the closure
+    let app_handle_clone = app_handle.clone();
 
-    // Launch process and manually manage the debug loop
-    let launch_req = joybug2::protocol::DebuggerRequest::Launch { command: launch_command.clone() };
-    if let Err(e) = client.send(&launch_req) {
-        let mut state = session_state.lock().unwrap();
-        state.status = SessionStatusUI::Error(e.to_string());
-        emit_session_event(&session_state, app_handle.as_ref().unwrap());
-        return Err(Error::DebugLoop(e.to_string()));
-    }
+    // Create main session with event handler and launch
+    let _final_state = joybug2::protocol_io::DebugSession::new(session_state.clone(), Some(&server_url))
+        .map_err(|e| Error::ConnectionFailed(e.to_string()))?
+        .on_event(move |session, event| {
+            debug!("📥 Received debug event from server: {}", event);
+            info!("Debug event: {}", event);
 
-    loop {
-        match client.receive() {
-            Ok(resp) => {
-                let should_break = handle_debugger_response(
-                    resp,
-                    &session_state,
-                    &step_receiver,
-                    app_handle.as_ref(),
-                    &mut client,
-                );
-                if should_break {
-                    break;
+            let handle = app_handle_clone.as_ref().unwrap();
+            crate::ui_logger::log_debug(
+                handle,
+                &format!("Received debug event: {}", event),
+                Some(session.state.lock().unwrap().id.clone()),
+            );
+            crate::ui_logger::toast_info(handle, &format!("{}", event));
+
+            // Handle events that don't require thread context or user interaction first.
+            if matches!(event, joybug2::protocol_io::DebugEvent::ThreadExited { .. } | joybug2::protocol_io::DebugEvent::ProcessExited { .. }) {
+                {
+                    let mut state = session.state.lock().unwrap();
+                    state.current_event = Some(event.clone());
+                    state.events.push(event.clone());
+                    update_session_from_event(&mut state, event);
+                }
+                
+                emit_session_event(&session.state, handle);
+
+                // For ThreadExited, we continue execution.
+                // For ProcessExited, this will also "continue", but the debug loop should terminate
+                // as the debugee is gone.
+                return Ok(true);
+            }
+
+            // Update session state from event
+            {
+                let context = session.get_thread_context(event.pid(), event.tid()).unwrap();
+                let mut state = session.state.lock().unwrap();
+                state.current_event = Some(event.clone());
+                state.events.push(event.clone());
+                state.status = SessionStatusUI::Paused; // Paused waiting for user input
+                state.current_context = Some(crate::events::convert_raw_context_to_serializable(context));
+
+                update_session_from_event(&mut state, event);
+
+            }
+            // Get thread context if applicable
+            //let req = joybug2::protocol::DebuggerRequest::GetThreadContext { pid, tid };
+            //debug!("📤 Sending GetThreadContext request to server: pid={}, tid={}", pid, tid);
+            //match session.send_and_receive(&req) {
+            //    Ok(joybug2::protocol::DebuggerResponse::ThreadContext { context: raw_context }) => {
+            //        debug!("📥 Received ThreadContext response from server");
+            //        let mut state = session.state.lock().unwrap();
+            //        state.current_context = Some(crate::events::convert_raw_context_to_serializable(raw_context));
+            //    }
+            //    Ok(other_resp) => {
+            //        debug!("📥 Received unexpected response from server: {:?}", other_resp);
+            //        warn!("Expected ThreadContext response, got {:?}", other_resp);
+            //    }
+            //    Err(e) => {
+            //        debug!("❌ Failed to get thread context from server: {}", e);
+            //        error!("Failed to get thread context: {}", e);
+            //    }
+            //}
+
+            // Emit session events
+            emit_session_event(&session.state, handle);
+
+            info!("Debug event received, waiting for user command");
+
+            // Wait for user commands
+            match handle_ui_commands(&ui_receiver, session, &app_handle_clone, event) {
+                Ok(should_continue) => {
+                    // Return the boolean value to control the session loop
+                    return Ok(should_continue);
+                }
+                Err(e) => {
+                    error!("Error handling UI commands: {}", e);
+                    let mut state = session.state.lock().unwrap();
+                    state.status = SessionStatusUI::Error(e.to_string());
+                    return Ok(false); // Stop session on error
                 }
             }
-            Err(e) => {
-                error!("Failed to receive from debug server: {}", e);
-                let mut state = session_state.lock().unwrap();
-                state.status = SessionStatusUI::Error(e.to_string());
-                if let Some(handle) = app_handle.as_ref() {
-                    emit_session_event(&session_state, handle);
-                }
-                break;
-            }
-        }
-    }
-
+        })
+        .launch(launch_command)
+        .map_err(|e| Error::DebugLoop(e.to_string()))?;
 
     // Mark session as finished
     {
@@ -179,116 +546,7 @@ pub fn run_debug_session(
     Ok(())
 }
 
-fn handle_debugger_response(
-    resp: joybug2::protocol::DebuggerResponse,
-    session_state: &Arc<Mutex<SessionStateUI>>,
-    step_receiver: &std::sync::mpsc::Receiver<StepCommand>,
-    app_handle: Option<&AppHandle>,
-    client: &mut joybug2::protocol_io::DebugSession<()>,
-) -> bool {
-    use joybug2::protocol::{DebuggerRequest, DebuggerResponse};
 
-    match resp {
-        DebuggerResponse::Event { event } => {
-            info!("Debug event: {}", event);
-
-            if let Some(handle) = app_handle {
-                crate::ui_logger::log_debug(
-                    handle,
-                    &format!("Received debug event: {}", event),
-                    Some(session_state.lock().unwrap().id.clone()),
-                );
-                // toast the event
-                crate::ui_logger::toast_info(handle, &format!("{}", event));
-            }
-
-            let aux_client_arc = {
-                let mut state = session_state.lock().unwrap();
-                state.current_event = Some(event.clone());
-                state.events.push(event.clone());
-                state.status = SessionStatusUI::Paused;
-                state.current_context = None;
-                update_session_from_event(&mut state, &event);
-                state.aux_client.clone()
-            };
-
-            if let Some(aux_client_mutex) = aux_client_arc {
-                let pid = event.pid();
-                let tid = event.tid();
-
-                if pid != 0 && tid != 0 {
-                    let req = DebuggerRequest::GetThreadContext { pid, tid };
-                    if let Ok(mut aux_client) = aux_client_mutex.lock() {
-                        match aux_client.send_and_receive(&req) {
-                            Ok(DebuggerResponse::ThreadContext { context: raw_context }) => {
-                                let mut state = session_state.lock().unwrap();
-                                state.current_context = Some(crate::events::convert_raw_context_to_serializable(raw_context));
-                            }
-                            Ok(other_resp) => warn!("Expected ThreadContext response, got {:?}", other_resp),
-                            Err(e) => error!("Failed to get thread context: {}", e),
-                        }
-                    }
-                }
-            }
-
-            if let Some(handle) = app_handle {
-                emit_session_event(session_state, handle);
-            }
-
-            info!("Debug event received, waiting for user command");
-
-            match step_receiver.recv() {
-                Ok(command) => {
-                    info!("Received step command: {:?}", command);
-                    let pid = event.pid();
-                    let tid = event.tid();
-
-                    let maybe_req = match command {
-                        StepCommand::Go => Some(DebuggerRequest::Continue { pid, tid }),
-                        StepCommand::StepIn => Some(DebuggerRequest::Step { pid, tid, kind: StepKind::Into }),
-                        StepCommand::Stop => None,
-                    };
-
-                    if let Some(req) = maybe_req {
-                        if pid != 0 && tid != 0 {
-                             {
-                                let mut state = session_state.lock().unwrap();
-                                state.status = SessionStatusUI::Running;
-                            }
-                            if let Some(handle) = app_handle {
-                                emit_session_event(session_state, handle);
-                            }
-                            if let Err(e) = client.send(&req) {
-                                error!("Failed to send command to debug server: {}", e);
-                                return true; // break loop
-                            }
-                        }
-                    } else {
-                        // Stop command
-                        return true; // break loop
-                    }
-                }
-                Err(_) => {
-                    warn!("Debug session receiver disconnected");
-                    return true; // break loop
-                }
-            }
-        }
-        DebuggerResponse::Error { message } => {
-            error!("Debug server error: {}", message);
-            let mut state = session_state.lock().unwrap();
-            state.status = SessionStatusUI::Error(message.clone());
-            if let Some(handle) = app_handle {
-                emit_session_event(session_state, handle);
-            }
-            return true; // break loop on error
-        }
-        _ => {
-            // Handle other responses if needed, but don't break loop
-        }
-    }
-    false // continue loop
-}
 
 
 // Helper function to emit session-updated events

@@ -1,5 +1,6 @@
 import { useEffect, useState, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import { useSessionContext } from '@/contexts/SessionContext';
 import { AlertCircle, List } from 'lucide-react';
 
@@ -23,16 +24,12 @@ export function ContextCallStackView() {
     setError(null);
     
     try {
-      const result = await invoke<CallStackFrame[]>('get_session_callstack', {
+      await invoke('request_session_callstack', {
         sessionId: sessionData.session.id,
       });
-      setCallStack(result);
-      setError(null); // Clear any previous errors
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to fetch call stack';
       setError(errorMessage);
-      setCallStack([]); // Clear old call stack data on error
-    } finally {
     }
   };
 
@@ -52,6 +49,28 @@ export function ContextCallStackView() {
       fetchCallStack();
     }
   }, [sessionData?.session?.id]); // Run when session ID is available
+
+  // Listen for callstack updates
+  useEffect(() => {
+    const unlistenUpdated = listen('callstack-updated', (event: any) => {
+      if (event.payload.session_id === sessionData?.session?.id) {
+        setCallStack(event.payload.frames);
+        setError(null);
+      }
+    });
+
+    const unlistenError = listen('callstack-error', (event: any) => {
+      if (event.payload.session_id === sessionData?.session?.id) {
+        setError(event.payload.error);
+        setCallStack([]);
+      }
+    });
+
+    return () => {
+      unlistenUpdated.then(f => f());
+      unlistenError.then(f => f());
+    };
+  }, [sessionData?.session?.id]);
 
   // Track if component is visible (mounted)
   useEffect(() => {

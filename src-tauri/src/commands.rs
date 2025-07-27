@@ -3,11 +3,11 @@ use crate::session::run_debug_session;
 use crate::state::{
     DebugSessionUI, LogEntry, LogsState, SessionStateUI, SessionStatesMap, SessionStatusUI,
 };
-use crate::session::StepCommand;
+use crate::session::UICommand;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use tauri::{State, Emitter};
-use tracing::{error, info};
+use tracing::{debug, error, info};
 
 // Helper function to emit session-updated event
 fn emit_session_update(
@@ -265,7 +265,7 @@ pub fn step_debug_session(
         }
         
         state
-            .step_sender
+            .ui_sender
             .as_ref()
             .ok_or_else(|| Error::InternalCommunication("Session step sender not available".to_string()))?
             .clone()
@@ -273,7 +273,7 @@ pub fn step_debug_session(
 
     // Send step signal - let session thread handle status updates
     step_sender
-        .send(StepCommand::Go)
+        .send(UICommand::Go)
         .map_err(|e| Error::InternalCommunication(format!("Failed to send step signal: {}", e)))?;
 
     Ok(())
@@ -302,14 +302,14 @@ pub fn step_in_debug_session(
         }
         
         state
-            .step_sender
+            .ui_sender
             .as_ref()
             .ok_or_else(|| Error::InternalCommunication("Session step sender not available".to_string()))?
             .clone()
     };
 
     step_sender
-        .send(StepCommand::StepIn)
+        .send(UICommand::StepIn)
         .map_err(|e| Error::InternalCommunication(format!("Failed to send step in signal: {}", e)))?;
 
     Ok(())
@@ -322,11 +322,11 @@ pub fn stop_debug_session(
 ) -> Result<()> {
     if let Some(session_state) = session_states.lock().unwrap().get(&session_id) {
         let mut state = session_state.lock().unwrap();
-        if let Some(sender) = state.step_sender.take() {
+        if let Some(sender) = state.ui_sender.take() {
             // Dropping sender will cause recv() to fail in the debug loop, stopping it
             info!("Stopping session by dropping the step_sender.");
             // Send stop command to ensure immediate exit if loop is waiting
-            let _ = sender.send(StepCommand::Stop);
+            let _ = sender.send(UICommand::Stop);
         }
         // Also handle the case where a session is connecting but not yet in the debug loop
         if matches!(state.status, SessionStatusUI::Connecting) {
@@ -380,12 +380,12 @@ pub struct SerializableInstruction {
 }
 
 #[tauri::command]
-pub fn get_disassembly(
+pub fn request_disassembly(
     session_id: String,
     address: u64,
     count: usize,
     session_states: State<'_, SessionStatesMap>,
-) -> Result<Vec<SerializableInstruction>> {
+) -> Result<()> {
     let session_state = {
         let states = session_states.lock().unwrap();
         states
@@ -393,39 +393,19 @@ pub fn get_disassembly(
             .cloned()
             .ok_or_else(|| Error::SessionNotFound(session_id.clone()))?
     };
-
-    let (aux_client, pid) = {
-        let state = session_state.lock().unwrap();
-
-        let pid = match state.status {
-            SessionStatusUI::Paused => {
-                if let Some(event) = &state.current_event {
-                    event.pid()
-                } else {
-                    return Err(Error::InvalidSessionState(
-                        "Session is paused but has no current event".to_string(),
-                    ));
-                }
-            }
-            _ => {
-                return Err(Error::InvalidSessionState(
-                    "Session must be paused to get disassembly".to_string(),
-                ));
-            }
-        };
-
-        let client = state
-            .aux_client
-            .as_ref()
-            .cloned()
-            .ok_or_else(|| Error::InternalCommunication("Auxiliary client not available".to_string()))?;
-
-        (client, pid)
-    };
+    debug!("Disassembly request received for session {} at address 0x{:X}", session_id, address);
 
     // Determine architecture from current thread context or fallback to compile-time detection
     let arch = {
         let state = session_state.lock().unwrap();
+        
+        // Verify session can be disassembled
+        if !matches!(state.status, SessionStatusUI::Paused) {
+            return Err(Error::InvalidSessionState(
+                format!("Session must be paused to get disassembly, but is: {:?}", state.status),
+            ));
+        }
+        
         match &state.current_context {
             Some(crate::state::SerializableThreadContext::X64(_)) => joybug2::interfaces::Architecture::X64,
             Some(crate::state::SerializableThreadContext::Arm64(_)) => joybug2::interfaces::Architecture::Arm64,
@@ -445,44 +425,27 @@ pub fn get_disassembly(
         }
     };
 
-    let mut client = aux_client.lock().unwrap();
-    let req = joybug2::protocol::DebuggerRequest::DisassembleMemory { pid, address, count, arch };
-    let resp = client.send_and_receive(&req).map_err(|e| Error::InternalCommunication(e.to_string()))?;
+    // Send disassembly command via UI channel
+    let ui_sender = {
+        let state = session_state.lock().unwrap();
+        state
+            .ui_sender
+            .as_ref()
+            .ok_or_else(|| Error::InternalCommunication("Session UI sender not available".to_string()))?
+            .clone()
+    };
 
-    if let joybug2::protocol::DebuggerResponse::Instructions { instructions } = resp {
-        let serializable_instructions = instructions
-            .iter()
-            .map(|inst| {
-                let address_str = if let Some(ref sym) = inst.symbol_info {
-                    format!("{}!{}+0x{:x}", sym.module_name, sym.symbol_name, sym.offset)
-                } else {
-                    format!("{:#X}", inst.address)
-                };
+    // Send disassembly command - results will be emitted via event
+    ui_sender
+        .send(UICommand::Disassembly { 
+            arch, 
+            address, 
+            count: count as u32 
+        })
+        .map_err(|e| Error::InternalCommunication(format!("Failed to send disassembly command: {}", e)))?;
 
-                let op_str = inst.symbolized_op_str.as_ref().unwrap_or(&inst.op_str);
-
-                SerializableInstruction {
-                    address: format!("{:#X}", inst.address),
-                    symbol: address_str,
-                    bytes: inst
-                        .bytes
-                        .iter()
-                        .map(|b| format!("{:02X}", b))
-                        .collect::<Vec<String>>()
-                        .join(" "),
-                    mnemonic: inst.mnemonic.clone(),
-                    op_str: op_str.clone(),
-                }
-            })
-            .collect();
-
-        Ok(serializable_instructions)
-    } else {
-        Err(Error::InternalCommunication(format!(
-            "Unexpected response from debug server for DisassembleMemory: {:?}",
-            resp
-        )))
-    }
+    info!("Disassembly request sent for session {} at address 0x{:X}", session_id, address);
+    Ok(())
 }
 
 #[tauri::command]
@@ -504,7 +467,6 @@ pub fn get_session_modules(
             }
         }).collect();
         
-        info!("Retrieved {} modules for session {}", modules.len(), session_id);
         Ok(modules)
     } else {
         Err(Error::SessionNotFound(session_id))
@@ -529,7 +491,6 @@ pub fn get_session_threads(
             }
         }).collect();
         
-        info!("Retrieved {} threads for session {}", threads.len(), session_id);
         Ok(threads)
     } else {
         Err(Error::SessionNotFound(session_id))
@@ -543,63 +504,35 @@ pub fn search_session_symbols(
     limit: Option<usize>,
     session_states: State<'_, SessionStatesMap>,
 ) -> Result<Vec<SymbolData>> {
-    let sessions = session_states.lock().unwrap();
-    let limit = limit.unwrap_or(30);
-    
-    if let Some(session_arc) = sessions.get(&session_id) {
-        let session = session_arc.lock().unwrap();
-        
-        if let Some(aux_client) = &session.aux_client {
-            // Use the new FindSymbol request to search across all modules
-            let mut client = aux_client.lock().unwrap();
-            let req = joybug2::protocol::DebuggerRequest::FindSymbol { 
-                symbol_name: pattern.clone(),
-                max_results: limit,
-            };
-            
-            match client.send_and_receive(&req) {
-                Ok(joybug2::protocol::DebuggerResponse::ResolvedSymbolList { symbols: resolved_symbols }) => {
-                    // Convert ResolvedSymbol to SymbolData
-                    let symbols: Vec<SymbolData> = resolved_symbols.iter().map(|resolved_symbol| {
-                        // Extract just the symbol name from the full "module!symbol" format
-                        let symbol_name = if let Some(pos) = resolved_symbol.name.find('!') {
-                            resolved_symbol.name[pos + 1..].to_string()
-                        } else {
-                            resolved_symbol.name.clone()
-                        };
-                        
-                        SymbolData {
-                            name: symbol_name,
-                            module_name: resolved_symbol.module_name.clone(),
-                            rva: resolved_symbol.rva,
-                            va: format!("0x{:X}", resolved_symbol.va),
-                            display_name: resolved_symbol.name.clone(), // Use the full name which is already "module!symbol"
-                        }
-                    }).collect();
-                    
-                    info!("Retrieved {} symbols matching '{}' for session {}", symbols.len(), pattern, session_id);
-                    Ok(symbols)
-                }
-                Ok(joybug2::protocol::DebuggerResponse::Error { message }) => {
-                    error!("Failed to find symbols for pattern '{}': {}", pattern, message);
-                    Err(Error::InternalCommunication(format!("Symbol search failed: {}", message)))
-                }
-                Ok(_) => {
-                    let error_msg = "Unexpected response for FindSymbol request";
-                    error!("{}", error_msg);
-                    Err(Error::InternalCommunication(error_msg.to_string()))
-                }
-                Err(e) => {
-                    error!("Failed to communicate with debug client for symbol search: {}", e);
-                    Err(Error::InternalCommunication(format!("Communication failed: {}", e)))
-                }
-            }
-        } else {
-            Err(Error::InternalCommunication("Auxiliary client not available".to_string()))
-        }
-    } else {
-        Err(Error::SessionNotFound(session_id))
-    }
+    let session_state = {
+        let states = session_states.lock().unwrap();
+        states
+            .get(&session_id)
+            .cloned()
+            .ok_or_else(|| Error::SessionNotFound(session_id.clone()))?
+    };
+
+    debug!("Searching for symbols in session {} with pattern '{}'", session_id, pattern);
+
+    let ui_sender = {
+        let state = session_state.lock().unwrap();
+        state
+            .ui_sender
+            .as_ref()
+            .ok_or_else(|| Error::InternalCommunication("Session UI sender not available".to_string()))?
+            .clone()
+    };
+
+    // Send symbol search command - results will be emitted via event
+    ui_sender
+        .send(UICommand::SearchSymbols { 
+            pattern: pattern.clone(),
+            limit: limit.unwrap_or(30) as u32
+        })
+        .map_err(|e| Error::InternalCommunication(format!("Failed to send symbol search command: {}", e)))?;
+
+    info!("Symbol search request sent for session {} with pattern '{}'", session_id, pattern);
+    Ok(Vec::new()) // Return empty vector as results will come via events
 }
 
 
@@ -620,7 +553,7 @@ pub struct ThreadData {
     pub start_address: String,
 }
 
-#[derive(serde::Serialize)]
+#[derive(serde::Serialize, Clone, Debug)]
 pub struct CallStackData {
     pub frame_number: usize,
     pub instruction_pointer: String,
@@ -639,10 +572,10 @@ pub struct SymbolData {
 }
 
 #[tauri::command]
-pub fn get_session_callstack(
+pub fn request_session_callstack(
     session_id: String,
     session_states: State<'_, SessionStatesMap>,
-) -> Result<Vec<CallStackData>> {
+) -> Result<()> {
     let session_state = {
         let states = session_states.lock().unwrap();
         states
@@ -651,66 +584,62 @@ pub fn get_session_callstack(
             .ok_or_else(|| Error::SessionNotFound(session_id.clone()))?
     };
 
-    let (aux_client, pid, tid) = {
+    let ui_sender = {
         let state = session_state.lock().unwrap();
 
-        let (pid, tid) = match state.status {
-            SessionStatusUI::Paused => {
-                if let Some(event) = &state.current_event {
-                    (event.pid(), event.tid())
-                } else {
-                    return Err(Error::InvalidSessionState(
-                        "Session is paused but has no current event".to_string(),
-                    ));
-                }
-            }
-            _ => {
-                return Err(Error::InvalidSessionState(
-                    "Session must be paused to get call stack".to_string(),
-                ));
-            }
-        };
+        if !matches!(state.status, SessionStatusUI::Paused) {
+            return Err(Error::InvalidSessionState(
+                "Session must be paused to get call stack".to_string(),
+            ));
+        }
 
-        let client = state
-            .aux_client
+        state
+            .ui_sender
             .as_ref()
-            .cloned()
-            .ok_or_else(|| Error::InternalCommunication("Auxiliary client not available".to_string()))?;
-
-        (client, pid, tid)
+            .ok_or_else(|| Error::InternalCommunication("Session UI sender not available".to_string()))?
+            .clone()
     };
 
-    // Send request to get call stack
-    let request = joybug2::protocol::DebuggerRequest::GetCallStack { pid, tid };
-    let mut client = aux_client.lock().unwrap();
-    
-    match client.send_and_receive(&request) {
-        Ok(joybug2::protocol::DebuggerResponse::CallStack { frames }) => {
-            // Convert to CallStackData for frontend
-            let call_stack: Vec<CallStackData> = frames.iter().enumerate().map(|(i, frame)| {
-                CallStackData {
-                    frame_number: i,
-                    instruction_pointer: format!("0x{:016x}", frame.instruction_pointer),
-                    stack_pointer: format!("0x{:016x}", frame.stack_pointer),
-                    frame_pointer: format!("0x{:016x}", frame.frame_pointer),
-                    symbol_info: frame.symbol.as_ref().map(|sym| {
-                        format!("{}!{}+0x{:x}", sym.module_name, sym.symbol_name, sym.offset)
-                    }),
-                }
-            }).collect();
-            
-            info!("Fetched {} call stack frames for session {}", call_stack.len(), session_id);
-            Ok(call_stack)
+    ui_sender
+        .send(UICommand::GetCallStack)
+        .map_err(|e| Error::InternalCommunication(format!("Failed to send GetCallStack command: {}", e)))?;
+
+    info!("Request for call stack sent for session {}", session_id);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn update_window_state(
+    session_id: String,
+    window_type: String,
+    is_open: bool,
+    session_states: State<'_, SessionStatesMap>,
+    app_handle: tauri::AppHandle,
+) -> Result<()> {
+    let session_state = {
+        let states = session_states.lock().unwrap();
+        states
+            .get(&session_id)
+            .cloned()
+            .ok_or_else(|| Error::SessionNotFound(session_id.clone()))?
+    };
+
+    {
+        let mut state = session_state.lock().unwrap();
+        match window_type.as_str() {
+            "disassembly" => state.is_disassembly_window_open = is_open,
+            "registers" => state.is_registers_window_open = is_open,
+            "callstack" => state.is_callstack_window_open = is_open,
+            _ => return Err(Error::InvalidSessionState(format!(
+                "Unknown window type: {}",
+                window_type
+            ))),
         }
-        Ok(response) => {
-            Err(Error::InternalCommunication(format!(
-                "Expected CallStack response, got {:?}",
-                response
-            )))
-        }
-        Err(e) => Err(Error::InternalCommunication(format!(
-            "Failed to fetch call stack: {}",
-            e
-        ))),
     }
+
+    // Emit session update to notify frontend
+    emit_session_update(&session_state, &app_handle);
+    
+    debug!("Updated window state for session {}: {} = {}", session_id, window_type, is_open);
+    Ok(())
 } 
