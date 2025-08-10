@@ -26,9 +26,7 @@ export default function SessionDocked() {
   const {
     session,
     isLoading,
-    isProcessing,
-    isSteppingIn,
-    isStopping,
+    busyAction,
     modules,
     threads,
     loadModules,
@@ -36,6 +34,8 @@ export default function SessionDocked() {
     searchSymbols,
     handleGo,
     handleStepIn,
+    handleStepOver,
+    handleStepOut,
     handleStop,
     handleStart,
     canStep,
@@ -125,13 +125,25 @@ export default function SessionDocked() {
   // Hotkey handlers
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'F7') {
+      if (event.key === 'F11' && event.shiftKey) {
+        event.preventDefault();
+        event.stopPropagation();
+        handleStepOut();
+        return;
+      }
+      if (event.key === 'F11') {
         event.preventDefault();
         event.stopPropagation();
         handleStepIn();
         return;
       }
-      if (event.key === 'F8') {
+      if (event.key === 'F10') {
+        event.preventDefault();
+        event.stopPropagation();
+        handleStepOver();
+        return;
+      }
+      if (event.key === 'F5') {
         event.preventDefault();
         event.stopPropagation();
         handleGo();
@@ -179,7 +191,7 @@ export default function SessionDocked() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [handleGo, handleStepIn, toggleTabWithBackendUpdate]);
+  }, [handleGo, handleStepIn, handleStepOver, handleStepOut, toggleTabWithBackendUpdate]);
 
   const contextValue = useMemo(() => ({
     session,
@@ -314,11 +326,11 @@ export default function SessionDocked() {
       >
         <SessionHeader
           session={session}
-          isProcessing={isProcessing}
-          isSteppingIn={isSteppingIn}
-          isStopping={isStopping}
+          busyAction={busyAction}
           handleGo={handleGo}
           handleStepIn={handleStepIn}
+          handleStepOver={handleStepOver}
+          handleStepOut={handleStepOut}
           handleStop={handleStop}
           handleStart={handleStart}
           canStep={canStep}

@@ -24,9 +24,19 @@ export function AssemblyView({ sessionId, address }: AssemblyViewProps) {
   const [lastFetchedAddress, setLastFetchedAddress] = useState<number | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
+  // Clear stale instructions when session or address becomes unavailable
+  useEffect(() => {
+    if (!sessionId || address == null) {
+      setInstructions([]);
+      setError(null);
+      setIsLoading(false);
+      setLastFetchedAddress(null);
+    }
+  }, [sessionId, address]);
+
   useEffect(() => {
     const requestDisassembly = async () => {
-      if (!sessionId || !address || address === lastFetchedAddress) return;
+      if (!sessionId || address == null || address === lastFetchedAddress) return;
 
       setError(null);
       setIsLoading(true);
@@ -93,7 +103,7 @@ export function AssemblyView({ sessionId, address }: AssemblyViewProps) {
     };
   }, [sessionId, address]);
 
-  if (!sessionId || !address) {
+  if (!sessionId || (address == null && instructions.length === 0)) {
     return (
       <div className="flex flex-col items-center justify-center h-full text-muted-foreground p-4">
         <div className="text-center">
@@ -116,7 +126,7 @@ export function AssemblyView({ sessionId, address }: AssemblyViewProps) {
     );
   }
 
-  if (isLoading) {
+  if (isLoading && instructions.length === 0) {
     return (
       <div className="flex items-center justify-center h-full text-muted-foreground">
         <div className="text-center">

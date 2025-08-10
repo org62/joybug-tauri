@@ -316,6 +316,78 @@ pub fn step_in_debug_session(
 }
 
 #[tauri::command]
+pub fn step_over_debug_session(
+    session_id: String,
+    session_states: State<'_, SessionStatesMap>,
+) -> Result<()> {
+    let session_state = {
+        let states = session_states.lock().unwrap();
+        states
+            .get(&session_id)
+            .cloned()
+            .ok_or_else(|| Error::SessionNotFound(session_id.clone()))?
+    };
+
+    let step_sender = {
+        let state = session_state.lock().unwrap();
+        
+        if !matches!(state.status, SessionStatusUI::Paused) {
+            return Err(Error::InvalidSessionState(
+                "Session must be paused to step over".to_string()
+            ));
+        }
+        
+        state
+            .ui_sender
+            .as_ref()
+            .ok_or_else(|| Error::InternalCommunication("Session step sender not available".to_string()))?
+            .clone()
+    };
+
+    step_sender
+        .send(UICommand::StepOver)
+        .map_err(|e| Error::InternalCommunication(format!("Failed to send step over signal: {}", e)))?;
+
+    Ok(())
+}
+
+#[tauri::command]
+pub fn step_out_debug_session(
+    session_id: String,
+    session_states: State<'_, SessionStatesMap>,
+) -> Result<()> {
+    let session_state = {
+        let states = session_states.lock().unwrap();
+        states
+            .get(&session_id)
+            .cloned()
+            .ok_or_else(|| Error::SessionNotFound(session_id.clone()))?
+    };
+
+    let step_sender = {
+        let state = session_state.lock().unwrap();
+        
+        if !matches!(state.status, SessionStatusUI::Paused) {
+            return Err(Error::InvalidSessionState(
+                "Session must be paused to step out".to_string()
+            ));
+        }
+        
+        state
+            .ui_sender
+            .as_ref()
+            .ok_or_else(|| Error::InternalCommunication("Session step sender not available".to_string()))?
+            .clone()
+    };
+
+    step_sender
+        .send(UICommand::StepOut)
+        .map_err(|e| Error::InternalCommunication(format!("Failed to send step out signal: {}", e)))?;
+
+    Ok(())
+}
+
+#[tauri::command]
 pub fn stop_debug_session(
     session_id: String,
     session_states: State<'_, SessionStatesMap>,

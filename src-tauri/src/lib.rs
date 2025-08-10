@@ -32,6 +32,8 @@ pub fn run() {
             commands::start_debug_session,
             commands::step_debug_session,
             commands::step_in_debug_session,
+            commands::step_over_debug_session,
+            commands::step_out_debug_session,
             commands::stop_debug_session,
             commands::delete_debug_session,
             commands::request_disassembly,

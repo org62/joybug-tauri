@@ -7,9 +7,9 @@ import { DebugSession, Module, Thread, Symbol } from '@/contexts/SessionContext'
 export function useDebugSession(sessionId: string | undefined) {
   const [session, setSession] = useState<DebugSession | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [isSteppingIn, setIsSteppingIn] = useState(false);
-  const [isStopping, setIsStopping] = useState(false);
+  const [busyAction, setBusyAction] = useState<
+    "go" | "stepIn" | "stepOut" | "stepOver" | "stop" | null
+  >(null);
   const [modules, setModules] = useState<Module[]>([]);
   const [threads, setThreads] = useState<Thread[]>([]);
 
@@ -130,7 +130,7 @@ export function useDebugSession(sessionId: string | undefined) {
 
   const handleGo = useCallback(async () => {
     if (!sessionId || !canStep) return;
-    setIsProcessing(true);
+    setBusyAction("go");
     try {
       await invoke("step_debug_session", { sessionId });
       // The session-updated event will refresh the state
@@ -139,13 +139,13 @@ export function useDebugSession(sessionId: string | undefined) {
       toast.error(errorMessage);
       console.error(errorMessage);
     } finally {
-      setIsProcessing(false);
+      setBusyAction(null);
     }
   }, [sessionId, canStep]);
 
   const handleStepIn = useCallback(async () => {
     if (!sessionId || !canStep) return;
-    setIsSteppingIn(true);
+    setBusyAction("stepIn");
     try {
       await invoke("step_in_debug_session", { sessionId });
       // The session-updated event will refresh the state
@@ -154,7 +154,35 @@ export function useDebugSession(sessionId: string | undefined) {
       toast.error(errorMessage);
       console.error(errorMessage);
     } finally {
-      setIsSteppingIn(false);
+      setBusyAction(null);
+    }
+  }, [sessionId, canStep]);
+
+  const handleStepOut = useCallback(async () => {
+    if (!sessionId || !canStep) return;
+    setBusyAction("stepOut");
+    try {
+      await invoke("step_out_debug_session", { sessionId });
+    } catch (error) {
+      const errorMessage = `Failed to step out session: ${error}`;
+      toast.error(errorMessage);
+      console.error(errorMessage);
+    } finally {
+      setBusyAction(null);
+    }
+  }, [sessionId, canStep]);
+
+  const handleStepOver = useCallback(async () => {
+    if (!sessionId || !canStep) return;
+    setBusyAction("stepOver");
+    try {
+      await invoke("step_over_debug_session", { sessionId });
+    } catch (error) {
+      const errorMessage = `Failed to step over session: ${error}`;
+      toast.error(errorMessage);
+      console.error(errorMessage);
+    } finally {
+      setBusyAction(null);
     }
   }, [sessionId, canStep]);
 
@@ -172,7 +200,7 @@ export function useDebugSession(sessionId: string | undefined) {
 
   const handleStop = useCallback(async () => {
     if (!sessionId || !canStop) return;
-    setIsStopping(true);
+    setBusyAction("stop");
     try {
       await invoke("stop_debug_session", { sessionId });
       toast.success("Debug session stopped");
@@ -181,16 +209,14 @@ export function useDebugSession(sessionId: string | undefined) {
       toast.error(errorMessage);
       console.error(errorMessage);
     } finally {
-      setIsStopping(false);
+      setBusyAction(null);
     }
   }, [sessionId, canStop]);
 
   return {
     session,
     isLoading,
-    isProcessing,
-    isSteppingIn,
-    isStopping,
+    busyAction,
     modules,
     threads,
     loadModules,
@@ -198,6 +224,8 @@ export function useDebugSession(sessionId: string | undefined) {
     searchSymbols,
     handleGo,
     handleStepIn,
+    handleStepOut,
+    handleStepOver,
     handleStop,
     handleStart,
     canStep,

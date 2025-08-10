@@ -8,6 +8,8 @@ use tracing::{debug, error, info, warn};
 pub enum UICommand {
     Go,
     StepIn,
+    StepOver,
+    StepOut,
     Stop,
     Disassembly{ arch: joybug2::interfaces::Architecture, address: u64, count: u32 },
     GetCallStack,
@@ -377,7 +379,77 @@ fn handle_ui_commands(
                         return Ok(true); // Continue execution
                     }
                     UICommand::StepIn => {
-                        todo!("StepIn");
+                        // Initiate single step into on current pid/tid
+                        let pid = event.pid();
+                        let tid = event.tid();
+
+                        debug!("📤 StepIn command - pid={}, tid={}", pid, tid);
+
+                        // Request a step into; stop after first step completes
+                        session
+                            .step(
+                                pid,
+                                tid,
+                                joybug2::protocol_io::StepKind::Into,
+                                |_s, _pid, _tid, _addr, _kind| {
+                                    debug!("📥 StepIn handler called");
+                                    Ok(joybug2::protocol_io::StepAction::Stop)
+                                },
+                            )
+                            .map_err(|e| Error::DebugLoop(format!(
+                                "Failed to start step-in: {}",
+                                e
+                            )))?;
+
+                        return Ok(true);
+                    }
+                    UICommand::StepOver => {
+                        // Initiate step over on current pid/tid
+                        let pid = event.pid();
+                        let tid = event.tid();
+
+                        debug!("📤 StepOver command - pid={}, tid={}", pid, tid);
+
+                        session
+                            .step(
+                                pid,
+                                tid,
+                                joybug2::protocol_io::StepKind::Over,
+                                |_s, _pid, _tid, _addr, _kind| {
+                                    debug!("📥 StepOver handler called");
+                                    Ok(joybug2::protocol_io::StepAction::Stop)
+                                },
+                            )
+                            .map_err(|e| Error::DebugLoop(format!(
+                                "Failed to start step-over: {}",
+                                e
+                            )))?;
+
+                        return Ok(true);
+                    }
+                    UICommand::StepOut => {
+                        // Initiate step out on current pid/tid
+                        let pid = event.pid();
+                        let tid = event.tid();
+
+                        debug!("📤 StepOut command - pid={}, tid={}", pid, tid);
+
+                        session
+                            .step(
+                                pid,
+                                tid,
+                                joybug2::protocol_io::StepKind::Out,
+                                |_s, _pid, _tid, _addr, _kind| {
+                                    debug!("📥 StepOut handler called");
+                                    Ok(joybug2::protocol_io::StepAction::Stop)
+                                },
+                            )
+                            .map_err(|e| Error::DebugLoop(format!(
+                                "Failed to start step-out: {}",
+                                e
+                            )))?;
+
+                        return Ok(true);
                     }
                     UICommand::Disassembly { arch, address, count } => {
                         // Handle disassembly request
