@@ -80,8 +80,8 @@ fn update_session_from_event(state: &mut SessionStateUI, event: &joybug2::protoc
             // Process has exited, clear all modules and threads
             state.modules.clear();
             state.threads.clear();
-            state.status = SessionStatusUI::Finished;
-            info!("Process exited, session finished.");
+            state.status = SessionStatusUI::Stopped;
+            info!("Process exited, session stopped.");
         }
         _ => {
             // Other events don't affect modules/threads
@@ -476,7 +476,7 @@ fn handle_ui_commands(
                     UICommand::Stop => {
                         info!("Stop command received, terminating session");
                         let mut state = session.state.lock().unwrap();
-                        state.status = SessionStatusUI::Finished;
+                        state.status = SessionStatusUI::Stopped;
                         return Ok(false); // Stop session
                     }
                 }
@@ -506,19 +506,14 @@ pub fn run_debug_session(
     // Get step receiver from session state
     let ui_receiver = {
         let mut state = session_state.lock().unwrap();
-        state.ui_receiver.take().unwrap()
+        match state.ui_receiver.take() {
+            Some(rx) => rx,
+            None => {
+                // Session was started twice or receiver already taken due to race. Surface as error and stop.
+                return Err(Error::InternalCommunication("UI receiver not available (session already running?)".to_string()));
+            }
+        }
     };
-
-    // Mark as connected
-    {
-        let mut state = session_state.lock().unwrap();
-        state.status = SessionStatusUI::Connected;
-    }
-
-    // Emit session update for Connected status
-    if let Some(ref handle) = app_handle {
-        emit_session_event(&session_state, handle);
-    }
 
     // Create app handle clone for the closure
     let app_handle_clone = app_handle.clone();
@@ -557,7 +552,16 @@ pub fn run_debug_session(
 
             // Update session state from event
             {
-                let context = session.get_thread_context(event.pid(), event.tid()).unwrap();
+                let context = match session.get_thread_context(event.pid(), event.tid()) {
+                    Ok(ctx) => ctx,
+                    Err(e) => {
+                        error!("Failed to get thread context: {}", e);
+                        let mut state = session.state.lock().unwrap();
+                        state.status = SessionStatusUI::Error(format!("GetThreadContext failed: {}", e));
+                        emit_session_event(&session.state, handle);
+                        return Ok(false);
+                    }
+                };
                 let mut state = session.state.lock().unwrap();
                 state.current_event = Some(event.clone());
                 state.events.push(event.clone());
@@ -612,7 +616,7 @@ pub fn run_debug_session(
     {
         let mut state = session_state.lock().unwrap();
         if !matches!(state.status, SessionStatusUI::Error(_)) {
-            state.status = SessionStatusUI::Finished;
+            state.status = SessionStatusUI::Stopped;
             state.reset();
         }
         state.current_event = None;

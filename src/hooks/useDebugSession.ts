@@ -16,11 +16,11 @@ export function useDebugSession(sessionId: string | undefined) {
   const canStep = useMemo(() => session?.status === "Paused", [session]);
   const canStop = useMemo(() => {
     if (!session || typeof session.status !== "string") return false;
-    return ["Connecting", "Connected", "Running", "Paused"].includes(session.status);
+    return ["Running", "Paused"].includes(session.status);
   }, [session]);
   const canStart = useMemo(() => {
     if (!session || typeof session.status !== "string") return false;
-    return ["Created", "Finished"].includes(session.status);
+    return ["Stopped"].includes(session.status);
   }, [session]);
 
   const loadModules = useCallback(async () => {
@@ -118,7 +118,7 @@ export function useDebugSession(sessionId: string | undefined) {
         }
       };
       fetchData();
-    } else if (session?.status === "Finished" || typeof session?.status === 'object') {
+    } else if (session?.status === "Stopped" || typeof session?.status === 'object') {
       setModules([]);
       setThreads([]);
     }

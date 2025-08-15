@@ -20,12 +20,9 @@ pub struct DebugSessionUI {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SessionStatusUI {
-    Created,
-    Connecting,
-    Connected,
+    Stopped,
     Running,
     Paused,
-    Finished,
     Error(String),
 }
 
@@ -117,7 +114,7 @@ impl SessionStateUI {
             server_url,
             launch_command,
             created_at: chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string(),
-            status: SessionStatusUI::Created,
+            status: SessionStatusUI::Stopped,
             events: Vec::new(),
             modules: Vec::new(),
             threads: Vec::new(),

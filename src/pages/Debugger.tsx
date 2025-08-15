@@ -49,12 +49,9 @@ interface DebugEventInfo {
 }
 
 type SessionStatus = 
-  | "Created"
-  | "Connecting" 
-  | "Connected"
+  | "Stopped"
   | "Running"
   | "Paused"
-  | "Finished"
   | { Error: string };
 
 export default function Debugger() {
@@ -212,8 +209,7 @@ export default function Debugger() {
       setFormServerUrl("127.0.0.1:9000");
       setFormLaunchCommand("cmd.exe /c echo Hello World!");
       
-      // Immediately refresh sessions instead of waiting for auto-refresh
-      await loadSessions();
+      // Live updates will arrive via events; no manual refresh
       
       return sessionId;
     } catch (error) {
@@ -248,8 +244,7 @@ export default function Debugger() {
       toast.success("Debug session updated successfully");
       setIsSessionDialogOpen(false);
       setSessionToEdit(null);
-      // Immediately refresh sessions instead of waiting for auto-refresh
-      await loadSessions();
+      // Live updates will arrive via events; no manual refresh
     } catch (error) {
       console.error("Failed to update debug session:", error);
       toast.error(error as string);
@@ -261,8 +256,7 @@ export default function Debugger() {
     try {
       await invoke("start_debug_session", { sessionId });
       toast.success("Debug session started");
-      // Immediately refresh sessions instead of waiting for auto-refresh
-      await loadSessions();
+      // Live updates will arrive via events; no manual refresh
     } catch (error) {
       console.error("Failed to start debug session:", error);
       toast.error(`Failed to start debug session: ${error}`);
@@ -273,8 +267,7 @@ export default function Debugger() {
     try {
       await invoke("stop_debug_session", { sessionId });
       toast.success("Debug session stopped");
-      // Immediately refresh sessions instead of waiting for auto-refresh
-      await loadSessions();
+      // Live updates will arrive via events; no manual refresh
     } catch (error) {
       console.error("Failed to stop debug session:", error);
       toast.error(error as string);
@@ -289,8 +282,7 @@ export default function Debugger() {
       removeSessionFromStorage(sessionId);
       
       toast.success("Debug session deleted");
-      // Immediately refresh sessions instead of waiting for auto-refresh
-      await loadSessions();
+      // Live updates will arrive via events; no manual refresh
     } catch (error) {
       console.error("Failed to delete debug session:", error);
       toast.error(error as string);
@@ -312,18 +304,12 @@ export default function Debugger() {
   const getStatusBadge = (status: SessionStatus) => {
     if (typeof status === "string") {
       switch (status) {
-        case "Created":
-          return <Badge variant="secondary">Created</Badge>;
-        case "Connecting":
-          return <Badge variant="outline" className="animate-pulse">Connecting...</Badge>;
-        case "Connected":
-          return <Badge variant="default" className="bg-blue-600">Connected</Badge>;
+        case "Stopped":
+          return <Badge variant="secondary">Stopped</Badge>;
         case "Running":
           return <Badge variant="default" className="bg-green-600 animate-pulse">Running</Badge>;
         case "Paused":
           return <Badge variant="default" className="bg-yellow-600">Paused</Badge>;
-        case "Finished":
-          return <Badge variant="outline">Finished</Badge>;
         default:
           return <Badge variant="secondary">{status}</Badge>;
       }
@@ -336,18 +322,12 @@ export default function Debugger() {
   const getStatusDescription = (status: SessionStatus) => {
     if (typeof status === "string") {
       switch (status) {
-        case "Created":
-          return "Session created, ready to start";
-        case "Connecting":
-          return "Connecting to debug server...";
-        case "Connected":
-          return "Connected to debug server";
+        case "Stopped":
+          return "Session is stopped";
         case "Running":
           return "Debug session is running";
         case "Paused":
           return "Debug session is paused on an event";
-        case "Finished":
-          return "Debug session has finished";
         default:
           return status;
       }
@@ -358,31 +338,31 @@ export default function Debugger() {
 
   const canStart = (status: SessionStatus) => {
     if (typeof status !== "string") return true; // Allow to retry on error
-    return ["Created", "Finished"].includes(status);
+    return ["Stopped"].includes(status);
   };
 
   const canEdit = (status: SessionStatus) => {
     if (typeof status !== "string") return true; // Allow to edit on error
-    return ["Created", "Finished"].includes(status);
+    return ["Stopped"].includes(status);
   };
 
   const canView = (status: SessionStatus) => {
     if (typeof status === "string") {
-      return ["Connected", "Running", "Paused"].includes(status);
+      return ["Running", "Paused"].includes(status);
     }
     return false;
   };
 
   const canStop = (status: SessionStatus) => {
     if (typeof status === "string") {
-      return ["Connecting", "Connected", "Running", "Paused"].includes(status);
+      return ["Running", "Paused"].includes(status);
     }
     return false;
   };
 
   const canDelete = (status: SessionStatus) => {
     if (typeof status !== "string") return true; // Allow to delete on error
-    return ["Created", "Finished"].includes(status);
+    return ["Stopped"].includes(status);
   };
 
   return (

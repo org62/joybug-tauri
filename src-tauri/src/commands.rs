@@ -102,9 +102,9 @@ pub fn update_debug_session(
     if let Some(session_state) = states.get(&session_id) {
         let mut state = session_state.lock().unwrap();
 
-        // only allow editing for created or finished sessions
-        if !matches!(state.status, SessionStatusUI::Created | SessionStatusUI::Finished) {
-            return Err("Session can only be edited when in 'Created' or 'Finished' state.".to_string());
+        // only allow editing for stopped sessions
+        if !matches!(state.status, SessionStatusUI::Stopped) {
+            return Err("Session can only be edited when in 'Stopped' state.".to_string());
         }
 
         state.name = name;
@@ -181,19 +181,16 @@ pub fn start_debug_session(
     // Reset state if session is being restarted
     {
         let mut state = session_state.lock().unwrap();
-        if matches!(state.status, SessionStatusUI::Finished | SessionStatusUI::Error(_)) {
+        // Prevent double-start if already active (ui_receiver taken by running session)
+        if state.ui_receiver.is_none() {
+            return Err(Error::InvalidSessionState("Session is already running".to_string()));
+        }
+        if matches!(state.status, SessionStatusUI::Stopped | SessionStatusUI::Error(_)) {
             state.reset();
         }
     }
 
-    // Update status to Connecting
-    {
-        let mut state = session_state.lock().unwrap();
-        state.status = SessionStatusUI::Connecting;
-    }
-
-    // Emit session-updated event for the status change to Connecting
-    emit_session_update(&session_state, &app_handle);
+    // Do not emit here; UI will update on real events from the session thread
 
     // Log session start
     crate::ui_logger::log_info(
@@ -215,8 +212,8 @@ pub fn start_debug_session(
             let mut state = session_state_for_thread.lock().unwrap();
             match &result {
                 Ok(_) => {
-                    if !matches!(state.status, SessionStatusUI::Finished) {
-                        state.status = SessionStatusUI::Finished;
+                    if !matches!(state.status, SessionStatusUI::Stopped) {
+                        state.status = SessionStatusUI::Stopped;
                     }
                     info!("Debug session {} completed successfully", session_id_for_thread);
                 }
@@ -407,10 +404,7 @@ pub fn stop_debug_session(
                 // Send stop command to ensure immediate exit if loop is waiting
                 let _ = sender.send(UICommand::Stop);
             }
-            // Also handle the case where a session is connecting but not yet in the debug loop
-            if matches!(state.status, SessionStatusUI::Connecting) {
-                state.status = SessionStatusUI::Finished;
-            }
+            // No special handling for a transient connecting state
         }
 
         // Emit update so frontend reflects stop request immediately

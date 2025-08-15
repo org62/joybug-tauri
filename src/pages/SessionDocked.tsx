@@ -264,18 +264,12 @@ export default function SessionDocked() {
   const getStatusBadge = (status: SessionStatus) => {
     if (typeof status === "string") {
       switch (status) {
-        case "Created":
-          return <Badge variant="secondary">Created</Badge>;
-        case "Connecting":
-          return <Badge variant="outline" className="animate-pulse">Connecting...</Badge>;
-        case "Connected":
-          return <Badge variant="default" className="bg-blue-600">Connected</Badge>;
+        case "Stopped":
+          return <Badge variant="secondary">Stopped</Badge>;
         case "Running":
           return <Badge variant="default" className="bg-green-600 animate-pulse">Running</Badge>;
         case "Paused":
           return <Badge variant="default" className="bg-yellow-600">Paused</Badge>;
-        case "Finished":
-          return <Badge variant="outline">Finished</Badge>;
         default:
           return <Badge variant="secondary">{status}</Badge>;
       }

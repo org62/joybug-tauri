@@ -49,12 +49,9 @@ export interface Symbol {
 }
 
 export type SessionStatus = 
-  | "Created"
-  | "Connecting" 
-  | "Connected"
+  | "Stopped"
   | "Running"
   | "Paused"
-  | "Finished"
   | { Error: string };
 
 // Context for session data
