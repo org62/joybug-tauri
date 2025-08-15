@@ -391,19 +391,30 @@ pub fn step_out_debug_session(
 pub fn stop_debug_session(
     session_id: String,
     session_states: State<'_, SessionStatesMap>,
+    app_handle: tauri::AppHandle,
 ) -> Result<()> {
-    if let Some(session_state) = session_states.lock().unwrap().get(&session_id) {
-        let mut state = session_state.lock().unwrap();
-        if let Some(sender) = state.ui_sender.take() {
-            // Dropping sender will cause recv() to fail in the debug loop, stopping it
-            info!("Stopping session by dropping the step_sender.");
-            // Send stop command to ensure immediate exit if loop is waiting
-            let _ = sender.send(UICommand::Stop);
+    let session_state = {
+        let states = session_states.lock().unwrap();
+        states.get(&session_id).cloned()
+    };
+
+    if let Some(session_state) = session_state {
+        {
+            let mut state = session_state.lock().unwrap();
+            if let Some(sender) = state.ui_sender.take() {
+                // Dropping sender will cause recv() to fail in the debug loop, stopping it
+                info!("Stopping session by dropping the step_sender.");
+                // Send stop command to ensure immediate exit if loop is waiting
+                let _ = sender.send(UICommand::Stop);
+            }
+            // Also handle the case where a session is connecting but not yet in the debug loop
+            if matches!(state.status, SessionStatusUI::Connecting) {
+                state.status = SessionStatusUI::Finished;
+            }
         }
-        // Also handle the case where a session is connecting but not yet in the debug loop
-        if matches!(state.status, SessionStatusUI::Connecting) {
-            state.status = SessionStatusUI::Finished;
-        }
+
+        // Emit update so frontend reflects stop request immediately
+        emit_session_update(&session_state, &app_handle);
     }
     // Always return Ok, as the goal is to stop the session, and if it's not found, it's already "stopped"
     Ok(())
@@ -413,14 +424,19 @@ pub fn stop_debug_session(
 pub fn delete_debug_session(
     session_id: String,
     session_states: State<'_, SessionStatesMap>,
+    app_handle: tauri::AppHandle,
 ) -> Result<()> {
     // Attempt to stop the session first. We ignore the result because even if stopping fails,
     // we want to proceed with deletion.
-    let _ = stop_debug_session(session_id.clone(), session_states.clone());
+    let _ = stop_debug_session(session_id.clone(), session_states.clone(), app_handle.clone());
 
     // Remove the session from the state map.
     if session_states.lock().unwrap().remove(&session_id).is_some() {
         info!("Successfully deleted session: {}", session_id);
+        // Inform frontend that a session was removed
+        if let Err(e) = app_handle.emit("session-removed", &session_id) {
+            error!("Failed to emit session-removed event: {}", e);
+        }
         Ok(())
     } else {
         // If the session was not found, it's already gone, so we can consider this a success.

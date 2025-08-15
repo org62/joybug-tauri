@@ -297,6 +297,18 @@ pub fn debug_event_to_info(event: &joybug2::protocol_io::DebugEvent) -> DebugEve
             address: Some(*address),
             context: None,
         },
+        DebugEvent::StepFailed { pid, tid, kind, message } => DebugEventInfo {
+            event_type: "StepFailed".to_string(),
+            process_id: *pid,
+            thread_id: *tid,
+            details: format!(
+                "Step failed: PID={}, TID={}, Kind={:?}, Message={}",
+                pid, tid, kind, message
+            ),
+            can_continue: false,
+            address: None,
+            context: None,
+        },
         DebugEvent::Unknown => DebugEventInfo {
             event_type: "Unknown".to_string(),
             process_id: 0,

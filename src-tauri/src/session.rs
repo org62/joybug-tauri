@@ -434,20 +434,29 @@ fn handle_ui_commands(
 
                         debug!("📤 StepOut command - pid={}, tid={}", pid, tid);
 
-                        session
-                            .step(
-                                pid,
-                                tid,
-                                joybug2::protocol_io::StepKind::Out,
-                                |_s, _pid, _tid, _addr, _kind| {
-                                    debug!("📥 StepOut handler called");
-                                    Ok(joybug2::protocol_io::StepAction::Stop)
-                                },
-                            )
-                            .map_err(|e| Error::DebugLoop(format!(
-                                "Failed to start step-out: {}",
-                                e
-                            )))?;
+                        if let Err(e) = session.step(
+                            pid,
+                            tid,
+                            joybug2::protocol_io::StepKind::Out,
+                            |_s, _pid, _tid, _addr, _kind| {
+                                debug!("📥 StepOut handler called");
+                                Ok(joybug2::protocol_io::StepAction::Stop)
+                            },
+                        ) {
+                            // Surface step-out error to UI, log, and stop the session per requirement
+                            let msg = format!("Step out failed: {}", e);
+                            if let Some(ref handle) = app_handle_clone {
+                                let session_id = {
+                                    let state = session.state.lock().unwrap();
+                                    state.id.clone()
+                                };
+                                crate::ui_logger::log_error(handle, &msg, Some(session_id));
+                                crate::ui_logger::toast_error(handle, &msg);
+                            }
+                            // Keep session paused: do NOT continue execution; wait for the next UI command
+                            debug!("StepOut failed; staying paused and awaiting next command");
+                            continue;
+                        }
 
                         return Ok(true);
                     }

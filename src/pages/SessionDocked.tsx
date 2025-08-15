@@ -176,7 +176,7 @@ export default function SessionDocked() {
           event.stopPropagation();
           toggleTabWithBackendUpdate("threads");
           break;
-        case 'c':
+        case 'l':
           event.preventDefault();
           event.stopPropagation();
           toggleTabWithBackendUpdate("callstack");
