@@ -531,7 +531,28 @@ pub fn run_debug_session(
                 &format!("Received debug event: {}", event),
                 Some(session.state.lock().unwrap().id.clone()),
             );
-            crate::ui_logger::toast_info(handle, &format!("{}", event));
+            if !matches!(event, joybug2::protocol_io::DebugEvent::Output { .. }) {
+                crate::ui_logger::toast_info(handle, &format!("{}", event));
+            }
+
+            // Special handling for OutputDebugString: log and toast raw string, do not pause
+            if let joybug2::protocol_io::DebugEvent::Output { output, .. } = event {
+                let session_id = {
+                    let state = session.state.lock().unwrap();
+                    state.id.clone()
+                };
+                // add "OutputDebugString: " to the output
+                let output = format!("OutputDebugString: {}", output);
+                crate::ui_logger::log_info(handle, &output, Some(session_id));
+                crate::ui_logger::toast_info(handle, &output);
+
+                // Record event but keep session running (no context fetch / pause)
+                {
+                    let mut state = session.state.lock().unwrap();
+                    state.events.push(event.clone());
+                }
+                emit_session_event(&session.state, handle);
+            }
 
             // Handle events that don't require thread context or user interaction first.
             if matches!(event, joybug2::protocol_io::DebugEvent::ThreadExited { .. } | joybug2::protocol_io::DebugEvent::ProcessExited { .. }) {
