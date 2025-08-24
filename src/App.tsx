@@ -81,7 +81,7 @@ function AppContent() {
           </Routes>
         </Suspense>
       </main>
-      <Toaster />
+      <Toaster visibleToasts={3} expand />
     </div>
   );
 }

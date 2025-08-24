@@ -531,7 +531,12 @@ pub fn run_debug_session(
                 &format!("Received debug event: {}", event),
                 Some(session.state.lock().unwrap().id.clone()),
             );
-            if !matches!(event, joybug2::protocol_io::DebugEvent::Output { .. }) {
+            if !matches!(
+                event,
+                joybug2::protocol_io::DebugEvent::Output { .. }
+                    | joybug2::protocol_io::DebugEvent::DllLoaded { .. }
+                    | joybug2::protocol_io::DebugEvent::DllUnloaded { .. }
+            ) {
                 crate::ui_logger::toast_info(handle, &format!("{}", event));
             }
 
@@ -589,7 +594,75 @@ pub fn run_debug_session(
                 state.status = SessionStatusUI::Paused; // Paused waiting for user input
                 state.current_context = Some(crate::events::convert_raw_context_to_serializable(context));
 
+                // For DllUnloaded, capture module name before state update removes it
+                let mut unloaded_module_name: Option<String> = None;
+                if let joybug2::protocol_io::DebugEvent::DllUnloaded { base_of_dll, .. } = event {
+                    if let Some(m) = state.modules.iter().find(|m| m.base == *base_of_dll) {
+                        unloaded_module_name = Some(m.name.clone());
+                    }
+                }
+
                 update_session_from_event(&mut state, event);
+
+                // Emit targeted events for specific debug events (we may use unloaded_module_name captured above)
+                if let Some(ref handle) = app_handle_clone {
+                    let session_id = state.id.clone();
+                    match event {
+                        joybug2::protocol_io::DebugEvent::DllUnloaded { pid, tid, base_of_dll } => {
+                            #[derive(serde::Serialize)]
+                            struct DllUnloadedEvent {
+                                session_id: String,
+                                pid: u32,
+                                tid: u32,
+                                base_of_dll: u64,
+                                dll_name: Option<String>,
+                            }
+                            let payload = DllUnloadedEvent { session_id, pid: *pid, tid: *tid, base_of_dll: *base_of_dll, dll_name: unloaded_module_name };
+                            if let Err(e) = handle.emit("dll-unloaded", &payload) {
+                                error!("Failed to emit dll-unloaded event: {}", e);
+                            } else {
+                                debug!("📡 Emitted dll-unloaded event for base 0x{:X}", base_of_dll);
+                            }
+
+                            // Log and toast with DLL name when available
+                            let message = match &payload.dll_name {
+                                Some(name) => format!("DLL unloaded: {} @ 0x{:X}", name, base_of_dll),
+                                None => format!("DLL unloaded @ 0x{:X}", base_of_dll),
+                            };
+                            let sid = payload.session_id.clone();
+                            crate::ui_logger::log_info(handle, &message, Some(sid));
+                            crate::ui_logger::toast_info(handle, &message);
+                        }
+                        joybug2::protocol_io::DebugEvent::DllLoaded { pid, tid, dll_name, base_of_dll, size_of_dll } => {
+                            #[derive(serde::Serialize)]
+                            struct DllLoadedEvent<'a> {
+                                session_id: String,
+                                pid: u32,
+                                tid: u32,
+                                dll_name: &'a str,
+                                base_of_dll: u64,
+                                size_of_dll: Option<u64>,
+                            }
+                            let name = dll_name.as_deref().unwrap_or("<unknown>");
+                            let payload = DllLoadedEvent { session_id, pid: *pid, tid: *tid, dll_name: name, base_of_dll: *base_of_dll, size_of_dll: *size_of_dll };
+                            if let Err(e) = handle.emit("dll-loaded", &payload) {
+                                error!("Failed to emit dll-loaded event: {}", e);
+                            } else {
+                                debug!("📡 Emitted dll-loaded event for base 0x{:X}", base_of_dll);
+                            }
+
+                            // Log and toast with DLL name on load
+                            let message = match size_of_dll {
+                                Some(sz) => format!("DLL loaded: {} @ 0x{:X} (size: 0x{:X})", name, base_of_dll, sz),
+                                None => format!("DLL loaded: {} @ 0x{:X}", name, base_of_dll),
+                            };
+                            let sid = payload.session_id.clone();
+                            crate::ui_logger::log_info(handle, &message, Some(sid));
+                            crate::ui_logger::toast_info(handle, &message);
+                        }
+                        _ => {}
+                    }
+                }
 
             }
             // Get thread context if applicable

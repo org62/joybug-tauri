@@ -128,6 +128,36 @@ export function useDebugSession(sessionId: string | undefined) {
     };
   }, [session, loadModules, loadThreads]);
 
+  // Listen for dll load/unload targeted events to refresh modules quickly
+  useEffect(() => {
+    if (!sessionId) return;
+    let unlistenUnload: (() => void) | undefined;
+    let unlistenLoad: (() => void) | undefined;
+    const attach = async () => {
+      unlistenUnload = await listen<{ session_id: string; pid: number; tid: number; base_of_dll: number; dll_name?: string }>(
+        "dll-unloaded",
+        async (event) => {
+          if (event.payload.session_id !== sessionId) return;
+          const mods = await loadModules();
+          setModules(mods);
+        }
+      );
+      unlistenLoad = await listen<{ session_id: string; pid: number; tid: number; dll_name: string; base_of_dll: number; size_of_dll?: number }>(
+        "dll-loaded",
+        async (event) => {
+          if (event.payload.session_id !== sessionId) return;
+          const mods = await loadModules();
+          setModules(mods);
+        }
+      );
+    };
+    attach();
+    return () => {
+      if (unlistenUnload) unlistenUnload();
+      if (unlistenLoad) unlistenLoad();
+    };
+  }, [sessionId, loadModules]);
+
   const handleGo = useCallback(async () => {
     if (!sessionId || !canStep) return;
     setBusyAction("go");
