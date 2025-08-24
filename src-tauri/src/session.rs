@@ -376,6 +376,13 @@ fn handle_ui_commands(
                 match command {
                     UICommand::Go => {
                         debug!("📤 Go command - continuing execution");
+                        // Set UI status to Running while target executes
+                        if let Some(handle) = app_handle_clone.as_ref() {
+                            let mut s = session.state.lock().unwrap();
+                            s.status = SessionStatusUI::Running;
+                            drop(s);
+                            emit_session_event(&session.state, handle);
+                        }
                         return Ok(true); // Continue execution
                     }
                     UICommand::StepIn => {
@@ -401,6 +408,13 @@ fn handle_ui_commands(
                                 e
                             )))?;
 
+                        // Target will run briefly until step completes; mark as Running
+                        if let Some(handle) = app_handle_clone.as_ref() {
+                            let mut s = session.state.lock().unwrap();
+                            s.status = SessionStatusUI::Running;
+                            drop(s);
+                            emit_session_event(&session.state, handle);
+                        }
                         return Ok(true);
                     }
                     UICommand::StepOver => {
@@ -425,6 +439,12 @@ fn handle_ui_commands(
                                 e
                             )))?;
 
+                        if let Some(handle) = app_handle_clone.as_ref() {
+                            let mut s = session.state.lock().unwrap();
+                            s.status = SessionStatusUI::Running;
+                            drop(s);
+                            emit_session_event(&session.state, handle);
+                        }
                         return Ok(true);
                     }
                     UICommand::StepOut => {
@@ -458,6 +478,12 @@ fn handle_ui_commands(
                             continue;
                         }
 
+                        if let Some(handle) = app_handle_clone.as_ref() {
+                            let mut s = session.state.lock().unwrap();
+                            s.status = SessionStatusUI::Running;
+                            drop(s);
+                            emit_session_event(&session.state, handle);
+                        }
                         return Ok(true);
                     }
                     UICommand::Disassembly { arch, address, count } => {
@@ -514,6 +540,15 @@ pub fn run_debug_session(
             }
         }
     };
+
+    // Mark status as Running at launch and notify UI
+    {
+        let mut state = session_state.lock().unwrap();
+        state.status = SessionStatusUI::Running;
+    }
+    if let Some(ref handle) = app_handle {
+        emit_session_event(&session_state, handle);
+    }
 
     // Create app handle clone for the closure
     let app_handle_clone = app_handle.clone();
