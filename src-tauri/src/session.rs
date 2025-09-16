@@ -1,7 +1,8 @@
 use crate::error::{Error, Result};
 use crate::state::{SessionStateUI, SessionStatusUI};
+use crate::settings::SettingsState;
 use std::sync::{Arc, Mutex};
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 use tracing::{debug, error, info, warn};
 
 #[derive(Debug, Clone)]
@@ -595,24 +596,129 @@ pub fn run_debug_session(
             }
 
             // Handle events that don't require thread context or user interaction first.
-            if matches!(event, joybug2::protocol_io::DebugEvent::ThreadExited { .. } | joybug2::protocol_io::DebugEvent::ProcessExited { .. }) {
+            // ProcessExited: always finalize/continue.
+            if matches!(event, joybug2::protocol_io::DebugEvent::ProcessExited { .. }) {
                 {
                     let mut state = session.state.lock().unwrap();
                     state.current_event = Some(event.clone());
                     state.events.push(event.clone());
                     update_session_from_event(&mut state, event);
                 }
-                
                 emit_session_event(&session.state, handle);
-
-                // For ThreadExited, we continue execution.
-                // For ProcessExited, this will also "continue", but the debug loop should terminate
-                // as the debugee is gone.
                 return Ok(true);
             }
 
-            // Update session state from event
+            // ThreadExited: respect settings whether to pause or not
+            if let joybug2::protocol_io::DebugEvent::ThreadExited { .. } = event {
+                let should_pause_on_thread_exit = {
+                    let s = handle.state::<SettingsState>();
+                    let s = s.lock().unwrap();
+                    s.stop_on_thread_exit
+                };
+                if !should_pause_on_thread_exit {
+                    {
+                        let mut state = session.state.lock().unwrap();
+                        state.current_event = Some(event.clone());
+                        state.events.push(event.clone());
+                        update_session_from_event(&mut state, event);
+                    }
+                    emit_session_event(&session.state, handle);
+                    return Ok(true);
+                }
+            }
+
+            // Decide whether this event should pause or auto-continue based on user settings
             {
+                let settings = handle.state::<SettingsState>().inner().lock().unwrap().clone();
+                let should_pause = match event {
+                    joybug2::protocol_io::DebugEvent::ProcessCreated { .. } => settings.stop_on_process_create,
+                    joybug2::protocol_io::DebugEvent::ThreadCreated { .. } => settings.stop_on_thread_create,
+                    joybug2::protocol_io::DebugEvent::ThreadExited { .. } => settings.stop_on_thread_exit,
+                    joybug2::protocol_io::DebugEvent::DllLoaded { .. } => settings.stop_on_dll_load,
+                    joybug2::protocol_io::DebugEvent::DllUnloaded { .. } => settings.stop_on_dll_unload,
+                    joybug2::protocol_io::DebugEvent::InitialBreakpoint { .. } => settings.stop_on_initial_breakpoint,
+                    _ => true,
+                };
+
+                if !should_pause {
+                    // For non-pausing events, perform state update, emit any targeted events, notify UI, and continue.
+                    let mut unloaded_module_name: Option<String> = None;
+                    {
+                        let mut state = session.state.lock().unwrap();
+                        // Capture unloaded module name before removal
+                        if let joybug2::protocol_io::DebugEvent::DllUnloaded { base_of_dll, .. } = event {
+                            if let Some(m) = state.modules.iter().find(|m| m.base == *base_of_dll) {
+                                unloaded_module_name = Some(m.name.clone());
+                            }
+                        }
+                        state.current_event = Some(event.clone());
+                        state.events.push(event.clone());
+                        update_session_from_event(&mut state, event);
+                        // Keep status Running (do not set Paused)
+                        state.status = SessionStatusUI::Running;
+                    }
+
+                    // Emit targeted events for DLL load/unload (with logging/toast handled there)
+                    if let Some(ref handle) = app_handle_clone {
+                        let state = session.state.lock().unwrap();
+                        let session_id = state.id.clone();
+                        drop(state);
+                        match event {
+                            joybug2::protocol_io::DebugEvent::DllUnloaded { pid, tid, base_of_dll } => {
+                                #[derive(serde::Serialize)]
+                                struct DllUnloadedEvent {
+                                    session_id: String,
+                                    pid: u32,
+                                    tid: u32,
+                                    base_of_dll: u64,
+                                    dll_name: Option<String>,
+                                }
+                                let payload = DllUnloadedEvent { session_id: session_id.clone(), pid: *pid, tid: *tid, base_of_dll: *base_of_dll, dll_name: unloaded_module_name };
+                                if let Err(e) = handle.emit("dll-unloaded", &payload) {
+                                    error!("Failed to emit dll-unloaded event: {}", e);
+                                } else {
+                                    debug!("📡 Emitted dll-unloaded event for base 0x{:X}", base_of_dll);
+                                }
+                                let message = match &payload.dll_name {
+                                    Some(name) => format!("DLL unloaded: {} @ 0x{:X}", name, base_of_dll),
+                                    None => format!("DLL unloaded @ 0x{:X}", base_of_dll),
+                                };
+                                crate::ui_logger::log_info(handle, &message, Some(session_id));
+                                crate::ui_logger::toast_info(handle, &message);
+                            }
+                            joybug2::protocol_io::DebugEvent::DllLoaded { pid, tid, dll_name, base_of_dll, size_of_dll } => {
+                                #[derive(serde::Serialize)]
+                                struct DllLoadedEvent<'a> {
+                                    session_id: String,
+                                    pid: u32,
+                                    tid: u32,
+                                    dll_name: &'a str,
+                                    base_of_dll: u64,
+                                    size_of_dll: Option<u64>,
+                                }
+                                let name = dll_name.as_deref().unwrap_or("<unknown>");
+                                let payload = DllLoadedEvent { session_id: session_id.clone(), pid: *pid, tid: *tid, dll_name: name, base_of_dll: *base_of_dll, size_of_dll: *size_of_dll };
+                                if let Err(e) = handle.emit("dll-loaded", &payload) {
+                                    error!("Failed to emit dll-loaded event: {}", e);
+                                } else {
+                                    debug!("📡 Emitted dll-loaded event for base 0x{:X}", base_of_dll);
+                                }
+                                let message = match size_of_dll {
+                                    Some(sz) => format!("DLL loaded: {} @ 0x{:X} (size: 0x{:X})", name, base_of_dll, sz),
+                                    None => format!("DLL loaded: {} @ 0x{:X}", name, base_of_dll),
+                                };
+                                crate::ui_logger::log_info(handle, &message, Some(session_id));
+                                crate::ui_logger::toast_info(handle, &message);
+                            }
+                            _ => {}
+                        }
+                    }
+
+                    emit_session_event(&session.state, handle);
+                    return Ok(true);
+                }
+
+                // Update session state from event (pausing path)
                 let context = match session.get_thread_context(event.pid(), event.tid()) {
                     Ok(ctx) => ctx,
                     Err(e) => {
@@ -764,7 +870,7 @@ pub fn run_debug_session(
 
 
 // Helper function to emit session-updated events
-fn emit_session_event(
+pub(crate) fn emit_session_event(
     session_state: &Arc<Mutex<SessionStateUI>>,
     app_handle: &AppHandle,
 ) {

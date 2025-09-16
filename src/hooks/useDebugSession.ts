@@ -232,8 +232,14 @@ export function useDebugSession(sessionId: string | undefined) {
     if (!sessionId || !canStop) return;
     setBusyAction("stop");
     try {
-      await invoke("stop_debug_session", { sessionId });
-      toast.success("Debug session stopped");
+      const isRunning = session?.status === "Running";
+      if (isRunning) {
+        await invoke("terminate_debug_session", { sessionId });
+        toast.success("Terminate signal sent");
+      } else {
+        await invoke("stop_debug_session", { sessionId });
+        toast.success("Debug session stopped");
+      }
     } catch (error) {
       const errorMessage = `Failed to stop session: ${error}`;
       toast.error(errorMessage);
@@ -241,7 +247,7 @@ export function useDebugSession(sessionId: string | undefined) {
     } finally {
       setBusyAction(null);
     }
-  }, [sessionId, canStop]);
+  }, [sessionId, canStop, session]);
 
   return {
     session,

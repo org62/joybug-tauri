@@ -60,9 +60,12 @@ export function AssemblyView({ sessionId, address }: AssemblyViewProps) {
         } else {
           errorMessage = String(err);
         }
-        console.error("Failed to request disassembly:", err);
-        toast.error(`Failed to request disassembly: ${errorMessage}`);
-        setError(errorMessage);
+        // Graceful handling when session is running (not paused)
+        if (!(errorMessage.includes('InvalidSessionState') || errorMessage.includes('must be paused'))) {
+          console.error("Failed to request disassembly:", err);
+          toast.error(`Failed to request disassembly: ${errorMessage}`);
+          setError(errorMessage);
+        }
         setIsLoading(false);
       }
     };
@@ -90,9 +93,14 @@ export function AssemblyView({ sessionId, address }: AssemblyViewProps) {
       "disassembly-error", 
       (event) => {
         if (event.payload.session_id === sessionId && event.payload.address === address) {
-          setError(event.payload.error);
+          const msg = event.payload.error || '';
+          if (!(msg.includes('InvalidSessionState') || msg.includes('must be paused'))) {
+            setError(msg);
+            toast.error(`Disassembly failed: ${msg}`);
+          } else {
+            setError(null);
+          }
           setIsLoading(false);
-          toast.error(`Disassembly failed: ${event.payload.error}`);
         }
       }
     );
