@@ -1,7 +1,7 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
-import { ArrowLeft, Square, Play, MoveRight, CornerDownRight, CornerUpLeft } from 'lucide-react';
+import { ArrowLeft, Square, Play, MoveRight, CornerDownRight, CornerUpLeft, Pause } from 'lucide-react';
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -14,16 +14,18 @@ import { DebugSession, SessionStatus } from '@/contexts/SessionContext';
 
 export interface SessionHeaderProps {
   session: DebugSession;
-  busyAction: "go" | "stepIn" | "stepOut" | "stepOver" | "stop" | null;
+  busyAction: "go" | "stepIn" | "stepOut" | "stepOver" | "stop" | "pause" | null;
   handleGo: () => void;
   handleStepIn: () => void;
   handleStepOver: () => void;
   handleStepOut: () => void;
   handleStop: () => void;
   handleStart: () => void;
+  handlePause: () => void;
   canStep: boolean;
   canStop: boolean;
   canStart: boolean;
+  canPause: boolean;
   dockingRef: React.RefObject<{ getActiveTabs: () => string[] }>; // rc-dock doesn't export DockingLayoutRef type properly
   getStatusBadge: (status: SessionStatus) => React.ReactNode;
   toggleTab: (tabId: string) => void;
@@ -39,9 +41,11 @@ export const SessionHeader: React.FC<SessionHeaderProps> = ({
   handleStepOut,
   handleStop,
   handleStart,
+  handlePause,
   canStep,
   canStop,
   canStart,
+  canPause,
   getStatusBadge,
   toggleTab,
   resetLayout,
@@ -73,6 +77,20 @@ export const SessionHeader: React.FC<SessionHeaderProps> = ({
             <Play className="h-4 w-4 mr-2" />
             Start
           </Button>
+        )}
+        {!canStart && canPause && (
+          <div className="inline-flex items-center gap-1">
+            <Button
+              onClick={handlePause}
+              disabled={busyAction !== null}
+              size="sm"
+              variant="default"
+              title="Pause (Ctrl+Break)"
+              aria-label="Pause"
+            >
+              <Pause className="h-4 w-4" />
+            </Button>
+          </div>
         )}
         {/* Step buttons group with tighter spacing */}
         {canStep && (

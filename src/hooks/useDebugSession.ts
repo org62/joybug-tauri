@@ -8,7 +8,7 @@ export function useDebugSession(sessionId: string | undefined) {
   const [session, setSession] = useState<DebugSession | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [busyAction, setBusyAction] = useState<
-    "go" | "stepIn" | "stepOut" | "stepOver" | "stop" | null
+    "go" | "stepIn" | "stepOut" | "stepOver" | "stop" | "pause" | null
   >(null);
   const [modules, setModules] = useState<Module[]>([]);
   const [threads, setThreads] = useState<Thread[]>([]);
@@ -21,6 +21,11 @@ export function useDebugSession(sessionId: string | undefined) {
   const canStart = useMemo(() => {
     if (!session || typeof session.status !== "string") return false;
     return ["Stopped"].includes(session.status);
+  }, [session]);
+
+  const canPause = useMemo(() => {
+    if (!session || typeof session.status !== "string") return false;
+    return ["Running"].includes(session.status);
   }, [session]);
 
   const loadModules = useCallback(async () => {
@@ -249,6 +254,21 @@ export function useDebugSession(sessionId: string | undefined) {
     }
   }, [sessionId, canStop, session]);
 
+  const handlePause = useCallback(async () => {
+    if (!sessionId || !canPause) return;
+    setBusyAction("pause");
+    try {
+      await invoke("pause_debug_session", { sessionId });
+      toast.success("Pause signal sent");
+    } catch (error) {
+      const errorMessage = `Failed to pause session: ${error}`;
+      toast.error(errorMessage);
+      console.error(errorMessage);
+    } finally {
+      setBusyAction(null);
+    }
+  }, [sessionId, canPause]);
+
   return {
     session,
     isLoading,
@@ -264,8 +284,10 @@ export function useDebugSession(sessionId: string | undefined) {
     handleStepOver,
     handleStop,
     handleStart,
+    handlePause,
     canStep,
     canStop,
     canStart,
+    canPause,
   };
 } 

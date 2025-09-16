@@ -4,6 +4,7 @@ use crate::state::{
     DebugSessionUI, LogEntry, LogsState, SessionStateUI, SessionStatesMap, SessionStatusUI,
 };
 use crate::settings::{DebugSettings, SettingsState, save_settings_to_disk};
+use joybug2::protocol::DebuggerRequest;
 use crate::session::UICommand;
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -443,35 +444,75 @@ pub fn terminate_debug_session(
             (pid, state.server_url.clone())
         };
 
-        // Fire a terminate request to the server via protocol_io
-        // We don't have direct access to the protocol session here; reuse the run thread sender to signal Stop then log termination attempt
-        // Instead, emit a background task to send terminate via a short-lived client
-        let app_handle_clone = app_handle.clone();
-        std::thread::spawn(move || {
-            let res = (|| -> Result<()> {
-                // Build a temporary session to send the terminate request
-                let tmp_state = std::sync::Arc::new(std::sync::Mutex::new(crate::state::SessionStateUI::new(
-                    format!("tmp_{}_{}", session_id, chrono::Utc::now().timestamp_millis()),
-                    "tmp".to_string(),
-                    server_url.clone(),
-                    "".to_string(),
-                )));
-                let mut client = joybug2::protocol_io::DebugSession::new(tmp_state, Some(&server_url)).map_err(|e| Error::ConnectionFailed(e.to_string()))?;
-                let target_pid = if pid != 0 { pid } else { 0 };
-                if target_pid != 0 {
-                    client.terminate_process(target_pid).map_err(|e| Error::InternalCommunication(e.to_string()))?;
-                }
-                Ok(())
-            })();
-            if let Err(e) = res {
-                crate::ui_logger::log_error(&app_handle_clone, &format!("Failed to terminate: {}", e), Some(session_id.clone()));
+        // Fire a terminate request to the server synchronously via a short-lived client
+        if pid != 0 {
+            if let Err(e) = send_out_of_band_request(&server_url, DebuggerRequest::TerminateProcess { pid }) {
+                crate::ui_logger::log_error(&app_handle, &format!("Failed to terminate: {}", e), Some(session_id.clone()));
             } else {
-                crate::ui_logger::log_info(&app_handle_clone, "Terminate signal sent", Some(session_id.clone()));
+                crate::ui_logger::log_info(&app_handle, "Terminate signal sent", Some(session_id.clone()));
             }
-        });
+        }
 
-        // Emit update so frontend can reflect termination request
+        // Emit update so frontend can reflect termination request immediately
         emit_session_event(&session_state, &app_handle);
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn pause_debug_session(
+    session_id: String,
+    session_states: State<'_, SessionStatesMap>,
+    app_handle: tauri::AppHandle,
+) -> Result<()> {
+    let session_state = {
+        let states = session_states.lock().unwrap();
+        states.get(&session_id).cloned()
+    };
+
+    if let Some(session_state) = session_state {
+        // Get last known pid and server url
+        let (pid, server_url) = {
+            let state = session_state.lock().unwrap();
+            let pid = state.current_event.as_ref().map(|ev| ev.pid()).unwrap_or(0);
+            (pid, state.server_url.clone())
+        };
+
+        if pid == 0 {
+            return Err(Error::InvalidSessionState("No active process to pause".to_string()));
+        }
+
+        // Send BreakInto synchronously via a short-lived client (no extra thread)
+        send_out_of_band_request(&server_url, DebuggerRequest::BreakInto { pid })?;
+
+        crate::ui_logger::log_info(&app_handle, "Pause signal sent", Some(session_id.clone()));
+        Ok(())
+    } else {
+        Err(Error::SessionNotFound(session_id))
+    }
+}
+
+fn send_out_of_band_request(server_url: &str, req: DebuggerRequest) -> Result<()> {
+    let tmp_state = std::sync::Arc::new(std::sync::Mutex::new(crate::state::SessionStateUI::new(
+        format!("tmp_oob_{}", chrono::Utc::now().timestamp_millis()),
+        "tmp".to_string(),
+        server_url.to_string(),
+        "".to_string(),
+    )));
+    let mut client = joybug2::protocol_io::DebugSession::new(tmp_state, Some(server_url))
+        .map_err(|e| Error::ConnectionFailed(e.to_string()))?;
+    match req {
+        DebuggerRequest::BreakInto { pid } => {
+            client
+                .send_and_receive(&DebuggerRequest::BreakInto { pid })
+                .map_err(|e| Error::InternalCommunication(e.to_string()))?;
+        }
+        DebuggerRequest::TerminateProcess { pid } => {
+            client
+                .send_and_receive(&DebuggerRequest::TerminateProcess { pid })
+                .map_err(|e| Error::InternalCommunication(e.to_string()))?;
+        }
+        _ => return Err(Error::InvalidSessionState("Unsupported OOB request".to_string())),
     }
     Ok(())
 }

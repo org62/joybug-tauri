@@ -38,9 +38,11 @@ export default function SessionDocked() {
     handleStepOut,
     handleStop,
     handleStart,
+    handlePause,
     canStep,
     canStop,
     canStart,
+    canPause,
   } = useDebugSession(sessionId);
 
   // Function to sync window states with backend
@@ -327,9 +329,11 @@ export default function SessionDocked() {
           handleStepOut={handleStepOut}
           handleStop={handleStop}
           handleStart={handleStart}
+          handlePause={handlePause}
           canStep={canStep}
           canStop={canStop}
           canStart={canStart}
+          canPause={canPause}
           dockingRef={dockingRef}
           getStatusBadge={getStatusBadge}
           toggleTab={toggleTabWithBackendUpdate}
