@@ -5,9 +5,12 @@ import { AlertCircle } from 'lucide-react';
 export const ContextRegisterView = () => {
   const sessionData = useSessionContext();
   const currentEvent = sessionData?.session?.current_event;
+  const status = sessionData?.session?.status;
 
-  if (currentEvent?.context) {
-    return <RegisterView context={currentEvent.context} />;
+  const context = status === "Paused" ? currentEvent?.context : undefined;
+
+  if (context) {
+    return <RegisterView context={context} />;
   }
   return (
     <div className="flex flex-col items-center justify-center h-full text-muted-foreground p-4">

@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -48,12 +49,9 @@ interface DebugEventInfo {
 }
 
 type SessionStatus = 
-  | "Created"
-  | "Connecting" 
-  | "Connected"
+  | "Stopped"
   | "Running"
   | "Paused"
-  | "Finished"
   | { Error: string };
 
 export default function Debugger() {
@@ -120,10 +118,35 @@ export default function Debugger() {
     restoreSessionsFromStorage();
   }, []);
 
-  // Auto-refresh sessions every 1 second
+  // No polling: updates handled via events and explicit refreshes after actions
+
+  // Live updates via backend events
   useEffect(() => {
-    const interval = setInterval(loadSessions, 1000);
-    return () => clearInterval(interval);
+    let unlistenUpdated: (() => void) | null = null;
+    let unlistenRemoved: (() => void) | null = null;
+    const attach = async () => {
+      unlistenUpdated = await listen<DebugSession>("session-updated", (event) => {
+        const updated = event.payload;
+        setSessions((prev) => {
+          const index = prev.findIndex((s) => s.id === updated.id);
+          if (index === -1) {
+            return [updated, ...prev];
+          }
+          const copy = prev.slice();
+          copy[index] = updated;
+          return copy;
+        });
+      });
+      unlistenRemoved = await listen<string>("session-removed", (event) => {
+        const removedId = event.payload;
+        setSessions((prev) => prev.filter((s) => s.id !== removedId));
+      });
+    };
+    attach();
+    return () => {
+      if (unlistenUpdated) unlistenUpdated();
+      if (unlistenRemoved) unlistenRemoved();
+    };
   }, []);
 
   // Handle Ctrl+O to open new session dialog
@@ -186,7 +209,7 @@ export default function Debugger() {
       setFormServerUrl("127.0.0.1:9000");
       setFormLaunchCommand("cmd.exe /c echo Hello World!");
       
-      // Note: Auto-refresh will pick up the new session within 2 seconds
+      // Live updates will arrive via events; no manual refresh
       
       return sessionId;
     } catch (error) {
@@ -221,7 +244,7 @@ export default function Debugger() {
       toast.success("Debug session updated successfully");
       setIsSessionDialogOpen(false);
       setSessionToEdit(null);
-      // Auto-refresh will pick up changes
+      // Live updates will arrive via events; no manual refresh
     } catch (error) {
       console.error("Failed to update debug session:", error);
       toast.error(error as string);
@@ -233,7 +256,7 @@ export default function Debugger() {
     try {
       await invoke("start_debug_session", { sessionId });
       toast.success("Debug session started");
-      // Note: Auto-refresh will pick up the status change within 2 seconds
+      // Live updates will arrive via events; no manual refresh
     } catch (error) {
       console.error("Failed to start debug session:", error);
       toast.error(`Failed to start debug session: ${error}`);
@@ -244,6 +267,7 @@ export default function Debugger() {
     try {
       await invoke("stop_debug_session", { sessionId });
       toast.success("Debug session stopped");
+      // Live updates will arrive via events; no manual refresh
     } catch (error) {
       console.error("Failed to stop debug session:", error);
       toast.error(error as string);
@@ -258,6 +282,7 @@ export default function Debugger() {
       removeSessionFromStorage(sessionId);
       
       toast.success("Debug session deleted");
+      // Live updates will arrive via events; no manual refresh
     } catch (error) {
       console.error("Failed to delete debug session:", error);
       toast.error(error as string);
@@ -266,11 +291,7 @@ export default function Debugger() {
 
   const handleCreateAndStart = async () => {
     try {
-      const sessionId = await handleCreateSession();
-      // Small delay to ensure session is created
-      setTimeout(() => {
-        handleStartSession(sessionId);
-      }, 100);
+      await handleCreateSession();
     } catch (error) {
       // Error already handled in handleCreateSession
     }
@@ -283,18 +304,12 @@ export default function Debugger() {
   const getStatusBadge = (status: SessionStatus) => {
     if (typeof status === "string") {
       switch (status) {
-        case "Created":
-          return <Badge variant="secondary">Created</Badge>;
-        case "Connecting":
-          return <Badge variant="outline" className="animate-pulse">Connecting...</Badge>;
-        case "Connected":
-          return <Badge variant="default" className="bg-blue-600">Connected</Badge>;
+        case "Stopped":
+          return <Badge variant="secondary">Stopped</Badge>;
         case "Running":
           return <Badge variant="default" className="bg-green-600 animate-pulse">Running</Badge>;
         case "Paused":
           return <Badge variant="default" className="bg-yellow-600">Paused</Badge>;
-        case "Finished":
-          return <Badge variant="outline">Finished</Badge>;
         default:
           return <Badge variant="secondary">{status}</Badge>;
       }
@@ -307,18 +322,12 @@ export default function Debugger() {
   const getStatusDescription = (status: SessionStatus) => {
     if (typeof status === "string") {
       switch (status) {
-        case "Created":
-          return "Session created, ready to start";
-        case "Connecting":
-          return "Connecting to debug server...";
-        case "Connected":
-          return "Connected to debug server";
+        case "Stopped":
+          return "Session is stopped";
         case "Running":
           return "Debug session is running";
         case "Paused":
           return "Debug session is paused on an event";
-        case "Finished":
-          return "Debug session has finished";
         default:
           return status;
       }
@@ -328,32 +337,32 @@ export default function Debugger() {
   };
 
   const canStart = (status: SessionStatus) => {
-    if (typeof status !== "string") return false;
-    return ["Created", "Finished"].includes(status);
+    if (typeof status !== "string") return true; // Allow to retry on error
+    return ["Stopped"].includes(status);
   };
 
   const canEdit = (status: SessionStatus) => {
-    if (typeof status !== "string") return false;
-    return ["Created", "Finished"].includes(status);
+    if (typeof status !== "string") return true; // Allow to edit on error
+    return ["Stopped"].includes(status);
   };
 
   const canView = (status: SessionStatus) => {
     if (typeof status === "string") {
-      return ["Connected", "Running", "Paused"].includes(status);
+      return ["Running", "Paused"].includes(status);
     }
     return false;
   };
 
   const canStop = (status: SessionStatus) => {
     if (typeof status === "string") {
-      return ["Connecting", "Connected", "Running", "Paused"].includes(status);
+      return ["Running", "Paused"].includes(status);
     }
     return false;
   };
 
   const canDelete = (status: SessionStatus) => {
-    if (typeof status !== "string") return false;
-    return ["Created", "Finished"].includes(status);
+    if (typeof status !== "string") return true; // Allow to delete on error
+    return ["Stopped"].includes(status);
   };
 
   return (

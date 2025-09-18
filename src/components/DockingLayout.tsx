@@ -11,24 +11,43 @@ export interface DockingLayoutProps extends DockingConfig {
   onAddTab?: () => void;
   onResetLayout?: () => void;
   onToggleTab?: (tabId: string) => void;
+  onTabsChanged?: (activeTabIds: string[]) => void;
 }
 
 export interface DockingLayoutRef {
   addTab: () => void;
   resetLayout: () => void;
   toggleTab: (tabId: string) => void;
+  getActiveTabs: () => string[];
 }
 
 const DockingLayoutComponent = React.forwardRef<DockingLayoutRef, DockingLayoutProps>(
-  ({ children, className, style, onAddTab, onResetLayout, onToggleTab, ...config }, ref) => {
+  ({ children, className, style, onAddTab, onResetLayout, onToggleTab, onTabsChanged, ...config }, ref) => {
     const { resolvedTheme } = useTheme();
-    const docking = useDocking(config);
+    const docking = useDocking({ ...config, onTabsChanged });
 
     // Expose operations through ref
     React.useImperativeHandle(ref, () => ({
       addTab: docking.addTab,
       resetLayout: docking.resetLayout,
       toggleTab: docking.toggleTab,
+      getActiveTabs: () => {
+        const activeTabIds: string[] = [];
+        const findTabIds = (box: any) => {
+          if (box.tabs) {
+            box.tabs.forEach((tab: any) => {
+              if (tab.id) {
+                activeTabIds.push(tab.id);
+              }
+            });
+          }
+          if (box.children) {
+            box.children.forEach(findTabIds);
+          }
+        };
+        findTabIds(docking.layout.dockbox);
+        return activeTabIds;
+      },
     }));
 
     // Handle external event callbacks

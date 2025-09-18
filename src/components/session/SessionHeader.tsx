@@ -1,35 +1,55 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
-import { ArrowLeft, Square, ChevronRight, Play } from 'lucide-react';
+import { ArrowLeft, Square, Play, MoveRight, CornerDownRight, CornerUpLeft, Pause } from 'lucide-react';
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuCheckboxItem,
+  DropdownMenuSeparator,
+  DropdownMenuItem,
+} from '@/components/ui/dropdown-menu';
 import { DebugSession, SessionStatus } from '@/contexts/SessionContext';
 
-interface SessionHeaderProps {
+export interface SessionHeaderProps {
   session: DebugSession;
-  isStepping: boolean;
-  isStopping: boolean;
-  handleStep: () => void;
+  busyAction: "go" | "stepIn" | "stepOut" | "stepOver" | "stop" | "pause" | null;
+  handleGo: () => void;
+  handleStepIn: () => void;
+  handleStepOver: () => void;
+  handleStepOut: () => void;
   handleStop: () => void;
   handleStart: () => void;
+  handlePause: () => void;
   canStep: boolean;
   canStop: boolean;
   canStart: boolean;
-  dockingRef: React.RefObject<any>; // rc-dock doesn't export DockingLayoutRef type properly
+  canPause: boolean;
+  dockingRef: React.RefObject<{ getActiveTabs: () => string[] }>; // rc-dock doesn't export DockingLayoutRef type properly
   getStatusBadge: (status: SessionStatus) => React.ReactNode;
+  toggleTab: (tabId: string) => void;
+  resetLayout: () => void;
 }
 
 export const SessionHeader: React.FC<SessionHeaderProps> = ({
   session,
-  isStepping,
-  isStopping,
-  handleStep,
+  busyAction,
+  handleGo,
+  handleStepIn,
+  handleStepOver,
+  handleStepOut,
   handleStop,
   handleStart,
+  handlePause,
   canStep,
   canStop,
   canStart,
-  dockingRef,
+  canPause,
   getStatusBadge,
+  toggleTab,
+  resetLayout,
+  dockingRef,
 }) => {
   const navigate = useNavigate();
 
@@ -46,64 +66,146 @@ export const SessionHeader: React.FC<SessionHeaderProps> = ({
         </div>
       </div>
       
-      <div className="flex items-center gap-2">
+      <div className="flex items-center">
         {canStart && (
           <Button
             onClick={handleStart}
             size="sm"
             variant="outline"
+            className="mr-4"
           >
             <Play className="h-4 w-4 mr-2" />
             Start
           </Button>
         )}
+        {!canStart && canPause && (
+          <div className="inline-flex items-center gap-1">
+            <Button
+              onClick={handlePause}
+              disabled={busyAction !== null}
+              size="sm"
+              variant="default"
+              title="Pause (Ctrl+Break)"
+              aria-label="Pause"
+            >
+              <Pause className="h-4 w-4" />
+            </Button>
+          </div>
+        )}
+        {/* Step buttons group with tighter spacing */}
         {canStep && (
-          <Button
-            onClick={handleStep}
-            disabled={isStepping}
-            size="sm"
-            variant="default"
-          >
-            <ChevronRight className="h-4 w-4 mr-2" />
-            {isStepping ? "Stepping..." : "Step (F8)"}
-          </Button>
+          <div className="inline-flex items-center gap-1">
+            <Button
+              onClick={handleGo}
+              disabled={busyAction !== null}
+              size="sm"
+              variant="default"
+              title="Go (F5)"
+              aria-label="Go"
+            >
+              <Play className="h-4 w-4" />
+            </Button>
+            <Button
+              onClick={handleStepOver}
+              disabled={busyAction !== null}
+              size="sm"
+              variant="default"
+              title="Step Over (F10)"
+              aria-label="Step Over"
+            >
+              <MoveRight className="h-4 w-4" />
+            </Button>
+            <Button
+              onClick={handleStepIn}
+              disabled={busyAction !== null}
+              size="sm"
+              variant="default"
+              title="Step In (F11)"
+              aria-label="Step In"
+            >
+              <CornerDownRight className="h-4 w-4" />
+            </Button>
+            <Button
+              onClick={handleStepOut}
+              disabled={busyAction !== null}
+              size="sm"
+              variant="default"
+              title="Step Out (Shift+F11)"
+              aria-label="Step Out"
+            >
+              <CornerUpLeft className="h-4 w-4" />
+            </Button>
+          </div>
         )}
         
         {canStop && (
           <Button
             onClick={handleStop}
-            disabled={isStopping}
+            disabled={busyAction === "stop"}
             size="sm"
             variant="destructive"
+            className="ml-4 mr-4"
           >
             <Square className="h-4 w-4 mr-2" />
-            {isStopping ? "Stopping..." : "Stop"}
+            {busyAction === "stop" ? "Stopping..." : "Stop"}
           </Button>
         )}
-
-        <div className="ml-2 flex gap-1">
-          <Button variant="outline" size="sm" onClick={() => dockingRef.current?.toggleTab("disassembly")} title="Show Disassembly (Ctrl+D)">
-            D
-          </Button>
-          <Button variant="outline" size="sm" onClick={() => dockingRef.current?.toggleTab("registers")} title="Show Registers (Ctrl+R)">
-            R
-          </Button>
-          <Button variant="outline" size="sm" onClick={() => dockingRef.current?.toggleTab("modules")} title="Show Modules (Ctrl+M)">
-            M
-          </Button>
-          <Button variant="outline" size="sm" onClick={() => dockingRef.current?.toggleTab("threads")} title="Show Threads (Ctrl+T)">
-            T
-          </Button>
-          <Button variant="outline" size="sm" onClick={() => dockingRef.current?.toggleTab("callstack")} title="Show Call Stack (Ctrl+C)">
-            C
-          </Button>
-          <Button variant="outline" size="sm" onClick={() => dockingRef.current?.toggleTab("symbols")} title="Show Symbols (Ctrl+S)">
-            S
-          </Button>
-          <Button variant="outline" size="sm" onClick={() => dockingRef.current?.resetLayout()} title="Reset Layout">
-            Reset
-          </Button>
-        </div>
+        
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="outline" size="sm">Windows</Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="min-w-[220px]">
+            {(() => {
+              const activeTabs = dockingRef.current?.getActiveTabs?.() || [];
+              const active = new Set<string>(activeTabs);
+              return (
+                <>
+                  <DropdownMenuCheckboxItem
+                    checked={active.has('disassembly')}
+                    onCheckedChange={() => toggleTab('disassembly')}
+                  >
+                    Disassembly
+                  </DropdownMenuCheckboxItem>
+                  <DropdownMenuCheckboxItem
+                    checked={active.has('registers')}
+                    onCheckedChange={() => toggleTab('registers')}
+                  >
+                    Registers
+                  </DropdownMenuCheckboxItem>
+                  <DropdownMenuCheckboxItem
+                    checked={active.has('modules')}
+                    onCheckedChange={() => toggleTab('modules')}
+                  >
+                    Modules
+                  </DropdownMenuCheckboxItem>
+                  <DropdownMenuCheckboxItem
+                    checked={active.has('threads')}
+                    onCheckedChange={() => toggleTab('threads')}
+                  >
+                    Threads
+                  </DropdownMenuCheckboxItem>
+                  <DropdownMenuCheckboxItem
+                    checked={active.has('callstack')}
+                    onCheckedChange={() => toggleTab('callstack')}
+                  >
+                    Call Stack
+                  </DropdownMenuCheckboxItem>
+                  <DropdownMenuCheckboxItem
+                    checked={active.has('symbols')}
+                    onCheckedChange={() => toggleTab('symbols')}
+                  >
+                    Symbols
+                  </DropdownMenuCheckboxItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onSelect={(e: Event) => { e.preventDefault(); resetLayout(); }}>
+                    Reset Layout
+                  </DropdownMenuItem>
+                </>
+              );
+            })()}
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
     </div>
   );

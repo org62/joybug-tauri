@@ -1,28 +1,28 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{mpsc, Arc, Mutex};
-use joybug2::protocol_io::DebugClient;
+use crate::session::UICommand;
 
 // Serializable snapshot of session state for frontend communication
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DebugSession {
+pub struct DebugSessionUI {
     pub id: String,
     pub name: String,
     pub server_url: String,
     pub launch_command: String,
-    pub status: SessionStatus,
+    pub status: SessionStatusUI,
     pub current_event: Option<DebugEventInfo>,
     pub created_at: String,
+    pub disassembly_window_open: bool,
+    pub registers_window_open: bool,
+    pub callstack_window_open: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum SessionStatus {
-    Created,
-    Connecting,
-    Connected,
+pub enum SessionStatusUI {
+    Stopped,
     Running,
     Paused,
-    Finished,
     Error(String),
 }
 
@@ -75,7 +75,7 @@ pub struct DebugEventInfo {
 }
 
 // Session state - the single source of truth for each session
-pub struct SessionState {
+pub struct SessionStateUI {
     // Session metadata
     pub id: String,
     pub name: String,
@@ -84,21 +84,23 @@ pub struct SessionState {
     pub created_at: String,
     
     // Runtime state
-    pub status: SessionStatus,
+    pub status: SessionStatusUI,
     pub events: Vec<joybug2::protocol_io::DebugEvent>,
     pub modules: Vec<joybug2::protocol_io::ModuleInfo>,
     pub threads: Vec<joybug2::protocol_io::ThreadInfo>,
     pub current_event: Option<joybug2::protocol_io::DebugEvent>,
     pub current_context: Option<SerializableThreadContext>,
-    pub step_sender: Option<mpsc::Sender<bool>>, // Send true to continue, false to stop
-    pub step_receiver: Option<mpsc::Receiver<bool>>,
+    pub ui_sender: Option<mpsc::Sender<UICommand>>, // Send true to continue, false to stop
+    pub ui_receiver: Option<mpsc::Receiver<UICommand>>,
     pub debug_result: Option<Result<(), String>>, // Track if debug session succeeded or failed
     
-    // Auxiliary client for one-off commands
-    pub aux_client: Option<Arc<Mutex<DebugClient>>>,
+    // Window/Tab states
+    pub is_disassembly_window_open: bool,
+    pub is_registers_window_open: bool,
+    pub is_callstack_window_open: bool,
 }
 
-impl SessionState {
+impl SessionStateUI {
     pub fn new(
         id: String,
         name: String,
@@ -112,38 +114,43 @@ impl SessionState {
             server_url,
             launch_command,
             created_at: chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string(),
-            status: SessionStatus::Created,
+            status: SessionStatusUI::Stopped,
             events: Vec::new(),
             modules: Vec::new(),
             threads: Vec::new(),
             current_event: None,
             current_context: None,
-            step_sender: Some(step_sender),
-            step_receiver: Some(step_receiver),
+            ui_sender: Some(step_sender),
+            ui_receiver: Some(step_receiver),
             debug_result: None,
-            aux_client: None,
+            is_disassembly_window_open: false,
+            is_registers_window_open: false,
+            is_callstack_window_open: false,
         }
     }
 
     // Reset the state of a session to be ready for a new run
     pub fn reset(&mut self) {
-        self.status = SessionStatus::Created;
         self.events.clear();
         self.modules.clear();
         self.threads.clear();
         self.current_event = None;
         self.current_context = None;
         self.debug_result = None;
-        self.aux_client = None;
+
+        // Reset window states
+        self.is_disassembly_window_open = false;
+        self.is_registers_window_open = false;
+        self.is_callstack_window_open = false;
 
         let (step_sender, step_receiver) = mpsc::channel();
-        self.step_sender = Some(step_sender);
-        self.step_receiver = Some(step_receiver);
+        self.ui_sender = Some(step_sender);
+        self.ui_receiver = Some(step_receiver);
     }
 
     // Create a serializable snapshot of this session state
-    pub fn to_debug_session(&self) -> DebugSession {
-        DebugSession {
+    pub fn to_debug_session(&self) -> DebugSessionUI {
+        DebugSessionUI {
             id: self.id.clone(),
             name: self.name.clone(),
             server_url: self.server_url.clone(),
@@ -172,12 +179,15 @@ impl SessionState {
                 info
             }),
             created_at: self.created_at.clone(),
+            disassembly_window_open: self.is_disassembly_window_open,
+            registers_window_open: self.is_registers_window_open,
+            callstack_window_open: self.is_callstack_window_open,
         }
     }
 }
 
 // Global state - now just holding session states, no duplicate session storage
-pub type SessionStatesMap = Mutex<HashMap<String, Arc<Mutex<SessionState>>>>;
+pub type SessionStatesMap = Mutex<HashMap<String, Arc<Mutex<SessionStateUI>>>>;
 pub type LogsState = Mutex<Vec<LogEntry>>;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

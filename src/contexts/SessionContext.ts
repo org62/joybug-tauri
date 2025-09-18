@@ -12,6 +12,9 @@ export interface DebugSession {
   status: SessionStatus;
   current_event: DebugEventInfo | null;
   created_at: string;
+  disassembly_window_open: boolean;
+  registers_window_open: boolean;
+  callstack_window_open: boolean;
 }
 
 export interface DebugEventInfo {
@@ -46,12 +49,9 @@ export interface Symbol {
 }
 
 export type SessionStatus = 
-  | "Created"
-  | "Connecting" 
-  | "Connected"
+  | "Stopped"
   | "Running"
   | "Paused"
-  | "Finished"
   | { Error: string };
 
 // Context for session data

@@ -7,19 +7,25 @@ import { DebugSession, Module, Thread, Symbol } from '@/contexts/SessionContext'
 export function useDebugSession(sessionId: string | undefined) {
   const [session, setSession] = useState<DebugSession | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [isStepping, setIsStepping] = useState(false);
-  const [isStopping, setIsStopping] = useState(false);
+  const [busyAction, setBusyAction] = useState<
+    "go" | "stepIn" | "stepOut" | "stepOver" | "stop" | "pause" | null
+  >(null);
   const [modules, setModules] = useState<Module[]>([]);
   const [threads, setThreads] = useState<Thread[]>([]);
 
   const canStep = useMemo(() => session?.status === "Paused", [session]);
   const canStop = useMemo(() => {
     if (!session || typeof session.status !== "string") return false;
-    return ["Connecting", "Connected", "Running", "Paused"].includes(session.status);
+    return ["Running", "Paused"].includes(session.status);
   }, [session]);
   const canStart = useMemo(() => {
     if (!session || typeof session.status !== "string") return false;
-    return ["Created", "Finished"].includes(session.status);
+    return ["Stopped"].includes(session.status);
+  }, [session]);
+
+  const canPause = useMemo(() => {
+    if (!session || typeof session.status !== "string") return false;
+    return ["Running"].includes(session.status);
   }, [session]);
 
   const loadModules = useCallback(async () => {
@@ -27,7 +33,9 @@ export function useDebugSession(sessionId: string | undefined) {
     try {
       return await invoke<Module[]>("get_session_modules", { sessionId });
     } catch (error) {
-      toast.error(`Failed to load modules: ${error}`);
+      const errorMessage = `Failed to load modules: ${error}`;
+      toast.error(errorMessage);
+      console.error(errorMessage);
       return [];
     }
   }, [sessionId]);
@@ -37,7 +45,9 @@ export function useDebugSession(sessionId: string | undefined) {
     try {
       return await invoke<Thread[]>("get_session_threads", { sessionId });
     } catch (error) {
-      toast.error(`Failed to load threads: ${error}`);
+      const errorMessage = `Failed to load threads: ${error}`;
+      toast.error(errorMessage);
+      console.error(errorMessage);
       return [];
     }
   }, [sessionId]);
@@ -51,7 +61,9 @@ export function useDebugSession(sessionId: string | undefined) {
         limit: limit || 30 
       });
     } catch (error) {
-      toast.error(`Failed to search symbols: ${error}`);
+      const errorMessage = `Failed to search symbols: ${error}`;
+      toast.error(errorMessage);
+      console.error(errorMessage);
       return [];
     }
   }, [sessionId]);
@@ -62,7 +74,9 @@ export function useDebugSession(sessionId: string | undefined) {
       const result = await invoke<DebugSession>("get_debug_session", { sessionId });
       setSession(result);
     } catch (error) {
-      toast.error(`Failed to load session: ${error}`);
+      const errorMessage = `Failed to load session: ${error}`;
+      toast.error(errorMessage);
+      console.error(errorMessage);
       setSession(null);
     } finally {
       setIsLoading(false);
@@ -109,7 +123,7 @@ export function useDebugSession(sessionId: string | undefined) {
         }
       };
       fetchData();
-    } else if (session?.status === "Finished" || typeof session?.status === 'object') {
+    } else if (session?.status === "Stopped" || typeof session?.status === 'object') {
       setModules([]);
       setThreads([]);
     }
@@ -119,16 +133,91 @@ export function useDebugSession(sessionId: string | undefined) {
     };
   }, [session, loadModules, loadThreads]);
 
-  const handleStep = useCallback(async () => {
+  // Listen for dll load/unload targeted events to refresh modules quickly
+  useEffect(() => {
+    if (!sessionId) return;
+    let unlistenUnload: (() => void) | undefined;
+    let unlistenLoad: (() => void) | undefined;
+    const attach = async () => {
+      unlistenUnload = await listen<{ session_id: string; pid: number; tid: number; base_of_dll: number; dll_name?: string }>(
+        "dll-unloaded",
+        async (event) => {
+          if (event.payload.session_id !== sessionId) return;
+          const mods = await loadModules();
+          setModules(mods);
+        }
+      );
+      unlistenLoad = await listen<{ session_id: string; pid: number; tid: number; dll_name: string; base_of_dll: number; size_of_dll?: number }>(
+        "dll-loaded",
+        async (event) => {
+          if (event.payload.session_id !== sessionId) return;
+          const mods = await loadModules();
+          setModules(mods);
+        }
+      );
+    };
+    attach();
+    return () => {
+      if (unlistenUnload) unlistenUnload();
+      if (unlistenLoad) unlistenLoad();
+    };
+  }, [sessionId, loadModules]);
+
+  const handleGo = useCallback(async () => {
     if (!sessionId || !canStep) return;
-    setIsStepping(true);
+    setBusyAction("go");
     try {
       await invoke("step_debug_session", { sessionId });
       // The session-updated event will refresh the state
     } catch (error) {
-      toast.error(`Failed to step session: ${error}`);
+      const errorMessage = `Failed to step session: ${error}`;
+      toast.error(errorMessage);
+      console.error(errorMessage);
     } finally {
-      setIsStepping(false);
+      setBusyAction(null);
+    }
+  }, [sessionId, canStep]);
+
+  const handleStepIn = useCallback(async () => {
+    if (!sessionId || !canStep) return;
+    setBusyAction("stepIn");
+    try {
+      await invoke("step_in_debug_session", { sessionId });
+      // The session-updated event will refresh the state
+    } catch (error) {
+      const errorMessage = `Failed to step in session: ${error}`;
+      toast.error(errorMessage);
+      console.error(errorMessage);
+    } finally {
+      setBusyAction(null);
+    }
+  }, [sessionId, canStep]);
+
+  const handleStepOut = useCallback(async () => {
+    if (!sessionId || !canStep) return;
+    setBusyAction("stepOut");
+    try {
+      await invoke("step_out_debug_session", { sessionId });
+    } catch (error) {
+      const errorMessage = `Failed to step out session: ${error}`;
+      toast.error(errorMessage);
+      console.error(errorMessage);
+    } finally {
+      setBusyAction(null);
+    }
+  }, [sessionId, canStep]);
+
+  const handleStepOver = useCallback(async () => {
+    if (!sessionId || !canStep) return;
+    setBusyAction("stepOver");
+    try {
+      await invoke("step_over_debug_session", { sessionId });
+    } catch (error) {
+      const errorMessage = `Failed to step over session: ${error}`;
+      toast.error(errorMessage);
+      console.error(errorMessage);
+    } finally {
+      setBusyAction(null);
     }
   }, [sessionId, canStep]);
 
@@ -137,41 +226,68 @@ export function useDebugSession(sessionId: string | undefined) {
     try {
       await invoke("start_debug_session", { sessionId });
       toast.success("Debug session started");
-      // The session-updated event will refresh the state
     } catch (error) {
-      toast.error(`Failed to start session: ${error}`);
+      const errorMessage = `Failed to start session: ${error}`;
+      toast.error(errorMessage);
+      console.error(errorMessage);
     }
   }, [sessionId, canStart]);
 
   const handleStop = useCallback(async () => {
     if (!sessionId || !canStop) return;
-    setIsStopping(true);
+    setBusyAction("stop");
     try {
-      await invoke("stop_debug_session", { sessionId });
-      toast.success("Debug session stopped");
-      // The session-updated event will refresh the state
+      const isRunning = session?.status === "Running";
+      if (isRunning) {
+        await invoke("terminate_debug_session", { sessionId });
+        toast.success("Terminate signal sent");
+      } else {
+        await invoke("stop_debug_session", { sessionId });
+        toast.success("Debug session stopped");
+      }
     } catch (error) {
-      toast.error(`Failed to stop session: ${error}`);
+      const errorMessage = `Failed to stop session: ${error}`;
+      toast.error(errorMessage);
+      console.error(errorMessage);
     } finally {
-      setIsStopping(false);
+      setBusyAction(null);
     }
-  }, [sessionId, canStop]);
+  }, [sessionId, canStop, session]);
+
+  const handlePause = useCallback(async () => {
+    if (!sessionId || !canPause) return;
+    setBusyAction("pause");
+    try {
+      await invoke("pause_debug_session", { sessionId });
+      toast.success("Pause signal sent");
+    } catch (error) {
+      const errorMessage = `Failed to pause session: ${error}`;
+      toast.error(errorMessage);
+      console.error(errorMessage);
+    } finally {
+      setBusyAction(null);
+    }
+  }, [sessionId, canPause]);
 
   return {
     session,
     isLoading,
-    isStepping,
-    isStopping,
+    busyAction,
     modules,
     threads,
     loadModules,
     loadThreads,
     searchSymbols,
-    handleStep,
+    handleGo,
+    handleStepIn,
+    handleStepOut,
+    handleStepOver,
     handleStop,
     handleStart,
+    handlePause,
     canStep,
     canStop,
     canStart,
+    canPause,
   };
 } 

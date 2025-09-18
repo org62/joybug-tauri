@@ -1,7 +1,9 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { toast } from "sonner";
 import { ScrollArea } from "./ui/scroll-area";
+import { Cpu } from "lucide-react";
 
 interface Instruction {
   address: string;
@@ -12,49 +14,110 @@ interface Instruction {
 }
 
 interface AssemblyViewProps {
-  sessionId: string;
-  address: number;
+  sessionId?: string;
+  address?: number;
 }
 
 export function AssemblyView({ sessionId, address }: AssemblyViewProps) {
   const [instructions, setInstructions] = useState<Instruction[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [lastFetchedAddress, setLastFetchedAddress] = useState<number | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+
+  // Clear stale instructions when session or address becomes unavailable
+  useEffect(() => {
+    if (!sessionId || address == null) {
+      setInstructions([]);
+      setError(null);
+      setIsLoading(false);
+      setLastFetchedAddress(null);
+    }
+  }, [sessionId, address]);
 
   useEffect(() => {
-    const fetchDisassembly = async () => {
-      if (!sessionId || !address) return;
+    const requestDisassembly = async () => {
+      if (!sessionId || address == null || address === lastFetchedAddress) return;
 
-      setIsLoading(true);
       setError(null);
+      setIsLoading(true);
 
       try {
-        const result = await invoke<Instruction[]>("get_disassembly", {
+        await invoke("request_disassembly", {
           sessionId,
           address,
-          count: 0x100
+          count: 0x10
         });
-        setInstructions(result);
+        setLastFetchedAddress(address);
       } catch (err) {
-        const errorMessage =
-          err instanceof Error ? err.message : String(err);
-        console.error("Failed to fetch disassembly:", errorMessage);
-        toast.error(`Failed to fetch disassembly: ${errorMessage}`);
-        setError(errorMessage);
-      } finally {
+        let errorMessage: string;
+        if (err instanceof Error) {
+          errorMessage = err.message;
+        } else if (typeof err === 'string') {
+          errorMessage = err;
+        } else if (err && typeof err === 'object') {
+          // Handle Tauri error objects which might have message property
+          errorMessage = (err as any).message || JSON.stringify(err);
+        } else {
+          errorMessage = String(err);
+        }
+        // Graceful handling when session is running (not paused)
+        if (!(errorMessage.includes('InvalidSessionState') || errorMessage.includes('must be paused'))) {
+          console.error("Failed to request disassembly:", err);
+          toast.error(`Failed to request disassembly: ${errorMessage}`);
+          setError(errorMessage);
+        }
         setIsLoading(false);
       }
     };
 
-    fetchDisassembly();
+    requestDisassembly();
+  }, [sessionId, address, lastFetchedAddress]);
+
+  useEffect(() => {
+    if (!sessionId) return;
+
+    // Listen for disassembly results
+    const unlistenDisassembly = listen<{session_id: string, address: number, instructions: Instruction[]}>(
+      "disassembly-updated",
+      (event) => {
+        if (event.payload.session_id === sessionId && event.payload.address === address) {
+          setInstructions(event.payload.instructions);
+          setIsLoading(false);
+          setError(null);
+        }
+      }
+    );
+
+    // Listen for disassembly errors
+    const unlistenError = listen<{session_id: string, address: number, error: string}>(
+      "disassembly-error", 
+      (event) => {
+        if (event.payload.session_id === sessionId && event.payload.address === address) {
+          const msg = event.payload.error || '';
+          if (!(msg.includes('InvalidSessionState') || msg.includes('must be paused'))) {
+            setError(msg);
+            toast.error(`Disassembly failed: ${msg}`);
+          } else {
+            setError(null);
+          }
+          setIsLoading(false);
+        }
+      }
+    );
+
+    return () => {
+      unlistenDisassembly.then(unlisten => unlisten());
+      unlistenError.then(unlisten => unlisten());
+    };
   }, [sessionId, address]);
 
-  if (isLoading) {
+  if (!sessionId || (address == null && instructions.length === 0)) {
     return (
-      <div className="flex items-center justify-center h-full">
-        <div className="flex items-center">
-          <div className="animate-spin h-6 w-6 border-2 border-current border-t-transparent rounded-full" />
-          <span className="ml-2">Loading disassembly...</span>
+      <div className="flex flex-col items-center justify-center h-full text-muted-foreground p-4">
+        <div className="text-center">
+          <Cpu className="h-12 w-12 mx-auto mb-4 opacity-50" />
+          <p className="text-base font-medium">No disassembly available</p>
+          <p className="text-sm mt-1">Address information will appear here when debugging</p>
         </div>
       </div>
     );
@@ -66,6 +129,17 @@ export function AssemblyView({ sessionId, address }: AssemblyViewProps) {
         <div className="text-center">
           <p>Error loading disassembly:</p>
           <p className="text-sm mt-1 font-mono">{error}</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (isLoading && instructions.length === 0) {
+    return (
+      <div className="flex items-center justify-center h-full text-muted-foreground">
+        <div className="text-center">
+          <Cpu className="h-8 w-8 mx-auto mb-2 animate-pulse" />
+          <p>Loading disassembly...</p>
         </div>
       </div>
     );

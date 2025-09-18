@@ -2,6 +2,8 @@ import { useEffect, useState, useCallback } from 'react';
 import { useSessionContext } from '@/contexts/SessionContext';
 import { Input } from '@/components/ui/input';
 import { Search, Code, Loader2 } from 'lucide-react';
+import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 
 export const ContextSymbolsView = () => {
   const sessionData = useSessionContext();
@@ -10,6 +12,43 @@ export const ContextSymbolsView = () => {
   const [isSearching, setIsSearching] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
 
+  // Listen for symbol search results
+  useEffect(() => {
+    if (!sessionData.session?.id) return;
+
+    const listenToSymbolUpdates = async () => {
+      const unlistenUpdated = await listen<{session_id: string, pattern: string, symbols: any[]}>(
+        "symbols-updated",
+        (event) => {
+          if (event.payload.session_id === sessionData.session?.id) {
+            setSymbols(event.payload.symbols);
+            setHasSearched(true);
+            setIsSearching(false);
+          }
+        }
+      );
+
+      const unlistenError = await listen<{session_id: string, pattern: string, error: string}>(
+        "symbols-error",
+        (event) => {
+          if (event.payload.session_id === sessionData.session?.id) {
+            console.error('Symbol search failed:', event.payload.error);
+            setSymbols([]);
+            setHasSearched(true);
+            setIsSearching(false);
+          }
+        }
+      );
+
+      return () => {
+        unlistenUpdated();
+        unlistenError();
+      };
+    };
+
+    listenToSymbolUpdates();
+  }, [sessionData.session?.id]);
+
   // Debounced search function
   const debouncedSearch = useCallback(
     (() => {
@@ -17,16 +56,30 @@ export const ContextSymbolsView = () => {
       return (pattern: string) => {
         clearTimeout(timeoutId);
         timeoutId = setTimeout(async () => {
+          if (!sessionData.session?.id) return;
+          
+          // Only allow symbol search when session is paused
+          if (sessionData.session.status !== "Paused") {
+            console.log("Cannot search symbols: session is not paused");
+            setSymbols([]);
+            setHasSearched(true);
+            setIsSearching(false);
+            return;
+          }
+          
           if (pattern.trim().length >= 2) {
             setIsSearching(true);
             try {
-              const results = await sessionData.searchSymbols(pattern, 30);
-              setSymbols(results);
-              setHasSearched(true);
+              await invoke("search_session_symbols", { 
+                sessionId: sessionData.session.id, 
+                pattern, 
+                limit: 30 
+              });
+              // Results will come through the event listener
             } catch (error) {
-              console.error('Search failed:', error);
+              console.error('Failed to request symbol search:', error);
               setSymbols([]);
-            } finally {
+              setHasSearched(true);
               setIsSearching(false);
             }
           } else {
@@ -36,7 +89,7 @@ export const ContextSymbolsView = () => {
         }, 300); // 300ms debounce
       };
     })(),
-    [sessionData]
+    [sessionData.session?.id, sessionData.session?.status] // Add status to dependencies
   );
 
   // Handle search term changes
@@ -49,6 +102,19 @@ export const ContextSymbolsView = () => {
   };
 
   const renderContent = () => {
+    // Show a message when session is not in the right state
+    if (sessionData.session && sessionData.session.status !== "Paused") {
+      return (
+        <div className="flex flex-col items-center justify-center h-full text-muted-foreground p-4">
+          <div className="text-center">
+            <Code className="h-12 w-12 mx-auto mb-4 opacity-50" />
+            <p className="text-base font-medium">Symbol search unavailable</p>
+            <p className="text-sm mt-1">Session must be paused to search symbols</p>
+          </div>
+        </div>
+      );
+    }
+
     if (isSearching) {
       return (
         <div className="flex flex-col items-center justify-center h-full text-muted-foreground p-4">
@@ -102,21 +168,17 @@ export const ContextSymbolsView = () => {
   };
 
   return (
-    <div className="h-full flex flex-col">
-      {/* Search Bar */}
+    <div className="flex flex-col h-full">
       <div className="p-2 border-b">
-        <div className="relative">
-          <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
-          <Input
-            placeholder="Search symbols..."
-            value={searchTerm}
-            onChange={handleSearchChange}
-            className="pl-8"
-          />
-        </div>
+        <Input
+          type="text"
+          placeholder={sessionData.session?.status === "Paused" ? "Search symbols..." : "Session must be paused to search symbols"}
+          value={searchTerm}
+          onChange={handleSearchChange}
+          className="w-full"
+          disabled={!sessionData.session || sessionData.session.status !== "Paused"}
+        />
       </div>
-
-      {/* Symbols List */}
       <div className="flex-1 overflow-auto">
         {renderContent()}
       </div>

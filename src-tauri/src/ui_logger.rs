@@ -79,3 +79,15 @@ pub fn toast_info(app: &tauri::AppHandle, message: &str) {
         );
     }
 } 
+
+#[allow(dead_code)]
+pub fn toast_error(app: &tauri::AppHandle, message: &str) {
+    if let Err(e) = app.emit("show-toast-error", message) {
+        log(
+            app,
+            LogLevel::Error,
+            &format!("Failed to emit show-toast-error event: {}", e),
+            None,
+        );
+    }
+}

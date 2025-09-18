@@ -46,14 +46,18 @@ function AppContent() {
 
     window.addEventListener('keydown', handleKeyDown);
 
-    // Global toast listener
-    const unlisten = listen<string>("show-toast", (event) => {
+    // Global toast listeners
+    const unlistenInfo = listen<string>("show-toast", (event) => {
       toast.info(event.payload);
+    });
+    const unlistenError = listen<string>("show-toast-error", (event) => {
+      toast.error(event.payload);
     });
 
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
-      unlisten.then(f => f());
+      unlistenInfo.then(f => f());
+      unlistenError.then(f => f());
     };
   }, [navigate, resolvedTheme, setTheme]);
 
@@ -77,7 +81,7 @@ function AppContent() {
           </Routes>
         </Suspense>
       </main>
-      <Toaster />
+      <Toaster visibleToasts={8} />
     </div>
   );
 }

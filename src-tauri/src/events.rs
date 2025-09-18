@@ -94,6 +94,30 @@ pub fn debug_event_to_info(event: &joybug2::protocol_io::DebugEvent) -> DebugEve
     use joybug2::protocol_io::DebugEvent;
 
     match event {
+        DebugEvent::InitialBreakpoint { pid, tid, address } => DebugEventInfo {
+            event_type: "InitialBreakpoint".to_string(),
+            process_id: *pid,
+            thread_id: *tid,
+            details: format!(
+                "Initial breakpoint hit: PID={}, TID={}, Address=0x{:X}",
+                pid, tid, address
+            ),
+            can_continue: true,
+            address: Some(*address),
+            context: None,
+        },
+        DebugEvent::SingleShotBreakpoint { pid, tid, address } => DebugEventInfo {
+            event_type: "SingleShotBreakpoint".to_string(),
+            process_id: *pid,
+            thread_id: *tid,
+            details: format!(
+                "Single shot breakpoint hit: PID={}, TID={}, Address=0x{:X}",
+                pid, tid, address
+            ),
+            can_continue: true,
+            address: Some(*address),
+            context: None,
+        },
         DebugEvent::ProcessCreated {
             pid,
             tid,
@@ -253,6 +277,35 @@ pub fn debug_event_to_info(event: &joybug2::protocol_io::DebugEvent) -> DebugEve
                 pid, tid, error, event_type
             ),
             can_continue: true,
+            address: None,
+            context: None,
+        },
+        DebugEvent::StepComplete {
+            pid,
+            tid,
+            kind,
+            address,
+        } => DebugEventInfo {
+            event_type: "StepComplete".to_string(),
+            process_id: *pid,
+            thread_id: *tid,
+            details: format!(
+                "Step complete: PID={}, TID={}, Kind={:?}, Address=0x{:X}",
+                pid, tid, kind, address
+            ),
+            can_continue: true,
+            address: Some(*address),
+            context: None,
+        },
+        DebugEvent::StepFailed { pid, tid, kind, message } => DebugEventInfo {
+            event_type: "StepFailed".to_string(),
+            process_id: *pid,
+            thread_id: *tid,
+            details: format!(
+                "Step failed: PID={}, TID={}, Kind={:?}, Message={}",
+                pid, tid, kind, message
+            ),
+            can_continue: false,
             address: None,
             context: None,
         },

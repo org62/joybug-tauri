@@ -1,3 +1,3 @@
 [submodule "external/joybug2"]
 	path = external/joybug2
-	url = https://github.com/expend20/joybug2.git
+	url = https://github.com/org62/joybug-core.git
