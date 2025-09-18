@@ -13,8 +13,11 @@ jobs:
   build:
     strategy:
       matrix:
-        os: [windows-latest, windows-11-arm]
-    runs-on: ${{ matrix.os }}
+        arch: [ARM64, X64-native]
+    runs-on:
+      - self-hosted
+      - Windows
+      - ${{ matrix.arch }}
     steps:
     - uses: actions/checkout@v4
       with:
@@ -42,9 +45,9 @@ jobs:
     
     - name: Rename executable for architecture
       run: |
-        if ("${{ matrix.os }}" -eq "windows-latest") {
+        if ("${{ matrix.arch }}" -eq "X64-native") {
           Rename-Item -Path "src-tauri/target/release/joybug-tauri.exe" -NewName "joybug-tauri-x64.exe"
-        } elseif ("${{ matrix.os }}" -eq "windows-11-arm") {
+        } elseif ("${{ matrix.arch }}" -eq "ARM64") {
           Rename-Item -Path "src-tauri/target/release/joybug-tauri.exe" -NewName "joybug-tauri-aarch64.exe"
         }
       shell: powershell
@@ -52,5 +55,5 @@ jobs:
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: tauri-app-${{ matrix.os }}
+        name: tauri-app-${{ matrix.arch }}
         path: src-tauri/target/release/joybug-tauri-*.exe
