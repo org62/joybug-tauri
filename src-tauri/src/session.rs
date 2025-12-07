@@ -15,6 +15,42 @@ pub enum UICommand {
     Disassembly{ arch: joybug2::interfaces::Architecture, address: u64, count: u32 },
     GetCallStack,
     SearchSymbols{ pattern: String, limit: u32 },
+    ReadMemory{ address: u64, size: usize },
+    WriteMemory{ address: u64, data: Vec<u8> },
+}
+
+/// Event payload for successful memory read (may be partial)
+#[derive(serde::Serialize)]
+pub struct MemoryReadResult {
+    pub session_id: String,
+    pub address: u64,
+    pub requested_size: usize,
+    pub data: Vec<u8>,
+}
+
+/// Event payload for memory read error
+#[derive(serde::Serialize)]
+pub struct MemoryReadError {
+    pub session_id: String,
+    pub address: u64,
+    pub error: String,
+}
+
+/// Event payload for successful memory write
+#[derive(serde::Serialize)]
+pub struct MemoryWriteResult {
+    pub session_id: String,
+    pub address: u64,
+    pub success: bool,
+    pub bytes_written: usize,
+}
+
+/// Event payload for memory write error
+#[derive(serde::Serialize)]
+pub struct MemoryWriteError {
+    pub session_id: String,
+    pub address: u64,
+    pub error: String,
 }
 
 /// Updates session state (modules and threads) based on debug events
@@ -362,6 +398,136 @@ fn process_symbol_search(
     }
 }
 
+/// Processes a memory read request and emits results to the frontend
+fn process_memory_read(
+    session: &mut joybug2::protocol_io::DebugSession<Arc<Mutex<SessionStateUI>>>,
+    app_handle_clone: &Option<AppHandle>,
+    event: &joybug2::protocol_io::DebugEvent,
+    address: u64,
+    size: usize,
+) {
+    let pid = event.pid();
+    debug!("📤 Processing memory read request: pid={}, address=0x{:X}, size={}", pid, address, size);
+
+    match session.read_memory(pid, address, size) {
+        Ok(data) => {
+            let bytes_read = data.len();
+            let is_partial = bytes_read < size && bytes_read > 0;
+
+            if is_partial {
+                info!(
+                    "📥 Partial memory read: {} of {} bytes at 0x{:X}",
+                    bytes_read, size, address
+                );
+            } else {
+                debug!("📥 Received {} bytes from read_memory", bytes_read);
+            }
+
+            // Emit memory read results to frontend (including partial reads)
+            if let Some(ref handle) = app_handle_clone {
+                let session_id = {
+                    let state = session.state.lock().unwrap();
+                    state.id.clone()
+                };
+
+                let result = MemoryReadResult {
+                    session_id,
+                    address,
+                    requested_size: size,
+                    data,
+                };
+
+                if let Err(e) = handle.emit("memory-read-updated", &result) {
+                    error!("Failed to emit memory-read-updated event: {}", e);
+                } else {
+                    debug!("📡 Emitted memory-read-updated event for address 0x{:X}", address);
+                }
+            }
+        }
+        Err(e) => {
+            error!("Failed to read memory at 0x{:X}: {}", address, e);
+
+            // Emit error event
+            if let Some(ref handle) = app_handle_clone {
+                let session_id = {
+                    let state = session.state.lock().unwrap();
+                    state.id.clone()
+                };
+
+                let error_result = MemoryReadError {
+                    session_id,
+                    address,
+                    error: e.to_string(),
+                };
+
+                if let Err(emit_err) = handle.emit("memory-read-error", &error_result) {
+                    error!("Failed to emit memory-read-error event: {}", emit_err);
+                }
+            }
+        }
+    }
+}
+
+/// Processes a memory write request and emits results to the frontend
+fn process_memory_write(
+    session: &mut joybug2::protocol_io::DebugSession<Arc<Mutex<SessionStateUI>>>,
+    app_handle_clone: &Option<AppHandle>,
+    event: &joybug2::protocol_io::DebugEvent,
+    address: u64,
+    data: &[u8],
+) {
+    let pid = event.pid();
+    debug!("📤 Processing memory write request: pid={}, address=0x{:X}, size={}", pid, address, data.len());
+
+    match session.write_memory(pid, address, data.to_vec()) {
+        Ok(_) => {
+            debug!("📥 Successfully wrote {} bytes to memory", data.len());
+
+            // Emit memory write results to frontend
+            if let Some(ref handle) = app_handle_clone {
+                let session_id = {
+                    let state = session.state.lock().unwrap();
+                    state.id.clone()
+                };
+
+                let result = MemoryWriteResult {
+                    session_id,
+                    address,
+                    success: true,
+                    bytes_written: data.len(),
+                };
+
+                if let Err(e) = handle.emit("memory-write-result", &result) {
+                    error!("Failed to emit memory-write-result event: {}", e);
+                } else {
+                    debug!("📡 Emitted memory-write-result event for address 0x{:X}", address);
+                }
+            }
+        }
+        Err(e) => {
+            error!("Failed to write memory: {}", e);
+
+            // Emit error event
+            if let Some(ref handle) = app_handle_clone {
+                let session_id = {
+                    let state = session.state.lock().unwrap();
+                    state.id.clone()
+                };
+
+                let error_result = MemoryWriteError {
+                    session_id,
+                    address,
+                    error: e.to_string(),
+                };
+
+                if let Err(emit_err) = handle.emit("memory-write-error", &error_result) {
+                    error!("Failed to emit memory-write-error event: {}", emit_err);
+                }
+            }
+        }
+    }
+}
+
 /// Handles UI commands in a loop, returns true to continue execution, false to stop session
 fn handle_ui_commands(
     ui_receiver: &std::sync::mpsc::Receiver<UICommand>,
@@ -498,6 +664,14 @@ fn handle_ui_commands(
                     }
                     UICommand::SearchSymbols { ref pattern, limit } => {
                         process_symbol_search(session, app_handle_clone, event, pattern, limit);
+                        // Continue in loop waiting for next command (Go or Stop)
+                    }
+                    UICommand::ReadMemory { address, size } => {
+                        process_memory_read(session, app_handle_clone, event, address, size);
+                        // Continue in loop waiting for next command (Go or Stop)
+                    }
+                    UICommand::WriteMemory { address, ref data } => {
+                        process_memory_write(session, app_handle_clone, event, address, data);
                         // Continue in loop waiting for next command (Go or Stop)
                     }
                     UICommand::Stop => {

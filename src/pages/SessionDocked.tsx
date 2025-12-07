@@ -1,4 +1,4 @@
-import { useRef, useMemo, useEffect, useState, useLayoutEffect } from "react";
+import React, { useRef, useMemo, useEffect, useState, useLayoutEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { Button } from "@/components/ui/button";
@@ -14,6 +14,7 @@ import { ContextModulesView } from "@/components/session/ContextModulesView";
 import { ContextThreadsView } from "@/components/session/ContextThreadsView";
 import { ContextCallStackView } from "@/components/session/ContextCallStackView";
 import { ContextSymbolsView } from "@/components/session/ContextSymbolsView";
+import { ContextHexView } from "@/components/session/ContextHexView";
 import { useDebugSession } from "@/hooks/useDebugSession";
 import { SessionHeader } from "@/components/session/SessionHeader";
 
@@ -103,6 +104,13 @@ export default function SessionDocked() {
     dockingRef.current?.resetLayout();
   };
 
+  // Add a new memory tab
+  const handleAddNewMemoryTab = () => {
+    dockingRef.current?.addTypedTab('memory', (tabId) => (
+      <ContextHexView memoryViewId={tabId} />
+    ));
+  };
+
   // Initial state detection - sync when docking becomes ready
   useEffect(() => {
     if (!sessionId || !isDockingReady || !dockingRef.current) return;
@@ -188,6 +196,11 @@ export default function SessionDocked() {
           event.stopPropagation();
           toggleTabWithBackendUpdate("symbols");
           break;
+        case 'h':
+          event.preventDefault();
+          event.stopPropagation();
+          handleAddNewMemoryTab();
+          break;
       }
     };
 
@@ -213,6 +226,15 @@ export default function SessionDocked() {
     callstack: <ContextCallStackView />,
     symbols: <ContextSymbolsView />,
   }), []);
+
+  // Factory for creating dynamic tab content (e.g., memory tabs restored from storage)
+  const tabContentFactory = React.useCallback((tabId: string): React.ReactElement | null => {
+    // Handle memory tabs: "memory", "memory-1", "memory-2", etc.
+    if (tabId === 'memory' || tabId.startsWith('memory-')) {
+      return <ContextHexView memoryViewId={tabId} />;
+    }
+    return null;
+  }, []);
 
   // Create docking configuration with dynamic content  
   const dockingConfig = useMemo(() => {
@@ -260,8 +282,9 @@ export default function SessionDocked() {
       initialLayout: DebuggerDockingConfig.initialLayout,
       initialTabContents: sessionTabContents,
       tabContentMap: { ...DebuggerDockingConfig.tabContentMap, ...dynamicTabContent },
+      tabContentFactory,
     };
-  }, [sessionId, dynamicTabContent]);
+  }, [sessionId, dynamicTabContent, tabContentFactory]);
 
   const getStatusBadge = (status: SessionStatus) => {
     if (typeof status === "string") {
@@ -338,6 +361,7 @@ export default function SessionDocked() {
           getStatusBadge={getStatusBadge}
           toggleTab={toggleTabWithBackendUpdate}
           resetLayout={handleResetLayout}
+          addNewMemoryTab={handleAddNewMemoryTab}
         />
 
         {/* Docking Layout */}

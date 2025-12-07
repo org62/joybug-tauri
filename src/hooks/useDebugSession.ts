@@ -52,20 +52,58 @@ export function useDebugSession(sessionId: string | undefined) {
     }
   }, [sessionId]);
 
-  const searchSymbols = useCallback(async (pattern: string, limit?: number) => {
+  const searchSymbols = useCallback(async (pattern: string, limit?: number): Promise<Symbol[]> => {
     if (!sessionId) return [];
-    try {
-      return await invoke<Symbol[]>("search_session_symbols", { 
-        sessionId, 
-        pattern, 
-        limit: limit || 30 
-      });
-    } catch (error) {
-      const errorMessage = `Failed to search symbols: ${error}`;
-      toast.error(errorMessage);
-      console.error(errorMessage);
-      return [];
-    }
+
+    // Create a promise that will resolve when we receive the symbols-updated event
+    return new Promise(async (resolve) => {
+      const timeout = setTimeout(() => {
+        console.warn('Symbol search timed out');
+        resolve([]);
+      }, 5000); // 5 second timeout
+
+      // Set up one-time listener for the response
+      const unlisten = await listen<{ session_id: string; pattern: string; symbols: Symbol[] }>(
+        'symbols-updated',
+        (event) => {
+          if (event.payload.session_id === sessionId && event.payload.pattern === pattern) {
+            clearTimeout(timeout);
+            unlisten();
+            resolve(event.payload.symbols);
+          }
+        }
+      );
+
+      // Also listen for errors
+      const unlistenError = await listen<{ session_id: string; pattern: string; error: string }>(
+        'symbols-error',
+        (event) => {
+          if (event.payload.session_id === sessionId && event.payload.pattern === pattern) {
+            clearTimeout(timeout);
+            unlisten();
+            unlistenError();
+            console.error(`Symbol search error: ${event.payload.error}`);
+            resolve([]);
+          }
+        }
+      );
+
+      try {
+        await invoke("search_session_symbols", {
+          sessionId,
+          pattern,
+          limit: limit || 30
+        });
+      } catch (error) {
+        clearTimeout(timeout);
+        unlisten();
+        unlistenError();
+        const errorMessage = `Failed to search symbols: ${error}`;
+        toast.error(errorMessage);
+        console.error(errorMessage);
+        resolve([]);
+      }
+    });
   }, [sessionId]);
 
   const loadSession = useCallback(async () => {

@@ -1,7 +1,7 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
-import { ArrowLeft, Square, Play, MoveRight, CornerDownRight, CornerUpLeft, Pause } from 'lucide-react';
+import { ArrowLeft, Square, Play, MoveRight, CornerDownRight, CornerUpLeft, Pause, Plus } from 'lucide-react';
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -30,6 +30,7 @@ export interface SessionHeaderProps {
   getStatusBadge: (status: SessionStatus) => React.ReactNode;
   toggleTab: (tabId: string) => void;
   resetLayout: () => void;
+  addNewMemoryTab?: () => void;
 }
 
 export const SessionHeader: React.FC<SessionHeaderProps> = ({
@@ -49,6 +50,7 @@ export const SessionHeader: React.FC<SessionHeaderProps> = ({
   getStatusBadge,
   toggleTab,
   resetLayout,
+  addNewMemoryTab,
   dockingRef,
 }) => {
   const navigate = useNavigate();
@@ -197,6 +199,12 @@ export const SessionHeader: React.FC<SessionHeaderProps> = ({
                   >
                     Symbols
                   </DropdownMenuCheckboxItem>
+                  {addNewMemoryTab && (
+                    <DropdownMenuItem onSelect={(e: Event) => { e.preventDefault(); addNewMemoryTab(); }}>
+                      <Plus />
+                      Add Memory Window
+                    </DropdownMenuItem>
+                  )}
                   <DropdownMenuSeparator />
                   <DropdownMenuItem onSelect={(e: Event) => { e.preventDefault(); resetLayout(); }}>
                     Reset Layout
