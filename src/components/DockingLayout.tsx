@@ -16,6 +16,7 @@ export interface DockingLayoutProps extends DockingConfig {
 
 export interface DockingLayoutRef {
   addTab: () => void;
+  addTypedTab: (type: string, contentFactory: (tabId: string) => React.ReactElement) => string;
   resetLayout: () => void;
   toggleTab: (tabId: string) => void;
   getActiveTabs: () => string[];
@@ -29,6 +30,7 @@ const DockingLayoutComponent = React.forwardRef<DockingLayoutRef, DockingLayoutP
     // Expose operations through ref
     React.useImperativeHandle(ref, () => ({
       addTab: docking.addTab,
+      addTypedTab: docking.addTypedTab,
       resetLayout: docking.resetLayout,
       toggleTab: docking.toggleTab,
       getActiveTabs: () => {

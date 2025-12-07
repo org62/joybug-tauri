@@ -549,6 +549,18 @@ pub fn get_logs(logs_state: State<'_, LogsState>) -> Result<Vec<LogEntry>> {
 }
 
 #[tauri::command]
+pub fn add_log(
+    level: String,
+    message: String,
+    session_id: Option<String>,
+    logs_state: State<'_, LogsState>,
+) -> Result<()> {
+    let mut logs = logs_state.lock().unwrap();
+    logs.push(LogEntry::new(&level.to_uppercase(), &message, session_id));
+    Ok(())
+}
+
+#[tauri::command]
 pub fn clear_logs(logs_state: State<'_, LogsState>) -> Result<()> {
     let mut logs = logs_state.lock().unwrap();
     logs.clear();
@@ -790,6 +802,84 @@ pub fn request_session_callstack(
         .map_err(|e| Error::InternalCommunication(format!("Failed to send GetCallStack command: {}", e)))?;
 
     info!("Request for call stack sent for session {}", session_id);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn request_memory_read(
+    session_id: String,
+    address: u64,
+    size: usize,
+    session_states: State<'_, SessionStatesMap>,
+) -> Result<()> {
+    let session_state = {
+        let states = session_states.lock().unwrap();
+        states
+            .get(&session_id)
+            .cloned()
+            .ok_or_else(|| Error::SessionNotFound(session_id.clone()))?
+    };
+
+    let ui_sender = {
+        let state = session_state.lock().unwrap();
+
+        if !matches!(state.status, SessionStatusUI::Paused) {
+            return Err(Error::InvalidSessionState(
+                "Session must be paused to read memory".to_string(),
+            ));
+        }
+
+        state
+            .ui_sender
+            .as_ref()
+            .ok_or_else(|| Error::InternalCommunication("Session UI sender not available".to_string()))?
+            .clone()
+    };
+
+    ui_sender
+        .send(UICommand::ReadMemory { address, size })
+        .map_err(|e| Error::InternalCommunication(format!("Failed to send ReadMemory command: {}", e)))?;
+
+    info!("Memory read request sent for session {} at address 0x{:X}, size {}", session_id, address, size);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn request_memory_write(
+    session_id: String,
+    address: u64,
+    data: Vec<u8>,
+    session_states: State<'_, SessionStatesMap>,
+) -> Result<()> {
+    let session_state = {
+        let states = session_states.lock().unwrap();
+        states
+            .get(&session_id)
+            .cloned()
+            .ok_or_else(|| Error::SessionNotFound(session_id.clone()))?
+    };
+
+    let ui_sender = {
+        let state = session_state.lock().unwrap();
+
+        if !matches!(state.status, SessionStatusUI::Paused) {
+            return Err(Error::InvalidSessionState(
+                "Session must be paused to write memory".to_string(),
+            ));
+        }
+
+        state
+            .ui_sender
+            .as_ref()
+            .ok_or_else(|| Error::InternalCommunication("Session UI sender not available".to_string()))?
+            .clone()
+    };
+
+    ui_sender
+        .send(UICommand::WriteMemory { address, data })
+        .map_err(|e| Error::InternalCommunication(format!("Failed to send WriteMemory command: {}", e)))?;
+
+    info!("Memory write request sent for session {} at address 0x{:X}", session_id, address);
     Ok(())
 }
 

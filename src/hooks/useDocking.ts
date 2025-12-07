@@ -6,11 +6,13 @@ export interface DockingConfig {
   initialLayout: LayoutData;
   initialTabContents: { [key: string]: TabData };
   tabContentMap: Record<string, React.ReactElement>;
+  tabContentFactory?: (tabId: string) => React.ReactElement | null;
   onTabsChanged?: (activeTabIds: string[]) => void;
 }
 
 export interface DockingOperations {
   addTab: () => void;
+  addTypedTab: (type: string, contentFactory: (tabId: string) => React.ReactElement) => string;
   resetLayout: () => void;
   toggleTab: (tabId: string) => void;
   onLayoutChange: (
@@ -58,6 +60,7 @@ export function useDocking(config: DockingConfig): DockingState & DockingOperati
     initialLayout,
     initialTabContents,
     tabContentMap,
+    tabContentFactory,
     onTabsChanged,
   } = config;
 
@@ -110,6 +113,14 @@ export function useDocking(config: DockingConfig): DockingState & DockingOperati
         if (!loadedTab.content) {
           if (loadedTab.id && loadedTab.id in tabContentMap) {
             loadedTab.content = tabContentMap[loadedTab.id];
+          } else if (tabContentFactory && loadedTab.id) {
+            // Try factory for dynamic tabs (e.g., memory-1, memory-2)
+            const factoryContent = tabContentFactory(loadedTab.id);
+            if (factoryContent) {
+              loadedTab.content = factoryContent;
+            } else {
+              loadedTab.content = React.createElement("div", null, `Content for ${loadedTab.title}`);
+            }
           } else {
             loadedTab.content = React.createElement("div", null, `Content for ${loadedTab.title}`);
           }
@@ -128,7 +139,7 @@ export function useDocking(config: DockingConfig): DockingState & DockingOperati
 
       return finalTab;
     },
-    [tabContents, tabContentMap, initialTabContents]
+    [tabContents, tabContentMap, tabContentFactory, initialTabContents]
   );
 
   const addTab = React.useCallback(() => {
@@ -181,6 +192,88 @@ export function useDocking(config: DockingConfig): DockingState & DockingOperati
       return newLayout;
     });
   }, [LAYOUT_STORAGE_KEY, TAB_ID_COUNTER_STORAGE_KEY]);
+
+  // Track counters per type for typed tabs
+  const typeCountersRef = React.useRef<Record<string, number> | null>(null);
+
+  // Lazy initialization of type counters
+  const getTypeCounters = React.useCallback((): Record<string, number> => {
+    if (typeCountersRef.current === null) {
+      try {
+        const saved = localStorage.getItem(`${storagePrefix}.type_counters`);
+        typeCountersRef.current = saved ? JSON.parse(saved) : {};
+      } catch {
+        typeCountersRef.current = {};
+      }
+    }
+    return typeCountersRef.current!;
+  }, [storagePrefix]);
+
+  const addTypedTab = React.useCallback((type: string, contentFactory: (tabId: string) => React.ReactElement): string => {
+    // Get or initialize counter for this type
+    const currentCounters = getTypeCounters();
+
+    // Find existing tabs of this type to determine next number
+    const existingCount = currentCounters[type] || 0;
+    currentCounters[type] = existingCount + 1;
+    localStorage.setItem(`${storagePrefix}.type_counters`, JSON.stringify(currentCounters));
+
+    // Generate ID: first one is just the type, subsequent ones get numbers
+    const newId = existingCount === 0 ? type : `${type}-${existingCount}`;
+    const displayNumber = existingCount + 1;
+
+    // Capitalize first letter for title
+    const typeTitle = type.charAt(0).toUpperCase() + type.slice(1);
+    const title = displayNumber === 1 ? typeTitle : `${typeTitle} ${displayNumber}`;
+
+    setTabContents((currentTabs) => ({
+      ...currentTabs,
+      [newId]: {
+        id: newId,
+        title,
+        content: contentFactory(newId),
+        closable: true,
+      },
+    }));
+
+    setLayout((currentLayout) => {
+      const newLayout = JSON.parse(JSON.stringify(currentLayout));
+
+      // Try to find existing panel with same type tabs, or any panel
+      let targetPanel: any = null;
+      const findPanel = (box: any) => {
+        if (targetPanel) return;
+        if (box.tabs) {
+          // Prefer panel that already has tabs of this type
+          const hasTypeTab = box.tabs.some((t: any) => t.id === type || t.id?.startsWith(`${type}-`));
+          if (hasTypeTab || !targetPanel) {
+            targetPanel = box;
+          }
+        }
+        if (box.children) {
+          box.children.forEach(findPanel);
+        }
+      };
+      findPanel(newLayout.dockbox);
+
+      if (targetPanel?.tabs) {
+        targetPanel.tabs.push({ id: newId });
+        targetPanel.activeId = newId;
+      } else {
+        if (!newLayout.dockbox.children) {
+          newLayout.dockbox.children = [];
+        }
+        newLayout.dockbox.children.push({ tabs: [{ id: newId }], activeId: newId });
+      }
+
+      const serializableLayout = getSerializableLayout(newLayout);
+      localStorage.setItem(LAYOUT_STORAGE_KEY, JSON.stringify(serializableLayout));
+
+      return newLayout;
+    });
+
+    return newId;
+  }, [storagePrefix, LAYOUT_STORAGE_KEY, getTypeCounters]);
 
   const resetLayout = React.useCallback(() => {
     setLayout(initialLayout);
@@ -377,6 +470,7 @@ export function useDocking(config: DockingConfig): DockingState & DockingOperati
     tabContents,
     loadTab,
     addTab,
+    addTypedTab,
     resetLayout,
     toggleTab,
     onLayoutChange,
