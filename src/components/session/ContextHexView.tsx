@@ -6,9 +6,10 @@ import { parseAddress } from '@/lib/hexUtils';
 
 interface ContextHexViewProps {
   memoryViewId?: string;
+  initialAddress?: bigint;
 }
 
-export const ContextHexView = ({ memoryViewId = 'memory' }: ContextHexViewProps) => {
+export const ContextHexView = ({ memoryViewId = 'memory', initialAddress }: ContextHexViewProps) => {
   const sessionData = useSessionContext();
   const context = sessionData?.session?.current_event?.context;
 
@@ -130,6 +131,7 @@ export const ContextHexView = ({ memoryViewId = 'memory' }: ContextHexViewProps)
       sessionStatus={statusString}
       registers={registers}
       resolveSymbol={resolveSymbol}
+      initialAddress={initialAddress}
     />
   );
 };

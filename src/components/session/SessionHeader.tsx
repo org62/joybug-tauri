@@ -199,6 +199,12 @@ export const SessionHeader: React.FC<SessionHeaderProps> = ({
                   >
                     Symbols
                   </DropdownMenuCheckboxItem>
+                  <DropdownMenuCheckboxItem
+                    checked={active.has('memory_regions')}
+                    onCheckedChange={() => toggleTab('memory_regions')}
+                  >
+                    Memory Regions
+                  </DropdownMenuCheckboxItem>
                   {addNewMemoryTab && (
                     <DropdownMenuItem onSelect={(e: Event) => { e.preventDefault(); addNewMemoryTab(); }}>
                       <Plus />

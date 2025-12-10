@@ -77,10 +77,11 @@ export interface UseHexEditorOptions {
   sessionStatus?: string;
   registers?: RegisterContext;
   resolveSymbol?: SymbolResolver;
+  initialAddress?: bigint;
 }
 
 export function useHexEditor(options: UseHexEditorOptions): HexEditorState & HexEditorActions {
-  const { sessionId, memoryViewId = 'memory', sessionStatus, registers = {}, resolveSymbol } = options;
+  const { sessionId, memoryViewId = 'memory', sessionStatus, registers = {}, resolveSymbol, initialAddress } = options;
 
   // Create a unique persistence key combining session and view ID
   const persistenceKey = sessionId ? `${sessionId}-${memoryViewId}` : undefined;
@@ -88,7 +89,8 @@ export function useHexEditor(options: UseHexEditorOptions): HexEditorState & Hex
   // Get persisted state for this view
   const persistedState = persistenceKey ? sessionStateStore.get(persistenceKey) : undefined;
 
-  const [baseAddress, setBaseAddressState] = useState<bigint>(persistedState?.baseAddress ?? 0n);
+  // Use persisted address, then initialAddress, then 0
+  const [baseAddress, setBaseAddressState] = useState<bigint>(persistedState?.baseAddress ?? initialAddress ?? 0n);
   const [memoryData, setMemoryData] = useState<Uint8Array>(new Uint8Array(0));
   const [viewMode, setViewModeInternal] = useState<ViewMode>(persistedState?.viewMode ?? 'byte');
   const [bytesPerRow] = useState<number>(BYTES_PER_ROW);
@@ -100,6 +102,7 @@ export function useHexEditor(options: UseHexEditorOptions): HexEditorState & Hex
   const littleEndian = true; // Always little-endian as per requirements
   const initialLoadDone = useRef(false);
   const pendingReadAddress = useRef<bigint | null>(null);
+  const [listenersReady, setListenersReady] = useState(false);
 
   // Wrapper to persist baseAddress changes
   const setBaseAddress = useCallback((address: bigint) => {
@@ -289,10 +292,9 @@ export function useHexEditor(options: UseHexEditorOptions): HexEditorState & Hex
       });
 
       const unlistenReadError = await listen<MemoryReadError>('memory-read-error', (event) => {
-        // Only accept errors for this view's pending request
-        if (event.payload.session_id === sessionId &&
-            pendingReadAddress.current !== null &&
-            BigInt(event.payload.address) === pendingReadAddress.current) {
+        // Accept errors for this session if we have a pending read
+        // Don't be too strict about address matching - precision issues can occur with large addresses
+        if (event.payload.session_id === sessionId && pendingReadAddress.current !== null) {
           setError(event.payload.error);
           toastError(`Failed to read memory: ${event.payload.error}`, sessionId);
           setIsLoading(false);
@@ -313,6 +315,9 @@ export function useHexEditor(options: UseHexEditorOptions): HexEditorState & Hex
         }
       });
 
+      // Signal that listeners are ready
+      setListenersReady(true);
+
       return () => {
         unlistenRead();
         unlistenReadError();
@@ -323,20 +328,34 @@ export function useHexEditor(options: UseHexEditorOptions): HexEditorState & Hex
 
     const cleanup = setupListeners();
     return () => {
+      setListenersReady(false);
       cleanup.then((fn) => fn?.());
     };
   }, [sessionId]);
 
-  // Restore persisted state on mount
+  // Restore persisted state on mount, or load initialAddress for new tabs
+  // Wait for listeners to be ready to avoid race conditions with error handling
   useEffect(() => {
-    if (!persistenceKey || initialLoadDone.current) return;
+    if (!persistenceKey || initialLoadDone.current || !listenersReady) return;
 
+    // If initialAddress is explicitly provided, ALWAYS use it (this is a new tab with a specific address)
+    // This takes priority over any stale persisted state from a previously closed tab with the same ID
+    if (initialAddress !== undefined && initialAddress !== 0n && sessionStatus === 'Paused') {
+      initialLoadDone.current = true;
+      // Clear any stale persisted state and use the new address
+      sessionStateStore.delete(persistenceKey);
+      setBaseAddress(initialAddress);
+      loadMemory(initialAddress);
+      return;
+    }
+
+    // Otherwise, try to restore from persisted state (e.g., after page refresh)
     const persisted = sessionStateStore.get(persistenceKey);
-    if (persisted && persisted.baseAddress !== 0n) {
+    if (persisted && persisted.baseAddress !== 0n && sessionStatus === 'Paused') {
       initialLoadDone.current = true;
       loadMemory(persisted.baseAddress);
     }
-  }, [persistenceKey, loadMemory]);
+  }, [persistenceKey, loadMemory, initialAddress, sessionStatus, setBaseAddress, listenersReady]);
 
   // Reset error and data when session stops or restarts
   useEffect(() => {
