@@ -161,7 +161,8 @@ export function useDocking(config: DockingConfig): DockingState & DockingOperati
     }));
 
     setLayout((currentLayout) => {
-      const newLayout = JSON.parse(JSON.stringify(currentLayout));
+      // Use getSerializableLayout to avoid circular references from React elements
+      const newLayout = JSON.parse(JSON.stringify(getSerializableLayout(currentLayout)));
 
       let panel: any;
       const findPanel = (box: any) => {
@@ -186,8 +187,7 @@ export function useDocking(config: DockingConfig): DockingState & DockingOperati
         newLayout.dockbox.children.push({ tabs: [{ id: newId }] });
       }
 
-      const serializableLayout = getSerializableLayout(newLayout);
-      localStorage.setItem(LAYOUT_STORAGE_KEY, JSON.stringify(serializableLayout));
+      localStorage.setItem(LAYOUT_STORAGE_KEY, JSON.stringify(newLayout));
 
       return newLayout;
     });
@@ -240,7 +240,8 @@ export function useDocking(config: DockingConfig): DockingState & DockingOperati
     }));
 
     setLayout((currentLayout) => {
-      const newLayout = JSON.parse(JSON.stringify(currentLayout));
+      // Use getSerializableLayout to avoid circular references from React elements
+      const newLayout = JSON.parse(JSON.stringify(getSerializableLayout(currentLayout)));
 
       // Try to find existing panel with same type tabs, or any panel
       let targetPanel: any = null;
@@ -269,8 +270,7 @@ export function useDocking(config: DockingConfig): DockingState & DockingOperati
         newLayout.dockbox.children.push({ tabs: [{ id: newId }], activeId: newId });
       }
 
-      const serializableLayout = getSerializableLayout(newLayout);
-      localStorage.setItem(LAYOUT_STORAGE_KEY, JSON.stringify(serializableLayout));
+      localStorage.setItem(LAYOUT_STORAGE_KEY, JSON.stringify(newLayout));
 
       return newLayout;
     });
@@ -447,7 +447,14 @@ export function useDocking(config: DockingConfig): DockingState & DockingOperati
           box.children.forEach(findTabIds);
         }
       };
-      findTabIds(newLayoutData.dockbox);
+      if (newLayoutData.dockbox) {
+        findTabIds(newLayoutData.dockbox);
+      }
+      // Also search floatbox for undocked/floating tabs
+      const floatbox = (newLayoutData as any).floatbox;
+      if (floatbox?.children && Array.isArray(floatbox.children)) {
+        floatbox.children.forEach(findTabIds);
+      }
 
       setLayout(newLayoutData);
 
