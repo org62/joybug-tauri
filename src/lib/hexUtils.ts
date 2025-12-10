@@ -288,6 +288,149 @@ function parseTerm(
   return { value: null, needsSymbolResolution: true, symbolName: trimmed };
 }
 
+// ============================================================================
+// Selection utilities
+// ============================================================================
+
+/**
+ * Get normalized selection range (start <= end)
+ */
+export function getNormalizedSelection(
+  start: number | null,
+  end: number | null
+): { start: number; end: number } | null {
+  if (start === null || end === null) return null;
+  return {
+    start: Math.min(start, end),
+    end: Math.max(start, end),
+  };
+}
+
+/**
+ * Get bytes from memory for a selection range
+ */
+export function getSelectedBytes(
+  memoryData: Uint8Array,
+  startOffset: number,
+  endOffset: number
+): Uint8Array {
+  const start = Math.min(startOffset, endOffset);
+  const end = Math.max(startOffset, endOffset);
+  return memoryData.slice(start, end + 1);
+}
+
+// ============================================================================
+// Clipboard format utilities
+// ============================================================================
+
+/**
+ * Format bytes as ASCII text (non-printable chars become '.')
+ */
+export function formatBytesAsText(bytes: Uint8Array): string {
+  return Array.from(bytes).map(byteToAscii).join('');
+}
+
+/**
+ * Format bytes as space-separated hex (e.g., "48 65 6C 6C 6F")
+ */
+export function formatBytesAsHex(bytes: Uint8Array): string {
+  return Array.from(bytes)
+    .map((b) => b.toString(16).padStart(2, '0').toUpperCase())
+    .join(' ');
+}
+
+/**
+ * Format bytes as hex dump (full 16-byte rows only)
+ * Example: 00007FF812340000: 48 65 6C 6C 6F 20 57 6F 72 6C 64 21 00 00 00 00  Hello World!....
+ */
+export function formatBytesAsDump(
+  memoryData: Uint8Array,
+  baseAddress: bigint,
+  startOffset: number,
+  endOffset: number
+): string {
+  // Normalize range
+  const rangeStart = Math.min(startOffset, endOffset);
+  const rangeEnd = Math.max(startOffset, endOffset);
+
+  // Round to row boundaries (full lines only)
+  const rowStart = Math.floor(rangeStart / BYTES_PER_ROW) * BYTES_PER_ROW;
+  const rowEnd = Math.ceil((rangeEnd + 1) / BYTES_PER_ROW) * BYTES_PER_ROW;
+
+  const lines: string[] = [];
+
+  for (let offset = rowStart; offset < rowEnd && offset < memoryData.length; offset += BYTES_PER_ROW) {
+    const rowAddress = baseAddress + BigInt(offset);
+    const rowBytes = memoryData.slice(offset, Math.min(offset + BYTES_PER_ROW, memoryData.length));
+
+    // Hex part (space-separated)
+    const hexParts: string[] = [];
+    for (let i = 0; i < BYTES_PER_ROW; i++) {
+      if (i < rowBytes.length) {
+        hexParts.push(rowBytes[i].toString(16).padStart(2, '0').toUpperCase());
+      } else {
+        hexParts.push('  ');
+      }
+    }
+    const hexPart = hexParts.join(' ');
+
+    // ASCII part
+    const asciiParts: string[] = [];
+    for (let i = 0; i < BYTES_PER_ROW; i++) {
+      if (i < rowBytes.length) {
+        asciiParts.push(byteToAscii(rowBytes[i]));
+      } else {
+        asciiParts.push(' ');
+      }
+    }
+    const asciiPart = asciiParts.join('');
+
+    lines.push(`${formatAddress(rowAddress)}: ${hexPart}  ${asciiPart}`);
+  }
+
+  return lines.join('\n');
+}
+
+/**
+ * Parse hex string to bytes
+ * Accepts: "48656C6C6F", "48 65 6C 6C 6F", "0x48 0x65", "0x48, 0x65"
+ * Returns null if invalid
+ */
+export function parseHexToBytes(hex: string): Uint8Array | null {
+  // Remove 0x prefixes, spaces, commas, and other separators
+  const cleaned = hex
+    .replace(/0x/gi, '')
+    .replace(/[\s,;]/g, '')
+    .replace(/[^0-9A-Fa-f]/g, '');
+
+  if (cleaned.length === 0) {
+    return null;
+  }
+
+  // Pad with leading zero if odd length
+  const padded = cleaned.length % 2 === 1 ? '0' + cleaned : cleaned;
+
+  const bytes: number[] = [];
+  for (let i = 0; i < padded.length; i += 2) {
+    const byte = parseInt(padded.substring(i, i + 2), 16);
+    if (isNaN(byte)) return null;
+    bytes.push(byte);
+  }
+
+  return new Uint8Array(bytes);
+}
+
+/**
+ * Check if a character is a valid hex digit
+ */
+export function isHexChar(char: string): boolean {
+  return /^[0-9A-Fa-f]$/.test(char);
+}
+
+// ============================================================================
+// Address expression parsing
+// ============================================================================
+
 /**
  * Parse an address expression with support for:
  * - Hex addresses: 0x7FF8ABCD1234, 7FF8ABCD1234

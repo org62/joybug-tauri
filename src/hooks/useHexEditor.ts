@@ -4,12 +4,17 @@ import { listen } from '@tauri-apps/api/event';
 import { toastError, toastSuccess, toastInfo } from '@/lib/logger';
 import {
   ViewMode,
-  VIEW_MODE_CONFIGS,
   BYTES_PER_ROW,
   DEFAULT_CHUNK_SIZE,
   parseAddressExpression,
   RegisterContext,
   SymbolResolver,
+  getNormalizedSelection,
+  getSelectedBytes,
+  formatBytesAsText,
+  formatBytesAsHex,
+  formatBytesAsDump,
+  parseHexToBytes,
 } from '@/lib/hexUtils';
 
 // Persistent state store per session (survives component unmount)
@@ -53,8 +58,16 @@ export interface HexEditorState {
   bytesPerRow: number;
   isLoading: boolean;
   error: string | null;
-  selectedOffset: number | null;
+  // Selection state
+  selectionStart: number | null;
+  selectionEnd: number | null;
+  selectedOffsets: Set<number>;
+  isDragging: boolean;
+  // Editing state
   editingOffset: number | null;
+  editingColumn: 'hex' | 'ascii';
+  editBuffer: string;
+  // Other
   pendingChanges: Map<number, number>;
   littleEndian: boolean;
 }
@@ -63,12 +76,23 @@ export interface HexEditorActions {
   goToAddress: (address: string | bigint) => Promise<void>;
   refresh: () => void;
   setViewMode: (mode: ViewMode) => void;
-  startEdit: (offset: number) => void;
-  commitEdit: (value: string) => void;
-  cancelEdit: () => void;
+  // Pending changes
   applyPendingChanges: () => void;
   discardPendingChanges: () => void;
-  setSelectedOffset: (offset: number | null) => void;
+  // Selection actions
+  setSelection: (start: number | null, end: number | null) => void;
+  clearSelection: () => void;
+  extendSelection: (offset: number) => void;
+  setIsDragging: (dragging: boolean) => void;
+  // Editing actions
+  startHexEdit: (offset: number) => void;
+  startAsciiEdit: (offset: number) => void;
+  handleKeyInput: (key: string) => boolean;
+  commitEdit: () => void;
+  cancelEdit: () => void;
+  // Clipboard actions
+  copySelection: (format: 'text' | 'hex' | 'dump') => Promise<void>;
+  pasteBytes: () => Promise<void>;
 }
 
 export interface UseHexEditorOptions {
@@ -96,10 +120,31 @@ export function useHexEditor(options: UseHexEditorOptions): HexEditorState & Hex
   const [bytesPerRow] = useState<number>(BYTES_PER_ROW);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [selectedOffset, setSelectedOffset] = useState<number | null>(null);
-  const [editingOffset, setEditingOffset] = useState<number | null>(null);
   const [pendingChanges, setPendingChanges] = useState<Map<number, number>>(new Map());
   const littleEndian = true; // Always little-endian as per requirements
+
+  // New selection state (replaces single selectedOffset for multi-selection)
+  const [selectionStart, setSelectionStart] = useState<number | null>(null);
+  const [selectionEnd, setSelectionEnd] = useState<number | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
+
+  // Editing state - no visible input, byte stays visible, typing overwrites
+  const [editingOffset, setEditingOffset] = useState<number | null>(null);
+  const [editingColumn, setEditingColumn] = useState<'hex' | 'ascii'>('hex');
+  const [editBuffer, setEditBuffer] = useState(""); // Partial hex input (0-2 chars)
+
+  // Computed: set of all selected offsets for O(1) lookup
+  const selectedOffsets = useMemo(() => {
+    const set = new Set<number>();
+    if (selectionStart !== null && selectionEnd !== null) {
+      const start = Math.min(selectionStart, selectionEnd);
+      const end = Math.max(selectionStart, selectionEnd);
+      for (let i = start; i <= end; i++) {
+        set.add(i);
+      }
+    }
+    return set;
+  }, [selectionStart, selectionEnd]);
   const initialLoadDone = useRef(false);
   const pendingReadAddress = useRef<bigint | null>(null);
   const [listenersReady, setListenersReady] = useState(false);
@@ -164,7 +209,8 @@ export function useHexEditor(options: UseHexEditorOptions): HexEditorState & Hex
     }
 
     setBaseAddress(targetAddress);
-    setSelectedOffset(null);
+    setSelectionStart(null);
+    setSelectionEnd(null);
     setEditingOffset(null);
     loadMemory(targetAddress);
   }, [loadMemory, registers, resolveSymbol]);
@@ -181,37 +227,218 @@ export function useHexEditor(options: UseHexEditorOptions): HexEditorState & Hex
     setViewModeState(mode);
   }, []);
 
-  // Start editing at offset
-  const startEdit = useCallback((offset: number) => {
-    setEditingOffset(offset);
-    setSelectedOffset(offset);
+  // ============================================================================
+  // Selection actions
+  // ============================================================================
+
+  const setSelection = useCallback((start: number | null, end: number | null) => {
+    setSelectionStart(start);
+    setSelectionEnd(end);
   }, []);
 
-  // Commit edit with new value
-  const commitEdit = useCallback((value: string) => {
+  const clearSelection = useCallback(() => {
+    setSelectionStart(null);
+    setSelectionEnd(null);
+  }, []);
+
+  const extendSelection = useCallback((offset: number) => {
+    if (selectionStart === null) {
+      setSelectionStart(offset);
+      setSelectionEnd(offset);
+    } else {
+      setSelectionEnd(offset);
+    }
+  }, [selectionStart]);
+
+  // ============================================================================
+  // Editing actions - no visible input, byte stays visible, typing overwrites
+  // ============================================================================
+
+  // Start editing in hex mode (click on hex column)
+  const startHexEdit = useCallback((offset: number) => {
+    if (offset < 0 || offset >= memoryData.length) return;
+    setEditingOffset(offset);
+    setEditingColumn('hex');
+    setEditBuffer("");
+    setSelection(offset, offset);
+  }, [memoryData.length, setSelection]);
+
+  // Start editing in ascii mode (click on ascii column)
+  const startAsciiEdit = useCallback((offset: number) => {
+    if (offset < 0 || offset >= memoryData.length) return;
+    setEditingOffset(offset);
+    setEditingColumn('ascii');
+    setEditBuffer("");
+    setSelection(offset, offset);
+  }, [memoryData.length, setSelection]);
+
+  // Handle key input - the main editing function
+  const handleKeyInput = useCallback((key: string) => {
+    // If no selection, nothing to edit
+    if (selectionStart === null) return false;
+
+    // Start editing at selection start if not already editing
+    const offset = editingOffset ?? selectionStart;
+    const column = editingOffset !== null ? editingColumn : 'hex';
+
+    if (column === 'ascii') {
+      // ASCII mode: printable characters become bytes directly
+      if (key.length === 1 && key.charCodeAt(0) >= 32 && key.charCodeAt(0) < 127) {
+        const byteValue = key.charCodeAt(0);
+        const newPendingChanges = new Map(pendingChanges);
+        newPendingChanges.set(offset, byteValue);
+        setPendingChanges(newPendingChanges);
+
+        // Advance to next byte
+        const nextOffset = offset + 1;
+        if (nextOffset < memoryData.length) {
+          setEditingOffset(nextOffset);
+          setEditingColumn('ascii');
+          setEditBuffer("");
+          setSelection(nextOffset, nextOffset);
+        } else {
+          setEditingOffset(null);
+          setEditBuffer("");
+        }
+        return true;
+      }
+    } else {
+      // Hex mode: only hex characters allowed
+      if (/^[0-9A-Fa-f]$/.test(key)) {
+        const newBuffer = (editBuffer + key.toUpperCase()).slice(0, 2);
+        setEditBuffer(newBuffer);
+
+        if (!editingOffset) {
+          setEditingOffset(offset);
+          setEditingColumn('hex');
+        }
+
+        // When 2 characters entered, commit and advance
+        if (newBuffer.length === 2) {
+          const byteValue = parseInt(newBuffer, 16);
+          const newPendingChanges = new Map(pendingChanges);
+          newPendingChanges.set(offset, byteValue);
+          setPendingChanges(newPendingChanges);
+
+          // Advance to next byte
+          const nextOffset = offset + 1;
+          if (nextOffset < memoryData.length) {
+            setEditingOffset(nextOffset);
+            setEditBuffer("");
+            setSelection(nextOffset, nextOffset);
+          } else {
+            setEditingOffset(null);
+            setEditBuffer("");
+          }
+        }
+        return true;
+      }
+    }
+    return false;
+  }, [selectionStart, editingOffset, editingColumn, editBuffer, pendingChanges, memoryData.length, setSelection]);
+
+  // Cancel current edit
+  const cancelEdit = useCallback(() => {
+    setEditingOffset(null);
+    setEditBuffer("");
+  }, []);
+
+  // Commit partial edit (if user has typed 1 hex char)
+  const commitEdit = useCallback(() => {
     if (editingOffset === null) return;
 
-    const config = VIEW_MODE_CONFIGS[viewMode];
-    const parsed = config.parseValue(value);
+    if (editBuffer.length > 0 && editingColumn === 'hex') {
+      // Pad single hex char with 0 (e.g., "A" -> "0A")
+      const padded = editBuffer.padStart(2, '0');
+      const byteValue = parseInt(padded, 16);
+      if (!isNaN(byteValue) && byteValue >= 0 && byteValue <= 255) {
+        const newPendingChanges = new Map(pendingChanges);
+        newPendingChanges.set(editingOffset, byteValue);
+        setPendingChanges(newPendingChanges);
+      }
+    }
 
-    if (parsed === null) {
-      toastError('Invalid value format', sessionId);
+    setEditingOffset(null);
+    setEditBuffer("");
+  }, [editingOffset, editBuffer, editingColumn, pendingChanges]);
+
+  // ============================================================================
+  // Clipboard actions
+  // ============================================================================
+
+  const copySelection = useCallback(async (format: 'text' | 'hex' | 'dump') => {
+    if (selectionStart === null || selectionEnd === null) {
+      toastInfo('No selection to copy', sessionId);
       return;
     }
 
-    // Add to pending changes
-    const newPendingChanges = new Map(pendingChanges);
-    for (let i = 0; i < parsed.length; i++) {
-      newPendingChanges.set(editingOffset + i, parsed[i]);
-    }
-    setPendingChanges(newPendingChanges);
-    setEditingOffset(null);
-  }, [editingOffset, viewMode, pendingChanges]);
+    const range = getNormalizedSelection(selectionStart, selectionEnd);
+    if (!range) return;
 
-  // Cancel edit
-  const cancelEdit = useCallback(() => {
-    setEditingOffset(null);
-  }, []);
+    const selectedBytes = getSelectedBytes(memoryData, range.start, range.end);
+    let text = '';
+
+    switch (format) {
+      case 'text':
+        text = formatBytesAsText(selectedBytes);
+        break;
+      case 'hex':
+        text = formatBytesAsHex(selectedBytes);
+        break;
+      case 'dump':
+        text = formatBytesAsDump(memoryData, baseAddress, range.start, range.end);
+        break;
+    }
+
+    try {
+      await navigator.clipboard.writeText(text);
+      const byteCount = range.end - range.start + 1;
+      toastSuccess(`Copied ${byteCount} byte${byteCount !== 1 ? 's' : ''} as ${format}`, sessionId);
+    } catch (err) {
+      toastError('Failed to copy to clipboard', sessionId);
+    }
+  }, [selectionStart, selectionEnd, memoryData, baseAddress, sessionId]);
+
+  const pasteBytes = useCallback(async () => {
+    if (selectionStart === null) {
+      toastInfo('No cursor position for paste', sessionId);
+      return;
+    }
+
+    try {
+      const text = await navigator.clipboard.readText();
+      const bytes = parseHexToBytes(text);
+
+      if (!bytes || bytes.length === 0) {
+        toastError('Invalid hex format in clipboard', sessionId);
+        return;
+      }
+
+      // Add to pending changes
+      const newPendingChanges = new Map(pendingChanges);
+      let pastedCount = 0;
+      for (let i = 0; i < bytes.length; i++) {
+        const offset = selectionStart + i;
+        if (offset < memoryData.length) {
+          newPendingChanges.set(offset, bytes[i]);
+          pastedCount++;
+        }
+      }
+
+      if (pastedCount < bytes.length) {
+        toastInfo(`Pasted ${pastedCount} of ${bytes.length} bytes (truncated at buffer end)`, sessionId);
+      } else {
+        toastSuccess(`Pasted ${pastedCount} byte${pastedCount !== 1 ? 's' : ''}`, sessionId);
+      }
+
+      setPendingChanges(newPendingChanges);
+
+      // Select pasted range
+      setSelection(selectionStart, selectionStart + pastedCount - 1);
+    } catch (err) {
+      toastError('Failed to read from clipboard', sessionId);
+    }
+  }, [selectionStart, pendingChanges, memoryData.length, sessionId, setSelection]);
 
   // Apply pending changes by writing to memory
   const applyPendingChanges = useCallback(async () => {
@@ -380,24 +607,45 @@ export function useHexEditor(options: UseHexEditorOptions): HexEditorState & Hex
   }, [memoryData, pendingChanges]);
 
   return {
+    // State
     baseAddress,
     memoryData: effectiveMemoryData,
     viewMode,
     bytesPerRow,
     isLoading,
     error,
-    selectedOffset,
+    // Selection state
+    selectionStart,
+    selectionEnd,
+    selectedOffsets,
+    isDragging,
+    // Editing state
     editingOffset,
+    editingColumn,
+    editBuffer,
+    // Other state
     pendingChanges,
     littleEndian,
+    // Actions
     goToAddress,
     refresh,
     setViewMode,
-    startEdit,
-    commitEdit,
-    cancelEdit,
+    // Pending changes actions
     applyPendingChanges,
     discardPendingChanges,
-    setSelectedOffset,
+    // Selection actions
+    setSelection,
+    clearSelection,
+    extendSelection,
+    setIsDragging,
+    // Editing actions
+    startHexEdit,
+    startAsciiEdit,
+    handleKeyInput,
+    commitEdit,
+    cancelEdit,
+    // Clipboard actions
+    copySelection,
+    pasteBytes,
   };
 }
