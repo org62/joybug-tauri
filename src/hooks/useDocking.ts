@@ -193,34 +193,37 @@ export function useDocking(config: DockingConfig): DockingState & DockingOperati
     });
   }, [LAYOUT_STORAGE_KEY, TAB_ID_COUNTER_STORAGE_KEY]);
 
-  // Track counters per type for typed tabs
-  const typeCountersRef = React.useRef<Record<string, number> | null>(null);
-
-  // Lazy initialization of type counters
-  const getTypeCounters = React.useCallback((): Record<string, number> => {
-    if (typeCountersRef.current === null) {
-      try {
-        const saved = localStorage.getItem(`${storagePrefix}.type_counters`);
-        typeCountersRef.current = saved ? JSON.parse(saved) : {};
-      } catch {
-        typeCountersRef.current = {};
-      }
-    }
-    return typeCountersRef.current!;
-  }, [storagePrefix]);
-
   const addTypedTab = React.useCallback((type: string, contentFactory: (tabId: string) => React.ReactElement): string => {
-    // Get or initialize counter for this type
-    const currentCounters = getTypeCounters();
+    // Find existing tab IDs of this type to determine the lowest available number
+    const existingIds = new Set<number>();
+    const findExistingTypeIds = (box: any) => {
+      if (box.tabs) {
+        box.tabs.forEach((tab: any) => {
+          if (tab.id === type) {
+            existingIds.add(0); // The base ID "memory" corresponds to number 0 (display as 1)
+          } else if (tab.id?.startsWith(`${type}-`)) {
+            const num = parseInt(tab.id.slice(type.length + 1), 10);
+            if (!isNaN(num)) {
+              existingIds.add(num);
+            }
+          }
+        });
+      }
+      if (box.children) {
+        box.children.forEach(findExistingTypeIds);
+      }
+    };
+    findExistingTypeIds(layout.dockbox);
 
-    // Find existing tabs of this type to determine next number
-    const existingCount = currentCounters[type] || 0;
-    currentCounters[type] = existingCount + 1;
-    localStorage.setItem(`${storagePrefix}.type_counters`, JSON.stringify(currentCounters));
+    // Find the lowest available number (0-based internally, 1-based for display)
+    let nextNumber = 0;
+    while (existingIds.has(nextNumber)) {
+      nextNumber++;
+    }
 
     // Generate ID: first one is just the type, subsequent ones get numbers
-    const newId = existingCount === 0 ? type : `${type}-${existingCount}`;
-    const displayNumber = existingCount + 1;
+    const newId = nextNumber === 0 ? type : `${type}-${nextNumber}`;
+    const displayNumber = nextNumber + 1;
 
     // Capitalize first letter for title
     const typeTitle = type.charAt(0).toUpperCase() + type.slice(1);
@@ -273,7 +276,7 @@ export function useDocking(config: DockingConfig): DockingState & DockingOperati
     });
 
     return newId;
-  }, [storagePrefix, LAYOUT_STORAGE_KEY, getTypeCounters]);
+  }, [layout, LAYOUT_STORAGE_KEY]);
 
   const resetLayout = React.useCallback(() => {
     setLayout(initialLayout);

@@ -5,7 +5,9 @@
       "Bash(npm run build:*)",
       "Bash(cargo build:*)",
       "Bash(cargo check:*)",
-      "Bash(npx tsc:*)"
+      "Bash(npx tsc:*)",
+      "Bash(cat:*)",
+      "mcp__ida-pro-mcp__check_connection"
     ],
     "deny": [],
     "ask": []

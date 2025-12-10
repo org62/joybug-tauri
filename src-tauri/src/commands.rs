@@ -884,6 +884,43 @@ pub fn request_memory_write(
 }
 
 #[tauri::command]
+pub fn request_memory_regions(
+    session_id: String,
+    session_states: State<'_, SessionStatesMap>,
+) -> Result<()> {
+    let session_state = {
+        let states = session_states.lock().unwrap();
+        states
+            .get(&session_id)
+            .cloned()
+            .ok_or_else(|| Error::SessionNotFound(session_id.clone()))?
+    };
+
+    let ui_sender = {
+        let state = session_state.lock().unwrap();
+
+        if !matches!(state.status, SessionStatusUI::Paused) {
+            return Err(Error::InvalidSessionState(
+                "Session must be paused to enumerate memory regions".to_string(),
+            ));
+        }
+
+        state
+            .ui_sender
+            .as_ref()
+            .ok_or_else(|| Error::InternalCommunication("Session UI sender not available".to_string()))?
+            .clone()
+    };
+
+    ui_sender
+        .send(UICommand::GetMemoryRegions)
+        .map_err(|e| Error::InternalCommunication(format!("Failed to send GetMemoryRegions command: {}", e)))?;
+
+    info!("Memory regions request sent for session {}", session_id);
+    Ok(())
+}
+
+#[tauri::command]
 pub fn update_window_state(
     session_id: String,
     window_type: String,

@@ -27,9 +27,10 @@ interface HexViewProps {
   sessionStatus?: string;
   registers?: RegisterContext;
   resolveSymbol?: SymbolResolver;
+  initialAddress?: bigint;
 }
 
-export function HexView({ sessionId, memoryViewId = 'memory', sessionStatus, registers = {}, resolveSymbol }: HexViewProps) {
+export function HexView({ sessionId, memoryViewId = 'memory', sessionStatus, registers = {}, resolveSymbol, initialAddress }: HexViewProps) {
   const {
     baseAddress,
     memoryData,
@@ -49,7 +50,7 @@ export function HexView({ sessionId, memoryViewId = 'memory', sessionStatus, reg
     applyPendingChanges,
     discardPendingChanges,
     setSelectedOffset,
-  } = useHexEditor({ sessionId, memoryViewId, sessionStatus, registers, resolveSymbol });
+  } = useHexEditor({ sessionId, memoryViewId, sessionStatus, registers, resolveSymbol, initialAddress });
 
   const [addressInput, setAddressInput] = useState("");
   const [editValue, setEditValue] = useState("");

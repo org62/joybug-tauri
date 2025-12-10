@@ -15,6 +15,7 @@ import { ContextThreadsView } from "@/components/session/ContextThreadsView";
 import { ContextCallStackView } from "@/components/session/ContextCallStackView";
 import { ContextSymbolsView } from "@/components/session/ContextSymbolsView";
 import { ContextHexView } from "@/components/session/ContextHexView";
+import { ContextMemoryRegionsView } from "@/components/session/ContextMemoryRegionsView";
 import { useDebugSession } from "@/hooks/useDebugSession";
 import { SessionHeader } from "@/components/session/SessionHeader";
 
@@ -111,6 +112,17 @@ export default function SessionDocked() {
     ));
   };
 
+  // Add a new memory tab at a specific address (from memory regions click)
+  const handleNavigateToMemoryAddress = (address: string) => {
+    // Parse the hex address string (e.g., "0x00007FF..." -> bigint) to handle 64-bit addresses
+    // Remove "0x" prefix if present and parse as BigInt
+    const cleanAddress = address.toLowerCase().startsWith('0x') ? address.slice(2) : address;
+    const bigIntAddress = BigInt('0x' + cleanAddress);
+    dockingRef.current?.addTypedTab('memory', (tabId) => (
+      <ContextHexView memoryViewId={tabId} initialAddress={bigIntAddress} />
+    ));
+  };
+
   // Initial state detection - sync when docking becomes ready
   useEffect(() => {
     if (!sessionId || !isDockingReady || !dockingRef.current) return;
@@ -201,6 +213,11 @@ export default function SessionDocked() {
           event.stopPropagation();
           handleAddNewMemoryTab();
           break;
+        case 'g':
+          event.preventDefault();
+          event.stopPropagation();
+          toggleTabWithBackendUpdate("memory_regions");
+          break;
       }
     };
 
@@ -225,7 +242,8 @@ export default function SessionDocked() {
     threads: <ContextThreadsView />,
     callstack: <ContextCallStackView />,
     symbols: <ContextSymbolsView />,
-  }), []);
+    memory_regions: <ContextMemoryRegionsView onNavigateToAddress={handleNavigateToMemoryAddress} />,
+  }), [handleNavigateToMemoryAddress]);
 
   // Factory for creating dynamic tab content (e.g., memory tabs restored from storage)
   const tabContentFactory = React.useCallback((tabId: string): React.ReactElement | null => {
@@ -273,6 +291,12 @@ export default function SessionDocked() {
         id: "symbols",
         title: "Symbols",
         content: dynamicTabContent.symbols,
+        closable: true,
+      },
+      memory_regions: {
+        id: "memory_regions",
+        title: "Memory Regions",
+        content: dynamicTabContent.memory_regions,
         closable: true,
       },
     };

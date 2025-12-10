@@ -51,6 +51,7 @@ pub fn run() {
             commands::request_session_callstack,
             commands::request_memory_read,
             commands::request_memory_write,
+            commands::request_memory_regions,
             commands::update_window_state,
             commands::get_debug_settings,
             commands::update_debug_settings,

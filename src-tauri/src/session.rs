@@ -17,6 +17,7 @@ pub enum UICommand {
     SearchSymbols{ pattern: String, limit: u32 },
     ReadMemory{ address: u64, size: usize },
     WriteMemory{ address: u64, data: Vec<u8> },
+    GetMemoryRegions,
 }
 
 /// Event payload for successful memory read (may be partial)
@@ -51,6 +52,52 @@ pub struct MemoryWriteError {
     pub session_id: String,
     pub address: u64,
     pub error: String,
+}
+
+/// Event payload for successful memory regions enumeration
+#[derive(serde::Serialize)]
+pub struct MemoryRegionsResult {
+    pub session_id: String,
+    pub regions: Vec<SerializableMemoryRegion>,
+}
+
+/// Serializable memory region info
+#[derive(serde::Serialize)]
+pub struct SerializableMemoryRegion {
+    pub base_address: String,
+    pub allocation_base: String,
+    pub region_size: u64,
+    pub region_size_formatted: String,
+    pub state: String,
+    pub state_raw: u32,
+    pub protect: String,
+    pub protect_raw: u32,
+    pub region_type: String,
+    pub type_raw: u32,
+}
+
+/// Event payload for memory regions error
+#[derive(serde::Serialize)]
+pub struct MemoryRegionsError {
+    pub session_id: String,
+    pub error: String,
+}
+
+/// Format bytes into human readable format (KB, MB, GB)
+fn format_bytes(bytes: u64) -> String {
+    const KB: u64 = 1024;
+    const MB: u64 = KB * 1024;
+    const GB: u64 = MB * 1024;
+
+    if bytes >= GB {
+        format!("{:.1} GB", bytes as f64 / GB as f64)
+    } else if bytes >= MB {
+        format!("{:.1} MB", bytes as f64 / MB as f64)
+    } else if bytes >= KB {
+        format!("{:.1} KB", bytes as f64 / KB as f64)
+    } else {
+        format!("{} B", bytes)
+    }
 }
 
 /// Updates session state (modules and threads) based on debug events
@@ -528,6 +575,78 @@ fn process_memory_write(
     }
 }
 
+/// Processes a memory regions request and emits results to the frontend
+fn process_memory_regions_request(
+    session: &mut joybug2::protocol_io::DebugSession<Arc<Mutex<SessionStateUI>>>,
+    app_handle_clone: &Option<AppHandle>,
+    event: &joybug2::protocol_io::DebugEvent,
+) {
+    let pid = event.pid();
+    debug!("📤 Processing memory regions request: pid={}", pid);
+
+    match session.enumerate_memory_regions(pid) {
+        Ok(regions) => {
+            debug!("📥 Received {} memory regions", regions.len());
+
+            // Convert to serializable format using joybug2 formatting helpers
+            let serializable_regions: Vec<SerializableMemoryRegion> = regions
+                .iter()
+                .map(|r| SerializableMemoryRegion {
+                    base_address: format!("0x{:016X}", r.base_address),
+                    allocation_base: format!("0x{:016X}", r.allocation_base),
+                    region_size: r.region_size,
+                    region_size_formatted: format_bytes(r.region_size),
+                    state: joybug2::formatting::memory::state_to_str(r.state).to_string(),
+                    state_raw: r.state,
+                    protect: joybug2::formatting::memory::protect_to_str(r.protect).to_string(),
+                    protect_raw: r.protect,
+                    region_type: joybug2::formatting::memory::type_to_str(r.region_type).to_string(),
+                    type_raw: r.region_type,
+                })
+                .collect();
+
+            // Emit memory regions results to frontend
+            if let Some(ref handle) = app_handle_clone {
+                let session_id = {
+                    let state = session.state.lock().unwrap();
+                    state.id.clone()
+                };
+
+                let result = MemoryRegionsResult {
+                    session_id,
+                    regions: serializable_regions,
+                };
+
+                if let Err(e) = handle.emit("memory-regions-updated", &result) {
+                    error!("Failed to emit memory-regions-updated event: {}", e);
+                } else {
+                    debug!("📡 Emitted memory-regions-updated event with {} regions", result.regions.len());
+                }
+            }
+        }
+        Err(e) => {
+            error!("Failed to enumerate memory regions: {}", e);
+
+            // Emit error event
+            if let Some(ref handle) = app_handle_clone {
+                let session_id = {
+                    let state = session.state.lock().unwrap();
+                    state.id.clone()
+                };
+
+                let error_result = MemoryRegionsError {
+                    session_id,
+                    error: e.to_string(),
+                };
+
+                if let Err(emit_err) = handle.emit("memory-regions-error", &error_result) {
+                    error!("Failed to emit memory-regions-error event: {}", emit_err);
+                }
+            }
+        }
+    }
+}
+
 /// Handles UI commands in a loop, returns true to continue execution, false to stop session
 fn handle_ui_commands(
     ui_receiver: &std::sync::mpsc::Receiver<UICommand>,
@@ -672,6 +791,10 @@ fn handle_ui_commands(
                     }
                     UICommand::WriteMemory { address, ref data } => {
                         process_memory_write(session, app_handle_clone, event, address, data);
+                        // Continue in loop waiting for next command (Go or Stop)
+                    }
+                    UICommand::GetMemoryRegions => {
+                        process_memory_regions_request(session, app_handle_clone, event);
                         // Continue in loop waiting for next command (Go or Stop)
                     }
                     UICommand::Stop => {
