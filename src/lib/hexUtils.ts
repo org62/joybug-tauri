@@ -340,6 +340,42 @@ export function formatBytesAsHex(bytes: Uint8Array): string {
 }
 
 /**
+ * Format bytes as hex units according to view mode
+ * - byte: "AB CD EF"
+ * - word: "CDAB 1234" (little-endian 16-bit)
+ * - dword: "12345678" (little-endian 32-bit)
+ * - qword: "0123456789ABCDEF" (little-endian 64-bit)
+ * - float: treated as dword (4 bytes hex)
+ * - pointer: treated as qword (8 bytes hex)
+ */
+export function formatBytesAsHexUnits(bytes: Uint8Array, viewMode: ViewMode): string {
+  // For float/pointer, use the equivalent integer hex format
+  let effectiveMode = viewMode;
+  if (viewMode === 'float') {
+    effectiveMode = 'dword';
+  } else if (viewMode === 'pointer') {
+    effectiveMode = 'qword';
+  }
+
+  const config = VIEW_MODE_CONFIGS[effectiveMode];
+  const units: string[] = [];
+
+  for (let i = 0; i < bytes.length; i += config.bytesPerUnit) {
+    const unitBytes = bytes.slice(i, i + config.bytesPerUnit);
+    if (unitBytes.length === config.bytesPerUnit) {
+      units.push(config.formatValue(unitBytes, true)); // true = little-endian
+    } else {
+      // Partial unit at end - format remaining bytes individually
+      for (const b of unitBytes) {
+        units.push(b.toString(16).padStart(2, '0').toUpperCase());
+      }
+    }
+  }
+
+  return units.join(' ');
+}
+
+/**
  * Format bytes as hex dump (full 16-byte rows only)
  * Example: 00007FF812340000: 48 65 6C 6C 6F 20 57 6F 72 6C 64 21 00 00 00 00  Hello World!....
  */

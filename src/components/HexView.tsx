@@ -83,6 +83,8 @@ export function HexView({ sessionId, memoryViewId = 'memory', sessionStatus, reg
 
   // Track mouse down offset for drag selection
   const [mouseDownOffset, setMouseDownOffset] = useState<number | null>(null);
+  // Track if an actual drag occurred (mouse moved to different offset)
+  const didDragRef = useRef(false);
 
   // Global mouse up listener for drag selection
   useEffect(() => {
@@ -132,21 +134,26 @@ export function HexView({ sessionId, memoryViewId = 'memory', sessionStatus, reg
       extendSelection(offset);
     } else {
       // Normal click: start new selection
+      cancelEdit(); // Clear any existing edit state
       setSelection(offset, offset);
       setMouseDownOffset(offset);
       setIsDragging(true);
+      didDragRef.current = false; // Reset drag tracking
     }
-  }, [selectionStart, extendSelection, setSelection, setIsDragging]);
+  }, [selectionStart, extendSelection, setSelection, setIsDragging, cancelEdit]);
 
   const handleByteMouseMove = useCallback((offset: number) => {
     if (isDragging && mouseDownOffset !== null) {
+      if (offset !== mouseDownOffset) {
+        didDragRef.current = true; // User actually dragged to a different offset
+      }
       extendSelection(offset);
     }
   }, [isDragging, mouseDownOffset, extendSelection]);
 
   const handleByteClick = useCallback((offset: number, e: MouseEvent) => {
-    // If we were dragging, don't start edit
-    if (isDragging) return;
+    // If user actually dragged (moved to different offset), don't start edit
+    if (didDragRef.current) return;
 
     // Focus the hex view container to capture keyboard events
     hexViewContainerRef.current?.focus();
@@ -155,10 +162,10 @@ export function HexView({ sessionId, memoryViewId = 'memory', sessionStatus, reg
     if (!e.shiftKey) {
       startHexEdit(offset);
     }
-  }, [isDragging, startHexEdit]);
+  }, [startHexEdit]);
 
   const handleAsciiClick = useCallback((offset: number, e: MouseEvent) => {
-    if (isDragging) return;
+    if (didDragRef.current) return;
 
     // Focus the hex view container to capture keyboard events
     hexViewContainerRef.current?.focus();
@@ -169,7 +176,7 @@ export function HexView({ sessionId, memoryViewId = 'memory', sessionStatus, reg
       // Start editing this byte in ASCII mode
       startAsciiEdit(offset);
     }
-  }, [isDragging, selectionStart, extendSelection, startAsciiEdit]);
+  }, [selectionStart, extendSelection, startAsciiEdit]);
 
   // ============================================================================
   // Context menu handlers
@@ -203,10 +210,10 @@ export function HexView({ sessionId, memoryViewId = 'memory', sessionStatus, reg
       return;
     }
 
-    // Ctrl+V: Paste
+    // Ctrl+V: Paste (default to hex mode for keyboard shortcut)
     if ((e.ctrlKey || e.metaKey) && e.key === 'v') {
       e.preventDefault();
-      pasteBytes();
+      pasteBytes('hex');
       return;
     }
 
@@ -508,24 +515,28 @@ export function HexView({ sessionId, memoryViewId = 'memory', sessionStatus, reg
 
                     // Determine display value
                     let displayValue = config.formatValue(unitBytes, littleEndian);
-                    if (isEditing && viewMode === 'byte' && editBuffer.length > 0) {
-                      // Show editBuffer padded with underscore for missing char
-                      displayValue = editBuffer.length === 1
-                        ? editBuffer + '_'
-                        : editBuffer;
+                    if (isEditing && editBuffer.length > 0) {
+                      if (viewMode === 'float') {
+                        // Float mode: show typed value directly
+                        displayValue = editBuffer;
+                      } else {
+                        // Hex modes: show typed chars + underscores for remaining
+                        const remaining = config.displayWidth - editBuffer.length;
+                        displayValue = editBuffer + '_'.repeat(remaining);
+                      }
                     }
 
                     return (
                       <span
                         key={unitIndex}
-                        className={`cursor-pointer rounded px-0.5 ${
+                        className={`cursor-pointer rounded px-0.5 inline-block text-center ${
                           isSelected
                             ? "bg-primary text-primary-foreground"
                             : hasPendingChange
                             ? "bg-yellow-200 dark:bg-yellow-800"
                             : "hover:bg-muted/50"
                         } ${isEditing ? "ring-1 ring-primary" : ""}`}
-                        style={{ width: `${config.displayWidth}ch` }}
+                        style={{ minWidth: `${config.displayWidth}ch` }}
                         onMouseDown={(e) => handleByteMouseDown(unitOffset, e)}
                         onMouseMove={() => handleByteMouseMove(unitOffset)}
                         onClick={(e) => handleByteClick(unitOffset, e)}
@@ -626,13 +637,24 @@ export function HexView({ sessionId, memoryViewId = 'memory', sessionStatus, reg
           <button
             className="w-full px-3 py-1.5 text-sm text-left hover:bg-accent hover:text-accent-foreground flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
             onClick={() => {
-              pasteBytes();
+              pasteBytes('hex');
               setContextMenu(null);
             }}
             disabled={selectionStart === null}
           >
             <ClipboardPaste className="h-4 w-4" />
-            Paste
+            Paste Hex
+          </button>
+          <button
+            className="w-full px-3 py-1.5 text-sm text-left hover:bg-accent hover:text-accent-foreground flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+            onClick={() => {
+              pasteBytes('text');
+              setContextMenu(null);
+            }}
+            disabled={selectionStart === null}
+          >
+            <ClipboardPaste className="h-4 w-4" />
+            Paste Text
           </button>
         </div>
       )}

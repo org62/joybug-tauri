@@ -4,6 +4,7 @@ import { listen } from '@tauri-apps/api/event';
 import { toastError, toastSuccess, toastInfo } from '@/lib/logger';
 import {
   ViewMode,
+  VIEW_MODE_CONFIGS,
   BYTES_PER_ROW,
   DEFAULT_CHUNK_SIZE,
   parseAddressExpression,
@@ -12,7 +13,7 @@ import {
   getNormalizedSelection,
   getSelectedBytes,
   formatBytesAsText,
-  formatBytesAsHex,
+  formatBytesAsHexUnits,
   formatBytesAsDump,
   parseHexToBytes,
 } from '@/lib/hexUtils';
@@ -92,7 +93,7 @@ export interface HexEditorActions {
   cancelEdit: () => void;
   // Clipboard actions
   copySelection: (format: 'text' | 'hex' | 'dump') => Promise<void>;
-  pasteBytes: () => Promise<void>;
+  pasteBytes: (mode: 'hex' | 'text') => Promise<void>;
 }
 
 export interface UseHexEditorOptions {
@@ -242,13 +243,29 @@ export function useHexEditor(options: UseHexEditorOptions): HexEditorState & Hex
   }, []);
 
   const extendSelection = useCallback((offset: number) => {
+    const config = VIEW_MODE_CONFIGS[viewMode];
+
     if (selectionStart === null) {
-      setSelectionStart(offset);
-      setSelectionEnd(offset);
+      // Align to unit boundary
+      const unitStart = Math.floor(offset / config.bytesPerUnit) * config.bytesPerUnit;
+      const unitEnd = Math.min(unitStart + config.bytesPerUnit - 1, memoryData.length - 1);
+      setSelectionStart(unitStart);
+      setSelectionEnd(unitEnd);
     } else {
-      setSelectionEnd(offset);
+      // Extend selection to include the full unit at the offset
+      const unitStart = Math.floor(offset / config.bytesPerUnit) * config.bytesPerUnit;
+      const unitEnd = Math.min(unitStart + config.bytesPerUnit - 1, memoryData.length - 1);
+
+      // Determine which end of the unit to use based on selection direction
+      if (offset >= selectionStart) {
+        // Extending forward: use the end of the unit
+        setSelectionEnd(unitEnd);
+      } else {
+        // Extending backward: use the start of the unit
+        setSelectionEnd(unitStart);
+      }
     }
-  }, [selectionStart]);
+  }, [selectionStart, viewMode, memoryData.length]);
 
   // ============================================================================
   // Editing actions - no visible input, byte stays visible, typing overwrites
@@ -256,12 +273,19 @@ export function useHexEditor(options: UseHexEditorOptions): HexEditorState & Hex
 
   // Start editing in hex mode (click on hex column)
   const startHexEdit = useCallback((offset: number) => {
-    if (offset < 0 || offset >= memoryData.length) return;
-    setEditingOffset(offset);
+    const config = VIEW_MODE_CONFIGS[viewMode];
+    // Align offset to unit boundary for multi-byte modes
+    const unitOffset = Math.floor(offset / config.bytesPerUnit) * config.bytesPerUnit;
+
+    if (unitOffset < 0 || unitOffset >= memoryData.length) return;
+
+    setEditingOffset(unitOffset);
     setEditingColumn('hex');
     setEditBuffer("");
-    setSelection(offset, offset);
-  }, [memoryData.length, setSelection]);
+    // Select all bytes in the unit
+    const unitEnd = Math.min(unitOffset + config.bytesPerUnit - 1, memoryData.length - 1);
+    setSelection(unitOffset, unitEnd);
+  }, [viewMode, memoryData.length, setSelection]);
 
   // Start editing in ascii mode (click on ascii column)
   const startAsciiEdit = useCallback((offset: number) => {
@@ -303,39 +327,61 @@ export function useHexEditor(options: UseHexEditorOptions): HexEditorState & Hex
         return true;
       }
     } else {
-      // Hex mode: only hex characters allowed
-      if (/^[0-9A-Fa-f]$/.test(key)) {
-        const newBuffer = (editBuffer + key.toUpperCase()).slice(0, 2);
-        setEditBuffer(newBuffer);
+      // Hex column editing - mode-aware
+      const config = VIEW_MODE_CONFIGS[viewMode];
 
-        if (!editingOffset) {
-          setEditingOffset(offset);
-          setEditingColumn('hex');
-        }
+      if (viewMode === 'float') {
+        // Float mode: accept digits, decimal point, minus, exponent
+        if (/^[0-9.\-eE+]$/.test(key)) {
+          const newBuffer = editBuffer + key;
+          setEditBuffer(newBuffer);
 
-        // When 2 characters entered, commit and advance
-        if (newBuffer.length === 2) {
-          const byteValue = parseInt(newBuffer, 16);
-          const newPendingChanges = new Map(pendingChanges);
-          newPendingChanges.set(offset, byteValue);
-          setPendingChanges(newPendingChanges);
-
-          // Advance to next byte
-          const nextOffset = offset + 1;
-          if (nextOffset < memoryData.length) {
-            setEditingOffset(nextOffset);
-            setEditBuffer("");
-            setSelection(nextOffset, nextOffset);
-          } else {
-            setEditingOffset(null);
-            setEditBuffer("");
+          if (!editingOffset) {
+            setEditingOffset(offset);
+            setEditingColumn('hex');
           }
+          // No auto-commit for float (variable length) - user must press Enter/Tab
+          return true;
         }
-        return true;
+      } else {
+        // Hex modes (byte, word, dword, qword, pointer): only hex characters allowed
+        if (/^[0-9A-Fa-f]$/.test(key)) {
+          const newBuffer = (editBuffer + key.toUpperCase()).slice(0, config.displayWidth);
+          setEditBuffer(newBuffer);
+
+          if (!editingOffset) {
+            setEditingOffset(offset);
+            setEditingColumn('hex');
+          }
+
+          // Auto-commit when buffer reaches full length for the current mode
+          if (newBuffer.length === config.displayWidth) {
+            const bytes = config.parseValue(newBuffer);
+            if (bytes) {
+              const newPendingChanges = new Map(pendingChanges);
+              for (let i = 0; i < bytes.length; i++) {
+                newPendingChanges.set(offset + i, bytes[i]);
+              }
+              setPendingChanges(newPendingChanges);
+            }
+
+            // Advance to next unit
+            const nextOffset = offset + config.bytesPerUnit;
+            if (nextOffset < memoryData.length) {
+              setEditingOffset(nextOffset);
+              setEditBuffer("");
+              setSelection(nextOffset, nextOffset);
+            } else {
+              setEditingOffset(null);
+              setEditBuffer("");
+            }
+          }
+          return true;
+        }
       }
     }
     return false;
-  }, [selectionStart, editingOffset, editingColumn, editBuffer, pendingChanges, memoryData.length, setSelection]);
+  }, [selectionStart, editingOffset, editingColumn, editBuffer, pendingChanges, memoryData.length, setSelection, viewMode]);
 
   // Cancel current edit
   const cancelEdit = useCallback(() => {
@@ -343,24 +389,39 @@ export function useHexEditor(options: UseHexEditorOptions): HexEditorState & Hex
     setEditBuffer("");
   }, []);
 
-  // Commit partial edit (if user has typed 1 hex char)
+  // Commit partial edit - handles all view modes
   const commitEdit = useCallback(() => {
-    if (editingOffset === null) return;
+    if (editingOffset === null) {
+      setEditingOffset(null);
+      setEditBuffer("");
+      return;
+    }
 
     if (editBuffer.length > 0 && editingColumn === 'hex') {
-      // Pad single hex char with 0 (e.g., "A" -> "0A")
-      const padded = editBuffer.padStart(2, '0');
-      const byteValue = parseInt(padded, 16);
-      if (!isNaN(byteValue) && byteValue >= 0 && byteValue <= 255) {
+      const config = VIEW_MODE_CONFIGS[viewMode];
+      let bytes: Uint8Array | null = null;
+
+      if (viewMode === 'float') {
+        // Float: parse as-is (variable length input)
+        bytes = config.parseValue(editBuffer);
+      } else {
+        // Hex modes: pad with leading zeros to full displayWidth
+        const padded = editBuffer.padStart(config.displayWidth, '0');
+        bytes = config.parseValue(padded);
+      }
+
+      if (bytes) {
         const newPendingChanges = new Map(pendingChanges);
-        newPendingChanges.set(editingOffset, byteValue);
+        for (let i = 0; i < bytes.length; i++) {
+          newPendingChanges.set(editingOffset + i, bytes[i]);
+        }
         setPendingChanges(newPendingChanges);
       }
     }
 
     setEditingOffset(null);
     setEditBuffer("");
-  }, [editingOffset, editBuffer, editingColumn, pendingChanges]);
+  }, [editingOffset, editBuffer, editingColumn, pendingChanges, viewMode]);
 
   // ============================================================================
   // Clipboard actions
@@ -383,7 +444,7 @@ export function useHexEditor(options: UseHexEditorOptions): HexEditorState & Hex
         text = formatBytesAsText(selectedBytes);
         break;
       case 'hex':
-        text = formatBytesAsHex(selectedBytes);
+        text = formatBytesAsHexUnits(selectedBytes, viewMode);
         break;
       case 'dump':
         text = formatBytesAsDump(memoryData, baseAddress, range.start, range.end);
@@ -397,9 +458,9 @@ export function useHexEditor(options: UseHexEditorOptions): HexEditorState & Hex
     } catch (err) {
       toastError('Failed to copy to clipboard', sessionId);
     }
-  }, [selectionStart, selectionEnd, memoryData, baseAddress, sessionId]);
+  }, [selectionStart, selectionEnd, memoryData, baseAddress, sessionId, viewMode]);
 
-  const pasteBytes = useCallback(async () => {
+  const pasteBytes = useCallback(async (mode: 'hex' | 'text') => {
     if (selectionStart === null) {
       toastInfo('No cursor position for paste', sessionId);
       return;
@@ -407,11 +468,55 @@ export function useHexEditor(options: UseHexEditorOptions): HexEditorState & Hex
 
     try {
       const text = await navigator.clipboard.readText();
-      const bytes = parseHexToBytes(text);
+      let bytes: number[] | null;
 
-      if (!bytes || bytes.length === 0) {
-        toastError('Invalid hex format in clipboard', sessionId);
-        return;
+      if (mode === 'text') {
+        // Text mode: convert each character to its ASCII byte value
+        bytes = [];
+        for (let i = 0; i < text.length; i++) {
+          const charCode = text.charCodeAt(i);
+          // Only accept printable ASCII and common control chars
+          if (charCode < 256) {
+            bytes.push(charCode);
+          }
+        }
+        if (bytes.length === 0) {
+          toastError('No valid characters to paste', sessionId);
+          return;
+        }
+      } else {
+        // Hex mode: parse according to current view mode
+        // For float/pointer, use the equivalent integer format
+        let effectiveMode: ViewMode = viewMode;
+        if (viewMode === 'float') {
+          effectiveMode = 'dword';
+        } else if (viewMode === 'pointer') {
+          effectiveMode = 'qword';
+        }
+
+        const config = VIEW_MODE_CONFIGS[effectiveMode];
+        const unitStrings = text.trim().split(/\s+/);
+        bytes = [];
+
+        for (const unitStr of unitStrings) {
+          const unitBytes = config.parseValue(unitStr);
+          if (unitBytes) {
+            bytes.push(...Array.from(unitBytes));
+          }
+        }
+
+        // Fallback: try parsing as raw hex bytes if view-mode parsing failed
+        if (bytes.length === 0) {
+          const fallbackBytes = parseHexToBytes(text);
+          if (fallbackBytes && fallbackBytes.length > 0) {
+            bytes = Array.from(fallbackBytes);
+          }
+        }
+
+        if (!bytes || bytes.length === 0) {
+          toastError('Invalid hex format in clipboard', sessionId);
+          return;
+        }
       }
 
       // Add to pending changes
@@ -433,12 +538,22 @@ export function useHexEditor(options: UseHexEditorOptions): HexEditorState & Hex
 
       setPendingChanges(newPendingChanges);
 
-      // Select pasted range
-      setSelection(selectionStart, selectionStart + pastedCount - 1);
+      // Move cursor to next unit after pasted data (for repeated paste)
+      const nextOffset = selectionStart + pastedCount;
+      if (nextOffset < memoryData.length) {
+        // Align to unit boundary and select the full unit
+        const config = VIEW_MODE_CONFIGS[viewMode];
+        const unitStart = Math.floor(nextOffset / config.bytesPerUnit) * config.bytesPerUnit;
+        const unitEnd = Math.min(unitStart + config.bytesPerUnit - 1, memoryData.length - 1);
+        setSelection(unitStart, unitEnd);
+      } else {
+        // At end of buffer, select the pasted range
+        setSelection(selectionStart, selectionStart + pastedCount - 1);
+      }
     } catch (err) {
       toastError('Failed to read from clipboard', sessionId);
     }
-  }, [selectionStart, pendingChanges, memoryData.length, sessionId, setSelection]);
+  }, [selectionStart, pendingChanges, memoryData.length, sessionId, setSelection, viewMode]);
 
   // Apply pending changes by writing to memory
   const applyPendingChanges = useCallback(async () => {
