@@ -9,7 +9,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "./ui/select";
-import { Binary, RefreshCw, Save, X, ArrowRight, Copy, ClipboardPaste } from "lucide-react";
+import { Binary, RefreshCw, Save, X, ArrowRight, Copy, ClipboardPaste, ChevronLeft, ChevronRight } from "lucide-react";
 import { useHexEditor } from "@/hooks/useHexEditor";
 import {
   ViewMode,
@@ -53,6 +53,9 @@ export function HexView({ sessionId, memoryViewId = 'memory', sessionStatus, reg
     goToAddress,
     refresh,
     setViewMode,
+    // Pagination
+    loadPreviousPage,
+    loadNextPage,
     applyPendingChanges,
     discardPendingChanges,
     // Selection actions
@@ -211,7 +214,12 @@ export function HexView({ sessionId, memoryViewId = 'memory', sessionStatus, reg
     }
 
     // Ctrl+V: Paste (default to hex mode for keyboard shortcut)
+    // Skip if focus is on an input element (e.g., address input)
     if ((e.ctrlKey || e.metaKey) && e.key === 'v') {
+      const target = e.target as HTMLElement;
+      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') {
+        return; // Let the input handle paste normally
+      }
       e.preventDefault();
       pasteBytes('hex');
       return;
@@ -336,6 +344,9 @@ export function HexView({ sessionId, memoryViewId = 'memory', sessionStatus, reg
   const unitsPerRow = Math.floor(BYTES_PER_ROW / config.bytesPerUnit);
   const totalRows = Math.ceil(memoryData.length / BYTES_PER_ROW);
 
+  // Can navigate to previous page if baseAddress > 0
+  const canGoBack = baseAddress > 0n;
+
   // Empty state
   if (!sessionId) {
     return (
@@ -370,6 +381,9 @@ export function HexView({ sessionId, memoryViewId = 'memory', sessionStatus, reg
               pendingChanges={pendingChanges}
               applyPendingChanges={applyPendingChanges}
               discardPendingChanges={discardPendingChanges}
+              loadPreviousPage={loadPreviousPage}
+              loadNextPage={loadNextPage}
+              canGoBack={canGoBack}
             />
           </div>
           <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground p-4">
@@ -412,6 +426,9 @@ export function HexView({ sessionId, memoryViewId = 'memory', sessionStatus, reg
             pendingChanges={pendingChanges}
             applyPendingChanges={applyPendingChanges}
             discardPendingChanges={discardPendingChanges}
+            loadPreviousPage={loadPreviousPage}
+            loadNextPage={loadNextPage}
+            canGoBack={canGoBack}
           />
         </div>
         <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground p-4">
@@ -447,6 +464,9 @@ export function HexView({ sessionId, memoryViewId = 'memory', sessionStatus, reg
           pendingChanges={pendingChanges}
           applyPendingChanges={applyPendingChanges}
           discardPendingChanges={discardPendingChanges}
+          loadPreviousPage={loadPreviousPage}
+          loadNextPage={loadNextPage}
+          canGoBack={canGoBack}
         />
       </div>
 
@@ -602,6 +622,21 @@ export function HexView({ sessionId, memoryViewId = 'memory', sessionStatus, reg
         >
           <button
             className="w-full px-3 py-1.5 text-sm text-left hover:bg-accent hover:text-accent-foreground flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+            onClick={async () => {
+              if (selectionStart !== null) {
+                const address = baseAddress + BigInt(selectionStart);
+                await navigator.clipboard.writeText(formatAddress(address));
+              }
+              setContextMenu(null);
+            }}
+            disabled={selectionStart === null}
+          >
+            <Copy className="h-4 w-4" />
+            Copy Address
+          </button>
+          <div className="border-t border-border my-1" />
+          <button
+            className="w-full px-3 py-1.5 text-sm text-left hover:bg-accent hover:text-accent-foreground flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
             onClick={() => {
               copySelection('text');
               setContextMenu(null);
@@ -675,6 +710,9 @@ interface HexToolbarProps {
   pendingChanges: Map<number, number>;
   applyPendingChanges: () => void;
   discardPendingChanges: () => void;
+  loadPreviousPage: () => void;
+  loadNextPage: () => void;
+  canGoBack: boolean;
 }
 
 function HexToolbar({
@@ -689,6 +727,9 @@ function HexToolbar({
   pendingChanges,
   applyPendingChanges,
   discardPendingChanges,
+  loadPreviousPage,
+  loadNextPage,
+  canGoBack,
 }: HexToolbarProps) {
   return (
     <div className="flex items-center gap-2 p-2 border-b border-border bg-muted/30">
@@ -707,6 +748,28 @@ function HexToolbar({
         >
           <ArrowRight />
           <span>Go</span>
+        </Button>
+      </div>
+
+      {/* Page navigation */}
+      <div className="flex items-center gap-1">
+        <Button
+          variant="outline"
+          size="icon"
+          onClick={loadPreviousPage}
+          disabled={isLoading || !canGoBack}
+          title="Previous page"
+        >
+          <ChevronLeft className="h-4 w-4" />
+        </Button>
+        <Button
+          variant="outline"
+          size="icon"
+          onClick={loadNextPage}
+          disabled={isLoading}
+          title="Next page"
+        >
+          <ChevronRight className="h-4 w-4" />
         </Button>
       </div>
 

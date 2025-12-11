@@ -77,6 +77,9 @@ export interface HexEditorActions {
   goToAddress: (address: string | bigint) => Promise<void>;
   refresh: () => void;
   setViewMode: (mode: ViewMode) => void;
+  // Pagination
+  loadPreviousPage: () => void;
+  loadNextPage: () => void;
   // Pending changes
   applyPendingChanges: () => void;
   discardPendingChanges: () => void;
@@ -266,6 +269,35 @@ export function useHexEditor(options: UseHexEditorOptions): HexEditorState & Hex
       }
     }
   }, [selectionStart, viewMode, memoryData.length]);
+
+  // ============================================================================
+  // Pagination actions
+  // ============================================================================
+
+  // Load previous page (scroll up past beginning)
+  const loadPreviousPage = useCallback(() => {
+    if (isLoading) return;
+    // Go back by chunk size, but don't go below 0
+    const newAddress = baseAddress > BigInt(DEFAULT_CHUNK_SIZE)
+      ? baseAddress - BigInt(DEFAULT_CHUNK_SIZE)
+      : 0n;
+    if (newAddress !== baseAddress) {
+      setBaseAddress(newAddress);
+      clearSelection();
+      setEditingOffset(null);
+      loadMemory(newAddress);
+    }
+  }, [baseAddress, isLoading, loadMemory, setBaseAddress, clearSelection]);
+
+  // Load next page (scroll down past end)
+  const loadNextPage = useCallback(() => {
+    if (isLoading) return;
+    const newAddress = baseAddress + BigInt(DEFAULT_CHUNK_SIZE);
+    setBaseAddress(newAddress);
+    clearSelection();
+    setEditingOffset(null);
+    loadMemory(newAddress);
+  }, [baseAddress, isLoading, loadMemory, setBaseAddress, clearSelection]);
 
   // ============================================================================
   // Editing actions - no visible input, byte stays visible, typing overwrites
@@ -745,6 +777,9 @@ export function useHexEditor(options: UseHexEditorOptions): HexEditorState & Hex
     goToAddress,
     refresh,
     setViewMode,
+    // Pagination
+    loadPreviousPage,
+    loadNextPage,
     // Pending changes actions
     applyPendingChanges,
     discardPendingChanges,
