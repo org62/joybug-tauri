@@ -19,6 +19,8 @@ import {
   BYTES_PER_ROW,
   RegisterContext,
   SymbolResolver,
+  formatDereferenceChain,
+  getFirstChainSymbol,
 } from "@/lib/hexUtils";
 
 interface HexViewProps {
@@ -30,7 +32,7 @@ interface HexViewProps {
   initialAddress?: bigint;
 }
 
-export function HexView({ sessionId, memoryViewId = 'memory', sessionStatus, registers = {}, resolveSymbol, initialAddress }: HexViewProps) {
+export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}, resolveSymbol, initialAddress }: HexViewProps) {
   const {
     baseAddress,
     memoryData,
@@ -49,6 +51,8 @@ export function HexView({ sessionId, memoryViewId = 'memory', sessionStatus, reg
     // Other
     pendingChanges,
     littleEndian,
+    // Dereference data
+    dereferenceData,
     // Actions
     goToAddress,
     refresh,
@@ -341,8 +345,10 @@ export function HexView({ sessionId, memoryViewId = 'memory', sessionStatus, reg
 
   // Calculate rows
   const config = VIEW_MODE_CONFIGS[viewMode];
-  const unitsPerRow = Math.floor(BYTES_PER_ROW / config.bytesPerUnit);
-  const totalRows = Math.ceil(memoryData.length / BYTES_PER_ROW);
+  // For pointer mode: 1 pointer per row (8 bytes), otherwise use standard 16 bytes per row
+  const bytesPerRow = viewMode === 'pointer' ? config.bytesPerUnit : BYTES_PER_ROW;
+  const unitsPerRow = viewMode === 'pointer' ? 1 : Math.floor(BYTES_PER_ROW / config.bytesPerUnit);
+  const totalRows = Math.ceil(memoryData.length / bytesPerRow);
 
   // Can navigate to previous page if baseAddress > 0
   const canGoBack = baseAddress > 0n;
@@ -474,8 +480,10 @@ export function HexView({ sessionId, memoryViewId = 'memory', sessionStatus, reg
       <div className="shrink-0 font-mono text-sm px-2 pt-2 pb-1 border-b border-border text-muted-foreground text-xs">
         <div className="flex items-center">
           <span className="w-36 shrink-0">Address</span>
-          <span className="flex-1">Hex</span>
-          <span className="w-[136px] shrink-0 text-right pr-2">ASCII</span>
+          <span className="flex-1">{viewMode === 'pointer' ? 'Pointer' : 'Hex'}</span>
+          {viewMode !== 'pointer' && (
+            <span className="w-[136px] shrink-0 text-right pr-2">ASCII</span>
+          )}
         </div>
       </div>
 
@@ -487,9 +495,9 @@ export function HexView({ sessionId, memoryViewId = 'memory', sessionStatus, reg
         >
           {/* Rows */}
           {Array.from({ length: totalRows }).map((_, rowIndex) => {
-            const rowOffset = rowIndex * BYTES_PER_ROW;
+            const rowOffset = rowIndex * bytesPerRow;
             const rowAddress = baseAddress + BigInt(rowOffset);
-            const rowBytes = memoryData.slice(rowOffset, rowOffset + BYTES_PER_ROW);
+            const rowBytes = memoryData.slice(rowOffset, rowOffset + bytesPerRow);
 
             return (
               <div
@@ -546,55 +554,78 @@ export function HexView({ sessionId, memoryViewId = 'memory', sessionStatus, reg
                       }
                     }
 
+                    // Get dereference info for pointer mode
+                    const unitAddress = baseAddress + BigInt(unitOffset);
+                    const unitAddrStr = `0x${unitAddress.toString(16).padStart(16, '0').toUpperCase()}`;
+                    const derefEntry = viewMode === 'pointer' ? dereferenceData.get(unitAddrStr) : undefined;
+                    const firstSymbol = derefEntry?.chain ? getFirstChainSymbol(derefEntry.chain) : null;
+                    const derefChain = derefEntry?.chain ? formatDereferenceChain(derefEntry.chain) : '';
+
                     return (
                       <span
                         key={unitIndex}
-                        className={`cursor-pointer rounded px-0.5 inline-block text-center ${
-                          isSelected
-                            ? "bg-primary text-primary-foreground"
-                            : hasPendingChange
-                            ? "bg-yellow-200 dark:bg-yellow-800"
-                            : "hover:bg-muted/50"
-                        } ${isEditing ? "ring-1 ring-primary" : ""}`}
-                        style={{ minWidth: `${config.displayWidth}ch` }}
-                        onMouseDown={(e) => handleByteMouseDown(unitOffset, e)}
-                        onMouseMove={() => handleByteMouseMove(unitOffset)}
-                        onClick={(e) => handleByteClick(unitOffset, e)}
+                        className="inline-flex items-center gap-1"
                       >
-                        {displayValue}
+                        <span
+                          className={`cursor-pointer rounded px-0.5 inline-block text-center ${
+                            isSelected
+                              ? "bg-primary text-primary-foreground"
+                              : hasPendingChange
+                              ? "bg-yellow-200 dark:bg-yellow-800"
+                              : "hover:bg-muted/50"
+                          } ${isEditing ? "ring-1 ring-primary" : ""}`}
+                          style={{ minWidth: `${config.displayWidth}ch` }}
+                          onMouseDown={(e) => handleByteMouseDown(unitOffset, e)}
+                          onMouseMove={() => handleByteMouseMove(unitOffset)}
+                          onClick={(e) => handleByteClick(unitOffset, e)}
+                        >
+                          {displayValue}
+                        </span>
+                        {firstSymbol && (
+                          <span className="text-muted-foreground text-xs">
+                            ({firstSymbol})
+                          </span>
+                        )}
+                        {derefChain && (
+                          <span className="text-muted-foreground text-xs" title={derefChain}>
+                            {'\u2192'} {derefChain}
+                          </span>
+                        )}
                       </span>
                     );
                   })}
                 </div>
 
-                {/* ASCII column */}
-                <span className="w-[136px] shrink-0 text-right pr-2 text-muted-foreground">
-                  {Array.from(rowBytes).map((byte, i) => {
-                    const offset = rowOffset + i;
-                    const isSelected = selectedOffsets.has(offset);
-                    const isAsciiEditing = editingOffset === offset && editingColumn === 'ascii';
-                    const hasPending = pendingChanges.has(offset);
-                    const char = byteToAscii(byte);
+                {/* ASCII column - hidden in pointer mode */}
+                {viewMode !== 'pointer' && (
+                  <span className="w-[136px] shrink-0 text-right pr-2 text-muted-foreground">
+                    {Array.from(rowBytes).map((byte, i) => {
+                      const offset = rowOffset + i;
+                      const isSelected = selectedOffsets.has(offset);
+                      const isAsciiEditing = editingOffset === offset && editingColumn === 'ascii';
+                      const hasPending = pendingChanges.has(offset);
+                      const char = byteToAscii(byte);
 
-                    return (
-                      <span
-                        key={i}
-                        className={`cursor-pointer ${
-                          isSelected
-                            ? "bg-primary text-primary-foreground"
-                            : hasPending
-                            ? "bg-yellow-200 dark:bg-yellow-800"
-                            : ""
-                        } ${isAsciiEditing ? "ring-1 ring-primary" : ""}`}
-                        onClick={(e) => handleAsciiClick(offset, e)}
-                        onMouseDown={(e) => handleByteMouseDown(offset, e)}
-                        onMouseMove={() => handleByteMouseMove(offset)}
-                      >
-                        {char}
-                      </span>
-                    );
-                  })}
-                </span>
+                      return (
+                        <span
+                          key={i}
+                          className={`cursor-pointer ${
+                            isSelected
+                              ? "bg-primary text-primary-foreground"
+                              : hasPending
+                              ? "bg-yellow-200 dark:bg-yellow-800"
+                              : ""
+                          } ${isAsciiEditing ? "ring-1 ring-primary" : ""}`}
+                          onClick={(e) => handleAsciiClick(offset, e)}
+                          onMouseDown={(e) => handleByteMouseDown(offset, e)}
+                          onMouseMove={() => handleByteMouseMove(offset)}
+                        >
+                          {char}
+                        </span>
+                      );
+                    })}
+                  </span>
+                )}
               </div>
             );
           })}

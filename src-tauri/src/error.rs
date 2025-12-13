@@ -15,6 +15,8 @@ pub enum Error {
     InvalidSessionState(String),
     #[error("A session with the same server and command already exists")]
     SessionAlreadyExists,
+    #[error("Invalid parameter: {0}")]
+    InvalidParameter(String),
 }
 
 pub type Result<T> = std::result::Result<T, Error>; 

@@ -52,6 +52,7 @@ pub fn run() {
             commands::request_memory_read,
             commands::request_memory_write,
             commands::request_memory_regions,
+            commands::request_dereference,
             commands::update_window_state,
             commands::get_debug_settings,
             commands::update_debug_settings,

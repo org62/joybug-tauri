@@ -921,6 +921,49 @@ pub fn request_memory_regions(
 }
 
 #[tauri::command]
+pub fn request_dereference(
+    session_id: String,
+    address: String,
+    count: usize,
+    session_states: State<'_, SessionStatesMap>,
+) -> Result<()> {
+    // Parse address from hex string to handle 64-bit addresses without precision loss
+    let address = u64::from_str_radix(address.trim_start_matches("0x"), 16)
+        .map_err(|e| Error::InvalidParameter(format!("Invalid address '{}': {}", address, e)))?;
+
+    let session_state = {
+        let states = session_states.lock().unwrap();
+        states
+            .get(&session_id)
+            .cloned()
+            .ok_or_else(|| Error::SessionNotFound(session_id.clone()))?
+    };
+
+    let ui_sender = {
+        let state = session_state.lock().unwrap();
+
+        if !matches!(state.status, SessionStatusUI::Paused) {
+            return Err(Error::InvalidSessionState(
+                "Session must be paused to dereference memory".to_string(),
+            ));
+        }
+
+        state
+            .ui_sender
+            .as_ref()
+            .ok_or_else(|| Error::InternalCommunication("Session UI sender not available".to_string()))?
+            .clone()
+    };
+
+    ui_sender
+        .send(UICommand::Dereference { address, count })
+        .map_err(|e| Error::InternalCommunication(format!("Failed to send Dereference command: {}", e)))?;
+
+    info!("Dereference request sent for session {} at address 0x{:X}, count {}", session_id, address, count);
+    Ok(())
+}
+
+#[tauri::command]
 pub fn update_window_state(
     session_id: String,
     window_type: String,

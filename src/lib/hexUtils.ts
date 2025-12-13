@@ -12,6 +12,93 @@ export interface ViewModeConfig {
 }
 
 /**
+ * Dereference value types - matches the Rust SerializableDereferenceValue enum
+ */
+export type DereferenceValue =
+  | { type: 'Pointer'; address: string; symbol?: string }
+  | { type: 'Value'; value: string }
+  | { type: 'String'; value: string }
+  | { type: 'Instruction'; value: string }
+  | { type: 'LoopDetected'; address: string };
+
+/**
+ * Dereference entry - represents one address in the dereference result
+ */
+export interface DereferenceEntry {
+  address: string;
+  offset: number;
+  chain: DereferenceValue[];
+}
+
+/**
+ * Dereference result event payload
+ */
+export interface DereferenceResultPayload {
+  session_id: string;
+  base_address: string;
+  entries: DereferenceEntry[];
+}
+
+/**
+ * Get the symbol from the first chain item (if it's a pointer with symbol)
+ */
+export function getFirstChainSymbol(chain: DereferenceValue[]): string | null {
+  if (chain.length === 0) return null;
+  const first = chain[0];
+  if (first.type === 'Pointer' && first.symbol) {
+    return first.symbol;
+  }
+  return null;
+}
+
+/**
+ * Format a dereference chain as a string for inline display
+ * Skips first item - use getFirstChainSymbol to get symbol for pointer column
+ */
+export function formatDereferenceChain(chain: DereferenceValue[], maxItems: number = 8): string {
+  if (chain.length === 0) return '';
+
+  const items: string[] = [];
+  // Start from index 1 - first item symbol shown with pointer value
+  for (let i = 1; i < Math.min(chain.length, maxItems + 1); i++) {
+    const value = chain[i];
+    if (!value) break;
+
+    switch (value.type) {
+      case 'Pointer':
+        const addr = value.address.replace(/^0x0+/, '0x');
+        if (value.symbol) {
+          // Show address with symbol in brackets
+          items.push(addr + ' (' + value.symbol + ')');
+        } else {
+          items.push(addr);
+        }
+        break;
+      case 'Value':
+        items.push(value.value);
+        break;
+      case 'String':
+        items.push(value.value);
+        break;
+      case 'Instruction':
+        items.push('<' + value.value + '>');
+        break;
+      case 'LoopDetected':
+        items.push('[loop]');
+        break;
+    }
+  }
+
+  if (items.length === 0) return '';
+
+  let result = items.join(' \u2192 ');
+  if (chain.length > maxItems + 1) {
+    result += ' \u2192 ...';
+  }
+  return result;
+}
+
+/**
  * View mode configurations - designed for extensibility
  * To add a new view mode, simply add an entry here
  */

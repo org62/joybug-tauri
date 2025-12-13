@@ -9,7 +9,7 @@ interface ContextHexViewProps {
   initialAddress?: bigint;
 }
 
-export const ContextHexView = ({ memoryViewId = 'memory', initialAddress }: ContextHexViewProps) => {
+export const ContextHexView = ({ memoryViewId, initialAddress }: ContextHexViewProps) => {
   const sessionData = useSessionContext();
   const context = sessionData?.session?.current_event?.context;
 

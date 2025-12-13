@@ -18,6 +18,7 @@ pub enum UICommand {
     ReadMemory{ address: u64, size: usize },
     WriteMemory{ address: u64, data: Vec<u8> },
     GetMemoryRegions,
+    Dereference{ address: u64, count: usize },
 }
 
 /// Event payload for successful memory read (may be partial)
@@ -80,6 +81,41 @@ pub struct SerializableMemoryRegion {
 #[derive(serde::Serialize)]
 pub struct MemoryRegionsError {
     pub session_id: String,
+    pub error: String,
+}
+
+/// Event payload for successful dereference
+#[derive(serde::Serialize)]
+pub struct DereferenceResult {
+    pub session_id: String,
+    pub base_address: String,
+    pub entries: Vec<SerializableDereferenceEntry>,
+}
+
+/// Serializable dereference entry
+#[derive(serde::Serialize)]
+pub struct SerializableDereferenceEntry {
+    pub address: String,
+    pub offset: i64,
+    pub chain: Vec<SerializableDereferenceValue>,
+}
+
+/// Serializable dereference value
+#[derive(serde::Serialize)]
+#[serde(tag = "type")]
+pub enum SerializableDereferenceValue {
+    Pointer { address: String, symbol: Option<String> },
+    Value { value: String },
+    String { value: String },
+    Instruction { value: String },
+    LoopDetected { address: String },
+}
+
+/// Event payload for dereference error
+#[derive(serde::Serialize)]
+pub struct DereferenceError {
+    pub session_id: String,
+    pub address: String,
     pub error: String,
 }
 
@@ -647,6 +683,108 @@ fn process_memory_regions_request(
     }
 }
 
+/// Processes a dereference request and emits results to the frontend
+fn process_dereference_request(
+    session: &mut joybug2::protocol_io::DebugSession<Arc<Mutex<SessionStateUI>>>,
+    app_handle_clone: &Option<AppHandle>,
+    event: &joybug2::protocol_io::DebugEvent,
+    address: u64,
+    count: usize,
+) {
+    let pid = event.pid();
+    debug!("📤 Processing dereference request: pid={}, address=0x{:X}, count={}", pid, address, count);
+
+    match session.dereference(pid, address, count, None) {
+        Ok(entries) => {
+            debug!("📥 Received {} dereference entries", entries.len());
+
+            // Convert to serializable format
+            let serializable_entries: Vec<SerializableDereferenceEntry> = entries
+                .iter()
+                .map(|entry| {
+                    let chain: Vec<SerializableDereferenceValue> = entry.chain.iter().map(|v| {
+                        match v {
+                            joybug2::protocol::DereferenceValue::Pointer(addr, sym) => {
+                                SerializableDereferenceValue::Pointer {
+                                    address: format!("0x{:016X}", addr),
+                                    symbol: sym.clone(),
+                                }
+                            }
+                            joybug2::protocol::DereferenceValue::Value(val) => {
+                                SerializableDereferenceValue::Value {
+                                    value: format!("0x{:X}", val),
+                                }
+                            }
+                            joybug2::protocol::DereferenceValue::String(s) => {
+                                SerializableDereferenceValue::String {
+                                    value: s.clone(),
+                                }
+                            }
+                            joybug2::protocol::DereferenceValue::Instruction(instr) => {
+                                SerializableDereferenceValue::Instruction {
+                                    value: instr.clone(),
+                                }
+                            }
+                            joybug2::protocol::DereferenceValue::LoopDetected(addr) => {
+                                SerializableDereferenceValue::LoopDetected {
+                                    address: format!("0x{:016X}", addr),
+                                }
+                            }
+                        }
+                    }).collect();
+
+                    SerializableDereferenceEntry {
+                        address: format!("0x{:016X}", entry.address),
+                        offset: entry.offset,
+                        chain,
+                    }
+                })
+                .collect();
+
+            // Emit dereference results to frontend
+            if let Some(ref handle) = app_handle_clone {
+                let session_id = {
+                    let state = session.state.lock().unwrap();
+                    state.id.clone()
+                };
+
+                let result = DereferenceResult {
+                    session_id,
+                    base_address: format!("0x{:016X}", address),
+                    entries: serializable_entries,
+                };
+
+                if let Err(e) = handle.emit("dereference-updated", &result) {
+                    error!("Failed to emit dereference-updated event: {}", e);
+                } else {
+                    debug!("📡 Emitted dereference-updated event with {} entries", result.entries.len());
+                }
+            }
+        }
+        Err(e) => {
+            error!("Failed to dereference at 0x{:X}: {}", address, e);
+
+            // Emit error event
+            if let Some(ref handle) = app_handle_clone {
+                let session_id = {
+                    let state = session.state.lock().unwrap();
+                    state.id.clone()
+                };
+
+                let error_result = DereferenceError {
+                    session_id,
+                    address: format!("0x{:016X}", address),
+                    error: e.to_string(),
+                };
+
+                if let Err(emit_err) = handle.emit("dereference-error", &error_result) {
+                    error!("Failed to emit dereference-error event: {}", emit_err);
+                }
+            }
+        }
+    }
+}
+
 /// Handles UI commands in a loop, returns true to continue execution, false to stop session
 fn handle_ui_commands(
     ui_receiver: &std::sync::mpsc::Receiver<UICommand>,
@@ -795,6 +933,10 @@ fn handle_ui_commands(
                     }
                     UICommand::GetMemoryRegions => {
                         process_memory_regions_request(session, app_handle_clone, event);
+                        // Continue in loop waiting for next command (Go or Stop)
+                    }
+                    UICommand::Dereference { address, count } => {
+                        process_dereference_request(session, app_handle_clone, event, address, count);
                         // Continue in loop waiting for next command (Go or Stop)
                     }
                     UICommand::Stop => {

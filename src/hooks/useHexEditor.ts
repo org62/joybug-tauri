@@ -16,14 +16,15 @@ import {
   formatBytesAsHexUnits,
   formatBytesAsDump,
   parseHexToBytes,
+  DereferenceEntry,
+  DereferenceResultPayload,
 } from '@/lib/hexUtils';
 
-// Persistent state store per session (survives component unmount)
+// Persistent state store (survives component unmount within session)
 interface HexViewPersistedState {
   baseAddress: bigint;
   viewMode: ViewMode;
 }
-
 const sessionStateStore = new Map<string, HexViewPersistedState>();
 
 interface MemoryReadResult {
@@ -71,6 +72,8 @@ export interface HexEditorState {
   // Other
   pendingChanges: Map<number, number>;
   littleEndian: boolean;
+  // Dereference data (pointer mode)
+  dereferenceData: Map<string, DereferenceEntry>;
 }
 
 export interface HexEditorActions {
@@ -111,21 +114,40 @@ export interface UseHexEditorOptions {
 export function useHexEditor(options: UseHexEditorOptions): HexEditorState & HexEditorActions {
   const { sessionId, memoryViewId = 'memory', sessionStatus, registers = {}, resolveSymbol, initialAddress } = options;
 
-  // Create a unique persistence key combining session and view ID
+  // Persistence key for this view
   const persistenceKey = sessionId ? `${sessionId}-${memoryViewId}` : undefined;
+  const persisted = persistenceKey ? sessionStateStore.get(persistenceKey) : undefined;
 
-  // Get persisted state for this view
-  const persistedState = persistenceKey ? sessionStateStore.get(persistenceKey) : undefined;
-
-  // Use persisted address, then initialAddress, then 0
-  const [baseAddress, setBaseAddressState] = useState<bigint>(persistedState?.baseAddress ?? initialAddress ?? 0n);
+  // Initialize from: persisted state > initialAddress > 0
+  const [baseAddress, setBaseAddressRaw] = useState<bigint>(persisted?.baseAddress ?? initialAddress ?? 0n);
   const [memoryData, setMemoryData] = useState<Uint8Array>(new Uint8Array(0));
-  const [viewMode, setViewModeInternal] = useState<ViewMode>(persistedState?.viewMode ?? 'byte');
+  const [viewMode, setViewModeRaw] = useState<ViewMode>(persisted?.viewMode ?? 'byte');
+
+  // Persist on change
+  const setBaseAddress = useCallback((address: bigint) => {
+    setBaseAddressRaw(address);
+    if (persistenceKey) {
+      const existing = sessionStateStore.get(persistenceKey) || { baseAddress: 0n, viewMode: 'byte' as ViewMode };
+      sessionStateStore.set(persistenceKey, { ...existing, baseAddress: address });
+    }
+  }, [persistenceKey]);
+
+  const setViewModeInternal = useCallback((mode: ViewMode) => {
+    setViewModeRaw(mode);
+    if (persistenceKey) {
+      const existing = sessionStateStore.get(persistenceKey) || { baseAddress: 0n, viewMode: 'byte' as ViewMode };
+      sessionStateStore.set(persistenceKey, { ...existing, viewMode: mode });
+    }
+  }, [persistenceKey]);
   const [bytesPerRow] = useState<number>(BYTES_PER_ROW);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pendingChanges, setPendingChanges] = useState<Map<number, number>>(new Map());
   const littleEndian = true; // Always little-endian as per requirements
+
+  // Dereference data for pointer mode (keyed by address string)
+  const [dereferenceData, setDereferenceData] = useState<Map<string, DereferenceEntry>>(new Map());
+  const pendingDereferenceAddress = useRef<string | null>(null);
 
   // New selection state (replaces single selectedOffset for multi-selection)
   const [selectionStart, setSelectionStart] = useState<number | null>(null);
@@ -153,23 +175,6 @@ export function useHexEditor(options: UseHexEditorOptions): HexEditorState & Hex
   const pendingReadAddress = useRef<bigint | null>(null);
   const [listenersReady, setListenersReady] = useState(false);
 
-  // Wrapper to persist baseAddress changes
-  const setBaseAddress = useCallback((address: bigint) => {
-    setBaseAddressState(address);
-    if (persistenceKey) {
-      const existing = sessionStateStore.get(persistenceKey) || { baseAddress: 0n, viewMode: 'byte' as ViewMode };
-      sessionStateStore.set(persistenceKey, { ...existing, baseAddress: address });
-    }
-  }, [persistenceKey]);
-
-  // Wrapper to persist viewMode changes
-  const setViewModeState = useCallback((mode: ViewMode) => {
-    setViewModeInternal(mode);
-    if (persistenceKey) {
-      const existing = sessionStateStore.get(persistenceKey) || { baseAddress: 0n, viewMode: 'byte' as ViewMode };
-      sessionStateStore.set(persistenceKey, { ...existing, viewMode: mode });
-    }
-  }, [persistenceKey]);
 
   // Load memory from specified address
   const loadMemory = useCallback(async (address: bigint) => {
@@ -194,6 +199,30 @@ export function useHexEditor(options: UseHexEditorOptions): HexEditorState & Hex
       toastError(`Failed to read memory: ${errorMsg}`, sessionId);
       setIsLoading(false);
       pendingReadAddress.current = null;
+    }
+  }, [sessionId]);
+
+  // Load dereference data for pointer mode
+  const loadDereference = useCallback(async (address: bigint, count: number) => {
+    if (!sessionId) return;
+
+    const addrStr = `0x${address.toString(16).padStart(16, '0').toUpperCase()}`;
+    pendingDereferenceAddress.current = addrStr;
+
+    try {
+      await invoke('request_dereference', {
+        sessionId,
+        address: `0x${address.toString(16)}`,
+        count,
+      });
+      // Results will come via event
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message :
+        (typeof err === 'object' && err !== null && 'message' in err) ? String((err as any).message) :
+        (typeof err === 'string') ? err : JSON.stringify(err);
+      // Don't show error toast for dereference - it's supplementary data
+      console.error(`Failed to dereference: ${errorMsg}`);
+      pendingDereferenceAddress.current = null;
     }
   }, [sessionId]);
 
@@ -228,7 +257,7 @@ export function useHexEditor(options: UseHexEditorOptions): HexEditorState & Hex
 
   // Set view mode
   const setViewMode = useCallback((mode: ViewMode) => {
-    setViewModeState(mode);
+    setViewModeInternal(mode);
   }, []);
 
   // ============================================================================
@@ -689,6 +718,20 @@ export function useHexEditor(options: UseHexEditorOptions): HexEditorState & Hex
         }
       });
 
+      const unlistenDereference = await listen<DereferenceResultPayload>('dereference-updated', (event) => {
+        if (event.payload.session_id === sessionId &&
+            pendingDereferenceAddress.current !== null &&
+            event.payload.base_address === pendingDereferenceAddress.current) {
+          // Build map from address to entry
+          const newData = new Map<string, DereferenceEntry>();
+          for (const entry of event.payload.entries) {
+            newData.set(entry.address, entry);
+          }
+          setDereferenceData(newData);
+          pendingDereferenceAddress.current = null;
+        }
+      });
+
       // Signal that listeners are ready
       setListenersReady(true);
 
@@ -697,6 +740,7 @@ export function useHexEditor(options: UseHexEditorOptions): HexEditorState & Hex
         unlistenReadError();
         unlistenWrite();
         unlistenWriteError();
+        unlistenDereference();
       };
     };
 
@@ -707,38 +751,44 @@ export function useHexEditor(options: UseHexEditorOptions): HexEditorState & Hex
     };
   }, [sessionId]);
 
-  // Restore persisted state on mount, or load initialAddress for new tabs
-  // Wait for listeners to be ready to avoid race conditions with error handling
+  // Load memory on mount: persisted address > initialAddress
   useEffect(() => {
-    if (!persistenceKey || initialLoadDone.current || !listenersReady) return;
+    if (!sessionId || initialLoadDone.current || !listenersReady || sessionStatus !== 'Paused') return;
 
-    // If initialAddress is explicitly provided, ALWAYS use it (this is a new tab with a specific address)
-    // This takes priority over any stale persisted state from a previously closed tab with the same ID
-    if (initialAddress !== undefined && initialAddress !== 0n && sessionStatus === 'Paused') {
+    // Determine address to load: persisted > initialAddress
+    const addressToLoad = persisted?.baseAddress ?? initialAddress;
+    if (addressToLoad !== undefined && addressToLoad !== 0n) {
       initialLoadDone.current = true;
-      // Clear any stale persisted state and use the new address
-      sessionStateStore.delete(persistenceKey);
-      setBaseAddress(initialAddress);
-      loadMemory(initialAddress);
-      return;
+      loadMemory(addressToLoad);
     }
-
-    // Otherwise, try to restore from persisted state (e.g., after page refresh)
-    const persisted = sessionStateStore.get(persistenceKey);
-    if (persisted && persisted.baseAddress !== 0n && sessionStatus === 'Paused') {
-      initialLoadDone.current = true;
-      loadMemory(persisted.baseAddress);
-    }
-  }, [persistenceKey, loadMemory, initialAddress, sessionStatus, setBaseAddress, listenersReady]);
+  }, [sessionId, loadMemory, initialAddress, sessionStatus, listenersReady, persisted?.baseAddress]);
 
   // Reset error and data when session stops or restarts
   useEffect(() => {
     if (sessionStatus === 'Stopped') {
       setError(null);
       setMemoryData(new Uint8Array(0));
+      setDereferenceData(new Map());
       initialLoadDone.current = false;
     }
   }, [sessionStatus]);
+
+  // Fetch dereference data when in pointer mode and memory data is available
+  useEffect(() => {
+    if (viewMode !== 'pointer' || memoryData.length === 0 || !sessionId || sessionStatus !== 'Paused') {
+      // Clear dereference data when not in pointer mode
+      if (viewMode !== 'pointer' && dereferenceData.size > 0) {
+        setDereferenceData(new Map());
+      }
+      return;
+    }
+
+    // Calculate how many pointers we have (8 bytes each)
+    const pointerCount = Math.floor(memoryData.length / 8);
+    if (pointerCount > 0) {
+      loadDereference(baseAddress, pointerCount);
+    }
+  }, [viewMode, memoryData.length, baseAddress, sessionId, sessionStatus, loadDereference]);
 
   // Computed: effective memory data with pending changes applied for display
   const effectiveMemoryData = useMemo(() => {
@@ -773,6 +823,8 @@ export function useHexEditor(options: UseHexEditorOptions): HexEditorState & Hex
     // Other state
     pendingChanges,
     littleEndian,
+    // Dereference data
+    dereferenceData,
     // Actions
     goToAddress,
     refresh,
