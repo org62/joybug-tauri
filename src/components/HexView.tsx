@@ -19,9 +19,8 @@ import {
   BYTES_PER_ROW,
   RegisterContext,
   SymbolResolver,
-  formatDereferenceChain,
-  getFirstChainSymbol,
 } from "@/lib/hexUtils";
+import { PointerDereferenceDisplay } from "@/components/DereferenceDisplay";
 
 interface HexViewProps {
   sessionId?: string;
@@ -558,8 +557,6 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
                     const unitAddress = baseAddress + BigInt(unitOffset);
                     const unitAddrStr = `0x${unitAddress.toString(16).padStart(16, '0').toUpperCase()}`;
                     const derefEntry = viewMode === 'pointer' ? dereferenceData.get(unitAddrStr) : undefined;
-                    const firstSymbol = derefEntry?.chain ? getFirstChainSymbol(derefEntry.chain) : null;
-                    const derefChain = derefEntry?.chain ? formatDereferenceChain(derefEntry.chain) : '';
 
                     return (
                       <span
@@ -581,16 +578,7 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
                         >
                           {displayValue}
                         </span>
-                        {firstSymbol && (
-                          <span className="text-muted-foreground text-xs">
-                            ({firstSymbol})
-                          </span>
-                        )}
-                        {derefChain && (
-                          <span className="text-muted-foreground text-xs" title={derefChain}>
-                            {'\u2192'} {derefChain}
-                          </span>
-                        )}
+                        <PointerDereferenceDisplay entry={derefEntry} />
                       </span>
                     );
                   })}
