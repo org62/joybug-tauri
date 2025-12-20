@@ -57,6 +57,7 @@ export type SessionStatus =
 // Context for session data
 export interface SessionContextData {
   session: DebugSession | null;
+  displayStatus: SessionStatus;  // Debounced status for content views (prevents flicker on stepping)
   modules: Module[];
   threads: Thread[];
   loadModules: () => Promise<void>;

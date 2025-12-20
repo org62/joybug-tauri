@@ -574,6 +574,10 @@ pub struct SerializableInstruction {
     pub bytes: String,
     pub mnemonic: String,
     pub op_str: String,
+    pub is_jump: bool,
+    pub is_call: bool,
+    pub is_ret: bool,
+    pub jump_target: Option<String>,
 }
 
 #[tauri::command]
@@ -642,6 +646,75 @@ pub fn request_disassembly(
         .map_err(|e| Error::InternalCommunication(format!("Failed to send disassembly command: {}", e)))?;
 
     info!("Disassembly request sent for session {} at address 0x{:X}", session_id, address);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn request_function_disassembly(
+    session_id: String,
+    address: u64,
+    max_instructions: usize,
+    session_states: State<'_, SessionStatesMap>,
+) -> Result<()> {
+    let session_state = {
+        let states = session_states.lock().unwrap();
+        states
+            .get(&session_id)
+            .cloned()
+            .ok_or_else(|| Error::SessionNotFound(session_id.clone()))?
+    };
+    debug!("Function disassembly request received for session {} at address 0x{:X}", session_id, address);
+
+    // Determine architecture from current thread context or fallback to compile-time detection
+    let arch = {
+        let state = session_state.lock().unwrap();
+
+        // Verify session can be disassembled
+        if !matches!(state.status, SessionStatusUI::Paused) {
+            return Err(Error::InvalidSessionState(
+                format!("Session must be paused to get disassembly, but is: {:?}", state.status),
+            ));
+        }
+
+        match &state.current_context {
+            Some(crate::state::SerializableThreadContext::X64(_)) => joybug2::interfaces::Architecture::X64,
+            Some(crate::state::SerializableThreadContext::Arm64(_)) => joybug2::interfaces::Architecture::Arm64,
+            None => {
+                // Fallback to compile-time architecture detection
+                #[cfg(target_arch = "x86_64")]
+                { joybug2::interfaces::Architecture::X64 }
+                #[cfg(target_arch = "aarch64")]
+                { joybug2::interfaces::Architecture::Arm64 }
+                #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+                {
+                    return Err(Error::InvalidSessionState(
+                        "Unsupported target architecture for disassembly".to_string(),
+                    ));
+                }
+            }
+        }
+    };
+
+    // Send function disassembly command via UI channel
+    let ui_sender = {
+        let state = session_state.lock().unwrap();
+        state
+            .ui_sender
+            .as_ref()
+            .ok_or_else(|| Error::InternalCommunication("Session UI sender not available".to_string()))?
+            .clone()
+    };
+
+    // Send function disassembly command - results will be emitted via event
+    ui_sender
+        .send(UICommand::DisassembleFunction {
+            arch,
+            address,
+            max_instructions: max_instructions as u32,
+        })
+        .map_err(|e| Error::InternalCommunication(format!("Failed to send function disassembly command: {}", e)))?;
+
+    info!("Function disassembly request sent for session {} at address 0x{:X}", session_id, address);
     Ok(())
 }
 

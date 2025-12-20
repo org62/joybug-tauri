@@ -161,3 +161,30 @@
 .dark .dock-layout .dock-tab:hover {
   @apply text-amber-400;
 }
+
+/* Highlight fade animation for jump targets in disassembly view */
+@keyframes highlight-fade {
+  0% {
+    background-color: rgb(59 130 246 / 0.5); /* blue-500/50 */
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+
+.animate-highlight-fade {
+  animation: highlight-fade 1s ease-out forwards;
+}
+
+.dark .animate-highlight-fade {
+  animation: highlight-fade-dark 3s ease-out forwards;
+}
+
+@keyframes highlight-fade-dark {
+  0% {
+    background-color: rgb(59 130 246 / 0.4); /* blue-500/40 */
+  }
+  100% {
+    background-color: transparent;
+  }
+}

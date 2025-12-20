@@ -13,6 +13,7 @@ pub enum UICommand {
     StepOut,
     Stop,
     Disassembly{ arch: joybug2::interfaces::Architecture, address: u64, count: u32 },
+    DisassembleFunction{ arch: joybug2::interfaces::Architecture, address: u64, max_instructions: u32 },
     GetCallStack,
     SearchSymbols{ pattern: String, limit: u32 },
     ReadMemory{ address: u64, size: usize },
@@ -107,7 +108,7 @@ pub enum SerializableDereferenceValue {
     Pointer { address: String, symbol: Option<String> },
     Value { value: String },
     String { value: String },
-    Instruction { value: String },
+    Instruction { value: String, symbol: Option<String> },
     LoopDetected { address: String },
 }
 
@@ -247,6 +248,10 @@ fn process_disassembly_request(
                             .join(" "),
                         mnemonic: inst.mnemonic.clone(),
                         op_str: op_str.clone(),
+                        is_jump: inst.is_jump,
+                        is_call: inst.is_call,
+                        is_ret: inst.is_ret,
+                        jump_target: inst.jump_target.map(|addr| format!("{:#X}", addr)),
                     }
                 })
                 .collect();
@@ -303,6 +308,117 @@ fn process_disassembly_request(
                 
                 if let Err(emit_err) = handle.emit("disassembly-error", &error_result) {
                     error!("Failed to emit disassembly-error event: {}", emit_err);
+                }
+            }
+        }
+    }
+}
+
+/// Processes a function disassembly request with bounds detection and emits results to the frontend
+fn process_function_disassembly_request(
+    session: &mut joybug2::protocol_io::DebugSession<Arc<Mutex<SessionStateUI>>>,
+    app_handle_clone: &Option<AppHandle>,
+    event: &joybug2::protocol_io::DebugEvent,
+    arch: joybug2::interfaces::Architecture,
+    address: u64,
+    max_instructions: u32,
+) {
+    let pid = event.pid();
+    debug!("📤 Processing function disassembly request: pid={}, address=0x{:X}, max_instructions={}", pid, address, max_instructions);
+
+    match session.disassemble_function(pid, address, max_instructions as usize, arch) {
+        Ok((instructions, function_start, function_end, function_name)) => {
+            debug!("📥 Received {} instructions from disassemble_function", instructions.len());
+
+            // Convert to serializable format
+            let serializable_instructions: Vec<crate::commands::SerializableInstruction> = instructions
+                .iter()
+                .map(|inst| {
+                    let address_str = if let Some(ref sym) = inst.symbol_info {
+                        format!("{}!{}+0x{:x}", sym.module_name, sym.symbol_name, sym.offset)
+                    } else {
+                        format!("{:#X}", inst.address)
+                    };
+
+                    let op_str = inst.symbolized_op_str.as_ref().unwrap_or(&inst.op_str);
+
+                    crate::commands::SerializableInstruction {
+                        address: format!("{:#X}", inst.address),
+                        symbol: address_str,
+                        bytes: inst
+                            .bytes
+                            .iter()
+                            .map(|b| format!("{:02X}", b))
+                            .collect::<Vec<String>>()
+                            .join(" "),
+                        mnemonic: inst.mnemonic.clone(),
+                        op_str: op_str.clone(),
+                        is_jump: inst.is_jump,
+                        is_call: inst.is_call,
+                        is_ret: inst.is_ret,
+                        jump_target: inst.jump_target.map(|addr| format!("{:#X}", addr)),
+                    }
+                })
+                .collect();
+
+            // Emit function disassembly results to frontend
+            if let Some(ref handle) = app_handle_clone {
+                let session_id = {
+                    let state = session.state.lock().unwrap();
+                    state.id.clone()
+                };
+
+                #[derive(serde::Serialize)]
+                struct FunctionDisassemblyResult {
+                    session_id: String,
+                    address: u64,
+                    instructions: Vec<crate::commands::SerializableInstruction>,
+                    function_start: Option<String>,
+                    function_end: Option<String>,
+                    function_name: Option<String>,
+                }
+
+                let result = FunctionDisassemblyResult {
+                    session_id,
+                    address,
+                    instructions: serializable_instructions,
+                    function_start: function_start.map(|a| format!("{:#X}", a)),
+                    function_end: function_end.map(|a| format!("{:#X}", a)),
+                    function_name,
+                };
+
+                if let Err(e) = handle.emit("function-disassembly-updated", &result) {
+                    error!("Failed to emit function-disassembly-updated event: {}", e);
+                } else {
+                    debug!("📡 Emitted function-disassembly-updated event for address 0x{:X}", address);
+                }
+            }
+        }
+        Err(e) => {
+            error!("Failed to disassemble function: {}", e);
+
+            // Emit error event
+            if let Some(ref handle) = app_handle_clone {
+                let session_id = {
+                    let state = session.state.lock().unwrap();
+                    state.id.clone()
+                };
+
+                #[derive(serde::Serialize)]
+                struct FunctionDisassemblyError {
+                    session_id: String,
+                    address: u64,
+                    error: String,
+                }
+
+                let error_result = FunctionDisassemblyError {
+                    session_id,
+                    address,
+                    error: e.to_string(),
+                };
+
+                if let Err(emit_err) = handle.emit("function-disassembly-error", &error_result) {
+                    error!("Failed to emit function-disassembly-error event: {}", emit_err);
                 }
             }
         }
@@ -720,9 +836,10 @@ fn process_dereference_request(
                                     value: s.clone(),
                                 }
                             }
-                            joybug2::protocol::DereferenceValue::Instruction(instr) => {
+                            joybug2::protocol::DereferenceValue::Instruction(instr, sym) => {
                                 SerializableDereferenceValue::Instruction {
                                     value: instr.clone(),
+                                    symbol: sym.clone(),
                                 }
                             }
                             joybug2::protocol::DereferenceValue::LoopDetected(addr) => {
@@ -913,6 +1030,11 @@ fn handle_ui_commands(
                     UICommand::Disassembly { arch, address, count } => {
                         // Handle disassembly request
                         process_disassembly_request(session, app_handle_clone, event, arch, address, count);
+                        // Continue in loop waiting for next command (Go or Stop)
+                    }
+                    UICommand::DisassembleFunction { arch, address, max_instructions } => {
+                        // Handle function disassembly request
+                        process_function_disassembly_request(session, app_handle_clone, event, arch, address, max_instructions);
                         // Continue in loop waiting for next command (Go or Stop)
                     }
                     UICommand::GetCallStack => {

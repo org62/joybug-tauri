@@ -27,6 +27,7 @@ export default function SessionDocked() {
 
   const {
     session,
+    displayStatus,
     isLoading,
     busyAction,
     modules,
@@ -227,12 +228,13 @@ export default function SessionDocked() {
 
   const contextValue = useMemo(() => ({
     session,
+    displayStatus,
     modules,
     threads,
     loadModules: async () => { await loadModules(); },
     loadThreads: async () => { await loadThreads(); },
     searchSymbols: async (pattern: string, limit?: number) => { return await searchSymbols(pattern, limit); }
-  }), [session, modules, threads, loadModules, loadThreads, searchSymbols]);
+  }), [session, displayStatus, modules, threads, loadModules, loadThreads, searchSymbols]);
   
   // Static tab content - components will update via context
   const dynamicTabContent = useMemo(() => ({

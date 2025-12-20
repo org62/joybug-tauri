@@ -19,6 +19,7 @@ import {
   BYTES_PER_ROW,
   RegisterContext,
   SymbolResolver,
+  sanitizeAddressInput,
 } from "@/lib/hexUtils";
 import { PointerDereferenceDisplay } from "@/components/DereferenceDisplay";
 
@@ -198,6 +199,12 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
   // ============================================================================
 
   const handleContainerKeyDown = useCallback((e: KeyboardEvent<HTMLDivElement>) => {
+    // Skip handling if focus is on an input element (let it handle events normally)
+    const target = e.target as HTMLElement;
+    if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') {
+      return;
+    }
+
     // Escape: cancel edit or clear selection
     if (e.key === 'Escape') {
       e.preventDefault();
@@ -217,12 +224,7 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
     }
 
     // Ctrl+V: Paste (default to hex mode for keyboard shortcut)
-    // Skip if focus is on an input element (e.g., address input)
     if ((e.ctrlKey || e.metaKey) && e.key === 'v') {
-      const target = e.target as HTMLElement;
-      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') {
-        return; // Let the input handle paste normally
-      }
       e.preventDefault();
       pasteBytes('hex');
       return;
@@ -757,7 +759,7 @@ function HexToolbar({
         <Input
           placeholder="rsp, rax+0x10, symbol..."
           value={addressInput}
-          onChange={(e) => setAddressInput(e.target.value)}
+          onChange={(e) => setAddressInput(sanitizeAddressInput(e.target.value))}
           onKeyDown={handleAddressKeyDown}
         />
         <Button

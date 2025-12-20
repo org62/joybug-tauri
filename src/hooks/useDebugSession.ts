@@ -1,8 +1,8 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { toast } from 'sonner';
-import { DebugSession, Module, Thread, Symbol } from '@/contexts/SessionContext';
+import { DebugSession, Module, Thread, Symbol, SessionStatus } from '@/contexts/SessionContext';
 
 export function useDebugSession(sessionId: string | undefined) {
   const [session, setSession] = useState<DebugSession | null>(null);
@@ -13,7 +13,61 @@ export function useDebugSession(sessionId: string | undefined) {
   const [modules, setModules] = useState<Module[]>([]);
   const [threads, setThreads] = useState<Thread[]>([]);
 
-  const canStep = useMemo(() => session?.status === "Paused", [session]);
+  // Debounced display status - prevents UI flicker during quick stepping operations
+  const [displayStatus, setDisplayStatus] = useState<SessionStatus>("Stopped");
+  const statusTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Debounce logic: delay Paused → Running transitions to prevent flicker on stepping
+  useEffect(() => {
+    const actualStatus = session?.status;
+
+    // Clear any pending timeout
+    if (statusTimeoutRef.current) {
+      clearTimeout(statusTimeoutRef.current);
+      statusTimeoutRef.current = null;
+    }
+
+    if (!actualStatus) {
+      setDisplayStatus("Stopped");
+      return;
+    }
+
+    // Immediate transition for these cases:
+    // - Going to Paused (step completed, show results immediately)
+    // - Going to Stopped (session ended)
+    // - Going to Error
+    // - Initial state when displayStatus is Stopped
+    if (actualStatus === "Paused" ||
+        actualStatus === "Stopped" ||
+        typeof actualStatus === "object" ||  // Error state
+        displayStatus === "Stopped") {
+      setDisplayStatus(actualStatus);
+      return;
+    }
+
+    // Debounce transition TO Running (from Paused)
+    // This prevents flicker during quick step operations
+    if (actualStatus === "Running" && displayStatus === "Paused") {
+      statusTimeoutRef.current = setTimeout(() => {
+        setDisplayStatus("Running");
+      }, 250); // 250ms debounce
+      return;
+    }
+
+    // For any other case, update immediately
+    setDisplayStatus(actualStatus);
+  }, [session?.status]);
+
+  // Cleanup timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (statusTimeoutRef.current) {
+        clearTimeout(statusTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  const canStep = useMemo(() => displayStatus === "Paused", [displayStatus]);
   const canStop = useMemo(() => {
     if (!session || typeof session.status !== "string") return false;
     return ["Running", "Paused"].includes(session.status);
@@ -309,6 +363,7 @@ export function useDebugSession(sessionId: string | undefined) {
 
   return {
     session,
+    displayStatus,
     isLoading,
     busyAction,
     modules,

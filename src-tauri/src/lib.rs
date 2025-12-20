@@ -42,6 +42,7 @@ pub fn run() {
             commands::terminate_debug_session,
             commands::delete_debug_session,
             commands::request_disassembly,
+            commands::request_function_disassembly,
             commands::get_logs,
             commands::add_log,
             commands::clear_logs,

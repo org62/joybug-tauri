@@ -38,6 +38,9 @@ function formatValue(value: DereferenceValue): string {
     case 'String':
       return value.value;
     case 'Instruction':
+      if (value.symbol) {
+        return `(${value.symbol}) <${value.value}>`;
+      }
       return `<${value.value}>`;
     case 'LoopDetected':
       return '[loop]';
@@ -87,6 +90,12 @@ export function DereferenceDisplay({ entry, skipFirst = false, maxItems = 4 }: D
     return null;
   }
 
+  // Determine if we need a leading arrow:
+  // - skipFirst=true (hex view): always need arrow (showing what the displayed pointer points to)
+  // - skipFirst=false (register view): need arrow unless first item is Instruction (register IS the instruction)
+  const firstItem = chain[0];
+  const needsLeadingArrow = skipFirst || (firstItem && firstItem.type !== 'Instruction');
+
   return (
     <TooltipProvider delayDuration={200}>
       <Tooltip>
@@ -95,7 +104,7 @@ export function DereferenceDisplay({ entry, skipFirst = false, maxItems = 4 }: D
             {symbol && <span>({symbol})</span>}
             {chainStr && (
               <span className="truncate">
-                {'\u2192'} {chainStr}
+                {needsLeadingArrow && '\u2192 '}{chainStr}
               </span>
             )}
           </span>

@@ -12,13 +12,21 @@ export interface ViewModeConfig {
 }
 
 /**
+ * Sanitize address input by removing backticks and other invalid characters.
+ * Useful when pasting addresses from tools that format them like: 7ffe`97b87000
+ */
+export function sanitizeAddressInput(input: string): string {
+  return input.replace(/`/g, '');
+}
+
+/**
  * Dereference value types - matches the Rust SerializableDereferenceValue enum
  */
 export type DereferenceValue =
   | { type: 'Pointer'; address: string; symbol?: string }
   | { type: 'Value'; value: string }
   | { type: 'String'; value: string }
-  | { type: 'Instruction'; value: string }
+  | { type: 'Instruction'; value: string; symbol?: string }
   | { type: 'LoopDetected'; address: string };
 
 /**
@@ -81,7 +89,11 @@ export function formatDereferenceChain(chain: DereferenceValue[], maxItems: numb
         items.push(value.value);
         break;
       case 'Instruction':
-        items.push('<' + value.value + '>');
+        if (value.symbol) {
+          items.push('(' + value.symbol + ') <' + value.value + '>');
+        } else {
+          items.push('<' + value.value + '>');
+        }
         break;
       case 'LoopDetected':
         items.push('[loop]');
