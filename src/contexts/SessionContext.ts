@@ -6,9 +6,10 @@ export { type SerializableThreadContext } from "@/components/RegisterView";
 
 export interface DebugSession {
   id: string;
-  name:string;
+  name: string;
   server_url: string;
   launch_command: string;
+  is_local_run: boolean;
   status: SessionStatus;
   current_event: DebugEventInfo | null;
   created_at: string;

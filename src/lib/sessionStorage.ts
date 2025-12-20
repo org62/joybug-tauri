@@ -3,6 +3,7 @@ export interface SessionConfig {
   name: string;
   server_url: string;
   launch_command: string;
+  is_local_run: boolean;
   created_at: string;
 }
 
@@ -52,6 +53,7 @@ export function sessionToConfig(session: any): SessionConfig {
     name: session.name,
     server_url: session.server_url,
     launch_command: session.launch_command,
+    is_local_run: session.is_local_run ?? false,
     created_at: session.created_at,
   };
 }

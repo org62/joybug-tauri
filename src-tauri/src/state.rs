@@ -10,6 +10,7 @@ pub struct DebugSessionUI {
     pub name: String,
     pub server_url: String,
     pub launch_command: String,
+    pub is_local_run: bool,
     pub status: SessionStatusUI,
     pub current_event: Option<DebugEventInfo>,
     pub created_at: String,
@@ -81,8 +82,10 @@ pub struct SessionStateUI {
     pub name: String,
     pub server_url: String,
     pub launch_command: String,
+    pub is_local_run: bool,
+    pub embedded_server_port: Option<u16>,
     pub created_at: String,
-    
+
     // Runtime state
     pub status: SessionStatusUI,
     pub events: Vec<joybug2::protocol_io::DebugEvent>,
@@ -106,6 +109,7 @@ impl SessionStateUI {
         name: String,
         server_url: String,
         launch_command: String,
+        is_local_run: bool,
     ) -> Self {
         let (step_sender, step_receiver) = mpsc::channel();
         Self {
@@ -113,6 +117,8 @@ impl SessionStateUI {
             name,
             server_url,
             launch_command,
+            is_local_run,
+            embedded_server_port: None,
             created_at: chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string(),
             status: SessionStatusUI::Stopped,
             events: Vec::new(),
@@ -137,6 +143,7 @@ impl SessionStateUI {
         self.current_event = None;
         self.current_context = None;
         self.debug_result = None;
+        self.embedded_server_port = None;
 
         // Reset window states
         self.is_disassembly_window_open = false;
@@ -155,6 +162,7 @@ impl SessionStateUI {
             name: self.name.clone(),
             server_url: self.server_url.clone(),
             launch_command: self.launch_command.clone(),
+            is_local_run: self.is_local_run,
             status: self.status.clone(),
             current_event: self.current_event.as_ref().map(|event| {
                 let mut info = crate::events::debug_event_to_info(event);
@@ -189,6 +197,7 @@ impl SessionStateUI {
 // Global state - now just holding session states, no duplicate session storage
 pub type SessionStatesMap = Mutex<HashMap<String, Arc<Mutex<SessionStateUI>>>>;
 pub type LogsState = Mutex<Vec<LogEntry>>;
+pub type EmbeddedServersMap = Mutex<HashMap<String, crate::session::EmbeddedServerHandle>>;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LogEntry {

@@ -6,7 +6,7 @@ mod session;
 mod state;
 mod settings;
 
-use state::{LogsState, SessionStatesMap};
+use state::{EmbeddedServersMap, LogsState, SessionStatesMap};
 use settings::{SettingsState, load_settings_from_disk};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -24,6 +24,7 @@ pub fn run() {
                 .build()
         )
         .manage(SessionStatesMap::default())
+        .manage(EmbeddedServersMap::default())
         .manage(LogsState::default())
         .manage(SettingsState::new(load_settings_from_disk()))
         .invoke_handler(tauri::generate_handler![

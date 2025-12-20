@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import {
   Dialog,
   DialogClose,
@@ -35,6 +36,7 @@ interface DebugSession {
   name: string;
   server_url: string;
   launch_command: string;
+  is_local_run: boolean;
   status: SessionStatus;
   current_event: DebugEventInfo | null;
   created_at: string;
@@ -64,6 +66,7 @@ export default function Debugger() {
   const [formName, setFormName] = useState("");
   const [formServerUrl, setFormServerUrl] = useState("127.0.0.1:9000");
   const [formLaunchCommand, setFormLaunchCommand] = useState("cmd.exe /c echo Hello World!");
+  const [formLocalRun, setFormLocalRun] = useState(true);
 
   // Load sessions from backend with storage restoration
   const loadSessions = async () => {
@@ -97,6 +100,7 @@ export default function Debugger() {
               name: config.name,
               serverUrl: config.server_url,
               launchCommand: config.launch_command,
+              isLocalRun: config.is_local_run ?? true,
             });
           } catch (error) {
             console.warn(`Failed to restore session ${config.name}:`, error);
@@ -171,6 +175,7 @@ export default function Debugger() {
     setFormName("");
     setFormServerUrl("127.0.0.1:9000");
     setFormLaunchCommand("cmd.exe /c echo Hello World!");
+    setFormLocalRun(true);
     setIsSessionDialogOpen(true);
   };
 
@@ -179,6 +184,7 @@ export default function Debugger() {
     setFormName(session.name === DEFAULT_SESSION_NAME ? "" : session.name);
     setFormServerUrl(session.server_url);
     setFormLaunchCommand(session.launch_command);
+    setFormLocalRun(session.is_local_run);
     setIsSessionDialogOpen(true);
   };
 
@@ -188,29 +194,32 @@ export default function Debugger() {
     try {
       const sessionId = await invoke<string>("create_debug_session", {
         name: sessionName,
-        serverUrl: formServerUrl,
+        serverUrl: formLocalRun ? "" : formServerUrl,
         launchCommand: formLaunchCommand,
+        isLocalRun: formLocalRun,
       });
 
       // Save session config to storage
       addSessionToStorage({
         id: sessionId,
         name: sessionName,
-        server_url: formServerUrl,
+        server_url: formLocalRun ? "" : formServerUrl,
         launch_command: formLaunchCommand,
+        is_local_run: formLocalRun,
         created_at: new Date().toISOString(),
       });
 
       toast.success("Debug session created successfully");
       setIsSessionDialogOpen(false);
-      
+
       // Clear form
       setFormName("");
       setFormServerUrl("127.0.0.1:9000");
       setFormLaunchCommand("cmd.exe /c echo Hello World!");
-      
+      setFormLocalRun(true);
+
       // Live updates will arrive via events; no manual refresh
-      
+
       return sessionId;
     } catch (error) {
       console.error("Failed to create debug session:", error);
@@ -228,16 +237,18 @@ export default function Debugger() {
       await invoke("update_debug_session", {
         sessionId: sessionToEdit.id,
         name: sessionName,
-        serverUrl: formServerUrl,
+        serverUrl: formLocalRun ? "" : formServerUrl,
         launchCommand: formLaunchCommand,
+        isLocalRun: formLocalRun,
       });
 
       // Update session config in storage
       updateSessionInStorage({
         id: sessionToEdit.id,
         name: sessionName,
-        server_url: formServerUrl,
+        server_url: formLocalRun ? "" : formServerUrl,
         launch_command: formLaunchCommand,
+        is_local_run: formLocalRun,
         created_at: sessionToEdit.created_at,
       });
 
@@ -256,7 +267,8 @@ export default function Debugger() {
     try {
       await invoke("start_debug_session", { sessionId });
       toast.success("Debug session started");
-      // Live updates will arrive via events; no manual refresh
+      // Navigate to session view
+      navigate(`/session/${sessionId}`);
     } catch (error) {
       console.error("Failed to start debug session:", error);
       toast.error(`Failed to start debug session: ${error}`);
@@ -291,9 +303,12 @@ export default function Debugger() {
 
   const handleCreateAndStart = async () => {
     try {
-      await handleCreateSession();
+      const sessionId = await handleCreateSession();
+      if (sessionId) {
+        await handleStartSession(sessionId);
+      }
     } catch (error) {
-      // Error already handled in handleCreateSession
+      // Error already handled in handleCreateSession/handleStartSession
     }
   };
 
@@ -401,15 +416,30 @@ export default function Debugger() {
                     placeholder="My Debug Session"
                   />
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor="serverUrl">Debug Server URL</Label>
-                  <Input
-                    id="serverUrl"
-                    value={formServerUrl}
-                    onChange={(e) => setFormServerUrl(e.target.value)}
-                    placeholder="127.0.0.1:9000"
+                <div className="flex items-center space-x-2">
+                  <Switch
+                    id="localRun"
+                    checked={formLocalRun}
+                    onCheckedChange={(checked: boolean) => setFormLocalRun(checked)}
                   />
+                  <Label
+                    htmlFor="localRun"
+                    className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
+                  >
+                    Local Run (start embedded debug server)
+                  </Label>
                 </div>
+                {!formLocalRun && (
+                  <div className="space-y-2">
+                    <Label htmlFor="serverUrl">Debug Server URL</Label>
+                    <Input
+                      id="serverUrl"
+                      value={formServerUrl}
+                      onChange={(e) => setFormServerUrl(e.target.value)}
+                      placeholder="127.0.0.1:9000"
+                    />
+                  </div>
+                )}
                 <div className="space-y-2">
                   <Label htmlFor="launchCommand">Launch Command</Label>
                   <Input
@@ -521,7 +551,12 @@ export default function Debugger() {
                 <CardContent>
                   <div className="space-y-2 text-sm">
                     <div>
-                      <strong>Server:</strong> {session.server_url}
+                      <strong>Server:</strong>{" "}
+                      {session.is_local_run
+                        ? session.server_url
+                          ? `Local (${session.server_url})`
+                          : "Local (pending)"
+                        : session.server_url}
                     </div>
                     <div>
                       <strong>Command:</strong> {session.launch_command}

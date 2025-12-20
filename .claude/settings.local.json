@@ -9,7 +9,9 @@
       "Bash(cat:*)",
       "mcp__ida-pro-mcp__check_connection",
       "Bash(cargo test:*)",
-      "Bash(npm install:*)"
+      "Bash(npm install:*)",
+      "Bash(git config:*)",
+      "Bash(ls:*)"
     ],
     "deny": [],
     "ask": []

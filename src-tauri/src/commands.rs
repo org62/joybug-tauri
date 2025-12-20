@@ -1,7 +1,7 @@
 use crate::error::{Error, Result};
-use crate::session::{run_debug_session, emit_session_event};
+use crate::session::{run_debug_session, emit_session_event, EmbeddedServerHandle};
 use crate::state::{
-    DebugSessionUI, LogEntry, LogsState, SessionStateUI, SessionStatesMap, SessionStatusUI,
+    DebugSessionUI, EmbeddedServersMap, LogEntry, LogsState, SessionStateUI, SessionStatesMap, SessionStatusUI,
 };
 use crate::settings::{DebugSettings, SettingsState, save_settings_to_disk};
 use joybug2::protocol::DebuggerRequest;
@@ -24,32 +24,43 @@ pub fn create_debug_session(
     name: String,
     server_url: String,
     launch_command: String,
+    is_local_run: bool,
     session_states: State<'_, SessionStatesMap>,
     app_handle: tauri::AppHandle,
 ) -> std::result::Result<String, String> {
     let mut states = session_states.lock().unwrap();
 
-    // Check for duplicate session
-    for session_state in states.values() {
-        let state = session_state.lock().unwrap();
-        if state.server_url == server_url && state.launch_command == launch_command {
-            return Err(Error::SessionAlreadyExists.to_string());
+    // Check for duplicate session (only for non-local-run sessions with same server_url)
+    if !is_local_run {
+        for session_state in states.values() {
+            let state = session_state.lock().unwrap();
+            if !state.is_local_run && state.server_url == server_url && state.launch_command == launch_command {
+                return Err(Error::SessionAlreadyExists.to_string());
+            }
         }
     }
 
     let session_id = format!("session_{}", chrono::Utc::now().timestamp_millis());
 
+    // For local run sessions, server_url will be set when the embedded server starts
+    let effective_server_url = if is_local_run {
+        String::new()
+    } else {
+        server_url
+    };
+
     // Create new session state
     let session_state_arc = Arc::new(Mutex::new(SessionStateUI::new(
         session_id.clone(),
         name,
-        server_url,
+        effective_server_url,
         launch_command,
+        is_local_run,
     )));
 
     // Store session state
     states.insert(session_id.clone(), session_state_arc.clone());
-    
+
     // an explicit drop to show when we are releasing the lock on states
     drop(states);
 
@@ -95,17 +106,20 @@ pub fn update_debug_session(
     name: String,
     server_url: String,
     launch_command: String,
+    is_local_run: bool,
     session_states: State<'_, SessionStatesMap>,
     app_handle: tauri::AppHandle,
 ) -> std::result::Result<(), String> {
     let states = session_states.lock().unwrap();
 
-    // Check for duplicate session (excluding the current one)
-    for (id, session_state) in states.iter() {
-        if id != &session_id {
-            let state = session_state.lock().unwrap();
-            if state.server_url == server_url && state.launch_command == launch_command {
-                return Err(Error::SessionAlreadyExists.to_string());
+    // Check for duplicate session (excluding the current one, only for non-local-run)
+    if !is_local_run {
+        for (id, session_state) in states.iter() {
+            if id != &session_id {
+                let state = session_state.lock().unwrap();
+                if !state.is_local_run && state.server_url == server_url && state.launch_command == launch_command {
+                    return Err(Error::SessionAlreadyExists.to_string());
+                }
             }
         }
     }
@@ -119,7 +133,8 @@ pub fn update_debug_session(
         }
 
         state.name = name;
-        state.server_url = server_url;
+        state.is_local_run = is_local_run;
+        state.server_url = if is_local_run { String::new() } else { server_url };
         state.launch_command = launch_command;
 
         let session_state_arc = session_state.clone();
@@ -179,6 +194,7 @@ pub fn get_debug_session(
 pub fn start_debug_session(
     session_id: String,
     session_states: State<'_, SessionStatesMap>,
+    embedded_servers: State<'_, EmbeddedServersMap>,
     app_handle: tauri::AppHandle,
 ) -> Result<()> {
     let session_state = {
@@ -201,7 +217,30 @@ pub fn start_debug_session(
         }
     }
 
-    // Do not emit here; UI will update on real events from the session thread
+    // If local run, start embedded server
+    {
+        let mut state = session_state.lock().unwrap();
+        if state.is_local_run {
+            info!("Starting embedded server for local run session: {}", session_id);
+            let server_handle = EmbeddedServerHandle::start()
+                .map_err(|e| Error::ConnectionFailed(format!("Failed to start embedded server: {}", e)))?;
+
+            let port = server_handle.port;
+            let server_url = format!("127.0.0.1:{}", port);
+
+            // Store server handle
+            embedded_servers.lock().unwrap().insert(session_id.clone(), server_handle);
+
+            // Update session state with actual port and server URL
+            state.server_url = server_url;
+            state.embedded_server_port = Some(port);
+
+            info!("Embedded server started on port {} for session {}", port, session_id);
+        }
+    }
+
+    // Emit update so frontend can see the server URL
+    emit_session_event(&session_state, &app_handle);
 
     // Log session start
     crate::ui_logger::log_info(
@@ -214,7 +253,7 @@ pub fn start_debug_session(
     let session_state_for_thread = session_state.clone();
     let app_handle_for_thread = app_handle.clone();
     let session_id_for_thread = session_id.clone();
-    
+
     thread::spawn(move || {
         let result = run_debug_session(session_state_for_thread.clone(), Some(app_handle_for_thread.clone()));
 
@@ -399,6 +438,7 @@ pub fn step_out_debug_session(
 pub fn stop_debug_session(
     session_id: String,
     session_states: State<'_, SessionStatesMap>,
+    embedded_servers: State<'_, EmbeddedServersMap>,
     app_handle: tauri::AppHandle,
 ) -> Result<()> {
     let session_state = {
@@ -416,6 +456,12 @@ pub fn stop_debug_session(
                 let _ = sender.send(UICommand::Stop);
             }
             // No special handling for a transient connecting state
+        }
+
+        // Stop embedded server if running
+        if let Some(mut server_handle) = embedded_servers.lock().unwrap().remove(&session_id) {
+            info!("Stopping embedded server for session {}", session_id);
+            server_handle.stop();
         }
 
         // Emit update so frontend reflects stop request immediately
@@ -498,6 +544,7 @@ fn send_out_of_band_request(server_url: &str, req: DebuggerRequest) -> Result<()
         "tmp".to_string(),
         server_url.to_string(),
         "".to_string(),
+        false, // is_local_run
     )));
     let mut client = joybug2::protocol_io::DebugSession::new(tmp_state, Some(server_url))
         .map_err(|e| Error::ConnectionFailed(e.to_string()))?;
@@ -521,11 +568,12 @@ fn send_out_of_band_request(server_url: &str, req: DebuggerRequest) -> Result<()
 pub fn delete_debug_session(
     session_id: String,
     session_states: State<'_, SessionStatesMap>,
+    embedded_servers: State<'_, EmbeddedServersMap>,
     app_handle: tauri::AppHandle,
 ) -> Result<()> {
     // Attempt to stop the session first. We ignore the result because even if stopping fails,
     // we want to proceed with deletion.
-    let _ = stop_debug_session(session_id.clone(), session_states.clone(), app_handle.clone());
+    let _ = stop_debug_session(session_id.clone(), session_states.clone(), embedded_servers.clone(), app_handle.clone());
 
     // Remove the session from the state map.
     if session_states.lock().unwrap().remove(&session_id).is_some() {
