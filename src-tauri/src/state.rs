@@ -197,7 +197,7 @@ impl SessionStateUI {
 // Global state - now just holding session states, no duplicate session storage
 pub type SessionStatesMap = Mutex<HashMap<String, Arc<Mutex<SessionStateUI>>>>;
 pub type LogsState = Mutex<Vec<LogEntry>>;
-pub type EmbeddedServersMap = Mutex<HashMap<String, crate::session::EmbeddedServerHandle>>;
+pub type EmbeddedServersMap = Mutex<HashMap<String, joybug2::local_server::LocalServer>>;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LogEntry {

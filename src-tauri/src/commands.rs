@@ -1,5 +1,5 @@
 use crate::error::{Error, Result};
-use crate::session::{run_debug_session, emit_session_event, EmbeddedServerHandle};
+use crate::session::{run_debug_session, emit_session_event, LocalServer};
 use crate::state::{
     DebugSessionUI, EmbeddedServersMap, LogEntry, LogsState, SessionStateUI, SessionStatesMap, SessionStatusUI,
 };
@@ -222,10 +222,10 @@ pub fn start_debug_session(
         let mut state = session_state.lock().unwrap();
         if state.is_local_run {
             info!("Starting embedded server for local run session: {}", session_id);
-            let server_handle = EmbeddedServerHandle::start()
+            let server_handle = LocalServer::start()
                 .map_err(|e| Error::ConnectionFailed(format!("Failed to start embedded server: {}", e)))?;
 
-            let port = server_handle.port;
+            let port = server_handle.port();
             let server_url = format!("127.0.0.1:{}", port);
 
             // Store server handle

@@ -1,80 +1,11 @@
 use crate::error::{Error, Result};
 use crate::state::{SessionStateUI, SessionStatusUI};
 use crate::settings::SettingsState;
-use std::net::TcpListener as StdTcpListener;
 use std::sync::{Arc, Mutex};
-use std::thread::JoinHandle;
 use tauri::{AppHandle, Emitter, Manager};
-use tokio::sync::oneshot;
 use tracing::{debug, error, info, warn};
 
-/// Handle for managing an embedded joybug2 debug server
-pub struct EmbeddedServerHandle {
-    pub port: u16,
-    shutdown_tx: Option<oneshot::Sender<()>>,
-    thread_handle: Option<JoinHandle<()>>,
-}
-
-impl EmbeddedServerHandle {
-    /// Start an embedded debug server on a dynamically allocated port
-    pub fn start() -> std::result::Result<Self, String> {
-        // Bind to port 0 to let the OS assign an available port
-        let std_listener = StdTcpListener::bind("127.0.0.1:0")
-            .map_err(|e| format!("Failed to bind listener: {}", e))?;
-        let port = std_listener
-            .local_addr()
-            .map_err(|e| format!("Failed to get local address: {}", e))?
-            .port();
-
-        info!(port, "Starting embedded debug server");
-
-        // Create shutdown channel
-        let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
-
-        // Spawn thread with tokio runtime to run server
-        let thread_handle = std::thread::spawn(move || {
-            let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
-            rt.block_on(async move {
-                let shutdown_future = async {
-                    let _ = shutdown_rx.await;
-                };
-                if let Err(e) = joybug2::server::run_server_with_std_listener(
-                    std_listener,
-                    shutdown_future,
-                )
-                .await
-                {
-                    error!("Embedded server error: {}", e);
-                }
-            });
-        });
-
-        Ok(Self {
-            port,
-            shutdown_tx: Some(shutdown_tx),
-            thread_handle: Some(thread_handle),
-        })
-    }
-
-    /// Stop the embedded server and wait for the thread to finish
-    pub fn stop(&mut self) {
-        info!(port = self.port, "Stopping embedded debug server");
-        // Send shutdown signal
-        if let Some(tx) = self.shutdown_tx.take() {
-            let _ = tx.send(());
-        }
-        // Wait for thread to finish
-        if let Some(handle) = self.thread_handle.take() {
-            let _ = handle.join();
-        }
-    }
-}
-
-impl Drop for EmbeddedServerHandle {
-    fn drop(&mut self) {
-        self.stop();
-    }
-}
+pub use joybug2::local_server::LocalServer;
 
 #[derive(Debug, Clone)]
 pub enum UICommand {
