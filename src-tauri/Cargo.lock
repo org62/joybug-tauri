@@ -4888,8 +4888,7 @@ checksum = "f6ccf251212114b54433ec949fd6a7841275f9ada20dddd2f29e9ceea4501493"
 [[package]]
 name = "unicorn-engine"
 version = "2.1.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c16b5d5186d9400cd3bf9f892ed826cb724f69b906bbe66811527df73eaf7a33"
+source = "git+https://github.com/expend20/unicorn?branch=win-arm64-build#4d25a25adc5ddf9e808ce4265be32b237593fb77"
 dependencies = [
  "bindgen",
  "cc",
@@ -4901,8 +4900,7 @@ dependencies = [
 [[package]]
 name = "unicorn-engine-sys"
 version = "2.1.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "685282714d35a6fbfed0ae14d81bb11c91838bc7a165cac778321679a7bb91d8"
+source = "git+https://github.com/expend20/unicorn?branch=win-arm64-build#4d25a25adc5ddf9e808ce4265be32b237593fb77"
 dependencies = [
  "bindgen",
  "cc",
