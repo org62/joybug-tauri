@@ -13,7 +13,7 @@ jobs:
   build:
     strategy:
       matrix:
-        arch: [ARM64, X64-native]
+        arch: [ARM64, X64]
     runs-on:
       - self-hosted
       - Windows
@@ -31,7 +31,7 @@ jobs:
     
     - name: Rename executable for architecture
       run: |
-        if ("${{ matrix.arch }}" -eq "X64-native") {
+        if ("${{ matrix.arch }}" -eq "X64") {
           Rename-Item -Path "src-tauri/target/release/joybug-tauri.exe" -NewName "joybug-tauri-x64.exe"
         } elseif ("${{ matrix.arch }}" -eq "ARM64") {
           Rename-Item -Path "src-tauri/target/release/joybug-tauri.exe" -NewName "joybug-tauri-aarch64.exe"
