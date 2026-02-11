@@ -8,15 +8,43 @@ import { Cpu, ArrowLeft, ArrowRight, RefreshCw, ChevronRight } from "lucide-reac
 import { cn } from "@/lib/utils";
 import { useAssemblyView, Instruction } from "@/hooks/useAssemblyView";
 import { RegisterContext, SymbolResolver, sanitizeAddressInput } from "@/lib/hexUtils";
+import { EmulationQuickView } from "./EmulationQuickView";
+
+const COLUMN_WIDTHS_KEY = "assembly-column-widths";
+const MIN_COL_WIDTH = 40;
+
+interface ColumnWidths {
+  symbol: number;
+  bytes: number;
+  mnemonic: number;
+}
+
+const DEFAULT_COLUMN_WIDTHS: ColumnWidths = { symbol: 320, bytes: 144, mnemonic: 64 };
+
+function getInitialColumnWidths(): ColumnWidths {
+  try {
+    const stored = localStorage.getItem(COLUMN_WIDTHS_KEY);
+    if (stored) {
+      const parsed = JSON.parse(stored);
+      return {
+        symbol: Math.max(MIN_COL_WIDTH, parsed.symbol ?? DEFAULT_COLUMN_WIDTHS.symbol),
+        bytes: Math.max(MIN_COL_WIDTH, parsed.bytes ?? DEFAULT_COLUMN_WIDTHS.bytes),
+        mnemonic: Math.max(MIN_COL_WIDTH, parsed.mnemonic ?? DEFAULT_COLUMN_WIDTHS.mnemonic),
+      };
+    }
+  } catch {}
+  return { ...DEFAULT_COLUMN_WIDTHS };
+}
 
 interface AssemblyViewProps {
   sessionId?: string;
+  isPaused?: boolean;
   address?: number;
   registers?: RegisterContext;
   resolveSymbol?: SymbolResolver;
 }
 
-export function AssemblyView({ sessionId, address, registers, resolveSymbol }: AssemblyViewProps) {
+export function AssemblyView({ sessionId, isPaused, address, registers, resolveSymbol }: AssemblyViewProps) {
   const [addressInput, setAddressInput] = useState("");
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const pcRowRef = useRef<HTMLDivElement>(null);
@@ -25,13 +53,12 @@ export function AssemblyView({ sessionId, address, registers, resolveSymbol }: A
   const [highlightedAddress, setHighlightedAddress] = useState<bigint | null>(null);
   // Track which jump target is being hovered (for live highlight)
   const [hoveredJumpTarget, setHoveredJumpTarget] = useState<bigint | null>(null);
+  // Resizable column widths
+  const [columnWidths, setColumnWidths] = useState<ColumnWidths>(getInitialColumnWidths);
 
   const {
     instructions,
     pcAddress,
-    functionName,
-    functionStart,
-    functionEnd,
     isLoading,
     error,
     showBytes,
@@ -51,6 +78,33 @@ export function AssemblyView({ sessionId, address, registers, resolveSymbol }: A
     registers,
     resolveSymbol,
   });
+
+  // Handle column resize drag
+  const handleColumnResizeStart = useCallback((column: keyof ColumnWidths, e: React.MouseEvent) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startWidth = columnWidths[column];
+
+    const onMouseMove = (ev: MouseEvent) => {
+      const delta = ev.clientX - startX;
+      setColumnWidths(prev => ({
+        ...prev,
+        [column]: Math.max(MIN_COL_WIDTH, startWidth + delta),
+      }));
+    };
+
+    const onMouseUp = () => {
+      document.removeEventListener("mousemove", onMouseMove);
+      document.removeEventListener("mouseup", onMouseUp);
+      setColumnWidths(prev => {
+        try { localStorage.setItem(COLUMN_WIDTHS_KEY, JSON.stringify(prev)); } catch {}
+        return prev;
+      });
+    };
+
+    document.addEventListener("mousemove", onMouseMove);
+    document.addEventListener("mouseup", onMouseUp);
+  }, [columnWidths]);
 
   // Handle go-to action
   const handleGoTo = useCallback(async () => {
@@ -210,6 +264,24 @@ export function AssemblyView({ sessionId, address, registers, resolveSymbol }: A
         </div>
       </div>
 
+      {/* Column header - fixed outside scroll area */}
+      {showInstructions && (
+        <div className="shrink-0 flex items-center px-2 py-0.5 border-b border-border font-mono text-xs text-foreground/60 select-none">
+          <span className="w-4 shrink-0" />
+          <span className="shrink-0 truncate" style={{ width: columnWidths.symbol }}>Symbol</span>
+          <div className="w-1 shrink-0 self-stretch cursor-col-resize hover:bg-blue-500/30 active:bg-blue-500/50 mx-px" onMouseDown={(e) => handleColumnResizeStart("symbol", e)} />
+          {showBytes && (
+            <>
+              <span className="shrink-0 truncate" style={{ width: columnWidths.bytes }}>Bytes</span>
+              <div className="w-1 shrink-0 self-stretch cursor-col-resize hover:bg-blue-500/30 active:bg-blue-500/50 mx-px" onMouseDown={(e) => handleColumnResizeStart("bytes", e)} />
+            </>
+          )}
+          <span className="shrink-0 truncate" style={{ width: columnWidths.mnemonic }}>Mnemonic</span>
+          <div className="w-1 shrink-0 self-stretch cursor-col-resize hover:bg-blue-500/30 active:bg-blue-500/50 mx-px" onMouseDown={(e) => handleColumnResizeStart("mnemonic", e)} />
+          <span className="flex-1">Operands</span>
+        </div>
+      )}
+
       {/* Main content area */}
       <ScrollArea className="flex-1 min-h-0">
         {/* Empty state */}
@@ -247,7 +319,7 @@ export function AssemblyView({ sessionId, address, registers, resolveSymbol }: A
         {showInstructions && (
           <div
             ref={scrollContainerRef}
-            className="font-mono text-xs bg-gray-50 dark:bg-gray-900"
+            className="font-mono text-xs"
           >
             {instructions.map((inst, index) => {
               const instAddrUpper = inst.address.toUpperCase();
@@ -272,6 +344,7 @@ export function AssemblyView({ sessionId, address, registers, resolveSymbol }: A
                   isHighlighted={isHighlighted}
                   isHoverTarget={isHoverTarget}
                   showBytes={showBytes}
+                  columnWidths={columnWidths}
                   onJumpTargetClick={handleJumpTargetClick}
                   onJumpTargetHover={handleJumpTargetHover}
                   rowRef={rowRef}
@@ -282,18 +355,8 @@ export function AssemblyView({ sessionId, address, registers, resolveSymbol }: A
         )}
       </ScrollArea>
 
-      {/* Status bar - always visible */}
-      <div className="flex items-center gap-4 px-2 py-1 border-t border-border bg-muted/30 text-xs text-muted-foreground shrink-0">
-        {functionName && (
-          <span className="font-medium">{functionName}</span>
-        )}
-        {functionStart !== null && functionEnd !== null && (
-          <span>
-            {functionStart.toString(16).toUpperCase()} - {functionEnd.toString(16).toUpperCase()}
-          </span>
-        )}
-        <span className="ml-auto">{instructions.length > 0 ? `${instructions.length} instructions` : 'No data'}</span>
-      </div>
+      {/* Quick Emulation footer */}
+      <EmulationQuickView sessionId={sessionId} isPaused={isPaused} pcAddress={address} />
     </div>
   );
 }
@@ -305,12 +368,13 @@ interface InstructionRowProps {
   isHighlighted: boolean;
   isHoverTarget: boolean;
   showBytes: boolean;
+  columnWidths: ColumnWidths;
   onJumpTargetClick: (target: string) => void;
   onJumpTargetHover: (target: string | null) => void;
   rowRef?: React.Ref<HTMLDivElement>;
 }
 
-function InstructionRow({ instruction, isPC, isHighlighted, isHoverTarget, showBytes, onJumpTargetClick, onJumpTargetHover, rowRef }: InstructionRowProps) {
+function InstructionRow({ instruction, isPC, isHighlighted, isHoverTarget, showBytes, columnWidths, onJumpTargetClick, onJumpTargetHover, rowRef }: InstructionRowProps) {
   const { mnemonic, op_str, is_jump, is_call, is_ret, jump_target } = instruction;
 
   // Render operands with clickable jump target
@@ -347,13 +411,13 @@ function InstructionRow({ instruction, isPC, isHighlighted, isHoverTarget, showB
       </span>
 
       {/* Address/Symbol column */}
-      <span className="w-80 shrink-0 text-muted-foreground truncate" title={instruction.symbol}>
+      <span className="shrink-0 text-muted-foreground truncate" style={{ width: columnWidths.symbol }} title={instruction.symbol}>
         {instruction.symbol}
       </span>
 
       {/* Bytes column (conditional) */}
       {showBytes && (
-        <span className="w-36 shrink-0 text-gray-500 truncate" title={instruction.bytes}>
+        <span className="shrink-0 text-gray-500 truncate" style={{ width: columnWidths.bytes }} title={instruction.bytes}>
           {instruction.bytes}
         </span>
       )}
@@ -361,12 +425,13 @@ function InstructionRow({ instruction, isPC, isHighlighted, isHoverTarget, showB
       {/* Mnemonic - color coded */}
       <span
         className={cn(
-          "w-16 shrink-0",
+          "shrink-0",
           is_call && "text-green-500",
           is_jump && !is_call && "text-blue-500",
           is_ret && "text-red-500",
           !is_call && !is_jump && !is_ret && "text-blue-400"
         )}
+        style={{ width: columnWidths.mnemonic }}
       >
         {mnemonic}
       </span>

@@ -22,6 +22,12 @@ pub enum UICommand {
     WriteMemory{ address: u64, data: Vec<u8> },
     GetMemoryRegions,
     Dereference{ address: u64, count: usize },
+    Emulate {
+        max_instructions: usize,
+        mode: joybug2::protocol_io::EmulationMode,
+        exit_condition: Option<joybug2::protocol_io::TraceExitCondition>,
+        request_id: Option<String>,
+    },
 }
 
 /// Event payload for successful memory read (may be partial)
@@ -904,6 +910,214 @@ fn process_dereference_request(
     }
 }
 
+/// Formats a symbol as "module!name+0xoffset"
+fn format_symbol(module: &str, name: &str, offset: u64) -> String {
+    format!("{}!{}+0x{:x}", module, name, offset)
+}
+
+/// Extracts PC addresses from Tenet trace text (first key=value on each line is always the PC)
+fn extract_pcs_from_tenet(trace_text: &str) -> Vec<u64> {
+    trace_text.lines()
+        .filter(|l| !l.trim().is_empty())
+        .filter_map(|line| {
+            let first_comma = line.find(',').unwrap_or(line.len());
+            let first_field = &line[..first_comma];
+            let eq_pos = first_field.find('=')?;
+            let hex_val = first_field[eq_pos + 1..].trim_start_matches("0x").trim_start_matches("0X");
+            u64::from_str_radix(hex_val, 16).ok()
+        })
+        .collect()
+}
+
+/// Disassembles a set of unique addresses (1 instruction each) and returns instruction info
+fn disassemble_addresses(
+    session: &mut joybug2::protocol_io::DebugSession<Arc<Mutex<SessionStateUI>>>,
+    pid: u32,
+    addresses: &[u64],
+    arch: joybug2::interfaces::Architecture,
+) -> Vec<crate::commands::EmulationInstructionInfo> {
+    let mut info = Vec::with_capacity(addresses.len());
+    for &addr in addresses {
+        if let Ok(instructions) = session.disassemble_memory(pid, addr, 1, arch) {
+            if let Some(inst) = instructions.first() {
+                let symbol = inst.symbol_info.as_ref().map(|sym| {
+                    format_symbol(&sym.module_name, &sym.symbol_name, sym.offset)
+                });
+                let op_str = inst.symbolized_op_str.as_ref().unwrap_or(&inst.op_str).clone();
+                info.push(crate::commands::EmulationInstructionInfo {
+                    address: format!("0x{:X}", inst.address),
+                    symbol,
+                    mnemonic: inst.mnemonic.clone(),
+                    op_str,
+                });
+            }
+        }
+    }
+    info
+}
+
+/// Symbolize addresses in stop_reason strings like "Syscall(0x7FFC0E651262)"
+fn symbolize_stop_reason(
+    session: &mut joybug2::protocol_io::DebugSession<Arc<Mutex<SessionStateUI>>>,
+    pid: u32,
+    stop_reason: &str,
+) -> String {
+    // Match "Syscall(0xADDR)" or "ReachedAddress(0xADDR)"
+    if let Some(start) = stop_reason.find("(0x") {
+        if let Some(end) = stop_reason[start..].find(')') {
+            let hex_str = &stop_reason[start + 1..start + end]; // "0x..."
+            if let Ok(addr) = u64::from_str_radix(&hex_str[2..], 16) {
+                if let Ok((_module, sym, offset)) = session.resolve_address_to_symbol(pid, addr) {
+                    if let (Some(m), Some(s), Some(o)) = (_module, sym, offset) {
+                        let symbol = format_symbol(&m, &s.name, o);
+                        return format!("{}{}{}", &stop_reason[..start + 1], symbol, &stop_reason[start + end..]);
+                    }
+                }
+            }
+        }
+    }
+    stop_reason.to_string()
+}
+
+/// Processes an emulation request and emits results to the frontend
+fn process_emulation_request(
+    session: &mut joybug2::protocol_io::DebugSession<Arc<Mutex<SessionStateUI>>>,
+    app_handle_clone: &Option<AppHandle>,
+    event: &joybug2::protocol_io::DebugEvent,
+    max_instructions: usize,
+    mode: joybug2::protocol_io::EmulationMode,
+    exit_condition: Option<joybug2::protocol_io::TraceExitCondition>,
+    request_id: Option<String>,
+) {
+    let pid = event.pid();
+    let tid = event.tid();
+    debug!("📤 Processing emulation request: pid={}, tid={}, max_instructions={}, mode={:?}", pid, tid, max_instructions, mode);
+
+    let session_id = {
+        let state = session.state.lock().unwrap();
+        state.id.clone()
+    };
+
+    match session.emulate_instructions(pid, tid, max_instructions, mode, exit_condition) {
+        Ok(result) => {
+            debug!("📥 Received emulation result");
+
+            // Determine architecture for disassembly enrichment
+            let arch = {
+                let state = session.state.lock().unwrap();
+                match &state.current_context {
+                    Some(crate::state::SerializableThreadContext::X64(_)) => joybug2::interfaces::Architecture::X64,
+                    Some(crate::state::SerializableThreadContext::Arm64(_)) => joybug2::interfaces::Architecture::Arm64,
+                    None => {
+                        #[cfg(target_arch = "x86_64")]
+                        { joybug2::interfaces::Architecture::X64 }
+                        #[cfg(target_arch = "aarch64")]
+                        { joybug2::interfaces::Architecture::Arm64 }
+                        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+                        { joybug2::interfaces::Architecture::X64 }
+                    }
+                }
+            };
+
+            // Collect unique addresses for BasicBlock and InstructionTrace modes
+            let needs_disassembly = matches!(mode,
+                joybug2::protocol_io::EmulationMode::BasicBlock |
+                joybug2::protocol_io::EmulationMode::InstructionTrace
+            );
+
+            let unique_addrs: Vec<u64> = if needs_disassembly {
+                let raw_addrs: Vec<u64> = match &result {
+                    joybug2::protocol_io::EmulateResult::Emulation(data) => {
+                        data.basic_blocks.clone()
+                    }
+                    joybug2::protocol_io::EmulateResult::Trace(trace) => {
+                        extract_pcs_from_tenet(&trace.trace_text)
+                    }
+                };
+                // Deduplicate while preserving first-seen order
+                let mut seen = std::collections::HashSet::new();
+                raw_addrs.into_iter().filter(|a| seen.insert(*a)).collect()
+            } else {
+                Vec::new()
+            };
+
+            let instruction_info = if !unique_addrs.is_empty() {
+                debug!("📤 Disassembling {} unique addresses for emulation enrichment", unique_addrs.len());
+                disassemble_addresses(session, pid, &unique_addrs, arch)
+            } else {
+                Vec::new()
+            };
+
+            if let Some(ref handle) = app_handle_clone {
+                let payload = match result {
+                    joybug2::protocol_io::EmulateResult::Emulation(data) => {
+                        let stop_reason = symbolize_stop_reason(session, pid, &data.stop_reason);
+                        crate::commands::EmulationResultPayload {
+                            session_id,
+                            request_id,
+                            mode: format!("{:?}", mode),
+                            final_pc: Some(format!("0x{:X}", data.final_pc)),
+                            instructions_executed: data.instructions_executed,
+                            stop_reason,
+                            emulation_time_us: data.emulation_time_us,
+                            pages_loaded: Some(data.pages_loaded),
+                            basic_blocks: data.basic_blocks.iter().map(|addr| format!("0x{:X}", addr)).collect(),
+                            trace_text: None,
+                            trace_time_us: None,
+                            instruction_info,
+                            stats_text: data.stats_text,
+                        }
+                    }
+                    joybug2::protocol_io::EmulateResult::Trace(trace) => {
+                        let stop_reason = symbolize_stop_reason(session, pid, &trace.stop_reason);
+                        crate::commands::EmulationResultPayload {
+                            session_id,
+                            request_id,
+                            mode: format!("{:?}", mode),
+                            final_pc: None,
+                            instructions_executed: 0,
+                            stop_reason,
+                            emulation_time_us: trace.trace_time_us,
+                            pages_loaded: None,
+                            basic_blocks: Vec::new(),
+                            trace_text: Some(trace.trace_text),
+                            trace_time_us: Some(trace.trace_time_us),
+                            instruction_info,
+                            stats_text: trace.stats_text,
+                        }
+                    }
+                };
+
+                if let Err(e) = handle.emit("emulation-result", &payload) {
+                    error!("Failed to emit emulation-result event: {}", e);
+                } else {
+                    debug!("📡 Emitted emulation-result event with {} instruction info entries", payload.instruction_info.len());
+                }
+            }
+        }
+        Err(e) => {
+            error!("Failed to emulate instructions: {}", e);
+
+            if let Some(ref handle) = app_handle_clone {
+                #[derive(serde::Serialize)]
+                struct EmulationError {
+                    session_id: String,
+                    error: String,
+                }
+
+                let error_result = EmulationError {
+                    session_id,
+                    error: e.to_string(),
+                };
+
+                if let Err(emit_err) = handle.emit("emulation-error", &error_result) {
+                    error!("Failed to emit emulation-error event: {}", emit_err);
+                }
+            }
+        }
+    }
+}
+
 /// Handles UI commands in a loop, returns true to continue execution, false to stop session
 fn handle_ui_commands(
     ui_receiver: &std::sync::mpsc::Receiver<UICommand>,
@@ -1061,6 +1275,10 @@ fn handle_ui_commands(
                     }
                     UICommand::Dereference { address, count } => {
                         process_dereference_request(session, app_handle_clone, event, address, count);
+                        // Continue in loop waiting for next command (Go or Stop)
+                    }
+                    UICommand::Emulate { max_instructions, mode, ref exit_condition, ref request_id } => {
+                        process_emulation_request(session, app_handle_clone, event, max_instructions, mode, exit_condition.clone(), request_id.clone());
                         // Continue in loop waiting for next command (Go or Stop)
                     }
                     UICommand::Stop => {

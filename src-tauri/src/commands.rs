@@ -615,6 +615,31 @@ pub fn clear_logs(logs_state: State<'_, LogsState>) -> Result<()> {
     Ok(())
 }
 
+#[derive(serde::Serialize, Clone)]
+pub struct EmulationInstructionInfo {
+    pub address: String,
+    pub symbol: Option<String>,
+    pub mnemonic: String,
+    pub op_str: String,
+}
+
+#[derive(serde::Serialize)]
+pub struct EmulationResultPayload {
+    pub session_id: String,
+    pub request_id: Option<String>,
+    pub mode: String,
+    pub final_pc: Option<String>,
+    pub instructions_executed: usize,
+    pub stop_reason: String,
+    pub emulation_time_us: u64,
+    pub pages_loaded: Option<usize>,
+    pub basic_blocks: Vec<String>,
+    pub trace_text: Option<String>,
+    pub trace_time_us: Option<u64>,
+    pub instruction_info: Vec<EmulationInstructionInfo>,
+    pub stats_text: String,
+}
+
 #[derive(serde::Serialize)]
 pub struct SerializableInstruction {
     pub address: String,
@@ -1081,6 +1106,58 @@ pub fn request_dereference(
         .map_err(|e| Error::InternalCommunication(format!("Failed to send Dereference command: {}", e)))?;
 
     info!("Dereference request sent for session {} at address 0x{:X}, count {}", session_id, address, count);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn request_emulation(
+    session_id: String,
+    max_instructions: usize,
+    mode: String,
+    exit_address: Option<u64>,
+    request_id: Option<String>,
+    session_states: State<'_, SessionStatesMap>,
+) -> Result<()> {
+    let session_state = {
+        let states = session_states.lock().unwrap();
+        states
+            .get(&session_id)
+            .cloned()
+            .ok_or_else(|| Error::SessionNotFound(session_id.clone()))?
+    };
+
+    let emulation_mode = match mode.as_str() {
+        "Basic" => joybug2::protocol_io::EmulationMode::Basic,
+        "InstructionTrace" => joybug2::protocol_io::EmulationMode::InstructionTrace,
+        "BasicBlock" => joybug2::protocol_io::EmulationMode::BasicBlock,
+        "ModuleTransition" => joybug2::protocol_io::EmulationMode::ModuleTransition,
+        "Syscall" => joybug2::protocol_io::EmulationMode::Syscall,
+        _ => return Err(Error::InvalidSessionState(format!("Unknown emulation mode: {}", mode))),
+    };
+
+    let exit_condition = exit_address.map(joybug2::protocol_io::TraceExitCondition::ReachAddress);
+
+    let ui_sender = {
+        let state = session_state.lock().unwrap();
+
+        if !matches!(state.status, SessionStatusUI::Paused) {
+            return Err(Error::InvalidSessionState(
+                "Session must be paused to emulate".to_string(),
+            ));
+        }
+
+        state
+            .ui_sender
+            .as_ref()
+            .ok_or_else(|| Error::InternalCommunication("Session UI sender not available".to_string()))?
+            .clone()
+    };
+
+    ui_sender
+        .send(UICommand::Emulate { max_instructions, mode: emulation_mode, exit_condition, request_id })
+        .map_err(|e| Error::InternalCommunication(format!("Failed to send Emulate command: {}", e)))?;
+
+    info!("Emulation request sent for session {} with mode {}", session_id, mode);
     Ok(())
 }
 

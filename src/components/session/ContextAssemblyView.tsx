@@ -109,9 +109,12 @@ export const ContextAssemblyView = () => {
     return null;
   }, [sessionData?.searchSymbols]);
 
+  const isPaused = displayStatus === 'Paused';
+
   return (
     <AssemblyView
       sessionId={sessionData?.session?.id}
+      isPaused={isPaused}
       address={address}
       registers={registers}
       resolveSymbol={resolveSymbol}

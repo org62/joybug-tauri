@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -87,14 +87,19 @@ export default function Debugger() {
   const restoreSessionsFromStorage = async () => {
     try {
       const storedSessions = loadSessionsFromStorage();
-      
+
       // First, get existing sessions from backend
       const existingSessions = await invoke<DebugSession[]>("get_debug_sessions");
-      const existingIds = new Set(existingSessions.map(s => s.id));
-      
+
+      // Match by content (name + command + mode), not by ID, because IDs change across restarts
+      const existingByContent = new Set(
+        existingSessions.map(s => `${s.name}\0${s.launch_command}\0${s.is_local_run}`)
+      );
+
       // Create sessions in backend from stored configs that don't already exist
       for (const config of storedSessions) {
-        if (!existingIds.has(config.id)) {
+        const contentKey = `${config.name}\0${config.launch_command}\0${config.is_local_run}`;
+        if (!existingByContent.has(contentKey)) {
           try {
             await invoke("create_debug_session", {
               name: config.name,
@@ -102,12 +107,13 @@ export default function Debugger() {
               launchCommand: config.launch_command,
               isLocalRun: config.is_local_run ?? true,
             });
+            existingByContent.add(contentKey);
           } catch (error) {
             console.warn(`Failed to restore session ${config.name}:`, error);
           }
         }
       }
-      
+
       // Load current state from backend
       await loadSessions();
     } catch (error) {
@@ -117,8 +123,11 @@ export default function Debugger() {
     }
   };
 
-  // Initial load - restore sessions from storage
+  // Initial load - restore sessions from storage (useRef guard prevents StrictMode double-execution)
+  const hasRestoredRef = useRef(false);
   useEffect(() => {
+    if (hasRestoredRef.current) return;
+    hasRestoredRef.current = true;
     restoreSessionsFromStorage();
   }, []);
 

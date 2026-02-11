@@ -114,7 +114,7 @@ export default function SessionDocked() {
   };
 
   // Add a new memory tab at a specific address (from memory regions click)
-  const handleNavigateToMemoryAddress = (address: string) => {
+  const handleNavigateToMemoryAddress = React.useCallback((address: string) => {
     // Parse the hex address string (e.g., "0x00007FF..." -> bigint) to handle 64-bit addresses
     // Remove "0x" prefix if present and parse as BigInt
     const cleanAddress = address.toLowerCase().startsWith('0x') ? address.slice(2) : address;
@@ -122,7 +122,7 @@ export default function SessionDocked() {
     dockingRef.current?.addTypedTab('memory', (tabId) => (
       <ContextHexView memoryViewId={tabId} initialAddress={bigIntAddress} />
     ));
-  };
+  }, []);
 
   // Initial state detection - sync when docking becomes ready
   useEffect(() => {
@@ -209,7 +209,7 @@ export default function SessionDocked() {
           event.stopPropagation();
           toggleTabWithBackendUpdate("symbols");
           break;
-        case 'h':
+case 'h':
           event.preventDefault();
           event.stopPropagation();
           handleAddNewMemoryTab();
