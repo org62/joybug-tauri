@@ -1030,6 +1030,49 @@ pub fn request_memory_write(
 }
 
 #[tauri::command]
+pub fn request_set_register(
+    session_id: String,
+    register_name: String,
+    value: String,
+    session_states: State<'_, SessionStatesMap>,
+) -> Result<()> {
+    // Parse hex value (accept with or without 0x prefix)
+    let value = u64::from_str_radix(value.trim_start_matches("0x").trim_start_matches("0X"), 16)
+        .map_err(|e| Error::InvalidParameter(format!("Invalid hex value '{}': {}", value, e)))?;
+
+    let session_state = {
+        let states = session_states.lock().unwrap();
+        states
+            .get(&session_id)
+            .cloned()
+            .ok_or_else(|| Error::SessionNotFound(session_id.clone()))?
+    };
+
+    let ui_sender = {
+        let state = session_state.lock().unwrap();
+
+        if !matches!(state.status, SessionStatusUI::Paused) {
+            return Err(Error::InvalidSessionState(
+                "Session must be paused to set registers".to_string(),
+            ));
+        }
+
+        state
+            .ui_sender
+            .as_ref()
+            .ok_or_else(|| Error::InternalCommunication("Session UI sender not available".to_string()))?
+            .clone()
+    };
+
+    ui_sender
+        .send(UICommand::SetRegister { register_name: register_name.clone(), value })
+        .map_err(|e| Error::InternalCommunication(format!("Failed to send SetRegister command: {}", e)))?;
+
+    info!("Set register request sent for session {}: {} = 0x{:X}", session_id, register_name, value);
+    Ok(())
+}
+
+#[tauri::command]
 pub fn request_memory_regions(
     session_id: String,
     session_states: State<'_, SessionStatesMap>,

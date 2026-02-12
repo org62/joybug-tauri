@@ -1,9 +1,7 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useSessionContext } from '@/contexts/SessionContext';
 import { Input } from '@/components/ui/input';
 import { Search, Code, Loader2 } from 'lucide-react';
-import { invoke } from '@tauri-apps/api/core';
-import { listen } from '@tauri-apps/api/event';
 
 export const ContextSymbolsView = () => {
   const sessionData = useSessionContext();
@@ -11,95 +9,55 @@ export const ContextSymbolsView = () => {
   const [symbols, setSymbols] = useState<any[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Listen for symbol search results
+  // Clear results when session changes or is not paused
   useEffect(() => {
-    if (!sessionData.session?.id) return;
+    if (!sessionData.session?.id || sessionData.session.status !== "Paused") {
+      setSymbols([]);
+      setHasSearched(false);
+      setIsSearching(false);
+    }
+  }, [sessionData.session?.id, sessionData.session?.status]);
 
-    const listenToSymbolUpdates = async () => {
-      const unlistenUpdated = await listen<{session_id: string, pattern: string, symbols: any[]}>(
-        "symbols-updated",
-        (event) => {
-          if (event.payload.session_id === sessionData.session?.id) {
-            setSymbols(event.payload.symbols);
-            setHasSearched(true);
-            setIsSearching(false);
-          }
-        }
-      );
+  // Debounced search using searchSymbols from context
+  const handleSearchChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value;
+    setSearchTerm(value);
 
-      const unlistenError = await listen<{session_id: string, pattern: string, error: string}>(
-        "symbols-error",
-        (event) => {
-          if (event.payload.session_id === sessionData.session?.id) {
-            console.error('Symbol search failed:', event.payload.error);
-            setSymbols([]);
-            setHasSearched(true);
-            setIsSearching(false);
-          }
-        }
-      );
+    if (debounceRef.current) clearTimeout(debounceRef.current);
 
-      return () => {
-        unlistenUpdated();
-        unlistenError();
-      };
+    const trimmed = value.trim();
+    if (trimmed.length < 2) {
+      setSymbols([]);
+      setHasSearched(false);
+      setIsSearching(false);
+      return;
+    }
+
+    if (!sessionData.session?.id || sessionData.session.status !== "Paused" || !sessionData.searchSymbols) return;
+
+    setIsSearching(true);
+    debounceRef.current = setTimeout(async () => {
+      try {
+        const results = await sessionData.searchSymbols(trimmed, 30);
+        setSymbols(results);
+        setHasSearched(true);
+      } catch (error) {
+        console.error('Symbol search failed:', error);
+        setSymbols([]);
+        setHasSearched(true);
+      }
+      setIsSearching(false);
+    }, 300);
+  }, [sessionData.session?.id, sessionData.session?.status, sessionData.searchSymbols]);
+
+  // Cleanup debounce on unmount
+  useEffect(() => {
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
     };
-
-    listenToSymbolUpdates();
-  }, [sessionData.session?.id]);
-
-  // Debounced search function
-  const debouncedSearch = useCallback(
-    (() => {
-      let timeoutId: NodeJS.Timeout;
-      return (pattern: string) => {
-        clearTimeout(timeoutId);
-        timeoutId = setTimeout(async () => {
-          if (!sessionData.session?.id) return;
-          
-          // Only allow symbol search when session is paused
-          if (sessionData.session.status !== "Paused") {
-            console.log("Cannot search symbols: session is not paused");
-            setSymbols([]);
-            setHasSearched(true);
-            setIsSearching(false);
-            return;
-          }
-          
-          if (pattern.trim().length >= 2) {
-            setIsSearching(true);
-            try {
-              await invoke("search_session_symbols", { 
-                sessionId: sessionData.session.id, 
-                pattern, 
-                limit: 30 
-              });
-              // Results will come through the event listener
-            } catch (error) {
-              console.error('Failed to request symbol search:', error);
-              setSymbols([]);
-              setHasSearched(true);
-              setIsSearching(false);
-            }
-          } else {
-            setSymbols([]);
-            setHasSearched(false);
-          }
-        }, 300); // 300ms debounce
-      };
-    })(),
-    [sessionData.session?.id, sessionData.session?.status] // Add status to dependencies
-  );
-
-  // Handle search term changes
-  useEffect(() => {
-    debouncedSearch(searchTerm);
-  }, [searchTerm, debouncedSearch]);
-
-  const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setSearchTerm(e.target.value);
-  };
+  }, []);
 
   const renderContent = () => {
     // Show a message when session is not in the right state
@@ -151,7 +109,7 @@ export const ContextSymbolsView = () => {
     return (
       <div className="space-y-1">
         {symbols.map((symbol, index) => (
-          <div 
+          <div
             key={`${symbol.module_name}-${symbol.name}-${index}`}
             className="px-2 py-1 border-b hover:bg-gray-50 dark:hover:bg-gray-900"
           >
@@ -184,4 +142,4 @@ export const ContextSymbolsView = () => {
       </div>
     </div>
   );
-}; 
+};

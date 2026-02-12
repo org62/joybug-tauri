@@ -111,8 +111,19 @@ export function useDebugSession(sessionId: string | undefined) {
 
     // Create a promise that will resolve when we receive the symbols-updated event
     return new Promise(async (resolve) => {
+      let settled = false;
+
+      const cleanup = () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+        unlisten();
+        unlistenError();
+      };
+
       const timeout = setTimeout(() => {
-        console.warn('Symbol search timed out');
+        console.warn('Symbol search timed out for pattern:', pattern);
+        cleanup();
         resolve([]);
       }, 5000); // 5 second timeout
 
@@ -121,8 +132,7 @@ export function useDebugSession(sessionId: string | undefined) {
         'symbols-updated',
         (event) => {
           if (event.payload.session_id === sessionId && event.payload.pattern === pattern) {
-            clearTimeout(timeout);
-            unlisten();
+            cleanup();
             resolve(event.payload.symbols);
           }
         }
@@ -133,9 +143,7 @@ export function useDebugSession(sessionId: string | undefined) {
         'symbols-error',
         (event) => {
           if (event.payload.session_id === sessionId && event.payload.pattern === pattern) {
-            clearTimeout(timeout);
-            unlisten();
-            unlistenError();
+            cleanup();
             console.error(`Symbol search error: ${event.payload.error}`);
             resolve([]);
           }
@@ -149,9 +157,7 @@ export function useDebugSession(sessionId: string | undefined) {
           limit: limit || 30
         });
       } catch (error) {
-        clearTimeout(timeout);
-        unlisten();
-        unlistenError();
+        cleanup();
         const errorMessage = `Failed to search symbols: ${error}`;
         toast.error(errorMessage);
         console.error(errorMessage);

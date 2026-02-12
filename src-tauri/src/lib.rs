@@ -53,6 +53,7 @@ pub fn run() {
             commands::request_session_callstack,
             commands::request_memory_read,
             commands::request_memory_write,
+            commands::request_set_register,
             commands::request_memory_regions,
             commands::request_dereference,
             commands::request_emulation,

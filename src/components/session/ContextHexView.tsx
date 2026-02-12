@@ -2,7 +2,7 @@ import { useCallback, useMemo } from 'react';
 import { useSessionContext } from '@/contexts/SessionContext';
 import { HexView } from '@/components/HexView';
 import { RegisterContext, SymbolResolver } from '@/lib/hexUtils';
-import { parseAddress } from '@/lib/hexUtils';
+import { resolveSymbol } from '@/lib/symbolUtils';
 
 interface ContextHexViewProps {
   memoryViewId?: string;
@@ -58,63 +58,11 @@ export const ContextHexView = ({ memoryViewId, initialAddress }: ContextHexViewP
   }, [context]);
 
   // Create symbol resolver that uses searchSymbols
-  const resolveSymbol: SymbolResolver = useCallback(async (name: string) => {
+  const resolveSymbolFn: SymbolResolver = useCallback(async (name: string) => {
     if (!sessionData?.searchSymbols) return null;
-
     try {
-      let searchPattern = name;
-      let moduleFilter: string | null = null;
-
-      // If pattern contains "!", split into module and symbol
-      // e.g., "notepad!wWinMain" -> search for "wWinMain", filter by "notepad"
-      const bangIndex = name.indexOf('!');
-      if (bangIndex !== -1) {
-        moduleFilter = name.substring(0, bangIndex).toLowerCase();
-        searchPattern = name.substring(bangIndex + 1);
-      }
-
-      // Search for the symbol
-      const symbols = await sessionData.searchSymbols(searchPattern, 50);
-
-      // Filter and find best match
-      let candidates = symbols;
-
-      // If we have a module filter, apply it (partial match, ignoring .exe/.dll extension)
-      if (moduleFilter) {
-        candidates = symbols.filter(s => {
-          const moduleName = s.module_name.toLowerCase();
-          // Match "notepad" against "notepad.exe" or "notepad"
-          return moduleName === moduleFilter ||
-                 moduleName.startsWith(moduleFilter + '.') ||
-                 moduleName.replace(/\.(exe|dll|sys)$/i, '') === moduleFilter;
-        });
-      }
-
-      // Find exact symbol name match (case-insensitive)
-      const exactMatch = candidates.find(
-        s => s.name.toLowerCase() === searchPattern.toLowerCase()
-      );
-
-      if (exactMatch) {
-        return parseAddress(exactMatch.va);
-      }
-
-      // If no exact match but we have candidates, use the first one
-      if (candidates.length > 0) {
-        return parseAddress(candidates[0].va);
-      }
-
-      // Fallback: check original full search without module filter
-      if (moduleFilter && symbols.length > 0) {
-        const fallback = symbols.find(
-          s => s.name.toLowerCase() === searchPattern.toLowerCase()
-        );
-        if (fallback) {
-          return parseAddress(fallback.va);
-        }
-      }
-
-      return null;
+      const result = await resolveSymbol(sessionData.searchSymbols, name);
+      return result?.address ?? null;
     } catch {
       return null;
     }
@@ -130,7 +78,7 @@ export const ContextHexView = ({ memoryViewId, initialAddress }: ContextHexViewP
       memoryViewId={memoryViewId}
       sessionStatus={statusString}
       registers={registers}
-      resolveSymbol={resolveSymbol}
+      resolveSymbol={resolveSymbolFn}
       initialAddress={initialAddress}
     />
   );

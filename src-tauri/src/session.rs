@@ -28,6 +28,7 @@ pub enum UICommand {
         exit_condition: Option<joybug2::protocol_io::TraceExitCondition>,
         request_id: Option<String>,
     },
+    SetRegister { register_name: String, value: u64 },
 }
 
 /// Event payload for successful memory read (may be partial)
@@ -1118,6 +1119,159 @@ fn process_emulation_request(
     }
 }
 
+/// Processes a set register request: modifies one register in the thread context, writes it back,
+/// then re-reads and broadcasts the updated state.
+fn process_set_register(
+    session: &mut joybug2::protocol_io::DebugSession<Arc<Mutex<SessionStateUI>>>,
+    app_handle_clone: &Option<AppHandle>,
+    event: &joybug2::protocol_io::DebugEvent,
+    register_name: &str,
+    value: u64,
+) {
+    let pid = event.pid();
+    let tid = event.tid();
+    debug!("📤 Processing set register request: pid={}, tid={}, register={}, value=0x{:X}", pid, tid, register_name, value);
+
+    // 1. Get current raw thread context
+    let mut ctx = match session.get_thread_context(pid, tid) {
+        Ok(joybug2::protocol::ThreadContext::Win32RawContext(c)) => c,
+        Err(e) => {
+            error!("Failed to get thread context for set register: {}", e);
+            if let Some(ref handle) = app_handle_clone {
+                crate::ui_logger::toast_error(handle, &format!("Failed to get thread context: {}", e));
+            }
+            return;
+        }
+    };
+
+    // 2. Match register name and set value
+    // NOTE: Uses compile-time target_arch. If cross-arch remote debugging is added,
+    // this should be determined at runtime from the thread context type instead.
+    #[cfg(target_arch = "x86_64")]
+    {
+        match register_name {
+            "rax" => ctx.Rax = value,
+            "rbx" => ctx.Rbx = value,
+            "rcx" => ctx.Rcx = value,
+            "rdx" => ctx.Rdx = value,
+            "rsi" => ctx.Rsi = value,
+            "rdi" => ctx.Rdi = value,
+            "rbp" => ctx.Rbp = value,
+            "rsp" => ctx.Rsp = value,
+            "rip" => ctx.Rip = value,
+            "r8" => ctx.R8 = value,
+            "r9" => ctx.R9 = value,
+            "r10" => ctx.R10 = value,
+            "r11" => ctx.R11 = value,
+            "r12" => ctx.R12 = value,
+            "r13" => ctx.R13 = value,
+            "r14" => ctx.R14 = value,
+            "r15" => ctx.R15 = value,
+            "eflags" => ctx.EFlags = value as u32,
+            _ => {
+                error!("Unknown x64 register: {}", register_name);
+                if let Some(ref handle) = app_handle_clone {
+                    crate::ui_logger::toast_error(handle, &format!("Unknown register: {}", register_name));
+                }
+                return;
+            }
+        }
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    {
+        unsafe {
+            match register_name {
+                "x0" => ctx.Anonymous.X[0] = value,
+                "x1" => ctx.Anonymous.X[1] = value,
+                "x2" => ctx.Anonymous.X[2] = value,
+                "x3" => ctx.Anonymous.X[3] = value,
+                "x4" => ctx.Anonymous.X[4] = value,
+                "x5" => ctx.Anonymous.X[5] = value,
+                "x6" => ctx.Anonymous.X[6] = value,
+                "x7" => ctx.Anonymous.X[7] = value,
+                "x8" => ctx.Anonymous.X[8] = value,
+                "x9" => ctx.Anonymous.X[9] = value,
+                "x10" => ctx.Anonymous.X[10] = value,
+                "x11" => ctx.Anonymous.X[11] = value,
+                "x12" => ctx.Anonymous.X[12] = value,
+                "x13" => ctx.Anonymous.X[13] = value,
+                "x14" => ctx.Anonymous.X[14] = value,
+                "x15" => ctx.Anonymous.X[15] = value,
+                "x16" => ctx.Anonymous.X[16] = value,
+                "x17" => ctx.Anonymous.X[17] = value,
+                "x18" => ctx.Anonymous.X[18] = value,
+                "x19" => ctx.Anonymous.X[19] = value,
+                "x20" => ctx.Anonymous.X[20] = value,
+                "x21" => ctx.Anonymous.X[21] = value,
+                "x22" => ctx.Anonymous.X[22] = value,
+                "x23" => ctx.Anonymous.X[23] = value,
+                "x24" => ctx.Anonymous.X[24] = value,
+                "x25" => ctx.Anonymous.X[25] = value,
+                "x26" => ctx.Anonymous.X[26] = value,
+                "x27" => ctx.Anonymous.X[27] = value,
+                "x28" => ctx.Anonymous.X[28] = value,
+                "x29" => ctx.Anonymous.Anonymous.Fp = value,
+                "x30" => ctx.Anonymous.Anonymous.Lr = value,
+                "sp" => ctx.Sp = value,
+                "pc" => ctx.Pc = value,
+                "cpsr" => ctx.Cpsr = value as u32,
+                _ => {
+                    error!("Unknown ARM64 register: {}", register_name);
+                    if let Some(ref handle) = app_handle_clone {
+                        crate::ui_logger::toast_error(handle, &format!("Unknown register: {}", register_name));
+                    }
+                    return;
+                }
+            }
+        }
+    }
+
+    // 3. Write modified context back
+    let write_ctx = joybug2::protocol::ThreadContext::Win32RawContext(ctx);
+    if let Err(e) = session.set_thread_context(pid, tid, write_ctx) {
+        error!("Failed to set thread context: {}", e);
+        if let Some(ref handle) = app_handle_clone {
+            crate::ui_logger::toast_error(handle, &format!("Failed to set register: {}", e));
+        }
+        return;
+    }
+
+    // 4. Re-read context and update state
+    match session.get_thread_context(pid, tid) {
+        Ok(fresh_ctx) => {
+            let mut state = session.state.lock().unwrap();
+            state.current_context = Some(crate::events::convert_raw_context_to_serializable(fresh_ctx));
+        }
+        Err(e) => {
+            error!("Failed to re-read thread context after set: {}", e);
+        }
+    }
+
+    // 5. Emit session-updated to refresh the entire UI
+    if let Some(ref handle) = app_handle_clone {
+        emit_session_event(&session.state, handle);
+    }
+
+    info!("Successfully set register {} = 0x{:X}", register_name, value);
+}
+
+/// Reports a step error to the UI logger and toast.
+fn report_step_error(
+    session: &joybug2::protocol_io::DebugSession<Arc<Mutex<SessionStateUI>>>,
+    app_handle_clone: &Option<AppHandle>,
+    msg: &str,
+) {
+    if let Some(ref handle) = app_handle_clone {
+        let session_id = {
+            let state = session.state.lock().unwrap();
+            state.id.clone()
+        };
+        crate::ui_logger::log_error(handle, msg, Some(session_id));
+        crate::ui_logger::toast_error(handle, msg);
+    }
+}
+
 /// Handles UI commands in a loop, returns true to continue execution, false to stop session
 fn handle_ui_commands(
     ui_receiver: &std::sync::mpsc::Receiver<UICommand>,
@@ -1150,20 +1304,20 @@ fn handle_ui_commands(
                         debug!("📤 StepIn command - pid={}, tid={}", pid, tid);
 
                         // Request a step into; stop after first step completes
-                        session
-                            .step(
-                                pid,
-                                tid,
-                                joybug2::protocol_io::StepKind::Into,
-                                |_s, _pid, _tid, _addr, _kind| {
-                                    debug!("📥 StepIn handler called");
-                                    Ok(joybug2::protocol_io::StepAction::Stop)
-                                },
-                            )
-                            .map_err(|e| Error::DebugLoop(format!(
-                                "Failed to start step-in: {}",
-                                e
-                            )))?;
+                        if let Err(e) = session.step(
+                            pid,
+                            tid,
+                            joybug2::protocol_io::StepKind::Into,
+                            |_s, _pid, _tid, _addr, _kind| {
+                                debug!("📥 StepIn handler called");
+                                Ok(joybug2::protocol_io::StepAction::Stop)
+                            },
+                        ) {
+                            let msg = format!("Step in failed: {}", e);
+                            report_step_error(session, app_handle_clone, &msg);
+                            debug!("StepIn failed; staying paused and awaiting next command");
+                            continue;
+                        }
 
                         // Target will run briefly until step completes; mark as Running
                         if let Some(handle) = app_handle_clone.as_ref() {
@@ -1181,20 +1335,20 @@ fn handle_ui_commands(
 
                         debug!("📤 StepOver command - pid={}, tid={}", pid, tid);
 
-                        session
-                            .step(
-                                pid,
-                                tid,
-                                joybug2::protocol_io::StepKind::Over,
-                                |_s, _pid, _tid, _addr, _kind| {
-                                    debug!("📥 StepOver handler called");
-                                    Ok(joybug2::protocol_io::StepAction::Stop)
-                                },
-                            )
-                            .map_err(|e| Error::DebugLoop(format!(
-                                "Failed to start step-over: {}",
-                                e
-                            )))?;
+                        if let Err(e) = session.step(
+                            pid,
+                            tid,
+                            joybug2::protocol_io::StepKind::Over,
+                            |_s, _pid, _tid, _addr, _kind| {
+                                debug!("📥 StepOver handler called");
+                                Ok(joybug2::protocol_io::StepAction::Stop)
+                            },
+                        ) {
+                            let msg = format!("Step over failed: {}", e);
+                            report_step_error(session, app_handle_clone, &msg);
+                            debug!("StepOver failed; staying paused and awaiting next command");
+                            continue;
+                        }
 
                         if let Some(handle) = app_handle_clone.as_ref() {
                             let mut s = session.state.lock().unwrap();
@@ -1220,17 +1374,8 @@ fn handle_ui_commands(
                                 Ok(joybug2::protocol_io::StepAction::Stop)
                             },
                         ) {
-                            // Surface step-out error to UI, log, and stop the session per requirement
                             let msg = format!("Step out failed: {}", e);
-                            if let Some(ref handle) = app_handle_clone {
-                                let session_id = {
-                                    let state = session.state.lock().unwrap();
-                                    state.id.clone()
-                                };
-                                crate::ui_logger::log_error(handle, &msg, Some(session_id));
-                                crate::ui_logger::toast_error(handle, &msg);
-                            }
-                            // Keep session paused: do NOT continue execution; wait for the next UI command
+                            report_step_error(session, app_handle_clone, &msg);
                             debug!("StepOut failed; staying paused and awaiting next command");
                             continue;
                         }
@@ -1279,6 +1424,10 @@ fn handle_ui_commands(
                     }
                     UICommand::Emulate { max_instructions, mode, ref exit_condition, ref request_id } => {
                         process_emulation_request(session, app_handle_clone, event, max_instructions, mode, exit_condition.clone(), request_id.clone());
+                        // Continue in loop waiting for next command (Go or Stop)
+                    }
+                    UICommand::SetRegister { ref register_name, value } => {
+                        process_set_register(session, app_handle_clone, event, register_name, value);
                         // Continue in loop waiting for next command (Go or Stop)
                     }
                     UICommand::Stop => {

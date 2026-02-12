@@ -1,3 +1,4 @@
+import { useCallback } from "react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { DereferenceEntry } from "@/lib/hexUtils";
 import { RegisterDereferenceDisplay } from "@/components/DereferenceDisplay";
@@ -34,21 +35,37 @@ interface RegisterViewProps {
   context: SerializableThreadContext;
   getDereferenceForAddress?: (address: string) => DereferenceEntry | undefined;
   changedRegisters?: Set<string>;
+  onRegisterEdit?: (field: string, hexValue: string) => void;
 }
 
 interface RegisterPairProps {
   name: string;
+  field: string;
   value: string;
   dereferenceEntry?: DereferenceEntry;
   showDereference?: boolean;
   isChanged?: boolean;
+  onRegisterEdit?: (field: string, hexValue: string) => void;
 }
 
-const RegisterPair = ({ name, value, dereferenceEntry, showDereference = true, isChanged }: RegisterPairProps) => {
+const RegisterPair = ({ name, field, value, dereferenceEntry, showDereference = true, isChanged, onRegisterEdit }: RegisterPairProps) => {
+  const handleDoubleClick = useCallback(() => {
+    onRegisterEdit?.(field, value);
+  }, [onRegisterEdit, field, value]);
+
   return (
     <div className="flex items-center py-0.5 px-1 hover:bg-muted/50 rounded-sm text-xs min-w-0">
       <span className="w-8 font-semibold text-muted-foreground shrink-0">{name}</span>
-      <span className={cn("font-mono ml-1 shrink-0", isChanged && "text-red-400")}>{value}</span>
+      <span
+        className={cn(
+          "font-mono ml-1 shrink-0",
+          isChanged && "text-red-400",
+          onRegisterEdit && "cursor-pointer hover:underline"
+        )}
+        onDoubleClick={handleDoubleClick}
+      >
+        {value}
+      </span>
       {showDereference && (
         <span className="ml-1 min-w-0 truncate">
           <RegisterDereferenceDisplay entry={dereferenceEntry} maxItems={6} />
@@ -58,13 +75,13 @@ const RegisterPair = ({ name, value, dereferenceEntry, showDereference = true, i
   );
 };
 
-interface RegisterDef {
+export interface RegisterDef {
   name: string;
   field: string;
   showDereference?: boolean;
 }
 
-const X64_REGISTERS: RegisterDef[] = [
+export const X64_REGISTERS: RegisterDef[] = [
   { name: "RAX", field: "rax" }, { name: "RBX", field: "rbx" },
   { name: "RCX", field: "rcx" }, { name: "RDX", field: "rdx" },
   { name: "RSI", field: "rsi" }, { name: "RDI", field: "rdi" },
@@ -77,7 +94,7 @@ const X64_REGISTERS: RegisterDef[] = [
   { name: "EFL", field: "eflags", showDereference: false },
 ];
 
-const ARM64_REGISTERS: RegisterDef[] = [
+export const ARM64_REGISTERS: RegisterDef[] = [
   { name: "X0", field: "x0" }, { name: "X1", field: "x1" },
   { name: "X2", field: "x2" }, { name: "X3", field: "x3" },
   { name: "X4", field: "x4" }, { name: "X5", field: "x5" },
@@ -103,6 +120,7 @@ function renderRegisterList(
   defs: RegisterDef[],
   getDeref: (value: string) => DereferenceEntry | undefined,
   isChanged: (field: string) => boolean,
+  onRegisterEdit?: (field: string, hexValue: string) => void,
 ) {
   return (
     <ScrollArea className="h-full w-full">
@@ -113,10 +131,12 @@ function renderRegisterList(
             <RegisterPair
               key={field}
               name={name}
+              field={field}
               value={value}
               dereferenceEntry={showDereference !== false ? getDeref(value) : undefined}
               showDereference={showDereference}
               isChanged={isChanged(field)}
+              onRegisterEdit={onRegisterEdit}
             />
           );
         })}
@@ -125,16 +145,16 @@ function renderRegisterList(
   );
 }
 
-export function RegisterView({ context, getDereferenceForAddress, changedRegisters }: RegisterViewProps) {
+export function RegisterView({ context, getDereferenceForAddress, changedRegisters, onRegisterEdit }: RegisterViewProps) {
   const getDeref = (value: string) => getDereferenceForAddress?.(value);
   const isChanged = (field: string) => changedRegisters?.has(field) ?? false;
 
   if (context.arch === "X64") {
-    return renderRegisterList(context as unknown as Record<string, string>, X64_REGISTERS, getDeref, isChanged);
+    return renderRegisterList(context as unknown as Record<string, string>, X64_REGISTERS, getDeref, isChanged, onRegisterEdit);
   }
 
   if (context.arch === "Arm64") {
-    return renderRegisterList(context as unknown as Record<string, string>, ARM64_REGISTERS, getDeref, isChanged);
+    return renderRegisterList(context as unknown as Record<string, string>, ARM64_REGISTERS, getDeref, isChanged, onRegisterEdit);
   }
 
   return (
@@ -144,4 +164,4 @@ export function RegisterView({ context, getDereferenceForAddress, changedRegiste
       </div>
     </ScrollArea>
   );
-} 
+}
