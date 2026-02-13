@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useMemo, useCallback } from "react";
 import { ChevronDown, ChevronRight, Loader2 } from "lucide-react";
 import { ScrollArea } from "./ui/scroll-area";
+import { cn } from "@/lib/utils";
 import { useQuickEmulation, QuickEmulationResult } from "@/hooks/useQuickEmulation";
 import { parseTenetTrace } from "@/lib/tenetParser";
 
@@ -8,10 +9,10 @@ interface EmulationQuickViewProps {
   sessionId?: string;
   isPaused?: boolean;
   pcAddress?: number;
+  onNavigateToAddress?: (hexAddress: string) => void;
 }
 
 function formatTimingUs(us: number): string {
-  if (us < 1000) return `${us}µs`;
   return `${(us / 1000).toFixed(1)}ms`;
 }
 
@@ -44,32 +45,33 @@ function getInitialHeight(): number {
 function parseSummaryRow(result: QuickEmulationResult | null, kind: "syscall" | "module"): {
   label: string;
   muted: boolean;
+  finalPc: string | null;
 } {
-  if (!result) return { label: "...", muted: true };
+  if (!result) return { label: "...", muted: true, finalPc: null };
 
   if (result.stop_reason === "InstructionLimit") {
-    return { label: "Not reached", muted: true };
+    return { label: "Not reached", muted: true, finalPc: null };
   }
 
   const reason = result.stop_reason;
+  const finalPc = result.final_pc ?? null;
 
   if (kind === "syscall") {
     // stop_reason like "Syscall(ntdll!NtWriteFile+0x14)" or "Syscall(0x7FFC...)"
     const match = reason.match(/^Syscall\((.+)\)$/);
-    return { label: match ? match[1] : reason, muted: false };
+    return { label: match ? match[1] : reason, muted: false, finalPc };
   }
 
-  // Module transition: "ModuleTransition { from: "ntdll", to: "kernelbase", ... }"
-  const fromMatch = reason.match(/from:\s*"([^"]+)"/);
-  const toMatch = reason.match(/to:\s*"([^"]+)"/);
-  if (fromMatch && toMatch) {
-    return { label: `${fromMatch[1]} \u2192 ${toMatch[1]}`, muted: false };
+  // Module transition: "ModuleTransition(ntdll->kernelbase@SomeFunc+0x10)"
+  const moduleMatch = reason.match(/^ModuleTransition\(.+@(.+)\)$/);
+  if (moduleMatch) {
+    return { label: moduleMatch[1], muted: false, finalPc };
   }
 
-  return { label: reason, muted: false };
+  return { label: reason, muted: false, finalPc };
 }
 
-export function EmulationQuickView({ sessionId, isPaused, pcAddress }: EmulationQuickViewProps) {
+export function EmulationQuickView({ sessionId, isPaused, pcAddress, onNavigateToAddress }: EmulationQuickViewProps) {
   const [collapsed, setCollapsed] = useState(getInitialCollapsed);
   const [height, setHeight] = useState(getInitialHeight);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -331,7 +333,17 @@ export function EmulationQuickView({ sessionId, isPaused, pcAddress }: Emulation
           <div className="px-3 py-1 space-y-0.5 border-b border-border/50">
             <div className="flex items-center gap-2">
               <span className="text-muted-foreground w-24 shrink-0">Next Syscall:</span>
-              <span className={syscall.muted ? "text-muted-foreground" : "text-green-500"}>
+              <span
+                className={cn(
+                  syscall.muted ? "text-muted-foreground" : "text-green-500",
+                  !syscall.muted && onNavigateToAddress && syscall.finalPc && "cursor-pointer hover:underline hover:text-green-400"
+                )}
+                onClick={() => {
+                  if (!syscall.muted && onNavigateToAddress && syscall.finalPc) {
+                    onNavigateToAddress(syscall.finalPc);
+                  }
+                }}
+              >
                 {syscall.label}
               </span>
               {traceDistances.syscall !== undefined && (
@@ -342,7 +354,17 @@ export function EmulationQuickView({ sessionId, isPaused, pcAddress }: Emulation
             </div>
             <div className="flex items-center gap-2">
               <span className="text-muted-foreground w-24 shrink-0">Next Module:</span>
-              <span className={module.muted ? "text-muted-foreground" : "text-green-500"}>
+              <span
+                className={cn(
+                  module.muted ? "text-muted-foreground" : "text-green-500",
+                  !module.muted && onNavigateToAddress && module.finalPc && "cursor-pointer hover:underline hover:text-green-400"
+                )}
+                onClick={() => {
+                  if (!module.muted && onNavigateToAddress && module.finalPc) {
+                    onNavigateToAddress(module.finalPc);
+                  }
+                }}
+              >
                 {module.label}
               </span>
             </div>

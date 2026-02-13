@@ -1429,8 +1429,20 @@ fn apply_enable_breakpoint(
     };
 
     if let Some(bp) = bp_info {
-        if enabled && !bp.is_active && bp.address != 0 {
-            match session.set_breakpoint_at(pid, bp.address, None, |_s, _p, _t, _a| {
+        // Resolve address from loaded modules if not yet resolved
+        let address = if bp.address == 0 && enabled {
+            let state = session.state.lock().unwrap();
+            state.modules.iter()
+                .find(|m| m.name.eq_ignore_ascii_case(&bp.module_name) ||
+                      module_short_name(&m.name).eq_ignore_ascii_case(&bp.module_name))
+                .map(|m| m.base + bp.module_offset)
+                .unwrap_or(0)
+        } else {
+            bp.address
+        };
+
+        if enabled && !bp.is_active && address != 0 {
+            match session.set_breakpoint_at(pid, address, None, |_s, _p, _t, _a| {
                 Ok(joybug2::protocol_io::BreakpointDecision::Keep)
             }) {
                 Ok(()) => {
@@ -1438,6 +1450,7 @@ fn apply_enable_breakpoint(
                     if let Some(b) = state.breakpoints.iter_mut().find(|b| b.id == breakpoint_id) {
                         b.enabled = true;
                         b.is_active = true;
+                        b.address = address;
                     }
                 }
                 Err(e) => {
@@ -1449,7 +1462,7 @@ fn apply_enable_breakpoint(
                 }
             }
         } else if !enabled && bp.is_active {
-            if let Err(e) = session.remove_breakpoint(pid, bp.address) {
+            if let Err(e) = session.remove_breakpoint(pid, address) {
                 warn!("Failed to disable breakpoint: {}", e);
             }
             let mut state = session.state.lock().unwrap();
@@ -1538,23 +1551,33 @@ fn reapply_breakpoints_for_module(
     module_name: &str,
     module_base: u64,
 ) {
-    let breakpoints_to_apply: Vec<(String, u64)> = {
+    // Collect ALL matching breakpoints (resolve address for all, apply only enabled)
+    let breakpoints_to_apply: Vec<(String, u64, bool)> = {
         let state = session.state.lock().unwrap();
         state.breakpoints.iter()
-            .filter(|bp| bp.enabled && !bp.is_active && bp.module_name.eq_ignore_ascii_case(module_name))
-            .map(|bp| (bp.id.clone(), module_base + bp.module_offset))
+            .filter(|bp| !bp.is_active && bp.module_name.eq_ignore_ascii_case(module_name))
+            .map(|bp| (bp.id.clone(), module_base + bp.module_offset, bp.enabled))
             .collect()
     };
 
-    for (bp_id, addr) in breakpoints_to_apply {
-        if session.set_breakpoint_at(pid, addr, None, |_s, _p, _t, _a| {
-            Ok(joybug2::protocol_io::BreakpointDecision::Keep)
-        }).is_ok() {
+    for (bp_id, addr, enabled) in breakpoints_to_apply {
+        if enabled {
+            if session.set_breakpoint_at(pid, addr, None, |_s, _p, _t, _a| {
+                Ok(joybug2::protocol_io::BreakpointDecision::Keep)
+            }).is_ok() {
+                let mut state = session.state.lock().unwrap();
+                if let Some(bp) = state.breakpoints.iter_mut().find(|b| b.id == bp_id) {
+                    bp.address = addr;
+                    bp.is_active = true;
+                    info!("Re-applied breakpoint {} at 0x{:X}", bp.id, addr);
+                }
+            }
+        } else {
+            // Resolve address for disabled breakpoints so enabling later works
             let mut state = session.state.lock().unwrap();
             if let Some(bp) = state.breakpoints.iter_mut().find(|b| b.id == bp_id) {
                 bp.address = addr;
-                bp.is_active = true;
-                info!("Re-applied breakpoint {} at 0x{:X}", bp.id, addr);
+                info!("Resolved address for disabled breakpoint {} at 0x{:X}", bp.id, addr);
             }
         }
     }

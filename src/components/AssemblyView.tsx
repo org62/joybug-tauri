@@ -388,7 +388,7 @@ export function AssemblyView({ sessionId, isPaused, address, registers, resolveS
       </ScrollArea>
 
       {/* Quick Emulation footer */}
-      <EmulationQuickView sessionId={sessionId} isPaused={isPaused} pcAddress={address} />
+      <EmulationQuickView sessionId={sessionId} isPaused={isPaused} pcAddress={address} onNavigateToAddress={(addr) => goToAddressDirect(BigInt(addr))} />
 
       {/* Context Menu */}
       {contextMenu && (
