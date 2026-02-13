@@ -49,6 +49,7 @@ interface AssemblyViewProps {
 
 export function AssemblyView({ sessionId, isPaused, address, registers, resolveSymbol, breakpointAddresses, onToggleBreakpoint }: AssemblyViewProps) {
   const [addressInput, setAddressInput] = useState("");
+  const containerRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const pcRowRef = useRef<HTMLDivElement>(null);
   const jumpTargetRowRef = useRef<HTMLDivElement>(null);
@@ -194,6 +195,27 @@ export function AssemblyView({ sessionId, isPaused, address, registers, resolveS
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [goBack, goForward]);
 
+  // Mouse back/forward button navigation (buttons 3 & 4)
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const handleMouseDown = (e: MouseEvent) => {
+      if (e.button === 3) {
+        e.preventDefault();
+        e.stopPropagation();
+        goBack();
+      } else if (e.button === 4) {
+        e.preventDefault();
+        e.stopPropagation();
+        goForward();
+      }
+    };
+
+    container.addEventListener("mousedown", handleMouseDown);
+    return () => container.removeEventListener("mousedown", handleMouseDown);
+  }, [goBack, goForward]);
+
   // Determine content to show
   const showEmptyState = !sessionId || (address == null && instructions.length === 0 && !error && !isLoading);
   const showErrorState = error !== null;
@@ -201,7 +223,7 @@ export function AssemblyView({ sessionId, isPaused, address, registers, resolveS
   const showInstructions = instructions.length > 0;
 
   return (
-    <div className="absolute inset-0 flex flex-col overflow-hidden">
+    <div ref={containerRef} data-capture-mouse-nav className="absolute inset-0 flex flex-col overflow-hidden">
       {/* Toolbar */}
       <div className="flex items-center gap-2 p-2 border-b border-border bg-muted/30 shrink-0">
         {/* Go-to address input */}
