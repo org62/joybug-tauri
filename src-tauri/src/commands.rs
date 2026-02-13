@@ -918,6 +918,7 @@ pub struct SymbolData {
     pub rva: u32,
     pub va: String, // Virtual address (base_address + rva)
     pub display_name: String, // Format: "module!symbol_name"
+    pub is_function: bool,
 }
 
 #[tauri::command]

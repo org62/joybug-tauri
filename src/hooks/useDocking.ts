@@ -15,6 +15,7 @@ export interface DockingOperations {
   addTypedTab: (type: string, contentFactory: (tabId: string) => React.ReactElement) => string;
   resetLayout: () => void;
   toggleTab: (tabId: string) => void;
+  showTab: (tabId: string) => void;
   onLayoutChange: (
     newLayout: LayoutBase
   ) => void;
@@ -53,6 +54,65 @@ const getSerializableLayout = (l: LayoutBase): LayoutData => {
 
   return serializableLayout;
 };
+
+// --- Layout tree helpers ---
+
+/** Find whether a tab exists in the layout and whether it's the active tab in its panel */
+function findTabState(dockbox: any, tabId: string): { exists: boolean; isActive: boolean } {
+  let exists = false, isActive = false;
+  const walk = (box: any) => {
+    if (exists || !box) return;
+    if (box.tabs?.some((t: any) => t.id === tabId)) {
+      exists = true;
+      isActive = box.activeId === tabId;
+    }
+    if (box.children) box.children.forEach(walk);
+  };
+  walk(dockbox);
+  return { exists, isActive };
+}
+
+/** Set a tab as the active tab in its panel */
+function activateTab(dockbox: any, tabId: string) {
+  const walk = (box: any) => {
+    if (!box) return;
+    if (box.tabs?.some((t: { id: string }) => t.id === tabId)) {
+      box.activeId = tabId;
+    }
+    if (box.children) box.children.forEach(walk);
+  };
+  walk(dockbox);
+}
+
+/** Add a tab to the first panel found in the layout and activate it */
+function addTabToFirstPanel(dockbox: any, tabId: string) {
+  let panel: any;
+  const findPanel = (box: any) => {
+    if (panel || !box) return;
+    if (box.tabs) { panel = box; return; }
+    if (box.children) box.children.forEach(findPanel);
+  };
+  findPanel(dockbox);
+
+  if (panel?.tabs) {
+    panel.tabs.push({ id: tabId });
+    panel.activeId = tabId;
+  } else {
+    if (!dockbox.children) dockbox.children = [];
+    dockbox.children.push({ tabs: [{ id: tabId }], activeId: tabId });
+  }
+}
+
+/** Collect all tab IDs present in a layout box tree */
+function collectTabIds(box: any): string[] {
+  const ids = new Set<string>();
+  const walk = (b: any) => {
+    if (b?.tabs) b.tabs.forEach((t: any) => { if (t.id) ids.add(t.id); });
+    if (b?.children) b.children.forEach(walk);
+  };
+  walk(box);
+  return Array.from(ids);
+}
 
 export function useDocking(config: DockingConfig): DockingState & DockingOperations {
   const {
@@ -285,51 +345,21 @@ export function useDocking(config: DockingConfig): DockingState & DockingOperati
     tabIdCounterRef.current = initialCounter;
     localStorage.setItem(TAB_ID_COUNTER_STORAGE_KEY, initialCounter.toString());
     localStorage.setItem(LAYOUT_STORAGE_KEY, JSON.stringify(initialLayout));
-    
-    // Trigger onTabsChanged callback immediately after reset
+
     if (onTabsChanged) {
-      const activeTabIds = new Set<string>();
-      const findTabIds = (box: any) => {
-        if (box.tabs) {
-          box.tabs.forEach((tab: any) => {
-            if (tab.id) {
-              activeTabIds.add(tab.id);
-            }
-          });
-        }
-        if (box.children) {
-          box.children.forEach(findTabIds);
-        }
-      };
-      findTabIds(initialLayout.dockbox);
-      
-      // Call immediately - no timeout needed
-      onTabsChanged(Array.from(activeTabIds));
+      onTabsChanged(collectTabIds(initialLayout.dockbox));
     }
   }, [initialLayout, initialTabContents, LAYOUT_STORAGE_KEY, TAB_ID_COUNTER_STORAGE_KEY, onTabsChanged]);
 
   const toggleTab = React.useCallback((tabId: string) => {
     setLayout((currentLayout) => {
-      let tabExists = false;
-      let isActiveTab = false;
-
-      const findTab = (box: any) => {
-        if (tabExists || !box) return;
-        if (box.tabs?.some((t: TabData) => t.id === tabId)) {
-          tabExists = true;
-          isActiveTab = box.activeId === tabId;
-        }
-        if (box.children) {
-          box.children.forEach(findTab);
-        }
-      };
-      findTab(currentLayout.dockbox);
+      const { exists, isActive } = findTabState(currentLayout.dockbox, tabId);
 
       const newLayout = JSON.parse(
         JSON.stringify(getSerializableLayout(currentLayout))
       );
 
-      if (tabExists && isActiveTab) {
+      if (exists && isActive) {
         // Tab exists and is active - close it
         const removeTab = (box: any) => {
           if (!box) return;
@@ -337,7 +367,7 @@ export function useDocking(config: DockingConfig): DockingState & DockingOperati
             const tabIndex = box.tabs.findIndex((t: { id: string }) => t.id === tabId);
             if (tabIndex !== -1) {
               box.tabs.splice(tabIndex, 1);
-              
+
               // If this was the active tab, set a new active tab or clear activeId
               if (box.activeId === tabId) {
                 if (box.tabs.length > 0) {
@@ -348,9 +378,6 @@ export function useDocking(config: DockingConfig): DockingState & DockingOperati
                   delete box.activeId;
                 }
               }
-              
-              // If panel has no tabs left, we might want to remove the panel
-              // But for now, we'll keep empty panels to maintain layout structure
             }
           }
           if (box.children) {
@@ -358,69 +385,47 @@ export function useDocking(config: DockingConfig): DockingState & DockingOperati
           }
         };
         removeTab(newLayout.dockbox);
-      } else if (tabExists) {
-        // Tab exists but is not active - activate it
-        const findAndActivate = (box: any) => {
-          if (!box) return;
-          if (box.tabs?.some((t: { id: string }) => t.id === tabId)) {
-            box.activeId = tabId;
-          }
-          if (box.children) {
-            box.children.forEach(findAndActivate);
-          }
-        };
-        findAndActivate(newLayout.dockbox);
+      } else if (exists) {
+        activateTab(newLayout.dockbox, tabId);
       } else {
-        // Tab doesn't exist - add it
-        let panel: any;
-        const findPanel = (box: any) => {
-          if (panel || !box) return;
-          if (box.tabs) {
-            panel = box;
-          }
-          if (box.children) {
-            box.children.forEach(findPanel);
-          }
-        };
-        findPanel(newLayout.dockbox);
-
-        if (panel?.tabs) {
-          panel.tabs.push({ id: tabId });
-          panel.activeId = tabId;
-        } else {
-          if (!newLayout.dockbox.children) {
-            newLayout.dockbox.children = [];
-          }
-          newLayout.dockbox.children.push({
-            tabs: [{ id: tabId }],
-            activeId: tabId,
-          });
-        }
+        addTabToFirstPanel(newLayout.dockbox, tabId);
       }
 
       localStorage.setItem(LAYOUT_STORAGE_KEY, JSON.stringify(newLayout));
-      
-      // Trigger onTabsChanged callback immediately after layout update
+
       if (onTabsChanged) {
-        const activeTabIds = new Set<string>();
-        const findTabIds = (box: any) => {
-          if (box.tabs) {
-            box.tabs.forEach((tab: any) => {
-              if (tab.id) {
-                activeTabIds.add(tab.id);
-              }
-            });
-          }
-          if (box.children) {
-            box.children.forEach(findTabIds);
-          }
-        };
-        findTabIds(newLayout.dockbox);
-        
-        // Call immediately - no timeout needed
-        onTabsChanged(Array.from(activeTabIds));
+        onTabsChanged(collectTabIds(newLayout.dockbox));
       }
-      
+
+      return newLayout;
+    });
+  }, [LAYOUT_STORAGE_KEY, onTabsChanged]);
+
+  const showTab = React.useCallback((tabId: string) => {
+    setLayout((currentLayout) => {
+      const { exists, isActive } = findTabState(currentLayout.dockbox, tabId);
+
+      // If tab already exists and is active, no layout change needed
+      if (exists && isActive) {
+        return currentLayout;
+      }
+
+      const newLayout = JSON.parse(
+        JSON.stringify(getSerializableLayout(currentLayout))
+      );
+
+      if (exists) {
+        activateTab(newLayout.dockbox, tabId);
+      } else {
+        addTabToFirstPanel(newLayout.dockbox, tabId);
+      }
+
+      localStorage.setItem(LAYOUT_STORAGE_KEY, JSON.stringify(newLayout));
+
+      if (onTabsChanged) {
+        onTabsChanged(collectTabIds(newLayout.dockbox));
+      }
+
       return newLayout;
     });
   }, [LAYOUT_STORAGE_KEY, onTabsChanged]);
@@ -434,33 +439,18 @@ export function useDocking(config: DockingConfig): DockingState & DockingOperati
 
       const newLayoutData = newLayout as LayoutData;
 
-      const activeTabIds = new Set<string>();
-      const findTabIds = (box: any) => {
-        if (box.tabs) {
-          box.tabs.forEach((tab: TabData) => {
-            if (tab.id) {
-              activeTabIds.add(tab.id);
-            }
-          });
-        }
-        if (box.children) {
-          box.children.forEach(findTabIds);
-        }
-      };
-      if (newLayoutData.dockbox) {
-        findTabIds(newLayoutData.dockbox);
-      }
+      const dockTabIds = newLayoutData.dockbox ? collectTabIds(newLayoutData.dockbox) : [];
       // Also search floatbox for undocked/floating tabs
       const floatbox = (newLayoutData as any).floatbox;
-      if (floatbox?.children && Array.isArray(floatbox.children)) {
-        floatbox.children.forEach(findTabIds);
-      }
+      const floatTabIds = floatbox ? collectTabIds(floatbox) : [];
+      const allTabIds = [...new Set([...dockTabIds, ...floatTabIds])];
 
       setLayout(newLayoutData);
 
+      const activeTabIdSet = new Set(allTabIds);
       setTabContents((currentTabs) => {
         const newTabs: { [key: string]: TabData } = {};
-        for (const tabId of activeTabIds) {
+        for (const tabId of activeTabIdSet) {
           if (currentTabs[tabId]) {
             newTabs[tabId] = currentTabs[tabId];
           }
@@ -469,7 +459,7 @@ export function useDocking(config: DockingConfig): DockingState & DockingOperati
       });
 
       if (onTabsChanged) {
-        onTabsChanged(Array.from(activeTabIds));
+        onTabsChanged(allTabIds);
       }
     },
     [LAYOUT_STORAGE_KEY, onTabsChanged]
@@ -483,6 +473,7 @@ export function useDocking(config: DockingConfig): DockingState & DockingOperati
     addTypedTab,
     resetLayout,
     toggleTab,
+    showTab,
     onLayoutChange,
   };
-} 
+}

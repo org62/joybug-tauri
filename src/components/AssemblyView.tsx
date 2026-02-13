@@ -10,6 +10,7 @@ import { useAssemblyView, Instruction } from "@/hooks/useAssemblyView";
 import { RegisterContext, SymbolResolver, sanitizeAddressInput } from "@/lib/hexUtils";
 import { useContextMenu } from "@/hooks/useContextMenu";
 import { EmulationQuickView } from "./EmulationQuickView";
+import { consumePendingDisassemblyNavigation, NAVIGATE_DISASSEMBLY_EVENT } from "@/lib/navigationEvents";
 
 const COLUMN_WIDTHS_KEY = "assembly-column-widths";
 const MIN_COL_WIDTH = 40;
@@ -194,6 +195,31 @@ export function AssemblyView({ sessionId, isPaused, address, registers, resolveS
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [goBack, goForward]);
+
+  // External navigation via custom events (e.g., from symbol click)
+  // Uses a module-level pending store to survive potential remounts from layout changes.
+  useEffect(() => {
+    const navigateToAddress = (addr: string) => {
+      const clean = addr.toLowerCase().startsWith('0x') ? addr.slice(2) : addr;
+      goToAddressDirect(BigInt('0x' + clean));
+    };
+
+    // On mount, check if there's a pending navigation request
+    const pending = consumePendingDisassemblyNavigation();
+    if (pending) {
+      navigateToAddress(pending);
+    }
+
+    // Listen for future navigation requests
+    const handler = () => {
+      const addr = consumePendingDisassemblyNavigation();
+      if (addr) {
+        navigateToAddress(addr);
+      }
+    };
+    window.addEventListener(NAVIGATE_DISASSEMBLY_EVENT, handler);
+    return () => window.removeEventListener(NAVIGATE_DISASSEMBLY_EVENT, handler);
+  }, [goToAddressDirect]);
 
   // Mouse back/forward button navigation (buttons 3 & 4)
   useEffect(() => {

@@ -3,6 +3,7 @@ import { useParams, useNavigate } from "react-router-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { requestDisassemblyNavigation, requestMemoryNavigation } from "@/lib/navigationEvents";
 import { ArrowLeft, AlertCircle } from "lucide-react";
 import DockingLayout, { DockingLayoutRef } from "@/components/DockingLayout";
 import { DebuggerDockingConfig } from "@/lib/dockingConfigs";
@@ -115,16 +116,40 @@ export default function SessionDocked() {
     ));
   };
 
+  // Navigate to disassembly at a specific address (from symbol click)
+  // Uses event-based navigation to avoid React state changes that would cause remounts.
+  const handleNavigateToDisassembly = React.useCallback((address: string) => {
+    dockingRef.current?.showTab('disassembly');
+    requestDisassemblyNavigation(address);
+  }, []);
+
+  // Parse a hex address string (e.g., "0x00007FF..." -> bigint) to handle 64-bit addresses
+  const parseAddress = React.useCallback((address: string): bigint => {
+    const clean = address.toLowerCase().startsWith('0x') ? address.slice(2) : address;
+    return BigInt('0x' + clean);
+  }, []);
+
+  // Navigate to memory view at a specific address (from symbol click)
+  // Reuses an existing memory tab if one is open; creates a new one only if none exist.
+  const handleSymbolNavigateToMemory = React.useCallback((address: string) => {
+    const activeTabs = dockingRef.current?.getActiveTabs() ?? [];
+    const existingMemoryTab = activeTabs.find(id => id === 'memory' || id.startsWith('memory-'));
+    if (existingMemoryTab) {
+      dockingRef.current?.showTab(existingMemoryTab);
+      requestMemoryNavigation(address);
+    } else {
+      dockingRef.current?.addTypedTab('memory', (tabId) => (
+        <ContextHexView memoryViewId={tabId} initialAddress={parseAddress(address)} />
+      ));
+    }
+  }, [parseAddress]);
+
   // Add a new memory tab at a specific address (from memory regions click)
   const handleNavigateToMemoryAddress = React.useCallback((address: string) => {
-    // Parse the hex address string (e.g., "0x00007FF..." -> bigint) to handle 64-bit addresses
-    // Remove "0x" prefix if present and parse as BigInt
-    const cleanAddress = address.toLowerCase().startsWith('0x') ? address.slice(2) : address;
-    const bigIntAddress = BigInt('0x' + cleanAddress);
     dockingRef.current?.addTypedTab('memory', (tabId) => (
-      <ContextHexView memoryViewId={tabId} initialAddress={bigIntAddress} />
+      <ContextHexView memoryViewId={tabId} initialAddress={parseAddress(address)} />
     ));
-  }, []);
+  }, [parseAddress]);
 
   // Initial state detection - sync when docking becomes ready
   useEffect(() => {
@@ -211,7 +236,7 @@ export default function SessionDocked() {
           event.stopPropagation();
           toggleTabWithBackendUpdate("symbols");
           break;
-case 'h':
+        case 'h':
           event.preventDefault();
           event.stopPropagation();
           handleAddNewMemoryTab();
@@ -245,7 +270,9 @@ case 'h':
     loadThreads: async () => { await loadThreads(); },
     searchSymbols: async (pattern: string, limit?: number) => { return await searchSymbols(pattern, limit); },
     breakpointState,
-  }), [session, displayStatus, modules, threads, loadModules, loadThreads, searchSymbols, breakpointState]);
+    onNavigateToDisassembly: handleNavigateToDisassembly,
+    onNavigateToMemory: handleSymbolNavigateToMemory,
+  }), [session, displayStatus, modules, threads, loadModules, loadThreads, searchSymbols, breakpointState, handleNavigateToDisassembly, handleSymbolNavigateToMemory]);
   
   // Static tab content - components will update via context
   const dynamicTabContent = useMemo(() => ({

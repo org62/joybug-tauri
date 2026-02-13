@@ -61,6 +61,7 @@ export interface Symbol {
   rva: number;
   va: string;
   display_name: string;
+  is_function: boolean;
 }
 
 export type SessionStatus = 
@@ -79,6 +80,8 @@ export interface SessionContextData {
   loadThreads: () => Promise<void>;
   searchSymbols: (pattern: string, limit?: number) => Promise<Symbol[]>;
   breakpointState: BreakpointState;
+  onNavigateToDisassembly?: (address: string) => void;
+  onNavigateToMemory?: (address: string) => void;
 }
 
 export const SessionContext = createContext<SessionContextData | null>(null);

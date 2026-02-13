@@ -550,6 +550,7 @@ fn process_symbol_search(
                     rva: resolved_symbol.rva,
                     va: format!("0x{:X}", resolved_symbol.va),
                     display_name: resolved_symbol.name.clone(), // Use the full name which is already "module!symbol"
+                    is_function: resolved_symbol.is_function,
                 }
             }).collect();
 

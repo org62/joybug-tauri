@@ -19,6 +19,7 @@ export interface DockingLayoutRef {
   addTypedTab: (type: string, contentFactory: (tabId: string) => React.ReactElement) => string;
   resetLayout: () => void;
   toggleTab: (tabId: string) => void;
+  showTab: (tabId: string) => void;
   getActiveTabs: () => string[];
 }
 
@@ -33,6 +34,7 @@ const DockingLayoutComponent = React.forwardRef<DockingLayoutRef, DockingLayoutP
       addTypedTab: docking.addTypedTab,
       resetLayout: docking.resetLayout,
       toggleTab: docking.toggleTab,
+      showTab: docking.showTab,
       getActiveTabs: () => {
         const activeTabIds: string[] = [];
         const findTabIds = (box: any) => {

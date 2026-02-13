@@ -11,6 +11,7 @@ import {
 } from "./ui/select";
 import { Binary, RefreshCw, Save, X, ArrowRight, Copy, ClipboardPaste, ChevronLeft, ChevronRight } from "lucide-react";
 import { useHexEditor } from "@/hooks/useHexEditor";
+import { consumePendingMemoryNavigation, NAVIGATE_MEMORY_EVENT } from "@/lib/navigationEvents";
 import {
   ViewMode,
   VIEW_MODE_CONFIGS,
@@ -80,6 +81,23 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
 
   const [addressInput, setAddressInput] = useState("");
   const hexViewContainerRef = useRef<HTMLDivElement>(null);
+
+  // External navigation via custom events (e.g., from symbol click)
+  useEffect(() => {
+    const pending = consumePendingMemoryNavigation();
+    if (pending) {
+      goToAddress(pending);
+    }
+
+    const handler = () => {
+      const addr = consumePendingMemoryNavigation();
+      if (addr) {
+        goToAddress(addr);
+      }
+    };
+    window.addEventListener(NAVIGATE_MEMORY_EVENT, handler);
+    return () => window.removeEventListener(NAVIGATE_MEMORY_EVENT, handler);
+  }, [goToAddress]);
 
   // Context menu state
   const [contextMenu, setContextMenu] = useState<{

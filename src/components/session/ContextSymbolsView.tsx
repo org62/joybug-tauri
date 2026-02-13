@@ -17,7 +17,10 @@ export const ContextSymbolsView = () => {
   const isPaused = displayStatus === 'Paused';
   const sessionId = sessionData?.session?.id;
 
-  const { contextMenu, contextMenuRef, openContextMenu, closeContextMenu } = useContextMenu<{ va: string }>();
+  const onNavigateToDisassembly = sessionData.onNavigateToDisassembly;
+  const onNavigateToMemory = sessionData.onNavigateToMemory;
+
+  const { contextMenu, contextMenuRef, openContextMenu, closeContextMenu } = useContextMenu<{ va: string; is_function: boolean }>();
 
   const toggleBreakpoint = useCallback(async (address: string) => {
     if (!sessionId) return;
@@ -127,8 +130,15 @@ export const ContextSymbolsView = () => {
         {symbols.map((symbol, index) => (
           <div
             key={`${symbol.module_name}-${symbol.name}-${index}`}
-            className="px-2 py-1 border-b hover:bg-gray-50 dark:hover:bg-gray-900"
-            onContextMenu={(e) => openContextMenu(e, { va: symbol.va })}
+            className="px-2 py-1 border-b hover:bg-gray-50 dark:hover:bg-gray-900 cursor-pointer"
+            onClick={() => {
+              if (symbol.is_function) {
+                onNavigateToDisassembly?.(symbol.va);
+              } else {
+                onNavigateToMemory?.(symbol.va);
+              }
+            }}
+            onContextMenu={(e) => openContextMenu(e, { va: symbol.va, is_function: symbol.is_function })}
           >
             <div className="flex-1 min-w-0">
               <p className="text-sm font-mono truncate">
@@ -165,6 +175,28 @@ export const ContextSymbolsView = () => {
           className="fixed z-50 bg-popover text-popover-foreground rounded-md border shadow-md py-1 min-w-[180px]"
           style={{ left: contextMenu.x, top: contextMenu.y }}
         >
+          {onNavigateToDisassembly && (
+            <button
+              className="w-full px-3 py-1.5 text-sm text-left hover:bg-accent hover:text-accent-foreground"
+              onClick={() => {
+                onNavigateToDisassembly(contextMenu.data.va);
+                closeContextMenu();
+              }}
+            >
+              Go to Disassembly
+            </button>
+          )}
+          {onNavigateToMemory && (
+            <button
+              className="w-full px-3 py-1.5 text-sm text-left hover:bg-accent hover:text-accent-foreground"
+              onClick={() => {
+                onNavigateToMemory(contextMenu.data.va);
+                closeContextMenu();
+              }}
+            >
+              Go to Memory View
+            </button>
+          )}
           <button
             className="w-full px-3 py-1.5 text-sm text-left hover:bg-accent hover:text-accent-foreground"
             onClick={() => {
