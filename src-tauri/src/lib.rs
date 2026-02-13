@@ -1,3 +1,4 @@
+mod breakpoint_store;
 mod commands;
 mod error;
 mod events;
@@ -60,6 +61,11 @@ pub fn run() {
             commands::update_window_state,
             commands::get_debug_settings,
             commands::update_debug_settings,
+            commands::toggle_breakpoint,
+            commands::remove_breakpoint,
+            commands::enable_breakpoint,
+            commands::enable_breakpoint_group,
+            commands::update_breakpoint,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

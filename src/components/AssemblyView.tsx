@@ -4,10 +4,11 @@ import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Switch } from "./ui/switch";
 import { Label } from "./ui/label";
-import { Cpu, ArrowLeft, ArrowRight, RefreshCw, ChevronRight } from "lucide-react";
+import { Cpu, ArrowLeft, ArrowRight, RefreshCw, ChevronRight, Circle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAssemblyView, Instruction } from "@/hooks/useAssemblyView";
 import { RegisterContext, SymbolResolver, sanitizeAddressInput } from "@/lib/hexUtils";
+import { useContextMenu } from "@/hooks/useContextMenu";
 import { EmulationQuickView } from "./EmulationQuickView";
 
 const COLUMN_WIDTHS_KEY = "assembly-column-widths";
@@ -42,9 +43,11 @@ interface AssemblyViewProps {
   address?: number;
   registers?: RegisterContext;
   resolveSymbol?: SymbolResolver;
+  breakpointAddresses?: Set<string>;
+  onToggleBreakpoint?: (address: string) => void;
 }
 
-export function AssemblyView({ sessionId, isPaused, address, registers, resolveSymbol }: AssemblyViewProps) {
+export function AssemblyView({ sessionId, isPaused, address, registers, resolveSymbol, breakpointAddresses, onToggleBreakpoint }: AssemblyViewProps) {
   const [addressInput, setAddressInput] = useState("");
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const pcRowRef = useRef<HTMLDivElement>(null);
@@ -55,6 +58,8 @@ export function AssemblyView({ sessionId, isPaused, address, registers, resolveS
   const [hoveredJumpTarget, setHoveredJumpTarget] = useState<bigint | null>(null);
   // Resizable column widths
   const [columnWidths, setColumnWidths] = useState<ColumnWidths>(getInitialColumnWidths);
+  // Context menu for right-click
+  const { contextMenu, contextMenuRef, openContextMenu, closeContextMenu } = useContextMenu<{ address: string }>();
 
   const {
     instructions,
@@ -268,6 +273,7 @@ export function AssemblyView({ sessionId, isPaused, address, registers, resolveS
       {showInstructions && (
         <div className="shrink-0 flex items-center px-2 py-0.5 border-b border-border font-mono text-xs text-foreground/60 select-none">
           <span className="w-4 shrink-0" />
+          <span className="w-4 shrink-0" />
           <span className="shrink-0 truncate" style={{ width: columnWidths.symbol }}>Symbol</span>
           <div className="w-1 shrink-0 self-stretch cursor-col-resize hover:bg-blue-500/30 active:bg-blue-500/50 mx-px" onMouseDown={(e) => handleColumnResizeStart("symbol", e)} />
           {showBytes && (
@@ -336,6 +342,8 @@ export function AssemblyView({ sessionId, isPaused, address, registers, resolveS
                 rowRef = pcRowRef;
               }
 
+              const hasBreakpoint = breakpointAddresses?.has(inst.address.toUpperCase()) ?? false;
+
               return (
                 <InstructionRow
                   key={`${inst.address}-${index}`}
@@ -343,10 +351,12 @@ export function AssemblyView({ sessionId, isPaused, address, registers, resolveS
                   isPC={isPC}
                   isHighlighted={isHighlighted}
                   isHoverTarget={isHoverTarget}
+                  hasBreakpoint={hasBreakpoint}
                   showBytes={showBytes}
                   columnWidths={columnWidths}
                   onJumpTargetClick={handleJumpTargetClick}
                   onJumpTargetHover={handleJumpTargetHover}
+                  onContextMenu={(e, addr) => openContextMenu(e, { address: addr })}
                   rowRef={rowRef}
                 />
               );
@@ -357,6 +367,36 @@ export function AssemblyView({ sessionId, isPaused, address, registers, resolveS
 
       {/* Quick Emulation footer */}
       <EmulationQuickView sessionId={sessionId} isPaused={isPaused} pcAddress={address} />
+
+      {/* Context Menu */}
+      {contextMenu && (
+        <div
+          ref={contextMenuRef}
+          className="fixed z-50 bg-popover text-popover-foreground rounded-md border shadow-md py-1 min-w-[180px]"
+          style={{ left: contextMenu.x, top: contextMenu.y }}
+        >
+          {onToggleBreakpoint && (
+            <button
+              className="w-full px-3 py-1.5 text-sm text-left hover:bg-accent hover:text-accent-foreground flex items-center gap-2"
+              onClick={() => {
+                onToggleBreakpoint(contextMenu.data.address);
+                closeContextMenu();
+              }}
+            >
+              {breakpointAddresses?.has(contextMenu.data.address.toUpperCase()) ? "Remove Breakpoint" : "Toggle Breakpoint"}
+            </button>
+          )}
+          <button
+            className="w-full px-3 py-1.5 text-sm text-left hover:bg-accent hover:text-accent-foreground flex items-center gap-2"
+            onClick={async () => {
+              await navigator.clipboard.writeText(contextMenu.data.address);
+              closeContextMenu();
+            }}
+          >
+            Copy Address
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -367,14 +407,16 @@ interface InstructionRowProps {
   isPC: boolean;
   isHighlighted: boolean;
   isHoverTarget: boolean;
+  hasBreakpoint: boolean;
   showBytes: boolean;
   columnWidths: ColumnWidths;
   onJumpTargetClick: (target: string) => void;
   onJumpTargetHover: (target: string | null) => void;
+  onContextMenu: (e: React.MouseEvent, address: string) => void;
   rowRef?: React.Ref<HTMLDivElement>;
 }
 
-function InstructionRow({ instruction, isPC, isHighlighted, isHoverTarget, showBytes, columnWidths, onJumpTargetClick, onJumpTargetHover, rowRef }: InstructionRowProps) {
+function InstructionRow({ instruction, isPC, isHighlighted, isHoverTarget, hasBreakpoint, showBytes, columnWidths, onJumpTargetClick, onJumpTargetHover, onContextMenu, rowRef }: InstructionRowProps) {
   const { mnemonic, op_str, is_jump, is_call, is_ret, jump_target } = instruction;
 
   // Render operands with clickable jump target
@@ -404,10 +446,16 @@ function InstructionRow({ instruction, isPC, isHighlighted, isHoverTarget, showB
         isHighlighted && "animate-highlight-fade",
         isHoverTarget && "bg-blue-100 dark:bg-blue-900/40"
       )}
+      onContextMenu={(e) => onContextMenu(e, instruction.address)}
     >
       {/* PC indicator */}
       <span className="w-4 shrink-0 text-yellow-600 dark:text-yellow-400">
         {isPC && <ChevronRight className="h-3 w-3" />}
+      </span>
+
+      {/* Breakpoint indicator */}
+      <span className="w-4 shrink-0 flex items-center justify-center">
+        {hasBreakpoint && <Circle className="h-2.5 w-2.5 fill-red-500 text-red-500" />}
       </span>
 
       {/* Address/Symbol column */}

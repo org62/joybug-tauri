@@ -29,6 +29,11 @@ pub enum UICommand {
         request_id: Option<String>,
     },
     SetRegister { register_name: String, value: u64 },
+    ToggleBreakpoint { address: u64 },
+    RemoveBreakpoint { breakpoint_id: String },
+    EnableBreakpoint { breakpoint_id: String, enabled: bool },
+    EnableBreakpointGroup { group: String, enabled: bool },
+    UpdateBreakpoint { breakpoint_id: String, name: Option<String>, group: Option<String> },
 }
 
 /// Event payload for successful memory read (may be partial)
@@ -1256,6 +1261,319 @@ fn process_set_register(
     info!("Successfully set register {} = 0x{:X}", register_name, value);
 }
 
+/// Persist breakpoints to disk for the current session's launch command
+fn persist_breakpoints(session_state: &Arc<Mutex<SessionStateUI>>) {
+    let state = session_state.lock().unwrap();
+    crate::breakpoint_store::save_breakpoints(&state.launch_command, &state.breakpoints);
+}
+
+/// Emit a breakpoints-updated event to the frontend
+fn emit_breakpoints_event(
+    session: &joybug2::protocol_io::DebugSession<Arc<Mutex<SessionStateUI>>>,
+    app_handle_clone: &Option<AppHandle>,
+) {
+    if let Some(ref handle) = app_handle_clone {
+        let (session_id, breakpoints) = {
+            let state = session.state.lock().unwrap();
+            (state.id.clone(), state.breakpoints.clone())
+        };
+
+        #[derive(serde::Serialize)]
+        struct BreakpointsUpdatedEvent {
+            session_id: String,
+            breakpoints: Vec<crate::state::BreakpointInfo>,
+        }
+
+        let payload = BreakpointsUpdatedEvent { session_id, breakpoints };
+        if let Err(e) = handle.emit("breakpoints-updated", &payload) {
+            error!("Failed to emit breakpoints-updated event: {}", e);
+        }
+    }
+}
+
+/// Processes a toggle breakpoint request
+fn process_toggle_breakpoint(
+    session: &mut joybug2::protocol_io::DebugSession<Arc<Mutex<SessionStateUI>>>,
+    app_handle_clone: &Option<AppHandle>,
+    event: &joybug2::protocol_io::DebugEvent,
+    address: u64,
+) {
+    let pid = event.pid();
+
+    // Check if a breakpoint already exists at this address
+    let existing_bp_id = {
+        let state = session.state.lock().unwrap();
+        state.breakpoints.iter().find(|bp| bp.address == address).map(|bp| bp.id.clone())
+    };
+
+    if let Some(bp_id) = existing_bp_id {
+        // Remove existing breakpoint
+        let is_active = {
+            let state = session.state.lock().unwrap();
+            state.breakpoints.iter().find(|bp| bp.id == bp_id).map(|bp| bp.is_active).unwrap_or(false)
+        };
+        if is_active {
+            if let Err(e) = session.remove_breakpoint(pid, address) {
+                warn!("Failed to remove breakpoint at 0x{:X}: {}", address, e);
+            }
+        }
+        {
+            let mut state = session.state.lock().unwrap();
+            state.breakpoints.retain(|bp| bp.id != bp_id);
+        }
+        info!("Removed breakpoint at 0x{:X}", address);
+    } else {
+        // Resolve address to module+offset
+        let (module_name, module_offset) = {
+            let state = session.state.lock().unwrap();
+            let mut found = None;
+            for m in &state.modules {
+                let module_size = m.size.unwrap_or(0);
+                if address >= m.base && (module_size == 0 || address < m.base + module_size) {
+                    let name = module_short_name(&m.name).to_lowercase();
+                    found = Some((name, address - m.base));
+                    break;
+                }
+            }
+            found.unwrap_or_else(|| ("unknown".to_string(), address))
+        };
+
+        // Set the breakpoint in the debuggee
+        let bp_id = uuid::Uuid::new_v4().to_string();
+        let mut is_active = false;
+
+        match session.set_breakpoint_at(pid, address, None, |_session, _pid, _tid, _addr| {
+            Ok(joybug2::protocol_io::BreakpointDecision::Keep)
+        }) {
+            Ok(()) => {
+                is_active = true;
+                info!("Set breakpoint at 0x{:X} ({}+0x{:X})", address, module_name, module_offset);
+            }
+            Err(e) => {
+                error!("Failed to set breakpoint at 0x{:X}: {}", address, e);
+                if let Some(ref handle) = app_handle_clone {
+                    crate::ui_logger::toast_error(handle, &format!("Failed to set breakpoint: {}", e));
+                }
+            }
+        }
+
+        // Resolve nearest symbol for display
+        let symbol = match session.resolve_address_to_symbol(pid, address) {
+            Ok((Some(m), Some(sym), Some(offset))) => {
+                Some(format_symbol(&m, &sym.name, offset))
+            }
+            _ => None,
+        };
+
+        // Add to state
+        {
+            let mut state = session.state.lock().unwrap();
+            state.breakpoints.push(crate::state::BreakpointInfo {
+                id: bp_id,
+                address,
+                module_name,
+                module_offset,
+                name: None,
+                group: None,
+                symbol,
+                enabled: true,
+                is_active,
+            });
+        }
+    }
+
+    emit_breakpoints_event(session, app_handle_clone);
+    persist_breakpoints(&session.state);
+}
+
+/// Processes a remove breakpoint request
+fn process_remove_breakpoint(
+    session: &mut joybug2::protocol_io::DebugSession<Arc<Mutex<SessionStateUI>>>,
+    app_handle_clone: &Option<AppHandle>,
+    event: &joybug2::protocol_io::DebugEvent,
+    breakpoint_id: &str,
+) {
+    let pid = event.pid();
+    let bp_info = {
+        let state = session.state.lock().unwrap();
+        state.breakpoints.iter().find(|bp| bp.id == breakpoint_id).cloned()
+    };
+
+    if let Some(bp) = bp_info {
+        if bp.is_active {
+            if let Err(e) = session.remove_breakpoint(pid, bp.address) {
+                warn!("Failed to remove breakpoint at 0x{:X}: {}", bp.address, e);
+            }
+        }
+        {
+            let mut state = session.state.lock().unwrap();
+            state.breakpoints.retain(|b| b.id != breakpoint_id);
+        }
+        info!("Removed breakpoint {}", breakpoint_id);
+    }
+
+    emit_breakpoints_event(session, app_handle_clone);
+    persist_breakpoints(&session.state);
+}
+
+/// Core logic for enabling/disabling a single breakpoint (no emit/persist).
+fn apply_enable_breakpoint(
+    session: &mut joybug2::protocol_io::DebugSession<Arc<Mutex<SessionStateUI>>>,
+    pid: u32,
+    breakpoint_id: &str,
+    enabled: bool,
+) {
+    let bp_info = {
+        let state = session.state.lock().unwrap();
+        state.breakpoints.iter().find(|bp| bp.id == breakpoint_id).cloned()
+    };
+
+    if let Some(bp) = bp_info {
+        if enabled && !bp.is_active && bp.address != 0 {
+            match session.set_breakpoint_at(pid, bp.address, None, |_s, _p, _t, _a| {
+                Ok(joybug2::protocol_io::BreakpointDecision::Keep)
+            }) {
+                Ok(()) => {
+                    let mut state = session.state.lock().unwrap();
+                    if let Some(b) = state.breakpoints.iter_mut().find(|b| b.id == breakpoint_id) {
+                        b.enabled = true;
+                        b.is_active = true;
+                    }
+                }
+                Err(e) => {
+                    warn!("Failed to enable breakpoint: {}", e);
+                    let mut state = session.state.lock().unwrap();
+                    if let Some(b) = state.breakpoints.iter_mut().find(|b| b.id == breakpoint_id) {
+                        b.enabled = true; // Mark as enabled even if set failed (will retry on module load)
+                    }
+                }
+            }
+        } else if !enabled && bp.is_active {
+            if let Err(e) = session.remove_breakpoint(pid, bp.address) {
+                warn!("Failed to disable breakpoint: {}", e);
+            }
+            let mut state = session.state.lock().unwrap();
+            if let Some(b) = state.breakpoints.iter_mut().find(|b| b.id == breakpoint_id) {
+                b.enabled = false;
+                b.is_active = false;
+            }
+        } else {
+            let mut state = session.state.lock().unwrap();
+            if let Some(b) = state.breakpoints.iter_mut().find(|b| b.id == breakpoint_id) {
+                b.enabled = enabled;
+            }
+        }
+    }
+}
+
+/// Processes an enable/disable breakpoint request
+fn process_enable_breakpoint(
+    session: &mut joybug2::protocol_io::DebugSession<Arc<Mutex<SessionStateUI>>>,
+    app_handle_clone: &Option<AppHandle>,
+    event: &joybug2::protocol_io::DebugEvent,
+    breakpoint_id: &str,
+    enabled: bool,
+) {
+    apply_enable_breakpoint(session, event.pid(), breakpoint_id, enabled);
+    emit_breakpoints_event(session, app_handle_clone);
+    persist_breakpoints(&session.state);
+}
+
+/// Processes an enable/disable breakpoint group request
+fn process_enable_breakpoint_group(
+    session: &mut joybug2::protocol_io::DebugSession<Arc<Mutex<SessionStateUI>>>,
+    app_handle_clone: &Option<AppHandle>,
+    event: &joybug2::protocol_io::DebugEvent,
+    group: &str,
+    enabled: bool,
+) {
+    let bp_ids: Vec<String> = {
+        let state = session.state.lock().unwrap();
+        state.breakpoints.iter()
+            .filter(|bp| bp.group.as_deref() == Some(group))
+            .map(|bp| bp.id.clone())
+            .collect()
+    };
+
+    let pid = event.pid();
+    for bp_id in bp_ids {
+        apply_enable_breakpoint(session, pid, &bp_id, enabled);
+    }
+
+    emit_breakpoints_event(session, app_handle_clone);
+    persist_breakpoints(&session.state);
+}
+
+/// Processes an update breakpoint (name/group) request
+fn process_update_breakpoint(
+    session: &joybug2::protocol_io::DebugSession<Arc<Mutex<SessionStateUI>>>,
+    app_handle_clone: &Option<AppHandle>,
+    breakpoint_id: &str,
+    name: Option<String>,
+    group: Option<String>,
+) {
+    {
+        let mut state = session.state.lock().unwrap();
+        if let Some(bp) = state.breakpoints.iter_mut().find(|b| b.id == breakpoint_id) {
+            bp.name = name;
+            bp.group = group;
+        }
+    }
+    emit_breakpoints_event(session, app_handle_clone);
+    persist_breakpoints(&session.state);
+}
+
+/// Extracts just the filename from a full module path (e.g. "C:\Windows\ntdll.dll" -> "ntdll.dll").
+fn module_short_name(full_path: &str) -> String {
+    std::path::Path::new(full_path)
+        .file_name()
+        .map(|f| f.to_string_lossy().to_string())
+        .unwrap_or_else(|| full_path.to_string())
+}
+
+/// Re-apply breakpoints for a newly loaded module
+fn reapply_breakpoints_for_module(
+    session: &mut joybug2::protocol_io::DebugSession<Arc<Mutex<SessionStateUI>>>,
+    pid: u32,
+    module_name: &str,
+    module_base: u64,
+) {
+    let breakpoints_to_apply: Vec<(String, u64)> = {
+        let state = session.state.lock().unwrap();
+        state.breakpoints.iter()
+            .filter(|bp| bp.enabled && !bp.is_active && bp.module_name.eq_ignore_ascii_case(module_name))
+            .map(|bp| (bp.id.clone(), module_base + bp.module_offset))
+            .collect()
+    };
+
+    for (bp_id, addr) in breakpoints_to_apply {
+        if session.set_breakpoint_at(pid, addr, None, |_s, _p, _t, _a| {
+            Ok(joybug2::protocol_io::BreakpointDecision::Keep)
+        }).is_ok() {
+            let mut state = session.state.lock().unwrap();
+            if let Some(bp) = state.breakpoints.iter_mut().find(|b| b.id == bp_id) {
+                bp.address = addr;
+                bp.is_active = true;
+                info!("Re-applied breakpoint {} at 0x{:X}", bp.id, addr);
+            }
+        }
+    }
+}
+
+/// Mark breakpoints as inactive when their module is unloaded
+fn deactivate_breakpoints_for_module(
+    state: &mut SessionStateUI,
+    module_name: &str,
+) {
+    for bp in &mut state.breakpoints {
+        if bp.module_name.eq_ignore_ascii_case(module_name) && bp.is_active {
+            bp.is_active = false;
+            bp.address = 0;
+            info!("Deactivated breakpoint {} (module {} unloaded)", bp.id, module_name);
+        }
+    }
+}
+
 /// Reports a step error to the UI logger and toast.
 fn report_step_error(
     session: &joybug2::protocol_io::DebugSession<Arc<Mutex<SessionStateUI>>>,
@@ -1430,6 +1748,21 @@ fn handle_ui_commands(
                         process_set_register(session, app_handle_clone, event, register_name, value);
                         // Continue in loop waiting for next command (Go or Stop)
                     }
+                    UICommand::ToggleBreakpoint { address } => {
+                        process_toggle_breakpoint(session, app_handle_clone, event, address);
+                    }
+                    UICommand::RemoveBreakpoint { ref breakpoint_id } => {
+                        process_remove_breakpoint(session, app_handle_clone, event, breakpoint_id);
+                    }
+                    UICommand::EnableBreakpoint { ref breakpoint_id, enabled } => {
+                        process_enable_breakpoint(session, app_handle_clone, event, breakpoint_id, enabled);
+                    }
+                    UICommand::EnableBreakpointGroup { ref group, enabled } => {
+                        process_enable_breakpoint_group(session, app_handle_clone, event, group, enabled);
+                    }
+                    UICommand::UpdateBreakpoint { ref breakpoint_id, ref name, ref group } => {
+                        process_update_breakpoint(session, app_handle_clone, breakpoint_id, name.clone(), group.clone());
+                    }
                     UICommand::Stop => {
                         info!("Stop command received, terminating session");
                         let mut state = session.state.lock().unwrap();
@@ -1497,12 +1830,17 @@ pub fn run_debug_session(
                 &format!("Received debug event: {}", event),
                 Some(session.state.lock().unwrap().id.clone()),
             );
+            let is_internal_single_step = matches!(
+                event,
+                joybug2::protocol_io::DebugEvent::Exception { code, first_chance: true, .. }
+                    if *code == 0x80000004
+            );
             if !matches!(
                 event,
                 joybug2::protocol_io::DebugEvent::Output { .. }
                     | joybug2::protocol_io::DebugEvent::DllLoaded { .. }
                     | joybug2::protocol_io::DebugEvent::DllUnloaded { .. }
-            ) {
+            ) && !is_internal_single_step {
                 crate::ui_logger::toast_info(handle, &format!("{}", event));
             }
 
@@ -1567,6 +1905,9 @@ pub fn run_debug_session(
                     joybug2::protocol_io::DebugEvent::DllLoaded { .. } => settings.stop_on_dll_load,
                     joybug2::protocol_io::DebugEvent::DllUnloaded { .. } => settings.stop_on_dll_unload,
                     joybug2::protocol_io::DebugEvent::InitialBreakpoint { .. } => settings.stop_on_initial_breakpoint,
+                    // Internal single-step from breakpoint re-arming — never pause
+                    joybug2::protocol_io::DebugEvent::Exception { code, first_chance: true, .. }
+                        if *code == 0x80000004 => false,
                     _ => true,
                 };
 
@@ -1586,6 +1927,25 @@ pub fn run_debug_session(
                         update_session_from_event(&mut state, event);
                         // Keep status Running (do not set Paused)
                         state.status = SessionStatusUI::Running;
+                    }
+
+                    // Re-apply/deactivate breakpoints for module load/unload events
+                    match event {
+                        joybug2::protocol_io::DebugEvent::DllLoaded { dll_name, base_of_dll, .. } => {
+                            let name = dll_name.as_deref().unwrap_or("<unknown>");
+                            reapply_breakpoints_for_module(session, event.pid(), &module_short_name(name), *base_of_dll);
+                        }
+                        joybug2::protocol_io::DebugEvent::ProcessCreated { image_file_name, base_of_image, .. } => {
+                            let name = image_file_name.as_deref().unwrap_or("main.exe");
+                            reapply_breakpoints_for_module(session, event.pid(), &module_short_name(name), *base_of_image);
+                        }
+                        joybug2::protocol_io::DebugEvent::DllUnloaded { .. } => {
+                            if let Some(ref name) = unloaded_module_name {
+                                let mut state = session.state.lock().unwrap();
+                                deactivate_breakpoints_for_module(&mut state, &module_short_name(name));
+                            }
+                        }
+                        _ => {}
                     }
 
                     // Emit targeted events for DLL load/unload (with logging/toast handled there)
@@ -1673,11 +2033,36 @@ pub fn run_debug_session(
                     }
                 }
 
+                // Deactivate breakpoints for unloaded module (before state update removes module)
+                if let joybug2::protocol_io::DebugEvent::DllUnloaded { .. } = event {
+                    if let Some(ref name) = unloaded_module_name {
+                        deactivate_breakpoints_for_module(&mut state, &module_short_name(name));
+                    }
+                }
+
                 update_session_from_event(&mut state, event);
+
+                // Drop the lock before calling reapply which needs mut session
+                drop(state);
+
+                // Re-apply breakpoints for newly loaded modules (pausing path)
+                match event {
+                    joybug2::protocol_io::DebugEvent::DllLoaded { dll_name, base_of_dll, .. } => {
+                        let name = dll_name.as_deref().unwrap_or("<unknown>");
+                        reapply_breakpoints_for_module(session, event.pid(), &module_short_name(name), *base_of_dll);
+                    }
+                    joybug2::protocol_io::DebugEvent::ProcessCreated { image_file_name, base_of_image, .. } => {
+                        let name = image_file_name.as_deref().unwrap_or("main.exe");
+                        reapply_breakpoints_for_module(session, event.pid(), &module_short_name(name), *base_of_image);
+                    }
+                    _ => {}
+                }
 
                 // Emit targeted events for specific debug events (we may use unloaded_module_name captured above)
                 if let Some(ref handle) = app_handle_clone {
+                    let state = session.state.lock().unwrap();
                     let session_id = state.id.clone();
+                    drop(state);
                     match event {
                         joybug2::protocol_io::DebugEvent::DllUnloaded { pid, tid, base_of_dll } => {
                             #[derive(serde::Serialize)]
@@ -1757,6 +2142,7 @@ pub fn run_debug_session(
 
             // Emit session events
             emit_session_event(&session.state, handle);
+            emit_breakpoints_event(session, &app_handle_clone);
 
             info!("Debug event received, waiting for user command");
 

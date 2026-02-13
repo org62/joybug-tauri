@@ -3,6 +3,19 @@ use std::collections::HashMap;
 use std::sync::{mpsc, Arc, Mutex};
 use crate::session::UICommand;
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BreakpointInfo {
+    pub id: String,              // UUID
+    pub address: u64,            // current resolved absolute address (0 if unresolved)
+    pub module_name: String,     // e.g. "ntdll.dll" (lowercase for matching)
+    pub module_offset: u64,      // RVA within module
+    pub name: Option<String>,    // user-assigned label
+    pub group: Option<String>,   // group name
+    pub symbol: Option<String>,  // resolved symbol e.g. "kernel32!CreateFileW+0x10"
+    pub enabled: bool,           // user toggle
+    pub is_active: bool,         // currently set in debuggee
+}
+
 // Serializable snapshot of session state for frontend communication
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DebugSessionUI {
@@ -17,6 +30,7 @@ pub struct DebugSessionUI {
     pub disassembly_window_open: bool,
     pub registers_window_open: bool,
     pub callstack_window_open: bool,
+    pub breakpoints: Vec<BreakpointInfo>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -101,6 +115,9 @@ pub struct SessionStateUI {
     pub is_disassembly_window_open: bool,
     pub is_registers_window_open: bool,
     pub is_callstack_window_open: bool,
+
+    // Breakpoints
+    pub breakpoints: Vec<BreakpointInfo>,
 }
 
 impl SessionStateUI {
@@ -132,6 +149,7 @@ impl SessionStateUI {
             is_disassembly_window_open: false,
             is_registers_window_open: false,
             is_callstack_window_open: false,
+            breakpoints: Vec::new(),
         }
     }
 
@@ -149,6 +167,12 @@ impl SessionStateUI {
         self.is_disassembly_window_open = false;
         self.is_registers_window_open = false;
         self.is_callstack_window_open = false;
+
+        // Keep breakpoints but mark all as inactive/unresolved
+        for bp in &mut self.breakpoints {
+            bp.is_active = false;
+            bp.address = 0;
+        }
 
         let (step_sender, step_receiver) = mpsc::channel();
         self.ui_sender = Some(step_sender);
@@ -190,6 +214,7 @@ impl SessionStateUI {
             disassembly_window_open: self.is_disassembly_window_open,
             registers_window_open: self.is_registers_window_open,
             callstack_window_open: self.is_callstack_window_open,
+            breakpoints: self.breakpoints.clone(),
         }
     }
 }

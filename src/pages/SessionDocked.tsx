@@ -16,7 +16,9 @@ import { ContextCallStackView } from "@/components/session/ContextCallStackView"
 import { ContextSymbolsView } from "@/components/session/ContextSymbolsView";
 import { ContextHexView } from "@/components/session/ContextHexView";
 import { ContextMemoryRegionsView } from "@/components/session/ContextMemoryRegionsView";
+import { ContextBreakpointsView } from "@/components/session/ContextBreakpointsView";
 import { useDebugSession } from "@/hooks/useDebugSession";
+import { useBreakpoints } from "@/hooks/useBreakpoints";
 import { SessionHeader } from "@/components/session/SessionHeader";
 
 export default function SessionDocked() {
@@ -219,12 +221,20 @@ case 'h':
           event.stopPropagation();
           toggleTabWithBackendUpdate("memory_regions");
           break;
+        case 'b':
+          event.preventDefault();
+          event.stopPropagation();
+          toggleTabWithBackendUpdate("breakpoints");
+          break;
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [handleGo, handleStepIn, handleStepOver, handleStepOut, toggleTabWithBackendUpdate]);
+
+  const isPaused = displayStatus === 'Paused';
+  const breakpointState = useBreakpoints(session?.id, isPaused, session?.breakpoints);
 
   const contextValue = useMemo(() => ({
     session,
@@ -233,8 +243,9 @@ case 'h':
     threads,
     loadModules: async () => { await loadModules(); },
     loadThreads: async () => { await loadThreads(); },
-    searchSymbols: async (pattern: string, limit?: number) => { return await searchSymbols(pattern, limit); }
-  }), [session, displayStatus, modules, threads, loadModules, loadThreads, searchSymbols]);
+    searchSymbols: async (pattern: string, limit?: number) => { return await searchSymbols(pattern, limit); },
+    breakpointState,
+  }), [session, displayStatus, modules, threads, loadModules, loadThreads, searchSymbols, breakpointState]);
   
   // Static tab content - components will update via context
   const dynamicTabContent = useMemo(() => ({
@@ -245,6 +256,7 @@ case 'h':
     callstack: <ContextCallStackView />,
     symbols: <ContextSymbolsView />,
     memory_regions: <ContextMemoryRegionsView onNavigateToAddress={handleNavigateToMemoryAddress} />,
+    breakpoints: <ContextBreakpointsView />,
   }), [handleNavigateToMemoryAddress]);
 
   // Factory for creating dynamic tab content (e.g., memory tabs restored from storage)
@@ -299,6 +311,12 @@ case 'h':
         id: "memory_regions",
         title: "Memory Regions",
         content: dynamicTabContent.memory_regions,
+        closable: true,
+      },
+      breakpoints: {
+        id: "breakpoints",
+        title: "Breakpoints",
+        content: dynamicTabContent.breakpoints,
         closable: true,
       },
     };

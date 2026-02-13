@@ -1,6 +1,9 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { useSessionContext } from '@/contexts/SessionContext';
+import { useContextMenu } from '@/hooks/useContextMenu';
+import { invokeToggleBreakpoint } from '@/lib/sessionHelpers';
 import { Input } from '@/components/ui/input';
+import { ScrollArea } from '@/components/ui/scroll-area';
 import { Search, Code, Loader2 } from 'lucide-react';
 
 export const ContextSymbolsView = () => {
@@ -10,15 +13,29 @@ export const ContextSymbolsView = () => {
   const [isSearching, setIsSearching] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const displayStatus = sessionData?.displayStatus;
+  const isPaused = displayStatus === 'Paused';
+  const sessionId = sessionData?.session?.id;
+
+  const { contextMenu, contextMenuRef, openContextMenu, closeContextMenu } = useContextMenu<{ va: string }>();
+
+  const toggleBreakpoint = useCallback(async (address: string) => {
+    if (!sessionId) return;
+    try {
+      await invokeToggleBreakpoint(sessionId, address);
+    } catch (e) {
+      console.error('Failed to toggle breakpoint:', e);
+    }
+  }, [sessionId]);
 
   // Clear results when session changes or is not paused
   useEffect(() => {
-    if (!sessionData.session?.id || sessionData.session.status !== "Paused") {
+    if (!sessionId || !isPaused) {
       setSymbols([]);
       setHasSearched(false);
       setIsSearching(false);
     }
-  }, [sessionData.session?.id, sessionData.session?.status]);
+  }, [sessionId, isPaused]);
 
   // Debounced search using searchSymbols from context
   const handleSearchChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
@@ -35,7 +52,7 @@ export const ContextSymbolsView = () => {
       return;
     }
 
-    if (!sessionData.session?.id || sessionData.session.status !== "Paused" || !sessionData.searchSymbols) return;
+    if (!sessionId || !isPaused || !sessionData.searchSymbols) return;
 
     setIsSearching(true);
     debounceRef.current = setTimeout(async () => {
@@ -50,7 +67,7 @@ export const ContextSymbolsView = () => {
       }
       setIsSearching(false);
     }, 300);
-  }, [sessionData.session?.id, sessionData.session?.status, sessionData.searchSymbols]);
+  }, [sessionId, isPaused, sessionData.searchSymbols]);
 
   // Cleanup debounce on unmount
   useEffect(() => {
@@ -60,8 +77,7 @@ export const ContextSymbolsView = () => {
   }, []);
 
   const renderContent = () => {
-    // Show a message when session is not in the right state
-    if (sessionData.session && sessionData.session.status !== "Paused") {
+    if (sessionData.session && !isPaused) {
       return (
         <div className="flex flex-col items-center justify-center h-full text-muted-foreground p-4">
           <div className="text-center">
@@ -112,6 +128,7 @@ export const ContextSymbolsView = () => {
           <div
             key={`${symbol.module_name}-${symbol.name}-${index}`}
             className="px-2 py-1 border-b hover:bg-gray-50 dark:hover:bg-gray-900"
+            onContextMenu={(e) => openContextMenu(e, { va: symbol.va })}
           >
             <div className="flex-1 min-w-0">
               <p className="text-sm font-mono truncate">
@@ -130,16 +147,35 @@ export const ContextSymbolsView = () => {
       <div className="p-2 border-b">
         <Input
           type="text"
-          placeholder={sessionData.session?.status === "Paused" ? "Search symbols..." : "Session must be paused to search symbols"}
+          placeholder={isPaused ? "Search symbols..." : "Session must be paused to search symbols"}
           value={searchTerm}
           onChange={handleSearchChange}
           className="w-full"
-          disabled={!sessionData.session || sessionData.session.status !== "Paused"}
+          disabled={!sessionId || !isPaused}
         />
       </div>
-      <div className="flex-1 overflow-auto">
+      <ScrollArea className="flex-1 min-h-0">
         {renderContent()}
-      </div>
+      </ScrollArea>
+
+      {/* Context Menu */}
+      {contextMenu && (
+        <div
+          ref={contextMenuRef}
+          className="fixed z-50 bg-popover text-popover-foreground rounded-md border shadow-md py-1 min-w-[180px]"
+          style={{ left: contextMenu.x, top: contextMenu.y }}
+        >
+          <button
+            className="w-full px-3 py-1.5 text-sm text-left hover:bg-accent hover:text-accent-foreground"
+            onClick={() => {
+              toggleBreakpoint(contextMenu.data.va);
+              closeContextMenu();
+            }}
+          >
+            Toggle Breakpoint
+          </button>
+        </div>
+      )}
     </div>
   );
 };

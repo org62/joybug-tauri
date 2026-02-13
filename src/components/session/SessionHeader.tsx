@@ -205,6 +205,12 @@ export const SessionHeader: React.FC<SessionHeaderProps> = ({
                   >
                     Memory Regions
                   </DropdownMenuCheckboxItem>
+                  <DropdownMenuCheckboxItem
+                    checked={active.has('breakpoints')}
+                    onCheckedChange={() => toggleTab('breakpoints')}
+                  >
+                    Breakpoints
+                  </DropdownMenuCheckboxItem>
                   {addNewMemoryTab && (
                     <DropdownMenuItem onSelect={(e: Event) => { e.preventDefault(); addNewMemoryTab(); }}>
                       <Plus />

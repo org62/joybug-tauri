@@ -1,8 +1,21 @@
 import { createContext, useContext } from "react";
 import { SerializableThreadContext } from "@/components/RegisterView";
+import type { BreakpointState } from "@/hooks/useBreakpoints";
 
 // Re-export for convenience in other components
 export { type SerializableThreadContext } from "@/components/RegisterView";
+
+export interface RawBreakpoint {
+  id: string;
+  address: number;
+  module_name: string;
+  module_offset: number;
+  name: string | null;
+  group: string | null;
+  symbol: string | null;
+  enabled: boolean;
+  is_active: boolean;
+}
 
 export interface DebugSession {
   id: string;
@@ -16,6 +29,7 @@ export interface DebugSession {
   disassembly_window_open: boolean;
   registers_window_open: boolean;
   callstack_window_open: boolean;
+  breakpoints: RawBreakpoint[];
 }
 
 export interface DebugEventInfo {
@@ -64,6 +78,7 @@ export interface SessionContextData {
   loadModules: () => Promise<void>;
   loadThreads: () => Promise<void>;
   searchSymbols: (pattern: string, limit?: number) => Promise<Symbol[]>;
+  breakpointState: BreakpointState;
 }
 
 export const SessionContext = createContext<SessionContextData | null>(null);

@@ -58,6 +58,12 @@ pub fn create_debug_session(
         is_local_run,
     )));
 
+    // Load persisted breakpoints for this launch command
+    {
+        let mut state = session_state_arc.lock().unwrap();
+        state.breakpoints = crate::breakpoint_store::load_breakpoints(&state.launch_command);
+    }
+
     // Store session state
     states.insert(session_id.clone(), session_state_arc.clone());
 
@@ -1201,6 +1207,102 @@ pub fn request_emulation(
         .map_err(|e| Error::InternalCommunication(format!("Failed to send Emulate command: {}", e)))?;
 
     info!("Emulation request sent for session {} with mode {}", session_id, mode);
+    Ok(())
+}
+
+/// Sends a UICommand to a paused session. Shared helper for all breakpoint commands.
+fn send_paused_command(
+    session_id: &str,
+    session_states: &SessionStatesMap,
+    command: UICommand,
+) -> Result<()> {
+    let session_state = {
+        let states = session_states.lock().unwrap();
+        states
+            .get(session_id)
+            .cloned()
+            .ok_or_else(|| Error::SessionNotFound(session_id.to_string()))?
+    };
+
+    let ui_sender = {
+        let state = session_state.lock().unwrap();
+        if !matches!(state.status, SessionStatusUI::Paused) {
+            return Err(Error::InvalidSessionState(
+                "Session must be paused".to_string(),
+            ));
+        }
+        state
+            .ui_sender
+            .as_ref()
+            .ok_or_else(|| Error::InternalCommunication("Session UI sender not available".to_string()))?
+            .clone()
+    };
+
+    ui_sender
+        .send(command)
+        .map_err(|e| Error::InternalCommunication(format!("Failed to send command: {}", e)))?;
+
+    Ok(())
+}
+
+#[tauri::command]
+pub fn toggle_breakpoint(
+    session_id: String,
+    address: String,
+    session_states: State<'_, SessionStatesMap>,
+) -> Result<()> {
+    let address = u64::from_str_radix(address.trim_start_matches("0x").trim_start_matches("0X"), 16)
+        .map_err(|e| Error::InvalidParameter(format!("Invalid address '{}': {}", address, e)))?;
+    send_paused_command(&session_id, &session_states, UICommand::ToggleBreakpoint { address })?;
+    info!("Toggle breakpoint request sent for session {} at address 0x{:X}", session_id, address);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn remove_breakpoint(
+    session_id: String,
+    breakpoint_id: String,
+    session_states: State<'_, SessionStatesMap>,
+) -> Result<()> {
+    send_paused_command(&session_id, &session_states, UICommand::RemoveBreakpoint { breakpoint_id: breakpoint_id.clone() })?;
+    info!("Remove breakpoint request sent for session {}, bp_id {}", session_id, breakpoint_id);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn enable_breakpoint(
+    session_id: String,
+    breakpoint_id: String,
+    enabled: bool,
+    session_states: State<'_, SessionStatesMap>,
+) -> Result<()> {
+    send_paused_command(&session_id, &session_states, UICommand::EnableBreakpoint { breakpoint_id: breakpoint_id.clone(), enabled })?;
+    info!("Enable breakpoint request sent for session {}, bp_id {}, enabled={}", session_id, breakpoint_id, enabled);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn enable_breakpoint_group(
+    session_id: String,
+    group: String,
+    enabled: bool,
+    session_states: State<'_, SessionStatesMap>,
+) -> Result<()> {
+    send_paused_command(&session_id, &session_states, UICommand::EnableBreakpointGroup { group: group.clone(), enabled })?;
+    info!("Enable breakpoint group request sent for session {}, group '{}', enabled={}", session_id, group, enabled);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn update_breakpoint(
+    session_id: String,
+    breakpoint_id: String,
+    name: Option<String>,
+    group: Option<String>,
+    session_states: State<'_, SessionStatesMap>,
+) -> Result<()> {
+    send_paused_command(&session_id, &session_states, UICommand::UpdateBreakpoint { breakpoint_id: breakpoint_id.clone(), name, group })?;
+    info!("Update breakpoint request sent for session {}, bp_id {}", session_id, breakpoint_id);
     Ok(())
 }
 
