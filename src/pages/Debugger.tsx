@@ -18,7 +18,8 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
-import { Plus, Play, Eye, Pencil, Trash2, XSquare, FileCode2 } from "lucide-react";
+import { Plus, Play, Eye, Pencil, Trash2, XSquare, FileCode2, FolderOpen } from "lucide-react";
+import { open } from "@tauri-apps/plugin-dialog";
 import { toast } from "sonner";
 import { 
   loadSessionsFromStorage, 
@@ -178,6 +179,25 @@ export default function Debugger() {
       window.removeEventListener('keydown', handleKeyDown);
     };
   }, []); // Empty dependency array ensures this runs only once
+
+  const handleBrowseExecutable = async () => {
+    try {
+      const selected = await open({
+        multiple: false,
+        directory: false,
+        filters: [
+          { name: "Executables", extensions: ["exe", "com", "bat", "cmd"] },
+          { name: "All Files", extensions: ["*"] },
+        ],
+      });
+      if (selected) {
+        setFormLaunchCommand(selected);
+      }
+    } catch (error) {
+      console.error("Failed to open file dialog:", error);
+      toast.error(`Failed to open file dialog: ${error}`);
+    }
+  };
 
   const handleOpenNewSessionDialog = () => {
     setSessionToEdit(null);
@@ -451,12 +471,19 @@ export default function Debugger() {
                 )}
                 <div className="space-y-2">
                   <Label htmlFor="launchCommand">Launch Command</Label>
-                  <Input
-                    id="launchCommand"
-                    value={formLaunchCommand}
-                    onChange={(e) => setFormLaunchCommand(e.target.value)}
-                    placeholder="cmd.exe /c echo Hello World!"
-                  />
+                  <div className="flex gap-2">
+                    <Input
+                      id="launchCommand"
+                      value={formLaunchCommand}
+                      onChange={(e) => setFormLaunchCommand(e.target.value)}
+                      placeholder="cmd.exe /c echo Hello World!"
+                    />
+                    {formLocalRun && (
+                      <Button variant="outline" size="icon" onClick={handleBrowseExecutable} title="Browse for executable" type="button">
+                        <FolderOpen className="h-4 w-4" />
+                      </Button>
+                    )}
+                  </div>
                 </div>
               </div>
               <div className="flex justify-end gap-2">

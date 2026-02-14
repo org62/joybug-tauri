@@ -153,6 +153,17 @@
   border-radius: var(--radius-xl);
 }
 
+/* Disable rc-dock tab switch animations */
+.dock-content-animated {
+  transition: none !important;
+}
+.dock-ink-bar-animated {
+  transition: none !important;
+}
+.dock-tabpane:not(.dock-tabpane-active) {
+  animation: none !important;
+}
+
 .dark .dock-ink-bar {
   @apply bg-amber-400;
 }

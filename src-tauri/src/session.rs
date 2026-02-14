@@ -227,6 +227,33 @@ fn update_session_from_event(state: &mut SessionStateUI, event: &joybug2::protoc
     }
 }
 
+/// Extracts the filename (without extension) from a module path
+fn extract_module_name(module_path: &str) -> String {
+    std::path::Path::new(module_path)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or(module_path)
+        .to_string()
+}
+
+/// Clones the current module list from the shared session state.
+/// Use this to get a snapshot of modules without holding the lock during subsequent operations.
+fn get_modules_snapshot(session: &joybug2::protocol_io::DebugSession<Arc<Mutex<SessionStateUI>>>) -> Vec<joybug2::protocol_io::ModuleInfo> {
+    session.state.lock().unwrap().modules.clone()
+}
+
+/// Finds the module containing the given address, returns (short_name, offset_from_base)
+fn find_module_for_address(modules: &[joybug2::protocol_io::ModuleInfo], address: u64) -> Option<(String, u64)> {
+    for module in modules {
+        if let Some(size) = module.size {
+            if address >= module.base && address < module.base + size {
+                return Some((extract_module_name(&module.name), address - module.base));
+            }
+        }
+    }
+    None
+}
+
 /// Processes a disassembly request and emits results to the frontend
 fn process_disassembly_request(
     session: &mut joybug2::protocol_io::DebugSession<Arc<Mutex<SessionStateUI>>>,
@@ -238,16 +265,19 @@ fn process_disassembly_request(
 ) {
     let pid = event.pid();
     debug!("📤 Processing disassembly request: pid={}, address=0x{:X}, count={}", pid, address, count);
+    let modules = get_modules_snapshot(session);
     match session.disassemble_memory(pid, address, count as usize, arch) {
         Ok(instructions) => {
             debug!("📥 Received {} instructions from disassemble_memory", instructions.len());
-            
+
             // Convert to serializable format and emit event
             let serializable_instructions: Vec<crate::commands::SerializableInstruction> = instructions
                 .iter()
                 .map(|inst| {
                     let address_str = if let Some(ref sym) = inst.symbol_info {
                         format!("{}!{}+0x{:x}", sym.module_name, sym.symbol_name, sym.offset)
+                    } else if let Some((mod_name, offset)) = find_module_for_address(&modules, inst.address) {
+                        format!("{}+0x{:x}", mod_name, offset)
                     } else {
                         format!("{:#X}", inst.address)
                     };
@@ -343,6 +373,7 @@ fn process_function_disassembly_request(
     let pid = event.pid();
     debug!("📤 Processing function disassembly request: pid={}, address=0x{:X}, max_instructions={}", pid, address, max_instructions);
 
+    let modules = get_modules_snapshot(session);
     match session.disassemble_function(pid, address, max_instructions as usize, arch) {
         Ok((instructions, function_start, function_end, function_name)) => {
             debug!("📥 Received {} instructions from disassemble_function", instructions.len());
@@ -353,6 +384,8 @@ fn process_function_disassembly_request(
                 .map(|inst| {
                     let address_str = if let Some(ref sym) = inst.symbol_info {
                         format!("{}!{}+0x{:x}", sym.module_name, sym.symbol_name, sym.offset)
+                    } else if let Some((mod_name, offset)) = find_module_for_address(&modules, inst.address) {
+                        format!("{}+0x{:x}", mod_name, offset)
                     } else {
                         format!("{:#X}", inst.address)
                     };
@@ -443,16 +476,21 @@ fn process_function_disassembly_request(
 }
 
 /// Converts raw stack frames into the serializable CallStackData format
-fn convert_frames_to_callstack(frames: &[joybug2::interfaces::CallFrame]) -> Vec<crate::commands::CallStackData> {
+fn convert_frames_to_callstack(frames: &[joybug2::interfaces::CallFrame], modules: &[joybug2::protocol_io::ModuleInfo]) -> Vec<crate::commands::CallStackData> {
     frames.iter().enumerate().map(|(i, frame)| {
+        let symbol_info = if let Some(ref sym) = frame.symbol {
+            Some(format!("{}!{}+0x{:x}", sym.module_name, sym.symbol_name, sym.offset))
+        } else if let Some((mod_name, offset)) = find_module_for_address(modules, frame.instruction_pointer) {
+            Some(format!("{}+0x{:x}", mod_name, offset))
+        } else {
+            None
+        };
         crate::commands::CallStackData {
             frame_number: i,
             instruction_pointer: format!("0x{:016x}", frame.instruction_pointer),
             stack_pointer: format!("0x{:016x}", frame.stack_pointer),
             frame_pointer: format!("0x{:016x}", frame.frame_pointer),
-            symbol_info: frame.symbol.as_ref().map(|sym| {
-                format!("{}!{}+0x{:x}", sym.module_name, sym.symbol_name, sym.offset)
-            }),
+            symbol_info,
         }
     }).collect()
 }
@@ -467,11 +505,12 @@ fn process_callstack_request(
     let tid = event.tid();
     debug!("📤 Processing callstack request: pid={}, tid={}", pid, tid);
 
+    let modules = get_modules_snapshot(session);
     match session.get_call_stack(pid, tid) {
         Ok(frames) => {
             debug!("📥 Received {} frames from get_call_stack", frames.len());
 
-            let call_stack = convert_frames_to_callstack(&frames);
+            let call_stack = convert_frames_to_callstack(&frames, &modules);
 
             // Emit callstack results to frontend
             if let Some(ref handle) = app_handle_clone {
@@ -537,11 +576,12 @@ fn process_thread_callstack_request(
     let pid = event.pid();
     debug!("📤 Processing thread callstack request: pid={}, tid={}", pid, tid);
 
+    let modules = get_modules_snapshot(session);
     match session.get_call_stack(pid, tid) {
         Ok(frames) => {
             debug!("📥 Received {} frames from get_call_stack for tid={}", frames.len(), tid);
 
-            let call_stack = convert_frames_to_callstack(&frames);
+            let call_stack = convert_frames_to_callstack(&frames, &modules);
 
             if let Some(ref handle) = app_handle_clone {
                 let session_id = {
@@ -1150,13 +1190,18 @@ fn disassemble_addresses(
     addresses: &[u64],
     arch: joybug2::interfaces::Architecture,
 ) -> Vec<crate::commands::EmulationInstructionInfo> {
+    let modules = get_modules_snapshot(session);
     let mut info = Vec::with_capacity(addresses.len());
     for &addr in addresses {
         if let Ok(instructions) = session.disassemble_memory(pid, addr, 1, arch) {
             if let Some(inst) = instructions.first() {
-                let symbol = inst.symbol_info.as_ref().map(|sym| {
-                    format_symbol(&sym.module_name, &sym.symbol_name, sym.offset)
-                });
+                let symbol = if let Some(ref sym) = inst.symbol_info {
+                    Some(format_symbol(&sym.module_name, &sym.symbol_name, sym.offset))
+                } else if let Some((mod_name, offset)) = find_module_for_address(&modules, inst.address) {
+                    Some(format!("{}+0x{:x}", mod_name, offset))
+                } else {
+                    None
+                };
                 let op_str = inst.symbolized_op_str.as_ref().unwrap_or(&inst.op_str).clone();
                 info.push(crate::commands::EmulationInstructionInfo {
                     address: format!("0x{:X}", inst.address),
@@ -1170,7 +1215,37 @@ fn disassemble_addresses(
     info
 }
 
-/// Symbolize addresses in stop_reason strings like "Syscall(0x7FFC0E651262)"
+/// Symbolize a raw hex address in a stop_reason string, trying symbol resolution then module+offset fallback.
+/// `prefix_pos` is the byte offset of the character just before "0x" (e.g. '(' or '@'),
+/// so the hex literal starts at `prefix_pos + 1`.
+fn symbolize_address_in_stop_reason(
+    session: &mut joybug2::protocol_io::DebugSession<Arc<Mutex<SessionStateUI>>>,
+    pid: u32,
+    stop_reason: &str,
+    prefix_pos: usize,
+) -> Option<String> {
+    let after_prefix = prefix_pos + 1; // start of "0x..."
+    let end = prefix_pos + stop_reason[prefix_pos..].find(')')?;
+    let hex_str = &stop_reason[after_prefix..end];
+    let addr = u64::from_str_radix(&hex_str[2..], 16).ok()?;
+
+    // Try full symbol resolution first
+    if let Ok((_module, sym, offset)) = session.resolve_address_to_symbol(pid, addr) {
+        if let (Some(m), Some(s), Some(o)) = (_module, sym, offset) {
+            let symbol = format_symbol(&m, &s.name, o);
+            return Some(format!("{}{}{}", &stop_reason[..after_prefix], symbol, &stop_reason[end..]));
+        }
+    }
+    // Fall back to module+offset
+    let modules = get_modules_snapshot(session);
+    if let Some((mod_name, mod_offset)) = find_module_for_address(&modules, addr) {
+        let label = format!("{}+0x{:x}", mod_name, mod_offset);
+        return Some(format!("{}{}{}", &stop_reason[..after_prefix], label, &stop_reason[end..]));
+    }
+    None
+}
+
+/// Symbolize addresses in stop_reason strings like "Syscall(0x7FFC...)" or "ModuleTransition(mod1->mod2@0x7FFC...)"
 fn symbolize_stop_reason(
     session: &mut joybug2::protocol_io::DebugSession<Arc<Mutex<SessionStateUI>>>,
     pid: u32,
@@ -1178,16 +1253,14 @@ fn symbolize_stop_reason(
 ) -> String {
     // Match "Syscall(0xADDR)" or "ReachedAddress(0xADDR)"
     if let Some(start) = stop_reason.find("(0x") {
-        if let Some(end) = stop_reason[start..].find(')') {
-            let hex_str = &stop_reason[start + 1..start + end]; // "0x..."
-            if let Ok(addr) = u64::from_str_radix(&hex_str[2..], 16) {
-                if let Ok((_module, sym, offset)) = session.resolve_address_to_symbol(pid, addr) {
-                    if let (Some(m), Some(s), Some(o)) = (_module, sym, offset) {
-                        let symbol = format_symbol(&m, &s.name, o);
-                        return format!("{}{}{}", &stop_reason[..start + 1], symbol, &stop_reason[start + end..]);
-                    }
-                }
-            }
+        if let Some(result) = symbolize_address_in_stop_reason(session, pid, stop_reason, start) {
+            return result;
+        }
+    }
+    // Match "ModuleTransition(mod1->mod2@0xADDR)"
+    if let Some(at_pos) = stop_reason.find("@0x") {
+        if let Some(result) = symbolize_address_in_stop_reason(session, pid, stop_reason, at_pos) {
+            return result;
         }
     }
     stop_reason.to_string()

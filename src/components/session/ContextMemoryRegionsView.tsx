@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, useMemo } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { useSessionContext } from '@/contexts/SessionContext';
@@ -38,7 +38,6 @@ export function ContextMemoryRegionsView({ onNavigateToAddress }: ContextMemoryR
   const [isLoading, setIsLoading] = useState(false);
   const [stateFilter, setStateFilter] = useState<StateFilter>('committed');
   const [typeFilter, setTypeFilter] = useState<TypeFilter>('all');
-  const isOpenRef = useRef(false);
 
   const fetchMemoryRegions = async () => {
     if (!sessionData?.session?.id) return;
@@ -84,22 +83,16 @@ export function ContextMemoryRegionsView({ onNavigateToAddress }: ContextMemoryR
     });
   }, [regions, stateFilter, typeFilter]);
 
-  // Auto-fetch memory regions on every pause if window is open
+  // Fetch memory regions on pause (including first mount) and clear on resume/stop
   useEffect(() => {
-    if (sessionData?.session?.status === 'Paused' && isOpenRef.current) {
+    if (sessionData?.session?.status === 'Paused' && sessionData?.session?.id) {
       fetchMemoryRegions();
     } else if (sessionData?.session?.status !== 'Paused') {
       setRegions([]);
       setError(null);
+      setIsLoading(false);
     }
-  }, [sessionData?.session?.status, sessionData?.session?.current_event]);
-
-  // Fetch memory regions when component first mounts if session is already paused
-  useEffect(() => {
-    if (sessionData?.session?.status === 'Paused' && sessionData?.session?.id) {
-      fetchMemoryRegions();
-    }
-  }, [sessionData?.session?.id]);
+  }, [sessionData?.session?.id, sessionData?.session?.status, sessionData?.session?.current_event]);
 
   // Listen for memory regions updates
   useEffect(() => {
@@ -124,14 +117,6 @@ export function ContextMemoryRegionsView({ onNavigateToAddress }: ContextMemoryR
       unlistenError.then(f => f());
     };
   }, [sessionData?.session?.id]);
-
-  // Track if component is visible (mounted)
-  useEffect(() => {
-    isOpenRef.current = true;
-    return () => {
-      isOpenRef.current = false;
-    };
-  }, []);
 
   // Handler for clicking a region to open in hex view
   const handleRegionClick = (region: MemoryRegion) => {
