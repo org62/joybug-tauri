@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useRef, useLayoutEffect, useState } from 'react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import {
   Select,
@@ -14,6 +14,7 @@ import type {
   ExportKind,
 } from '@/hooks/useModuleInfo';
 import { Loader2, FileWarning, FileSearch } from 'lucide-react';
+import { useVirtualizer } from '@tanstack/react-virtual';
 
 interface ModuleInfoViewProps {
   modules: Module[];
@@ -253,12 +254,37 @@ const SectionsTable: React.FC<{
 
 // --- Section: Exports ---
 
+const EXPORT_ROW_HEIGHT = 24;
+
 const ExportsTable: React.FC<{
   exports: ModuleExtraInfo['exports'];
   moduleBase: string;
   entryPointRva: number;
+  scrollContainerRef: React.RefObject<HTMLDivElement | null>;
   onNavigateToDisassembly?: (address: string) => void;
-}> = ({ exports, moduleBase, entryPointRva, onNavigateToDisassembly }) => {
+}> = ({ exports, moduleBase, entryPointRva, scrollContainerRef, onNavigateToDisassembly }) => {
+  const listRef = useRef<HTMLDivElement>(null);
+  const [scrollMargin, setScrollMargin] = useState(0);
+
+  const entries = exports?.entries ?? [];
+
+  // Measure distance from scroll container top to the virtualized list
+  useLayoutEffect(() => {
+    if (listRef.current && scrollContainerRef.current) {
+      const listTop = listRef.current.getBoundingClientRect().top;
+      const scrollTop = scrollContainerRef.current.getBoundingClientRect().top;
+      setScrollMargin(listTop - scrollTop + scrollContainerRef.current.scrollTop);
+    }
+  });
+
+  const virtualizer = useVirtualizer({
+    count: entries.length,
+    getScrollElement: () => scrollContainerRef.current,
+    estimateSize: () => EXPORT_ROW_HEIGHT,
+    overscan: 30,
+    scrollMargin,
+  });
+
   if (!exports) return null;
 
   const baseAddr = BigInt(moduleBase);
@@ -266,48 +292,54 @@ const ExportsTable: React.FC<{
   return (
     <div>
       <h4 className="font-medium text-xs text-muted-foreground mb-1">
-        Exports — {exports.dll_name} ({exports.entries.length})
+        Exports — {exports.dll_name} ({entries.length})
       </h4>
-      <table className="w-full text-xs">
-        <thead>
-          <tr className="border-b text-muted-foreground">
-            <th className="text-left py-0.5 pr-2">Ord</th>
-            <th className="text-left py-0.5 pr-2">Name</th>
-            <th className="text-left py-0.5 pr-2">Address</th>
-            <th className="text-left py-0.5">Forward</th>
-          </tr>
-        </thead>
-        <tbody>
-          {exports.entries.map((entry, i) => {
-            const rva = getExportRva(entry.kind);
-            const fwd = getExportForwardTarget(entry.kind);
-            const va = rva !== null && rva !== 0 ? `0x${(baseAddr + BigInt(rva)).toString(16).toUpperCase()}` : null;
-            const isEntryPoint = rva === entryPointRva;
+      {/* Header row */}
+      <div className="flex text-xs text-muted-foreground border-b">
+        <span className="py-0.5 pr-2 shrink-0" style={{ width: 50 }}>Ord</span>
+        <span className="py-0.5 pr-2 shrink-0" style={{ width: 200 }}>Name</span>
+        <span className="py-0.5 pr-2 shrink-0" style={{ width: 160 }}>Address</span>
+        <span className="py-0.5 flex-1">Forward</span>
+      </div>
+      {/* Virtualized rows — rendered inline within the outer ScrollArea */}
+      <div ref={listRef} className="relative" style={{ height: virtualizer.getTotalSize() }}>
+        {virtualizer.getVirtualItems().map((virtualRow) => {
+          const entry = entries[virtualRow.index];
+          const rva = getExportRva(entry.kind);
+          const fwd = getExportForwardTarget(entry.kind);
+          const va = rva !== null && rva !== 0 ? `0x${(baseAddr + BigInt(rva)).toString(16).toUpperCase()}` : null;
+          const isEntryPoint = rva === entryPointRva;
 
-            return (
-              <tr
-                key={i}
-                className={`border-b border-border/40 ${isEntryPoint ? 'bg-yellow-500/10' : ''}`}
-              >
-                <td className="py-0.5 pr-2 font-mono">{entry.ordinal}</td>
-                <td className="py-0.5 pr-2 font-mono truncate max-w-[200px]" title={entry.name ?? undefined}>
-                  {entry.name ?? '—'}
-                </td>
-                <td className="py-0.5 pr-2">
-                  {va ? (
-                    <AddressLink address={va} onClick={onNavigateToDisassembly} />
-                  ) : (
-                    <span className="text-muted-foreground">—</span>
-                  )}
-                </td>
-                <td className="py-0.5 font-mono text-muted-foreground truncate max-w-[200px]" title={fwd ?? undefined}>
-                  {fwd ?? ''}
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
+          return (
+            <div
+              key={virtualRow.index}
+              className={`flex text-xs border-b border-border/40 ${isEntryPoint ? 'bg-yellow-500/10' : ''}`}
+              style={{
+                position: 'absolute',
+                top: virtualRow.start - virtualizer.options.scrollMargin,
+                left: 0,
+                right: 0,
+                height: EXPORT_ROW_HEIGHT,
+              }}
+            >
+              <span className="py-0.5 pr-2 font-mono shrink-0" style={{ width: 50 }}>{entry.ordinal}</span>
+              <span className="py-0.5 pr-2 font-mono truncate shrink-0" style={{ width: 200 }} title={entry.name ?? undefined}>
+                {entry.name ?? '—'}
+              </span>
+              <span className="py-0.5 pr-2 shrink-0" style={{ width: 160 }}>
+                {va ? (
+                  <AddressLink address={va} onClick={onNavigateToDisassembly} />
+                ) : (
+                  <span className="text-muted-foreground">—</span>
+                )}
+              </span>
+              <span className="py-0.5 font-mono text-muted-foreground truncate flex-1" title={fwd ?? undefined}>
+                {fwd ?? ''}
+              </span>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 };
@@ -328,6 +360,8 @@ export const ModuleInfoView: React.FC<ModuleInfoViewProps> = ({
     () => modules.find(m => m.base_address === selectedModuleBase),
     [modules, selectedModuleBase]
   );
+
+  const viewportRef = useRef<HTMLDivElement>(null);
 
   return (
     <div className="absolute inset-0 flex flex-col overflow-hidden">
@@ -353,7 +387,7 @@ export const ModuleInfoView: React.FC<ModuleInfoViewProps> = ({
       </div>
 
       {/* Content area */}
-      <ScrollArea className="flex-1 min-h-0">
+      <ScrollArea className="flex-1 min-h-0" viewportRef={viewportRef}>
         <div className="p-2 space-y-4">
           {isLoading && (
             <div className="flex items-center justify-center py-8 text-muted-foreground">
@@ -393,6 +427,7 @@ export const ModuleInfoView: React.FC<ModuleInfoViewProps> = ({
                 exports={info.exports}
                 moduleBase={selectedModuleBase!}
                 entryPointRva={info.nt_headers.OptionalHeader.AddressOfEntryPoint}
+                scrollContainerRef={viewportRef}
                 onNavigateToDisassembly={onNavigateToDisassembly}
               />
             </>

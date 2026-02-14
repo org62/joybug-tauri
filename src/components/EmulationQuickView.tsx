@@ -4,6 +4,7 @@ import { ScrollArea } from "./ui/scroll-area";
 import { cn } from "@/lib/utils";
 import { useQuickEmulation, QuickEmulationResult } from "@/hooks/useQuickEmulation";
 import { parseTenetTrace } from "@/lib/tenetParser";
+import { useVirtualizer } from "@tanstack/react-virtual";
 
 interface EmulationQuickViewProps {
   sessionId?: string;
@@ -69,6 +70,100 @@ function parseSummaryRow(result: QuickEmulationResult | null, kind: "syscall" | 
   }
 
   return { label: reason, muted: false, finalPc };
+}
+
+interface TraceLine {
+  index: number;
+  address: string;
+  mnemonic: string;
+  opStr: string;
+  changes: string;
+  memory: string;
+  tooltip: string;
+}
+
+const TRACE_ROW_HEIGHT = 18;
+
+function VirtualizedTraceLines({
+  height,
+  traceLines,
+  hasAnyData,
+  isLoading,
+  onRowEnter,
+  onRowMove,
+  onRowLeave,
+}: {
+  height: number;
+  traceLines: TraceLine[];
+  hasAnyData: boolean;
+  isLoading: boolean;
+  onRowEnter: (index: number, e: React.MouseEvent) => void;
+  onRowMove: (pos: { x: number; y: number }) => void;
+  onRowLeave: () => void;
+}) {
+  const viewportRef = useRef<HTMLDivElement>(null);
+
+  const virtualizer = useVirtualizer({
+    count: traceLines.length,
+    getScrollElement: () => viewportRef.current,
+    estimateSize: () => TRACE_ROW_HEIGHT,
+    overscan: 20,
+  });
+
+  if (traceLines.length === 0 && !hasAnyData && !isLoading) {
+    return (
+      <ScrollArea style={{ height }}>
+        <div className="px-3 py-2 text-muted-foreground text-center">
+          Pause the debugger to see quick emulation results
+        </div>
+      </ScrollArea>
+    );
+  }
+
+  if (traceLines.length === 0) {
+    return <ScrollArea style={{ height }} />;
+  }
+
+  return (
+    <ScrollArea style={{ height }} viewportRef={viewportRef}>
+      <div
+        className="px-1 py-0.5 relative"
+        style={{ height: virtualizer.getTotalSize() }}
+      >
+        {virtualizer.getVirtualItems().map((virtualRow) => {
+          const line = traceLines[virtualRow.index];
+          return (
+            <div
+              key={virtualRow.index}
+              className="flex items-center px-2 whitespace-nowrap hover:bg-muted/50 absolute left-0 right-0"
+              style={{ height: TRACE_ROW_HEIGHT, top: virtualRow.start }}
+              onMouseEnter={(e) => onRowEnter(line.index, e)}
+              onMouseMove={(e) => onRowMove({ x: e.clientX, y: e.clientY })}
+              onMouseLeave={onRowLeave}
+            >
+              <span className="text-muted-foreground w-8 shrink-0 text-right mr-2">
+                {line.index}
+              </span>
+              <span className="text-muted-foreground shrink-0 mr-3" style={{ minWidth: 180 }}>
+                {line.address.length > 35 ? line.address.slice(0, 34) + "\u2026" : line.address}
+              </span>
+              <span className="shrink-0 mr-3" style={{ minWidth: 140 }}>
+                <span className="text-blue-400">{line.mnemonic}</span>
+                {line.opStr && <> {line.opStr}</>}
+              </span>
+              {(line.changes || line.memory) && (
+                <>
+                  {line.changes && <span className="text-yellow-500 mr-1">{line.changes}</span>}
+                  {line.changes && line.memory && <span className="text-muted-foreground mr-1">, </span>}
+                  {line.memory && <span className="text-blue-500">{line.memory}</span>}
+                </>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </ScrollArea>
+  );
 }
 
 export function EmulationQuickView({ sessionId, isPaused, pcAddress, onNavigateToAddress }: EmulationQuickViewProps) {
@@ -443,47 +538,16 @@ export function EmulationQuickView({ sessionId, isPaused, pcAddress, onNavigateT
             </div>
           </div>
 
-          {/* Trace lines - scrollable */}
-          <ScrollArea style={{ height }}>
-            {traceLines.length > 0 && (
-              <div className="px-1 py-0.5">
-                {traceLines.map((line) => (
-                  <div
-                    key={line.index}
-                    className="flex items-center px-2 whitespace-nowrap hover:bg-muted/50"
-                    style={{ height: 18 }}
-                    onMouseEnter={(e) => handleRowEnter(line.index, e)}
-                    onMouseMove={(e) => setTooltipPos({ x: e.clientX, y: e.clientY })}
-                    onMouseLeave={handleRowLeave}
-                  >
-                    <span className="text-muted-foreground w-8 shrink-0 text-right mr-2">
-                      {line.index}
-                    </span>
-                    <span className="text-muted-foreground shrink-0 mr-3" style={{ minWidth: 180 }}>
-                      {line.address.length > 35 ? line.address.slice(0, 34) + "\u2026" : line.address}
-                    </span>
-                    <span className="shrink-0 mr-3" style={{ minWidth: 140 }}>
-                      <span className="text-blue-400">{line.mnemonic}</span>
-                      {line.opStr && <> {line.opStr}</>}
-                    </span>
-                    {(line.changes || line.memory) && (
-                      <>
-                        {line.changes && <span className="text-yellow-500 mr-1">{line.changes}</span>}
-                        {line.changes && line.memory && <span className="text-muted-foreground mr-1">, </span>}
-                        {line.memory && <span className="text-blue-500">{line.memory}</span>}
-                      </>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {!hasAnyData && !isLoading && (
-              <div className="px-3 py-2 text-muted-foreground text-center">
-                Pause the debugger to see quick emulation results
-              </div>
-            )}
-          </ScrollArea>
+          {/* Trace lines - scrollable + virtualized */}
+          <VirtualizedTraceLines
+            height={height}
+            traceLines={traceLines}
+            hasAnyData={!!hasAnyData}
+            isLoading={isLoading}
+            onRowEnter={handleRowEnter}
+            onRowMove={setTooltipPos}
+            onRowLeave={handleRowLeave}
+          />
         </div>
       )}
 

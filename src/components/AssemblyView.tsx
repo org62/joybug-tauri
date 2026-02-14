@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { ScrollArea } from "./ui/scroll-area";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
@@ -11,6 +11,7 @@ import { RegisterContext, SymbolResolver, sanitizeAddressInput } from "@/lib/hex
 import { useContextMenu } from "@/hooks/useContextMenu";
 import { EmulationQuickView } from "./EmulationQuickView";
 import { consumePendingDisassemblyNavigation, NAVIGATE_DISASSEMBLY_EVENT } from "@/lib/navigationEvents";
+import { useVirtualizer } from "@tanstack/react-virtual";
 
 const COLUMN_WIDTHS_KEY = "assembly-column-widths";
 const MIN_COL_WIDTH = 40;
@@ -22,6 +23,7 @@ interface ColumnWidths {
 }
 
 const DEFAULT_COLUMN_WIDTHS: ColumnWidths = { symbol: 320, bytes: 144, mnemonic: 64 };
+const ASSEMBLY_ROW_HEIGHT = 24;
 
 function getInitialColumnWidths(): ColumnWidths {
   try {
@@ -51,9 +53,7 @@ interface AssemblyViewProps {
 export function AssemblyView({ sessionId, isPaused, address, registers, resolveSymbol, breakpointAddresses, onToggleBreakpoint }: AssemblyViewProps) {
   const [addressInput, setAddressInput] = useState("");
   const containerRef = useRef<HTMLDivElement>(null);
-  const scrollContainerRef = useRef<HTMLDivElement>(null);
-  const pcRowRef = useRef<HTMLDivElement>(null);
-  const jumpTargetRowRef = useRef<HTMLDivElement>(null);
+  const viewportRef = useRef<HTMLDivElement>(null);
   // Track which address is being highlighted (for fade animation)
   const [highlightedAddress, setHighlightedAddress] = useState<bigint | null>(null);
   // Track which jump target is being hovered (for live highlight)
@@ -154,31 +154,49 @@ export function AssemblyView({ sessionId, isPaused, address, registers, resolveS
     }
   }, []);
 
-  // Scroll to PC when pcAddress changes or when instructions load (e.g., navigating back)
-  // This ensures PC is always visible after stepping or when returning to a function with PC
+  // Build address-to-index lookup for virtualizer scrolling
+  const addressIndexMap = useMemo(() => {
+    const map = new Map<string, number>();
+    for (let i = 0; i < instructions.length; i++) {
+      map.set(instructions[i].address.toUpperCase(), i);
+    }
+    return map;
+  }, [instructions]);
+
+  const virtualizer = useVirtualizer({
+    count: instructions.length,
+    getScrollElement: () => viewportRef.current,
+    estimateSize: () => ASSEMBLY_ROW_HEIGHT,
+    overscan: 30,
+  });
+
+  // Scroll to PC when pcAddress changes or when instructions load
   // But only if there's no jump target (user navigation takes priority)
   useEffect(() => {
-    if (jumpTargetAddress === null && pcAddress !== null && pcRowRef.current) {
-      // Use scrollIntoView to ensure PC row is visible
-      // 'center' keeps it roughly centered, 'nearest' only scrolls if needed
-      pcRowRef.current.scrollIntoView({ block: 'center', behavior: 'auto' });
+    if (jumpTargetAddress === null && pcAddress !== null && instructions.length > 0) {
+      const pcKey = `0X${pcAddress.toString(16).toUpperCase()}`;
+      const index = addressIndexMap.get(pcKey);
+      if (index !== undefined) {
+        virtualizer.scrollToIndex(index, { align: 'center' });
+      }
     }
-  }, [pcAddress, instructions, jumpTargetAddress]);
+  }, [pcAddress, instructions, jumpTargetAddress, addressIndexMap]);
 
-  // Scroll to and highlight jump target when navigating (clicking call/jump destinations)
+  // Scroll to and highlight jump target when navigating
   useEffect(() => {
-    if (jumpTargetAddress !== null && instructions.length > 0 && jumpTargetRowRef.current) {
-      // Scroll to the jump target
-      jumpTargetRowRef.current.scrollIntoView({ block: 'center', behavior: 'auto' });
-      // Trigger highlight animation
+    if (jumpTargetAddress !== null && instructions.length > 0) {
+      const targetKey = `0X${jumpTargetAddress.toString(16).toUpperCase()}`;
+      const index = addressIndexMap.get(targetKey);
+      if (index !== undefined) {
+        virtualizer.scrollToIndex(index, { align: 'center' });
+      }
       setHighlightedAddress(jumpTargetAddress);
-      // Clear highlight after animation (1 second)
       const timer = setTimeout(() => {
         setHighlightedAddress(null);
       }, 1000);
       return () => clearTimeout(timer);
     }
-  }, [jumpTargetAddress, instructions]);
+  }, [jumpTargetAddress, instructions, addressIndexMap]);
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -337,7 +355,7 @@ export function AssemblyView({ sessionId, isPaused, address, registers, resolveS
       )}
 
       {/* Main content area */}
-      <ScrollArea className="flex-1 min-h-0">
+      <ScrollArea className="flex-1 min-h-0" viewportRef={viewportRef}>
         {/* Empty state */}
         {showEmptyState && (
           <div className="flex flex-col items-center justify-center h-full text-muted-foreground p-4">
@@ -369,32 +387,23 @@ export function AssemblyView({ sessionId, isPaused, address, registers, resolveS
           </div>
         )}
 
-        {/* Instructions list */}
+        {/* Instructions list - virtualized */}
         {showInstructions && (
           <div
-            ref={scrollContainerRef}
-            className="font-mono text-xs"
+            className="font-mono text-xs relative"
+            style={{ height: virtualizer.getTotalSize() }}
           >
-            {instructions.map((inst, index) => {
+            {virtualizer.getVirtualItems().map((virtualRow) => {
+              const inst = instructions[virtualRow.index];
               const instAddrUpper = inst.address.toUpperCase();
               const isPC = pcAddress !== null && instAddrUpper === `0X${pcAddress.toString(16).toUpperCase()}`;
-              const isJumpTarget = jumpTargetAddress !== null && instAddrUpper === `0X${jumpTargetAddress.toString(16).toUpperCase()}`;
               const isHighlighted = highlightedAddress !== null && instAddrUpper === `0X${highlightedAddress.toString(16).toUpperCase()}`;
               const isHoverTarget = hoveredJumpTarget !== null && instAddrUpper === `0X${hoveredJumpTarget.toString(16).toUpperCase()}`;
-
-              // Determine which ref to use (jump target takes priority for scrolling)
-              let rowRef: React.Ref<HTMLDivElement> | undefined;
-              if (isJumpTarget) {
-                rowRef = jumpTargetRowRef;
-              } else if (isPC) {
-                rowRef = pcRowRef;
-              }
-
-              const hasBreakpoint = breakpointAddresses?.has(inst.address.toUpperCase()) ?? false;
+              const hasBreakpoint = breakpointAddresses?.has(instAddrUpper) ?? false;
 
               return (
                 <InstructionRow
-                  key={`${inst.address}-${index}`}
+                  key={`${inst.address}-${virtualRow.index}`}
                   instruction={inst}
                   isPC={isPC}
                   isHighlighted={isHighlighted}
@@ -405,7 +414,7 @@ export function AssemblyView({ sessionId, isPaused, address, registers, resolveS
                   onJumpTargetClick={handleJumpTargetClick}
                   onJumpTargetHover={handleJumpTargetHover}
                   onContextMenu={(e, addr) => openContextMenu(e, { address: addr })}
-                  rowRef={rowRef}
+                  style={{ position: 'absolute', top: virtualRow.start, left: 0, right: 0, height: ASSEMBLY_ROW_HEIGHT }}
                 />
               );
             })}
@@ -461,10 +470,10 @@ interface InstructionRowProps {
   onJumpTargetClick: (target: string) => void;
   onJumpTargetHover: (target: string | null) => void;
   onContextMenu: (e: React.MouseEvent, address: string) => void;
-  rowRef?: React.Ref<HTMLDivElement>;
+  style?: React.CSSProperties;
 }
 
-function InstructionRow({ instruction, isPC, isHighlighted, isHoverTarget, hasBreakpoint, showBytes, columnWidths, onJumpTargetClick, onJumpTargetHover, onContextMenu, rowRef }: InstructionRowProps) {
+function InstructionRow({ instruction, isPC, isHighlighted, isHoverTarget, hasBreakpoint, showBytes, columnWidths, onJumpTargetClick, onJumpTargetHover, onContextMenu, style }: InstructionRowProps) {
   const { mnemonic, op_str, is_jump, is_call, is_ret, jump_target } = instruction;
 
   // Render operands with clickable jump target
@@ -487,13 +496,13 @@ function InstructionRow({ instruction, isPC, isHighlighted, isHoverTarget, hasBr
 
   return (
     <div
-      ref={rowRef}
       className={cn(
-        "flex items-center hover:bg-muted/30 px-2 py-0.5",
+        "flex items-center hover:bg-muted/30 px-2",
         isPC && "bg-yellow-100 dark:bg-yellow-900/40",
         isHighlighted && "animate-highlight-fade",
         isHoverTarget && "bg-blue-100 dark:bg-blue-900/40"
       )}
+      style={style}
       onContextMenu={(e) => onContextMenu(e, instruction.address)}
     >
       {/* PC indicator */}
