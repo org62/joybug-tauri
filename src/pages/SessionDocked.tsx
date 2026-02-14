@@ -145,20 +145,13 @@ export default function SessionDocked() {
     }
   }, [parseAddress]);
 
-  const handleSymbolNavigateToMemory = React.useCallback((address: string) => {
+  const handleNavigateToMemory = React.useCallback((address: string) => {
     navigateToMemoryTab(address);
   }, [navigateToMemoryTab]);
 
   const handleNavigateToMemoryPointer = React.useCallback((address: string) => {
     navigateToMemoryTab(address, "pointer");
   }, [navigateToMemoryTab]);
-
-  // Add a new memory tab at a specific address (from memory regions click)
-  const handleNavigateToMemoryAddress = React.useCallback((address: string) => {
-    dockingRef.current?.addTypedTab('memory', (tabId) => (
-      <ContextHexView memoryViewId={tabId} initialAddress={parseAddress(address)} />
-    ));
-  }, [parseAddress]);
 
   // Open PE Viewer tab (singleton) — if already open, focus it and dispatch module selection
   const handleOpenModuleInfo = React.useCallback((moduleBase: string) => {
@@ -300,8 +293,8 @@ export default function SessionDocked() {
     searchSymbols: async (pattern: string, limit?: number) => { return await searchSymbols(pattern, limit); },
     breakpointState,
     onNavigateToDisassembly: handleNavigateToDisassembly,
-    onNavigateToMemory: handleSymbolNavigateToMemory,
-  }), [session, displayStatus, modules, threads, loadModules, loadThreads, searchSymbols, breakpointState, handleNavigateToDisassembly, handleSymbolNavigateToMemory]);
+    onNavigateToMemory: handleNavigateToMemory,
+  }), [session, displayStatus, modules, threads, loadModules, loadThreads, searchSymbols, breakpointState, handleNavigateToDisassembly, handleNavigateToMemory]);
   
   // Static tab content - components will update via context
   const dynamicTabContent = useMemo(() => ({
@@ -311,10 +304,10 @@ export default function SessionDocked() {
     threads: <ContextThreadsView onNavigateToDisassembly={handleNavigateToDisassembly} onNavigateToMemoryPointer={handleNavigateToMemoryPointer} />,
     callstack: <ContextCallStackView onNavigateToDisassembly={handleNavigateToDisassembly} onNavigateToMemoryPointer={handleNavigateToMemoryPointer} />,
     symbols: <ContextSymbolsView />,
-    memory_regions: <ContextMemoryRegionsView onNavigateToAddress={handleNavigateToMemoryAddress} />,
+    memory_regions: <ContextMemoryRegionsView onNavigateToAddress={handleNavigateToMemory} />,
     breakpoints: <ContextBreakpointsView />,
     peviewer: <ContextModuleInfoView />,
-  }), [handleNavigateToMemoryAddress, handleNavigateToDisassembly, handleNavigateToMemoryPointer, handleOpenModuleInfo]);
+  }), [handleNavigateToMemory, handleNavigateToDisassembly, handleNavigateToMemoryPointer, handleOpenModuleInfo]);
 
   // Factory for creating dynamic tab content (e.g., memory tabs restored from storage)
   const tabContentFactory = React.useCallback((tabId: string): React.ReactElement | null => {

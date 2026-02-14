@@ -72,6 +72,8 @@ export interface HexEditorState {
   // Other
   pendingChanges: Map<number, number>;
   littleEndian: boolean;
+  // Change detection
+  changedOffsets: Set<number>;
   // Dereference data (pointer mode)
   dereferenceData: Map<string, DereferenceEntry>;
 }
@@ -149,6 +151,9 @@ export function useHexEditor(options: UseHexEditorOptions): HexEditorState & Hex
   // Dereference data for pointer mode (keyed by address string)
   const [dereferenceData, setDereferenceData] = useState<Map<string, DereferenceEntry>>(new Map());
   const pendingDereferenceAddress = useRef<string | null>(null);
+
+  // Previous memory data for change detection (highlight changed bytes in red)
+  const prevMemoryDataRef = useRef<{ data: Uint8Array; baseAddress: bigint } | undefined>(undefined);
 
   // New selection state (replaces single selectedOffset for multi-selection)
   const [selectionStart, setSelectionStart] = useState<number | null>(null);
@@ -804,6 +809,37 @@ export function useHexEditor(options: UseHexEditorOptions): HexEditorState & Hex
     return result;
   }, [memoryData, pendingChanges]);
 
+  // Computed: set of byte offsets that changed since last read (for red highlighting)
+  const changedOffsets = useMemo(() => {
+    const set = new Set<number>();
+    const prev = prevMemoryDataRef.current;
+    if (!prev || prev.baseAddress !== baseAddress || memoryData.length === 0) return set;
+    const len = Math.min(prev.data.length, memoryData.length);
+    for (let i = 0; i < len; i++) {
+      if (prev.data[i] !== memoryData[i]) {
+        set.add(i);
+      }
+    }
+    return set;
+  }, [memoryData, baseAddress]);
+
+  // Update prev memory ref after render (same pattern as register change detection)
+  useEffect(() => {
+    if (!sessionId || sessionStatus !== 'Paused') {
+      prevMemoryDataRef.current = undefined;
+    } else if (memoryData.length > 0) {
+      // Only store when address matches what's already tracked (same-address refresh/step),
+      // or when there's no previous data (first load after navigation).
+      // When address changed but old memoryData is still in state (intermediate render),
+      // clear the ref so the incoming data won't be compared against stale data.
+      if (!prevMemoryDataRef.current || prevMemoryDataRef.current.baseAddress === baseAddress) {
+        prevMemoryDataRef.current = { data: new Uint8Array(memoryData), baseAddress };
+      } else {
+        prevMemoryDataRef.current = undefined;
+      }
+    }
+  }, [memoryData, baseAddress, sessionId, sessionStatus]);
+
   return {
     // State
     baseAddress,
@@ -824,6 +860,8 @@ export function useHexEditor(options: UseHexEditorOptions): HexEditorState & Hex
     // Other state
     pendingChanges,
     littleEndian,
+    // Change detection
+    changedOffsets,
     // Dereference data
     dereferenceData,
     // Actions

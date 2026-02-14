@@ -91,6 +91,12 @@ function decodeDllCharacteristics(chars: number): string {
 function formatTimestamp(timestamp: number): string {
   if (timestamp === 0) return '0';
   const date = new Date(timestamp * 1000);
+  const year = date.getUTCFullYear();
+  // PE format exists since ~1993; dates outside a reasonable range are likely
+  // content hashes from reproducible/deterministic builds (e.g. MSVC /Brepro)
+  if (year < 1980 || year > new Date().getFullYear() + 1) {
+    return `0x${timestamp.toString(16).toUpperCase()}`;
+  }
   return `${date.toISOString().replace('T', ' ').replace('.000Z', '')} (0x${timestamp.toString(16).toUpperCase()})`;
 }
 
@@ -148,7 +154,8 @@ const PEHeadersSection: React.FC<{
   moduleBase: string;
   moduleName: string;
   onNavigateToDisassembly?: (address: string) => void;
-}> = ({ info, moduleBase, moduleName, onNavigateToDisassembly }) => {
+  onNavigateToMemory?: (address: string) => void;
+}> = ({ info, moduleBase, moduleName, onNavigateToDisassembly, onNavigateToMemory }) => {
   const fh = info.nt_headers.FileHeader;
   const oh = info.nt_headers.OptionalHeader;
   const baseAddr = BigInt(moduleBase);
@@ -161,7 +168,7 @@ const PEHeadersSection: React.FC<{
       <div className="border-b pb-2">
         <h3 className="font-semibold text-sm">{getFileName(moduleName)}</h3>
         <div className="text-xs text-muted-foreground mt-1 space-y-0.5">
-          <div>Base: <span className="font-mono">{moduleBase}</span></div>
+          <div>Base: <AddressLink address={moduleBase} onClick={onNavigateToMemory} /></div>
           <div>
             Entry Point:{' '}
             <AddressLink address={entryPointStr} onClick={onNavigateToDisassembly} />
@@ -379,6 +386,7 @@ export const ModuleInfoView: React.FC<ModuleInfoViewProps> = ({
                 moduleBase={selectedModuleBase!}
                 moduleName={selectedModule.name}
                 onNavigateToDisassembly={onNavigateToDisassembly}
+                onNavigateToMemory={onNavigateToMemory}
               />
               <SectionsTable sections={info.sections} moduleBase={selectedModuleBase!} onNavigateToMemory={onNavigateToMemory} />
               <ExportsTable

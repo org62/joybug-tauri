@@ -53,6 +53,8 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
     // Other
     pendingChanges,
     littleEndian,
+    // Change detection
+    changedOffsets,
     // Dereference data
     dereferenceData,
     // Actions
@@ -560,6 +562,10 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
                       { length: config.bytesPerUnit },
                       (_, i) => pendingChanges.has(unitOffset + i)
                     ).some(Boolean);
+                    const hasChangedByte = Array.from(
+                      { length: config.bytesPerUnit },
+                      (_, i) => changedOffsets.has(unitOffset + i)
+                    ).some(Boolean);
 
                     // Determine display value
                     let displayValue = config.formatValue(unitBytes, littleEndian);
@@ -590,6 +596,8 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
                               ? "bg-primary text-primary-foreground"
                               : hasPendingChange
                               ? "bg-yellow-200 dark:bg-yellow-800"
+                              : hasChangedByte
+                              ? "text-red-400 hover:bg-muted/50"
                               : "hover:bg-muted/50"
                           } ${isEditing ? "ring-1 ring-primary" : ""}`}
                           style={{ minWidth: `${config.displayWidth}ch` }}
@@ -613,6 +621,7 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
                       const isSelected = selectedOffsets.has(offset);
                       const isAsciiEditing = editingOffset === offset && editingColumn === 'ascii';
                       const hasPending = pendingChanges.has(offset);
+                      const hasChanged = changedOffsets.has(offset);
                       const char = byteToAscii(byte);
 
                       return (
@@ -623,6 +632,8 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
                               ? "bg-primary text-primary-foreground"
                               : hasPending
                               ? "bg-yellow-200 dark:bg-yellow-800"
+                              : hasChanged
+                              ? "text-red-400"
                               : ""
                           } ${isAsciiEditing ? "ring-1 ring-primary" : ""}`}
                           onClick={(e) => handleAsciiClick(offset, e)}
