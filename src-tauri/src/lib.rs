@@ -68,6 +68,7 @@ pub fn run() {
             commands::enable_breakpoint,
             commands::enable_breakpoint_group,
             commands::update_breakpoint,
+            commands::request_module_extra_info,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

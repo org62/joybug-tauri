@@ -36,6 +36,7 @@ pub enum UICommand {
     UpdateBreakpoint { breakpoint_id: String, name: Option<String>, group: Option<String> },
     GetThreadCallStack { tid: u32 },
     ResolveThreadSymbols,
+    GetModuleExtraInfo { module_base: u64 },
 }
 
 /// Event payload for successful memory read (may be partial)
@@ -658,6 +659,70 @@ fn process_resolve_thread_symbols(
 
         if let Err(e) = handle.emit("thread-symbols-updated", &result) {
             error!("Failed to emit thread-symbols-updated event: {}", e);
+        }
+    }
+}
+
+/// Processes a module extra info request and emits PE header data to the frontend
+fn process_module_extra_info_request(
+    session: &mut joybug2::protocol_io::DebugSession<Arc<Mutex<SessionStateUI>>>,
+    app_handle_clone: &Option<AppHandle>,
+    event: &joybug2::protocol_io::DebugEvent,
+    module_base: u64,
+) {
+    let pid = event.pid();
+    debug!("📤 Processing module extra info request: pid={}, module_base=0x{:X}", pid, module_base);
+
+    if let Some(ref handle) = app_handle_clone {
+        let session_id = {
+            let state = session.state.lock().unwrap();
+            state.id.clone()
+        };
+        let module_base_str = format!("0x{:X}", module_base);
+
+        match session.get_module_extra_info(pid, module_base) {
+            Ok(info) => {
+                debug!("📥 Received module extra info for 0x{:X}", module_base);
+
+                #[derive(serde::Serialize)]
+                struct ModuleExtraInfoResult {
+                    session_id: String,
+                    module_base: String,
+                    info: joybug2::pe_types::ModuleExtraInfo,
+                }
+
+                let result = ModuleExtraInfoResult {
+                    session_id,
+                    module_base: module_base_str,
+                    info,
+                };
+
+                if let Err(e) = handle.emit("module-extra-info-updated", &result) {
+                    error!("Failed to emit module-extra-info-updated event: {}", e);
+                } else {
+                    debug!("📡 Emitted module-extra-info-updated event for 0x{:X}", module_base);
+                }
+            }
+            Err(e) => {
+                error!("Failed to get module extra info: {}", e);
+
+                #[derive(serde::Serialize)]
+                struct ModuleExtraInfoError {
+                    session_id: String,
+                    module_base: String,
+                    error: String,
+                }
+
+                let error_result = ModuleExtraInfoError {
+                    session_id,
+                    module_base: module_base_str,
+                    error: e.to_string(),
+                };
+
+                if let Err(emit_err) = handle.emit("module-extra-info-error", &error_result) {
+                    error!("Failed to emit module-extra-info-error event: {}", emit_err);
+                }
+            }
         }
     }
 }
@@ -1934,6 +1999,9 @@ fn handle_ui_commands(
                     }
                     UICommand::ResolveThreadSymbols => {
                         process_resolve_thread_symbols(session, app_handle_clone, event);
+                    }
+                    UICommand::GetModuleExtraInfo { module_base } => {
+                        process_module_extra_info_request(session, app_handle_clone, event, module_base);
                     }
                     UICommand::Stop => {
                         info!("Stop command received, terminating session");

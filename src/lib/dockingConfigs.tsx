@@ -67,6 +67,7 @@ export const DebuggerDockingConfig: DockingConfig = {
     symbols: { id: "symbols", title: "Symbols", content: <div>Symbols placeholder</div> },
     memory_regions: { id: "memory_regions", title: "Memory Regions", content: <div>Memory Regions placeholder</div> },
     breakpoints: { id: "breakpoints", title: "Breakpoints", content: <div>Breakpoints placeholder</div> },
+    peviewer: { id: "peviewer", title: "PE Viewer", content: <div>PE Viewer placeholder</div> },
   } as { [key: string]: TabData },
   tabContentMap: {
     registers: <StaticRegisterView context={mockContext} />,

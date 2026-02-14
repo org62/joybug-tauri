@@ -764,15 +764,15 @@ export function useHexEditor(options: UseHexEditorOptions): HexEditorState & Hex
     }
   }, [sessionId, loadMemory, initialAddress, sessionStatus, listenersReady, persisted?.baseAddress]);
 
-  // Reset error and data when session stops or restarts
+  // Reset error and data when session stops, ends, or resumes
   useEffect(() => {
-    if (sessionStatus === 'Stopped') {
+    if (!sessionId || !sessionStatus || sessionStatus !== 'Paused') {
       setError(null);
       setMemoryData(new Uint8Array(0));
       setDereferenceData(new Map());
       initialLoadDone.current = false;
     }
-  }, [sessionStatus]);
+  }, [sessionId, sessionStatus]);
 
   // Fetch dereference data when in pointer mode and memory data is available
   useEffect(() => {

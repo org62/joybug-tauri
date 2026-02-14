@@ -18,6 +18,7 @@ import { ContextSymbolsView } from "@/components/session/ContextSymbolsView";
 import { ContextHexView } from "@/components/session/ContextHexView";
 import { ContextMemoryRegionsView } from "@/components/session/ContextMemoryRegionsView";
 import { ContextBreakpointsView } from "@/components/session/ContextBreakpointsView";
+import { ContextModuleInfoView } from "@/components/session/ContextModuleInfoView";
 import { useDebugSession } from "@/hooks/useDebugSession";
 import { useBreakpoints } from "@/hooks/useBreakpoints";
 import { SessionHeader } from "@/components/session/SessionHeader";
@@ -159,6 +160,21 @@ export default function SessionDocked() {
     ));
   }, [parseAddress]);
 
+  // Open PE Viewer tab (singleton) — if already open, focus it and dispatch module selection
+  const handleOpenModuleInfo = React.useCallback((moduleBase: string) => {
+    const activeTabs = dockingRef.current?.getActiveTabs() ?? [];
+    if (activeTabs.includes('peviewer')) {
+      dockingRef.current?.showTab('peviewer');
+      window.dispatchEvent(new CustomEvent('select-peviewer-module', { detail: moduleBase }));
+    } else {
+      dockingRef.current?.toggleTab('peviewer');
+      // Dispatch after a tick so the component mounts first
+      setTimeout(() => {
+        window.dispatchEvent(new CustomEvent('select-peviewer-module', { detail: moduleBase }));
+      }, 0);
+    }
+  }, []);
+
   // Initial state detection - sync when docking becomes ready
   useEffect(() => {
     if (!sessionId || !isDockingReady || !dockingRef.current) return;
@@ -259,6 +275,11 @@ export default function SessionDocked() {
           event.stopPropagation();
           toggleTabWithBackendUpdate("breakpoints");
           break;
+        case 'p':
+          event.preventDefault();
+          event.stopPropagation();
+          toggleTabWithBackendUpdate("peviewer");
+          break;
       }
     };
 
@@ -286,13 +307,14 @@ export default function SessionDocked() {
   const dynamicTabContent = useMemo(() => ({
     disassembly: <ContextAssemblyView />,
     registers: <ContextRegisterView />,
-    modules: <ContextModulesView />,
+    modules: <ContextModulesView onOpenModuleInfo={handleOpenModuleInfo} />,
     threads: <ContextThreadsView onNavigateToDisassembly={handleNavigateToDisassembly} onNavigateToMemoryPointer={handleNavigateToMemoryPointer} />,
     callstack: <ContextCallStackView onNavigateToDisassembly={handleNavigateToDisassembly} onNavigateToMemoryPointer={handleNavigateToMemoryPointer} />,
     symbols: <ContextSymbolsView />,
     memory_regions: <ContextMemoryRegionsView onNavigateToAddress={handleNavigateToMemoryAddress} />,
     breakpoints: <ContextBreakpointsView />,
-  }), [handleNavigateToMemoryAddress, handleNavigateToDisassembly, handleNavigateToMemoryPointer]);
+    peviewer: <ContextModuleInfoView />,
+  }), [handleNavigateToMemoryAddress, handleNavigateToDisassembly, handleNavigateToMemoryPointer, handleOpenModuleInfo]);
 
   // Factory for creating dynamic tab content (e.g., memory tabs restored from storage)
   const tabContentFactory = React.useCallback((tabId: string): React.ReactElement | null => {
@@ -352,6 +374,12 @@ export default function SessionDocked() {
         id: "breakpoints",
         title: "Breakpoints",
         content: dynamicTabContent.breakpoints,
+        closable: true,
+      },
+      peviewer: {
+        id: "peviewer",
+        title: "PE Viewer",
+        content: dynamicTabContent.peviewer,
         closable: true,
       },
     };

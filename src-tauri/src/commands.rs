@@ -1268,6 +1268,19 @@ fn send_paused_command(
 }
 
 #[tauri::command]
+pub fn request_module_extra_info(
+    session_id: String,
+    module_base: String,
+    session_states: State<'_, SessionStatesMap>,
+) -> Result<()> {
+    let module_base = u64::from_str_radix(module_base.trim_start_matches("0x").trim_start_matches("0X"), 16)
+        .map_err(|e| Error::InvalidParameter(format!("Invalid module base '{}': {}", module_base, e)))?;
+    send_paused_command(&session_id, &session_states, UICommand::GetModuleExtraInfo { module_base })?;
+    info!("Module extra info request sent for session {} at base 0x{:X}", session_id, module_base);
+    Ok(())
+}
+
+#[tauri::command]
 pub fn toggle_breakpoint(
     session_id: String,
     address: String,

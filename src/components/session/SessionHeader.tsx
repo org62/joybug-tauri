@@ -211,6 +211,12 @@ export const SessionHeader: React.FC<SessionHeaderProps> = ({
                   >
                     Breakpoints
                   </DropdownMenuCheckboxItem>
+                  <DropdownMenuCheckboxItem
+                    checked={active.has('peviewer')}
+                    onCheckedChange={() => toggleTab('peviewer')}
+                  >
+                    PE Viewer
+                  </DropdownMenuCheckboxItem>
                   {addNewMemoryTab && (
                     <DropdownMenuItem onSelect={(e: Event) => { e.preventDefault(); addNewMemoryTab(); }}>
                       <Plus />

@@ -211,9 +211,11 @@ export function BreakpointsView({
       <ScrollArea className="flex-1 min-h-0">
         {breakpoints.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-muted-foreground p-4">
-            <span className="block h-3 w-3 rounded-full border-2 border-muted-foreground/40 mx-auto mb-3" />
-            <p className="text-sm">No breakpoints set</p>
-            <p className="text-xs mt-1">Right-click in disassembly to toggle</p>
+            <div className="text-center">
+              <span className="block h-12 w-12 rounded-full border-4 border-muted-foreground/40 mx-auto mb-4 opacity-50" />
+              <p className="text-base font-medium">No breakpoints set</p>
+              <p className="text-sm mt-1">Right-click in disassembly to toggle</p>
+            </div>
           </div>
         ) : (
           <div>
