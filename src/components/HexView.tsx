@@ -31,9 +31,10 @@ interface HexViewProps {
   registers?: RegisterContext;
   resolveSymbol?: SymbolResolver;
   initialAddress?: bigint;
+  initialViewMode?: ViewMode;
 }
 
-export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}, resolveSymbol, initialAddress }: HexViewProps) {
+export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}, resolveSymbol, initialAddress, initialViewMode }: HexViewProps) {
   const {
     baseAddress,
     memoryData,
@@ -77,7 +78,7 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
     // Clipboard actions
     copySelection,
     pasteBytes,
-  } = useHexEditor({ sessionId, memoryViewId, sessionStatus, registers, resolveSymbol, initialAddress });
+  } = useHexEditor({ sessionId, memoryViewId, sessionStatus, registers, resolveSymbol, initialAddress, initialViewMode });
 
   const [addressInput, setAddressInput] = useState("");
   const hexViewContainerRef = useRef<HTMLDivElement>(null);

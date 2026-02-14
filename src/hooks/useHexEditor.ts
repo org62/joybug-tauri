@@ -109,10 +109,11 @@ export interface UseHexEditorOptions {
   registers?: RegisterContext;
   resolveSymbol?: SymbolResolver;
   initialAddress?: bigint;
+  initialViewMode?: ViewMode;
 }
 
 export function useHexEditor(options: UseHexEditorOptions): HexEditorState & HexEditorActions {
-  const { sessionId, memoryViewId = 'memory', sessionStatus, registers = {}, resolveSymbol, initialAddress } = options;
+  const { sessionId, memoryViewId = 'memory', sessionStatus, registers = {}, resolveSymbol, initialAddress, initialViewMode } = options;
 
   // Persistence key for this view
   const persistenceKey = sessionId ? `${sessionId}-${memoryViewId}` : undefined;
@@ -121,7 +122,7 @@ export function useHexEditor(options: UseHexEditorOptions): HexEditorState & Hex
   // Initialize from: persisted state > initialAddress > 0
   const [baseAddress, setBaseAddressRaw] = useState<bigint>(persisted?.baseAddress ?? initialAddress ?? 0n);
   const [memoryData, setMemoryData] = useState<Uint8Array>(new Uint8Array(0));
-  const [viewMode, setViewModeRaw] = useState<ViewMode>(persisted?.viewMode ?? 'byte');
+  const [viewMode, setViewModeRaw] = useState<ViewMode>(persisted?.viewMode ?? initialViewMode ?? 'byte');
 
   // Persist on change
   const setBaseAddress = useCallback((address: bigint) => {

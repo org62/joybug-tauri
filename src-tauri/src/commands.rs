@@ -922,6 +922,27 @@ pub struct SymbolData {
 }
 
 #[tauri::command]
+pub fn request_resolve_thread_symbols(
+    session_id: String,
+    session_states: State<'_, SessionStatesMap>,
+) -> Result<()> {
+    send_paused_command(&session_id, &session_states, UICommand::ResolveThreadSymbols)?;
+    info!("Resolve thread symbols request sent for session {}", session_id);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn request_thread_callstack(
+    session_id: String,
+    tid: u32,
+    session_states: State<'_, SessionStatesMap>,
+) -> Result<()> {
+    send_paused_command(&session_id, &session_states, UICommand::GetThreadCallStack { tid })?;
+    info!("Thread callstack request sent for session {}, tid {}", session_id, tid);
+    Ok(())
+}
+
+#[tauri::command]
 pub fn request_session_callstack(
     session_id: String,
     session_states: State<'_, SessionStatesMap>,

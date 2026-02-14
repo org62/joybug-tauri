@@ -52,6 +52,8 @@ pub fn run() {
             commands::get_session_threads,
             commands::search_session_symbols,
             commands::request_session_callstack,
+            commands::request_thread_callstack,
+            commands::request_resolve_thread_symbols,
             commands::request_memory_read,
             commands::request_memory_write,
             commands::request_set_register,

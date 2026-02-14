@@ -34,6 +34,8 @@ pub enum UICommand {
     EnableBreakpoint { breakpoint_id: String, enabled: bool },
     EnableBreakpointGroup { group: String, enabled: bool },
     UpdateBreakpoint { breakpoint_id: String, name: Option<String>, group: Option<String> },
+    GetThreadCallStack { tid: u32 },
+    ResolveThreadSymbols,
 }
 
 /// Event payload for successful memory read (may be partial)
@@ -439,6 +441,21 @@ fn process_function_disassembly_request(
     }
 }
 
+/// Converts raw stack frames into the serializable CallStackData format
+fn convert_frames_to_callstack(frames: &[joybug2::interfaces::CallFrame]) -> Vec<crate::commands::CallStackData> {
+    frames.iter().enumerate().map(|(i, frame)| {
+        crate::commands::CallStackData {
+            frame_number: i,
+            instruction_pointer: format!("0x{:016x}", frame.instruction_pointer),
+            stack_pointer: format!("0x{:016x}", frame.stack_pointer),
+            frame_pointer: format!("0x{:016x}", frame.frame_pointer),
+            symbol_info: frame.symbol.as_ref().map(|sym| {
+                format!("{}!{}+0x{:x}", sym.module_name, sym.symbol_name, sym.offset)
+            }),
+        }
+    }).collect()
+}
+
 /// Processes a callstack request and emits results to the frontend
 fn process_callstack_request(
     session: &mut joybug2::protocol_io::DebugSession<Arc<Mutex<SessionStateUI>>>,
@@ -453,18 +470,7 @@ fn process_callstack_request(
         Ok(frames) => {
             debug!("📥 Received {} frames from get_call_stack", frames.len());
 
-            // Convert to serializable format
-            let call_stack: Vec<crate::commands::CallStackData> = frames.iter().enumerate().map(|(i, frame)| {
-                crate::commands::CallStackData {
-                    frame_number: i,
-                    instruction_pointer: format!("0x{:016x}", frame.instruction_pointer),
-                    stack_pointer: format!("0x{:016x}", frame.stack_pointer),
-                    frame_pointer: format!("0x{:016x}", frame.frame_pointer),
-                    symbol_info: frame.symbol.as_ref().map(|sym| {
-                        format!("{}!{}+0x{:x}", sym.module_name, sym.symbol_name, sym.offset)
-                    }),
-                }
-            }).collect();
+            let call_stack = convert_frames_to_callstack(&frames);
 
             // Emit callstack results to frontend
             if let Some(ref handle) = app_handle_clone {
@@ -493,29 +499,165 @@ fn process_callstack_request(
         }
         Err(e) => {
             error!("Failed to get call stack: {}", e);
-            
+
             // Emit error event
             if let Some(ref handle) = app_handle_clone {
                 let session_id = {
                     let state = session.state.lock().unwrap();
                     state.id.clone()
                 };
-                
+
                 #[derive(serde::Serialize, Clone)]
                 struct CallStackError {
                     session_id: String,
                     error: String,
                 }
-                
+
                 let error_result = CallStackError {
                     session_id,
                     error: e.to_string(),
                 };
-                
+
                 if let Err(emit_err) = handle.emit("callstack-error", &error_result) {
                     error!("Failed to emit callstack-error event: {}", emit_err);
                 }
             }
+        }
+    }
+}
+
+/// Processes a callstack request for a specific thread and emits results to the frontend
+fn process_thread_callstack_request(
+    session: &mut joybug2::protocol_io::DebugSession<Arc<Mutex<SessionStateUI>>>,
+    app_handle_clone: &Option<AppHandle>,
+    event: &joybug2::protocol_io::DebugEvent,
+    tid: u32,
+) {
+    let pid = event.pid();
+    debug!("📤 Processing thread callstack request: pid={}, tid={}", pid, tid);
+
+    match session.get_call_stack(pid, tid) {
+        Ok(frames) => {
+            debug!("📥 Received {} frames from get_call_stack for tid={}", frames.len(), tid);
+
+            let call_stack = convert_frames_to_callstack(&frames);
+
+            if let Some(ref handle) = app_handle_clone {
+                let session_id = {
+                    let state = session.state.lock().unwrap();
+                    state.id.clone()
+                };
+
+                #[derive(serde::Serialize, Clone)]
+                struct ThreadCallStackResult<'a> {
+                    session_id: String,
+                    tid: u32,
+                    frames: &'a Vec<crate::commands::CallStackData>,
+                }
+
+                let result = ThreadCallStackResult {
+                    session_id,
+                    tid,
+                    frames: &call_stack,
+                };
+
+                if let Err(e) = handle.emit("thread-callstack-updated", &result) {
+                    error!("Failed to emit thread-callstack-updated event: {}", e);
+                } else {
+                    debug!("📡 Emitted thread-callstack-updated event for pid {}, tid {}", pid, tid);
+                }
+            }
+        }
+        Err(e) => {
+            error!("Failed to get thread call stack for tid {}: {}", tid, e);
+
+            if let Some(ref handle) = app_handle_clone {
+                let session_id = {
+                    let state = session.state.lock().unwrap();
+                    state.id.clone()
+                };
+
+                #[derive(serde::Serialize, Clone)]
+                struct ThreadCallStackError {
+                    session_id: String,
+                    tid: u32,
+                    error: String,
+                }
+
+                let error_result = ThreadCallStackError {
+                    session_id,
+                    tid,
+                    error: e.to_string(),
+                };
+
+                if let Err(emit_err) = handle.emit("thread-callstack-error", &error_result) {
+                    error!("Failed to emit thread-callstack-error event: {}", emit_err);
+                }
+            }
+        }
+    }
+}
+
+/// Resolves symbols for all thread start addresses and emits results to the frontend
+fn process_resolve_thread_symbols(
+    session: &mut joybug2::protocol_io::DebugSession<Arc<Mutex<SessionStateUI>>>,
+    app_handle_clone: &Option<AppHandle>,
+    event: &joybug2::protocol_io::DebugEvent,
+) {
+    let pid = event.pid();
+    let threads: Vec<joybug2::protocol_io::ThreadInfo> = {
+        let state = session.state.lock().unwrap();
+        state.threads.clone()
+    };
+
+    #[derive(serde::Serialize, Clone)]
+    struct ThreadSymbolEntry {
+        tid: u32,
+        address: String,
+        symbol_info: Option<String>,
+        is_function: bool,
+    }
+
+    let mut entries: Vec<ThreadSymbolEntry> = Vec::new();
+
+    for thread in &threads {
+        let addr = thread.start_address;
+        let (symbol_info, is_function) = match session.resolve_address_to_symbol(pid, addr) {
+            Ok((Some(module), Some(sym), Some(offset))) => {
+                let short_module = module.rsplit(&['\\', '/'][..]).next().unwrap_or(&module);
+                let short_module = short_module.rsplitn(2, '.').last().unwrap_or(short_module);
+                let display = format!("{}!{}+0x{:x}", short_module, sym.name, offset);
+                (Some(display), sym.is_function)
+            }
+            _ => (None, true), // Unknown - default to function
+        };
+        entries.push(ThreadSymbolEntry {
+            tid: thread.tid,
+            address: format!("0x{:016x}", addr),
+            symbol_info,
+            is_function,
+        });
+    }
+
+    if let Some(ref handle) = app_handle_clone {
+        let session_id = {
+            let state = session.state.lock().unwrap();
+            state.id.clone()
+        };
+
+        #[derive(serde::Serialize, Clone)]
+        struct ThreadSymbolsResult {
+            session_id: String,
+            symbols: Vec<ThreadSymbolEntry>,
+        }
+
+        let result = ThreadSymbolsResult {
+            session_id,
+            symbols: entries,
+        };
+
+        if let Err(e) = handle.emit("thread-symbols-updated", &result) {
+            error!("Failed to emit thread-symbols-updated event: {}", e);
         }
     }
 }
@@ -1786,6 +1928,12 @@ fn handle_ui_commands(
                     }
                     UICommand::UpdateBreakpoint { ref breakpoint_id, ref name, ref group } => {
                         process_update_breakpoint(session, app_handle_clone, breakpoint_id, name.clone(), group.clone());
+                    }
+                    UICommand::GetThreadCallStack { tid } => {
+                        process_thread_callstack_request(session, app_handle_clone, event, tid);
+                    }
+                    UICommand::ResolveThreadSymbols => {
+                        process_resolve_thread_symbols(session, app_handle_clone, event);
                     }
                     UICommand::Stop => {
                         info!("Stop command received, terminating session");

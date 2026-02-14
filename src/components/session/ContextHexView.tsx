@@ -1,15 +1,16 @@
 import { useCallback, useMemo } from 'react';
 import { useSessionContext } from '@/contexts/SessionContext';
 import { HexView } from '@/components/HexView';
-import { RegisterContext, SymbolResolver } from '@/lib/hexUtils';
+import { RegisterContext, SymbolResolver, ViewMode } from '@/lib/hexUtils';
 import { resolveSymbol } from '@/lib/symbolUtils';
 
 interface ContextHexViewProps {
   memoryViewId?: string;
   initialAddress?: bigint;
+  initialViewMode?: ViewMode;
 }
 
-export const ContextHexView = ({ memoryViewId, initialAddress }: ContextHexViewProps) => {
+export const ContextHexView = ({ memoryViewId, initialAddress, initialViewMode }: ContextHexViewProps) => {
   const sessionData = useSessionContext();
   const context = sessionData?.session?.current_event?.context;
 
@@ -80,6 +81,7 @@ export const ContextHexView = ({ memoryViewId, initialAddress }: ContextHexViewP
       registers={registers}
       resolveSymbol={resolveSymbolFn}
       initialAddress={initialAddress}
+      initialViewMode={initialViewMode}
     />
   );
 };
