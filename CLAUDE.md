@@ -19,12 +19,23 @@ No tests exist in the Tauri layer. The joybug2 external crate has integration te
 ## Project Structure
 
 - `src-tauri/src/` — Rust backend
-  - `session.rs` — Debug session event loop, `UICommand` enum, `handle_ui_commands()`
-  - `commands.rs` — Tauri command handlers (30+)
+  - `session/` — Debug session module
+    - `types.rs` — `UICommand` enum, event payload types
+    - `runner.rs` — Debug session event loop (`run_debug_session`)
+    - `dispatch.rs` — `handle_ui_commands()` command dispatcher
+    - `disassembly.rs`, `memory.rs`, `emulation.rs`, `registers.rs`, `symbols.rs`, `breakpoints.rs`, `callstack.rs` — Per-domain processing
+  - `commands/` — Tauri command handlers (40+)
+    - `mod.rs` — `send_paused_command()` shared helper
+    - `session_lifecycle.rs` — Session CRUD (create, start, stop, delete)
+    - `stepping.rs` — Go, StepIn, StepOver, StepOut
+    - `disassembly.rs`, `memory.rs`, `breakpoints.rs`, `emulation.rs`, `symbols.rs`, `logging.rs`, `settings.rs`, `window_state.rs` — Per-domain commands
   - `lib.rs` — App setup, command registration, global state
   - `state.rs` — `SessionStateUI`, serializable types
   - `events.rs` — joybug2 context → serializable conversion
   - `breakpoint_store.rs` — Breakpoint persistence
+  - `error.rs` — Error types
+  - `settings.rs` — Debug settings
+  - `ui_logger.rs` — UI logging utilities
 - `src/` — React/TypeScript frontend
   - `pages/` — Route pages (`SessionDocked.tsx` is the main debugging view)
   - `components/session/` — Context wrapper components (`Context*View.tsx`)
@@ -39,10 +50,10 @@ No tests exist in the Tauri layer. The joybug2 external crate has integration te
 ### Command Flow (Frontend → Backend → Frontend)
 
 1. Frontend calls `invoke("command_name", { args })` (Tauri IPC)
-2. Command handler in `commands.rs` sends a `UICommand` variant through an mpsc channel
-3. Session loop in `session.rs` (`handle_ui_commands`) receives and processes it
+2. Command handler in `commands/` calls `send_paused_command()` to send a `UICommand` variant through an mpsc channel
+3. Session loop in `session/runner.rs` receives it; `handle_ui_commands()` in `session/dispatch.rs` processes it
 4. **Stepping commands** (Go, StepIn, StepOver, StepOut) return from the handler to resume execution
-5. **Non-stepping commands** (Disassembly, ReadMemory, Emulate, etc.) process inline and emit a Tauri event back, staying paused
+5. **Non-stepping commands** (Disassembly, ReadMemory, Emulate, etc.) call domain-specific `process_*()` functions in `session/`, emit a Tauri event, and stay paused
 6. Frontend hooks listen for events (e.g., `session-updated`, `disassembly-updated`, `memory-read-result`) and update component state
 
 ### Frontend Patterns
@@ -81,9 +92,9 @@ No tests exist in the Tauri layer. The joybug2 external crate has integration te
 4. Add keyboard shortcut in `SessionDocked.tsx` if needed
 
 ### Adding a New UICommand
-1. Add variant to `UICommand` enum in `session.rs`
-2. Handle it in `handle_ui_commands()` in `session.rs`
-3. Add Tauri command wrapper in `commands.rs`
+1. Add variant to `UICommand` enum in `session/types.rs`
+2. Handle it in `handle_ui_commands()` in `session/dispatch.rs` (add processing logic in a domain-specific `session/*.rs` file if needed)
+3. Add Tauri command handler in the appropriate `commands/*.rs` file (use `send_paused_command()` helper)
 4. Register the command in `lib.rs`
 5. Call from frontend via `invoke()`
 
