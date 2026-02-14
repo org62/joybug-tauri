@@ -154,6 +154,7 @@ export function useHexEditor(options: UseHexEditorOptions): HexEditorState & Hex
 
   // Previous memory data for change detection (highlight changed bytes in red)
   const prevMemoryDataRef = useRef<{ data: Uint8Array; baseAddress: bigint } | undefined>(undefined);
+  const lastSeenMemoryDataRef = useRef<Uint8Array | null>(null);
 
   // New selection state (replaces single selectedOffset for multi-selection)
   const [selectionStart, setSelectionStart] = useState<number | null>(null);
@@ -180,6 +181,9 @@ export function useHexEditor(options: UseHexEditorOptions): HexEditorState & Hex
   const initialLoadDone = useRef(false);
   const pendingReadAddress = useRef<bigint | null>(null);
   const [listenersReady, setListenersReady] = useState(false);
+  // Ref for auto-reload: tracks current address for the session-updated listener
+  const baseAddressRef = useRef<bigint>(baseAddress);
+  baseAddressRef.current = baseAddress;
 
 
   // Load memory from specified address
@@ -757,6 +761,34 @@ export function useHexEditor(options: UseHexEditorOptions): HexEditorState & Hex
     };
   }, [sessionId]);
 
+  // Auto-reload memory after a debugging step.
+  // Listens for session-updated directly (bypasses React batching which can swallow
+  // the Running→Paused transition during fast steps, making status-based effects miss it).
+  useEffect(() => {
+    if (!sessionId || !listenersReady) return;
+
+    let prevStatus: string | null = null;
+
+    const setupListener = async () => {
+      const unlisten = await listen<{ id: string; status: string }>('session-updated', (event) => {
+        if (event.payload.id !== sessionId) return;
+        const newStatus = event.payload.status;
+        const wasNonPaused = prevStatus !== null && prevStatus !== 'Paused';
+        prevStatus = newStatus;
+
+        // Reload when session transitions TO Paused from Running (step/breakpoint)
+        // and user has already loaded memory at an address
+        if (newStatus === 'Paused' && wasNonPaused && initialLoadDone.current) {
+          loadMemory(baseAddressRef.current);
+        }
+      });
+      return unlisten;
+    };
+
+    const cleanup = setupListener();
+    return () => { cleanup.then(fn => fn?.()); };
+  }, [sessionId, listenersReady, loadMemory]);
+
   // Load memory on mount: persisted address > initialAddress
   useEffect(() => {
     if (!sessionId || initialLoadDone.current || !listenersReady || sessionStatus !== 'Paused') return;
@@ -823,22 +855,31 @@ export function useHexEditor(options: UseHexEditorOptions): HexEditorState & Hex
     return set;
   }, [memoryData, baseAddress]);
 
-  // Update prev memory ref after render (same pattern as register change detection)
+  // Update prev memory ref after render for change detection.
+  // Only reacts to sessionId change (clear on session end) and actual new data
+  // from the backend (tracked via reference identity). Deliberately does NOT
+  // clear on sessionStatus changes so the baseline survives step transitions
+  // (Running → Paused) and the post-step reload can highlight what changed.
   useEffect(() => {
-    if (!sessionId || sessionStatus !== 'Paused') {
+    if (!sessionId) {
       prevMemoryDataRef.current = undefined;
-    } else if (memoryData.length > 0) {
-      // Only store when address matches what's already tracked (same-address refresh/step),
-      // or when there's no previous data (first load after navigation).
-      // When address changed but old memoryData is still in state (intermediate render),
-      // clear the ref so the incoming data won't be compared against stale data.
-      if (!prevMemoryDataRef.current || prevMemoryDataRef.current.baseAddress === baseAddress) {
-        prevMemoryDataRef.current = { data: new Uint8Array(memoryData), baseAddress };
-      } else {
-        prevMemoryDataRef.current = undefined;
-      }
+      lastSeenMemoryDataRef.current = null;
+      return;
     }
-  }, [memoryData, baseAddress, sessionId, sessionStatus]);
+    if (memoryData.length === 0) return; // Cleared by session cleanup — keep prevRef
+
+    const isNewData = memoryData !== lastSeenMemoryDataRef.current;
+    lastSeenMemoryDataRef.current = memoryData;
+    if (!isNewData) return; // Same stale reference after address change — skip
+
+    if (!prevMemoryDataRef.current || prevMemoryDataRef.current.baseAddress === baseAddress) {
+      // Same address (refresh/step) or first load — store as baseline
+      prevMemoryDataRef.current = { data: new Uint8Array(memoryData), baseAddress };
+    } else {
+      // Different address — clear baseline (no comparison across addresses)
+      prevMemoryDataRef.current = undefined;
+    }
+  }, [memoryData, baseAddress, sessionId]);
 
   return {
     // State
