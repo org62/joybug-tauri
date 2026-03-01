@@ -114,7 +114,7 @@ pub(crate) fn process_emulation_request(
         state.id.clone()
     };
 
-    match session.emulate_instructions(pid, tid, max_instructions, mode, exit_condition) {
+    match session.emulate_instructions(pid, tid, max_instructions, mode, exit_condition, vec![]) {
         Ok(result) => {
             debug!("📥 Received emulation result");
 

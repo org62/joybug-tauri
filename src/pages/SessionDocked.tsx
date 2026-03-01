@@ -132,7 +132,7 @@ export default function SessionDocked() {
 
   // Navigate to memory view at a specific address, reusing an existing tab if open.
   // initialViewMode is used only when creating a new tab (no existing memory tab).
-  const navigateToMemoryTab = React.useCallback((address: string, initialViewMode?: "byte" | "pointer" | "signed" | "float") => {
+  const navigateToMemoryTab = React.useCallback((address: string, initialViewMode?: "byte" | "pointer" | "float") => {
     const activeTabs = dockingRef.current?.getActiveTabs() ?? [];
     const existingMemoryTab = activeTabs.find(id => id === 'memory' || id.startsWith('memory-'));
     if (existingMemoryTab) {
