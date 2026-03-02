@@ -11,6 +11,7 @@ pub fn request_emulation(
     mode: String,
     exit_address: Option<u64>,
     request_id: Option<String>,
+    memory_reads: Option<Vec<(u64, usize)>>,
     session_states: State<'_, SessionStatesMap>,
 ) -> Result<()> {
     let emulation_mode = match mode.as_str() {
@@ -29,6 +30,7 @@ pub fn request_emulation(
         mode: emulation_mode,
         exit_condition,
         request_id,
+        memory_reads: memory_reads.unwrap_or_default(),
     })?;
 
     info!("Emulation request sent for session {} with mode {}", session_id, mode);

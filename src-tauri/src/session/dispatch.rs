@@ -148,8 +148,8 @@ pub(crate) fn handle_ui_commands(
                     UICommand::Dereference { address, count } => {
                         process_dereference_request(session, app_handle_clone, event, address, count);
                     }
-                    UICommand::Emulate { max_instructions, mode, ref exit_condition, ref request_id } => {
-                        process_emulation_request(session, app_handle_clone, event, max_instructions, mode, exit_condition.clone(), request_id.clone());
+                    UICommand::Emulate { max_instructions, mode, ref exit_condition, ref request_id, ref memory_reads } => {
+                        process_emulation_request(session, app_handle_clone, event, max_instructions, mode, exit_condition.clone(), request_id.clone(), memory_reads.clone());
                     }
                     UICommand::SetRegister { ref register_name, value } => {
                         process_set_register(session, app_handle_clone, event, register_name, value);

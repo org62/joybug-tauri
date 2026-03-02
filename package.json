@@ -7,7 +7,11 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "test:e2e": "playwright test --config e2e/playwright.config.ts",
+    "test:e2e:ui": "playwright test --config e2e/playwright.config.ts --ui",
+    "test:e2e:headed": "playwright test --config e2e/playwright.config.ts --headed",
+    "test:e2e:build": "cd src-tauri && cargo build"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.14",
@@ -38,6 +42,7 @@
     "tailwindcss": "^4.1.8"
   },
   "devDependencies": {
+    "@playwright/test": "^1.58.2",
     "@tauri-apps/cli": "^2",
     "@types/node": "^22.15.30",
     "@types/react": "^18.3.1",

@@ -2,7 +2,7 @@ use tauri::{AppHandle, Emitter};
 use tracing::{debug, error};
 
 use super::helpers::{find_module_for_address, format_symbol, get_modules_snapshot};
-use super::types::{DebugSession, EmulationInstructionInfo, EmulationResultPayload};
+use super::types::{DebugSession, EmulationInstructionInfo, EmulationResultPayload, MemorySnapshotEntry};
 
 /// Extracts PC addresses from Tenet trace text (first key=value on each line is always the PC)
 fn extract_pcs_from_tenet(trace_text: &str) -> Vec<u64> {
@@ -104,6 +104,7 @@ pub(crate) fn process_emulation_request(
     mode: joybug2::protocol_io::EmulationMode,
     exit_condition: Option<joybug2::protocol_io::TraceExitCondition>,
     request_id: Option<String>,
+    memory_reads: Vec<(u64, usize)>,
 ) {
     let pid = event.pid();
     let tid = event.tid();
@@ -114,7 +115,7 @@ pub(crate) fn process_emulation_request(
         state.id.clone()
     };
 
-    match session.emulate_instructions(pid, tid, max_instructions, mode, exit_condition) {
+    match session.emulate_instructions(pid, tid, max_instructions, mode, exit_condition, memory_reads) {
         Ok(result) => {
             debug!("📥 Received emulation result");
 
@@ -165,6 +166,12 @@ pub(crate) fn process_emulation_request(
                 let payload = match result {
                     joybug2::protocol_io::EmulateResult::Emulation(data) => {
                         let stop_reason = symbolize_stop_reason(session, pid, &data.stop_reason);
+                        let memory_snapshots = data.memory_snapshots.into_iter()
+                            .map(|(addr, bytes)| MemorySnapshotEntry {
+                                address: format!("0x{:X}", addr),
+                                data: bytes,
+                            })
+                            .collect();
                         EmulationResultPayload {
                             session_id,
                             request_id,
@@ -179,6 +186,7 @@ pub(crate) fn process_emulation_request(
                             trace_time_us: None,
                             instruction_info,
                             stats_text: data.stats_text,
+                            memory_snapshots,
                         }
                     }
                     joybug2::protocol_io::EmulateResult::Trace(trace) => {
@@ -197,6 +205,7 @@ pub(crate) fn process_emulation_request(
                             trace_time_us: Some(trace.trace_time_us),
                             instruction_info,
                             stats_text: trace.stats_text,
+                            memory_snapshots: Vec::new(),
                         }
                     }
                 };

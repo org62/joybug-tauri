@@ -9,6 +9,11 @@ interface EmulationInstructionInfo {
   op_str: string;
 }
 
+interface MemorySnapshotEntry {
+  address: string;
+  data: number[];
+}
+
 export interface QuickEmulationResult {
   session_id: string;
   request_id: string | null;
@@ -23,6 +28,7 @@ export interface QuickEmulationResult {
   trace_time_us: number | null;
   instruction_info: EmulationInstructionInfo[];
   stats_text: string;
+  memory_snapshots: MemorySnapshotEntry[];
 }
 
 export type TraceMode = "InstructionTrace" | "BasicBlock";

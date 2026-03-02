@@ -166,27 +166,36 @@ export function useDebugSession(sessionId: string | undefined) {
     });
   }, [sessionId]);
 
-  const loadSession = useCallback(async () => {
-    if (!sessionId) return;
-    try {
-      const result = await invoke<DebugSession>("get_debug_session", { sessionId });
-      setSession(result);
-    } catch (error) {
-      const errorMessage = `Failed to load session: ${error}`;
-      toast.error(errorMessage);
-      console.error(errorMessage);
-      setSession(null);
-    } finally {
-      setIsLoading(false);
-    }
-  }, [sessionId]);
-
   const handleSessionUpdate = useCallback((newSession: DebugSession) => {
     setSession(newSession);
+    setIsLoading(false);
   }, []);
 
   useEffect(() => {
-    loadSession();
+    // Track fetch ordering to prevent stale responses from overwriting fresh data.
+    // Each fetch increments the counter; only the latest fetch applies its result.
+    let fetchSeq = 0;
+    const fetchSession = async () => {
+      if (!sessionId) return;
+      const mySeq = ++fetchSeq;
+      try {
+        const result = await invoke<DebugSession>("get_debug_session", { sessionId });
+        if (mySeq === fetchSeq) {
+          setSession(result);
+          setIsLoading(false);
+        }
+      } catch (error) {
+        if (mySeq === fetchSeq) {
+          const errorMessage = `Failed to load session: ${error}`;
+          toast.error(errorMessage);
+          console.error(errorMessage);
+          setSession(null);
+          setIsLoading(false);
+        }
+      }
+    };
+
+    fetchSession();
 
     const listenToSessionUpdates = async () => {
       const unlisten = await listen<DebugSession>(
@@ -197,6 +206,9 @@ export function useDebugSession(sessionId: string | undefined) {
           }
         }
       );
+      // Re-fetch after listener is active to catch events that fired
+      // between the initial fetch and listener setup
+      fetchSession();
       return unlisten;
     };
 
@@ -207,7 +219,7 @@ export function useDebugSession(sessionId: string | undefined) {
         if (unlisten) unlisten();
       });
     };
-  }, [sessionId, loadSession, handleSessionUpdate]);
+  }, [sessionId, handleSessionUpdate]);
 
   useEffect(() => {
     let isCancelled = false;

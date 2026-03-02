@@ -23,6 +23,7 @@ pub enum UICommand {
         mode: joybug2::protocol_io::EmulationMode,
         exit_condition: Option<joybug2::protocol_io::TraceExitCondition>,
         request_id: Option<String>,
+        memory_reads: Vec<(u64, usize)>,
     },
     SetRegister { register_name: String, value: u64 },
     ToggleBreakpoint { address: u64 },
@@ -190,4 +191,11 @@ pub struct EmulationResultPayload {
     pub trace_time_us: Option<u64>,
     pub instruction_info: Vec<EmulationInstructionInfo>,
     pub stats_text: String,
+    pub memory_snapshots: Vec<MemorySnapshotEntry>,
+}
+
+#[derive(serde::Serialize)]
+pub struct MemorySnapshotEntry {
+    pub address: String,
+    pub data: Vec<u8>,
 }
