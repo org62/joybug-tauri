@@ -11,6 +11,7 @@ import {
   DropdownMenuItem,
 } from '@/components/ui/dropdown-menu';
 import { DebugSession, SessionStatus } from '@/contexts/SessionContext';
+import { useKeybindingContext } from '@/contexts/KeybindingContext';
 
 export interface SessionHeaderProps {
   session: DebugSession;
@@ -54,6 +55,7 @@ export const SessionHeader: React.FC<SessionHeaderProps> = ({
   dockingRef,
 }) => {
   const navigate = useNavigate();
+  const { getKeybinding } = useKeybindingContext();
 
   return (
     <div className="mb-3 flex items-center justify-between">
@@ -67,7 +69,7 @@ export const SessionHeader: React.FC<SessionHeaderProps> = ({
           {getStatusBadge(session.status)}
         </div>
       </div>
-      
+
       <div className="flex items-center">
         {canStart && (
           <Button
@@ -102,7 +104,7 @@ export const SessionHeader: React.FC<SessionHeaderProps> = ({
               disabled={busyAction !== null}
               size="sm"
               variant="default"
-              title="Go (F5)"
+              title={`Go (${getKeybinding("debug.go")})`}
               aria-label="Go"
             >
               <Play className="h-4 w-4" />
@@ -112,7 +114,7 @@ export const SessionHeader: React.FC<SessionHeaderProps> = ({
               disabled={busyAction !== null}
               size="sm"
               variant="default"
-              title="Step Over (F10)"
+              title={`Step Over (${getKeybinding("debug.stepOver")})`}
               aria-label="Step Over"
             >
               <MoveRight className="h-4 w-4" />
@@ -122,7 +124,7 @@ export const SessionHeader: React.FC<SessionHeaderProps> = ({
               disabled={busyAction !== null}
               size="sm"
               variant="default"
-              title="Step In (F11)"
+              title={`Step In (${getKeybinding("debug.stepIn")})`}
               aria-label="Step In"
             >
               <CornerDownRight className="h-4 w-4" />
@@ -132,14 +134,14 @@ export const SessionHeader: React.FC<SessionHeaderProps> = ({
               disabled={busyAction !== null}
               size="sm"
               variant="default"
-              title="Step Out (Shift+F11)"
+              title={`Step Out (${getKeybinding("debug.stepOut")})`}
               aria-label="Step Out"
             >
               <CornerUpLeft className="h-4 w-4" />
             </Button>
           </div>
         )}
-        
+
         {canStop && (
           <Button
             onClick={handleStop}
@@ -152,7 +154,7 @@ export const SessionHeader: React.FC<SessionHeaderProps> = ({
             {busyAction === "stop" ? "Stopping..." : "Stop"}
           </Button>
         )}
-        
+
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="outline" size="sm">Windows</Button>
@@ -167,60 +169,70 @@ export const SessionHeader: React.FC<SessionHeaderProps> = ({
                     checked={active.has('disassembly')}
                     onCheckedChange={() => toggleTab('disassembly')}
                   >
-                    Disassembly
+                    <span className="flex-1">Disassembly</span>
+                    <span className="ml-auto text-xs text-muted-foreground">{getKeybinding("panel.disassembly")}</span>
                   </DropdownMenuCheckboxItem>
                   <DropdownMenuCheckboxItem
                     checked={active.has('registers')}
                     onCheckedChange={() => toggleTab('registers')}
                   >
-                    Registers
+                    <span className="flex-1">Registers</span>
+                    <span className="ml-auto text-xs text-muted-foreground">{getKeybinding("panel.registers")}</span>
                   </DropdownMenuCheckboxItem>
                   <DropdownMenuCheckboxItem
                     checked={active.has('modules')}
                     onCheckedChange={() => toggleTab('modules')}
                   >
-                    Modules
+                    <span className="flex-1">Modules</span>
+                    <span className="ml-auto text-xs text-muted-foreground">{getKeybinding("panel.modules")}</span>
                   </DropdownMenuCheckboxItem>
                   <DropdownMenuCheckboxItem
                     checked={active.has('threads')}
                     onCheckedChange={() => toggleTab('threads')}
                   >
-                    Threads
+                    <span className="flex-1">Threads</span>
+                    <span className="ml-auto text-xs text-muted-foreground">{getKeybinding("panel.threads")}</span>
                   </DropdownMenuCheckboxItem>
                   <DropdownMenuCheckboxItem
                     checked={active.has('callstack')}
                     onCheckedChange={() => toggleTab('callstack')}
                   >
-                    Call Stack
+                    <span className="flex-1">Call Stack</span>
+                    <span className="ml-auto text-xs text-muted-foreground">{getKeybinding("panel.callstack")}</span>
                   </DropdownMenuCheckboxItem>
                   <DropdownMenuCheckboxItem
                     checked={active.has('symbols')}
                     onCheckedChange={() => toggleTab('symbols')}
                   >
-                    Symbols
+                    <span className="flex-1">Symbols</span>
+                    <span className="ml-auto text-xs text-muted-foreground">{getKeybinding("panel.symbols")}</span>
                   </DropdownMenuCheckboxItem>
                   <DropdownMenuCheckboxItem
                     checked={active.has('memory_regions')}
                     onCheckedChange={() => toggleTab('memory_regions')}
                   >
-                    Memory Regions
+                    <span className="flex-1">Memory Regions</span>
+                    <span className="ml-auto text-xs text-muted-foreground">{getKeybinding("panel.memoryRegions")}</span>
                   </DropdownMenuCheckboxItem>
                   <DropdownMenuCheckboxItem
                     checked={active.has('breakpoints')}
                     onCheckedChange={() => toggleTab('breakpoints')}
                   >
-                    Breakpoints
+                    <span className="flex-1">Breakpoints</span>
+                    <span className="ml-auto text-xs text-muted-foreground">{getKeybinding("panel.breakpoints")}</span>
                   </DropdownMenuCheckboxItem>
                   <DropdownMenuCheckboxItem
                     checked={active.has('peviewer')}
                     onCheckedChange={() => toggleTab('peviewer')}
                   >
-                    PE Viewer
+                    <span className="flex-1">PE Viewer</span>
+                    <span className="ml-auto text-xs text-muted-foreground">{getKeybinding("panel.peViewer")}</span>
                   </DropdownMenuCheckboxItem>
                   {addNewMemoryTab && (
                     <DropdownMenuItem onSelect={(e: Event) => { e.preventDefault(); addNewMemoryTab(); }}>
                       <Plus />
-                      Add Memory Window
+                      <span className="flex-1">Add Memory Window</span>
+                      <span className="ml-auto text-xs text-muted-foreground">{getKeybinding("panel.addMemory")}</span>
                     </DropdownMenuItem>
                   )}
                   <DropdownMenuSeparator />

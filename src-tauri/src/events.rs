@@ -235,6 +235,18 @@ pub fn debug_event_to_info(event: &joybug2::protocol_io::DebugEvent) -> DebugEve
             address: Some(*address),
             context: None,
         },
+        DebugEvent::HardwareBreakpoint { pid, tid, address, dr_index, bp_type } => DebugEventInfo {
+            event_type: "HardwareBreakpoint".to_string(),
+            process_id: *pid,
+            thread_id: *tid,
+            details: format!(
+                "Hardware breakpoint hit: PID={}, TID={}, Address=0x{:X}, DR{}, Type={:?}",
+                pid, tid, address, dr_index, bp_type
+            ),
+            can_continue: true,
+            address: Some(*address),
+            context: None,
+        },
         DebugEvent::Exception {
             pid,
             tid,

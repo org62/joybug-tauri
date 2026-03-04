@@ -1,8 +1,30 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Mutex;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KeybindingSettings {
+    #[serde(default = "default_preset")]
+    pub preset: String,
+    #[serde(default)]
+    pub custom_bindings: HashMap<String, String>,
+}
+
+fn default_preset() -> String {
+    "windbg".to_string()
+}
+
+impl Default for KeybindingSettings {
+    fn default() -> Self {
+        Self {
+            preset: default_preset(),
+            custom_bindings: HashMap::new(),
+        }
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DebugSettings {
@@ -12,6 +34,8 @@ pub struct DebugSettings {
     pub stop_on_dll_unload: bool,
     pub stop_on_initial_breakpoint: bool,
     pub stop_on_process_create: bool,
+    #[serde(default)]
+    pub keybindings: KeybindingSettings,
 }
 
 impl Default for DebugSettings {
@@ -23,6 +47,7 @@ impl Default for DebugSettings {
             stop_on_dll_unload: true,
             stop_on_initial_breakpoint: true,
             stop_on_process_create: true,
+            keybindings: KeybindingSettings::default(),
         }
     }
 }

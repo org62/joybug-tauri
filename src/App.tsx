@@ -4,6 +4,9 @@ import { listen } from "@tauri-apps/api/event";
 import { toast } from "sonner";
 import { useTheme } from "next-themes";
 import Header from "@/components/Header";
+import { KeybindingContext, useKeybindingContext } from "@/contexts/KeybindingContext";
+import { useKeybindings } from "@/hooks/useKeybindings";
+import { keyboardEventToChord } from "@/lib/keybindings";
 
 // Lazy load pages for code splitting
 const Home = React.lazy(() => import("@/pages/Home"));
@@ -20,27 +23,32 @@ import RcDockThemeLoader from "./components/RcDockThemeLoader";
 function AppContent() {
   const navigate = useNavigate();
   const { resolvedTheme, setTheme } = useTheme();
+  const { reverseLookup } = useKeybindingContext();
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if ((event.ctrlKey || event.metaKey) && event.shiftKey) {
-        switch (event.key) {
-          case 'D':
-            event.preventDefault();
-            event.stopPropagation();
-            navigate('/debugger');
-            break;
-          case 'L':
-            event.preventDefault();
-            event.stopPropagation();
-            navigate('/logs');
-            break;
-          case 'T':
-            event.preventDefault();
-            event.stopPropagation();
-            setTheme(resolvedTheme === 'light' ? 'dark' : 'light');
-            break;
-        }
+      const chord = keyboardEventToChord(event);
+      if (!chord) return;
+
+      const action = reverseLookup.get(chord);
+      if (!action) return;
+
+      switch (action) {
+        case "nav.debugger":
+          event.preventDefault();
+          event.stopPropagation();
+          navigate('/debugger');
+          break;
+        case "nav.logs":
+          event.preventDefault();
+          event.stopPropagation();
+          navigate('/logs');
+          break;
+        case "nav.toggleTheme":
+          event.preventDefault();
+          event.stopPropagation();
+          setTheme(resolvedTheme === 'light' ? 'dark' : 'light');
+          break;
       }
     };
 
@@ -59,7 +67,7 @@ function AppContent() {
       unlistenInfo.then(f => f());
       unlistenError.then(f => f());
     };
-  }, [navigate, resolvedTheme, setTheme]);
+  }, [navigate, resolvedTheme, setTheme, reverseLookup]);
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-neutral-900">
@@ -86,10 +94,21 @@ function AppContent() {
   );
 }
 
+function KeybindingProvider({ children }: { children: React.ReactNode }) {
+  const keybindingData = useKeybindings();
+  return (
+    <KeybindingContext.Provider value={keybindingData}>
+      {children}
+    </KeybindingContext.Provider>
+  );
+}
+
 function App() {
   return (
     <Router>
-      <AppContent />
+      <KeybindingProvider>
+        <AppContent />
+      </KeybindingProvider>
     </Router>
   );
 }

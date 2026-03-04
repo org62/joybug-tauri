@@ -12,6 +12,8 @@ import { useContextMenu } from "@/hooks/useContextMenu";
 import { EmulationQuickView } from "./EmulationQuickView";
 import { consumePendingDisassemblyNavigation, NAVIGATE_DISASSEMBLY_EVENT } from "@/lib/navigationEvents";
 import { useVirtualizer } from "@tanstack/react-virtual";
+import { useKeybindingContext } from "@/contexts/KeybindingContext";
+import { keyboardEventToChord } from "@/lib/keybindings";
 
 const COLUMN_WIDTHS_KEY = "assembly-column-widths";
 const MIN_COL_WIDTH = 40;
@@ -198,13 +200,19 @@ export function AssemblyView({ sessionId, isPaused, address, registers, resolveS
     }
   }, [jumpTargetAddress, instructions, addressIndexMap]);
 
-  // Keyboard shortcuts
+  // Keyboard shortcuts — chord-based lookup via keybinding context
+  const { reverseLookup, getKeybinding } = useKeybindingContext();
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.altKey && e.key === "ArrowLeft") {
+      const chord = keyboardEventToChord(e);
+      if (!chord) return;
+
+      const action = reverseLookup.get(chord);
+      if (action === "assembly.goBack") {
         e.preventDefault();
         goBack();
-      } else if (e.altKey && e.key === "ArrowRight") {
+      } else if (action === "assembly.goForward") {
         e.preventDefault();
         goForward();
       }
@@ -212,7 +220,7 @@ export function AssemblyView({ sessionId, isPaused, address, registers, resolveS
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [goBack, goForward]);
+  }, [goBack, goForward, reverseLookup]);
 
   // External navigation via custom events (e.g., from symbol click)
   // Uses a module-level pending store to survive potential remounts from layout changes.
@@ -292,7 +300,7 @@ export function AssemblyView({ sessionId, isPaused, address, registers, resolveS
             className="h-7 w-7"
             onClick={goBack}
             disabled={!canGoBack}
-            title="Go back (Alt+Left)"
+            title={`Go back (${getKeybinding("assembly.goBack")})`}
           >
             <ArrowLeft className="h-3 w-3" />
           </Button>
@@ -302,7 +310,7 @@ export function AssemblyView({ sessionId, isPaused, address, registers, resolveS
             className="h-7 w-7"
             onClick={goForward}
             disabled={!canGoForward}
-            title="Go forward (Alt+Right)"
+            title={`Go forward (${getKeybinding("assembly.goForward")})`}
           >
             <ArrowRight className="h-3 w-3" />
           </Button>

@@ -13,6 +13,7 @@ $!git diff --cached$
 
 1. Carefully analyze the staged diff above for:
    - **Bugs**: Logic errors, off-by-one errors, null/undefined risks, race conditions, missing error handling at system boundaries, security vulnerabilities
+   - **Simplification**: Code that can be made shorter or clearer — redundant variables, unnecessary nesting, verbose patterns that have idiomatic alternatives, conditions that can be collapsed
    - **Code duplication**: Repeated logic that should be extracted, copy-paste patterns
    - **Maintainability**: Unclear naming, overly complex control flow, missing cleanup patterns (e.g. session cleanup per project conventions), inconsistent patterns compared to surrounding code
 

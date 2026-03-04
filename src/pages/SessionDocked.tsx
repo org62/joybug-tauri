@@ -22,6 +22,8 @@ import { ContextModuleInfoView } from "@/components/session/ContextModuleInfoVie
 import { useDebugSession } from "@/hooks/useDebugSession";
 import { useBreakpoints } from "@/hooks/useBreakpoints";
 import { SessionHeader } from "@/components/session/SessionHeader";
+import { useKeybindingContext } from "@/contexts/KeybindingContext";
+import { keyboardEventToChord } from "@/lib/keybindings";
 
 export default function SessionDocked() {
   const { sessionId } = useParams<{ sessionId: string }>();
@@ -189,86 +191,86 @@ export default function SessionDocked() {
     }
   }, [sessionId, isDockingReady]); // Check after each layout update
 
-  // Hotkey handlers
+  // Hotkey handlers — chord-based lookup via keybinding context
+  const { reverseLookup } = useKeybindingContext();
+
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'F11' && event.shiftKey) {
-        event.preventDefault();
-        event.stopPropagation();
-        handleStepOut();
-        return;
-      }
-      if (event.key === 'F11') {
-        event.preventDefault();
-        event.stopPropagation();
-        handleStepIn();
-        return;
-      }
-      if (event.key === 'F10') {
-        event.preventDefault();
-        event.stopPropagation();
-        handleStepOver();
-        return;
-      }
-      if (event.key === 'F5') {
-        event.preventDefault();
-        event.stopPropagation();
-        handleGo();
-        return;
-      }
-      
-      if (!event.ctrlKey) return;
+      const chord = keyboardEventToChord(event);
+      if (!chord) return;
 
-      // Only handle single Ctrl+key combinations (not Ctrl+Shift+key)
-      if (event.shiftKey) return;
+      const action = reverseLookup.get(chord);
+      if (!action) return;
 
-      switch (event.key.toLowerCase()) {
-        case 'd':
+      switch (action) {
+        // Debug stepping
+        case "debug.go":
+          event.preventDefault();
+          event.stopPropagation();
+          handleGo();
+          break;
+        case "debug.stepIn":
+          event.preventDefault();
+          event.stopPropagation();
+          handleStepIn();
+          break;
+        case "debug.stepOver":
+          event.preventDefault();
+          event.stopPropagation();
+          handleStepOver();
+          break;
+        case "debug.stepOut":
+          event.preventDefault();
+          event.stopPropagation();
+          handleStepOut();
+          break;
+        // Panel toggles
+        case "panel.disassembly":
           event.preventDefault();
           event.stopPropagation();
           toggleTabWithBackendUpdate("disassembly");
           break;
-        case 'r':
+        case "panel.registers":
           event.preventDefault();
           event.stopPropagation();
           toggleTabWithBackendUpdate("registers");
           break;
-        case 'm':
+        case "panel.modules":
           event.preventDefault();
           event.stopPropagation();
           toggleTabWithBackendUpdate("modules");
           break;
-        case 't':
+        case "panel.threads":
           event.preventDefault();
           event.stopPropagation();
           toggleTabWithBackendUpdate("threads");
           break;
-        case 'l':
+        case "panel.callstack":
           event.preventDefault();
           event.stopPropagation();
           toggleTabWithBackendUpdate("callstack");
           break;
-        case 's':
+        case "panel.symbols":
           event.preventDefault();
           event.stopPropagation();
           toggleTabWithBackendUpdate("symbols");
           break;
-        case 'h':
+        case "panel.addMemory":
           event.preventDefault();
           event.stopPropagation();
           handleAddNewMemoryTab();
           break;
-        case 'g':
+        case "panel.memoryRegions":
           event.preventDefault();
           event.stopPropagation();
           toggleTabWithBackendUpdate("memory_regions");
           break;
-        case 'b':
+        case "panel.breakpoints":
           event.preventDefault();
           event.stopPropagation();
           toggleTabWithBackendUpdate("breakpoints");
           break;
-        case 'p':
+        case "panel.peViewer":
           event.preventDefault();
           event.stopPropagation();
           toggleTabWithBackendUpdate("peviewer");
@@ -278,7 +280,7 @@ export default function SessionDocked() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [handleGo, handleStepIn, handleStepOver, handleStepOut, toggleTabWithBackendUpdate]);
+  }, [handleGo, handleStepIn, handleStepOver, handleStepOut, toggleTabWithBackendUpdate, reverseLookup]);
 
   const isPaused = displayStatus === 'Paused';
   const breakpointState = useBreakpoints(session?.id, isPaused, session?.breakpoints);
