@@ -24,6 +24,13 @@ import { useBreakpoints } from "@/hooks/useBreakpoints";
 import { SessionHeader } from "@/components/session/SessionHeader";
 import { useKeybindingContext } from "@/contexts/KeybindingContext";
 import { keyboardEventToChord } from "@/lib/keybindings";
+import { useCommandPaletteContext } from "@/contexts/CommandPaletteContext";
+import type { PaletteCommand } from "@/contexts/CommandPaletteContext";
+import {
+  Play, Square, Pause, ArrowDownToLine, CornerDownRight, ArrowUpFromLine, SkipForward,
+  Code, Cpu, Box, Layers, ListTree, Search, HardDrive, MapPin, FileCode,
+  Plus, RotateCcw, Navigation,
+} from "lucide-react";
 
 export default function SessionDocked() {
   const { sessionId } = useParams<{ sessionId: string }>();
@@ -103,21 +110,21 @@ export default function SessionDocked() {
   };
 
   // Simple toggle function - onTabsChanged will handle backend sync
-  const toggleTabWithBackendUpdate = (tabId: string) => {
+  const toggleTabWithBackendUpdate = React.useCallback((tabId: string) => {
     dockingRef.current?.toggleTab(tabId);
-  };
+  }, []);
 
   // Simple reset function - onTabsChanged will handle backend sync
-  const handleResetLayout = () => {
+  const handleResetLayout = React.useCallback(() => {
     dockingRef.current?.resetLayout();
-  };
+  }, []);
 
   // Add a new memory tab
-  const handleAddNewMemoryTab = () => {
+  const handleAddNewMemoryTab = React.useCallback(() => {
     dockingRef.current?.addTypedTab('memory', (tabId) => (
       <ContextHexView memoryViewId={tabId} />
     ));
-  };
+  }, []);
 
   // Navigate to disassembly at a specific address (from symbol click)
   // Uses event-based navigation to avoid React state changes that would cause remounts.
@@ -283,6 +290,221 @@ export default function SessionDocked() {
   }, [handleGo, handleStepIn, handleStepOver, handleStepOut, toggleTabWithBackendUpdate, reverseLookup]);
 
   const isPaused = displayStatus === 'Paused';
+
+  // ── Command palette registration ──────────────────────────────────────────
+  const { registerCommands, enterSubInput } = useCommandPaletteContext();
+
+  useEffect(() => {
+    const commands: PaletteCommand[] = [
+      // Session lifecycle
+      {
+        id: "session.start",
+        label: "Start Session",
+        group: "Session",
+        icon: <Play className="size-4" />,
+        onSelect: handleStart,
+        enabled: canStart,
+        keywords: ["run", "launch", "start"],
+      },
+      {
+        id: "session.stop",
+        label: "Stop Session",
+        group: "Session",
+        icon: <Square className="size-4" />,
+        onSelect: handleStop,
+        enabled: canStop,
+        keywords: ["stop", "terminate", "kill"],
+      },
+      {
+        id: "session.pause",
+        label: "Pause Session",
+        group: "Session",
+        icon: <Pause className="size-4" />,
+        onSelect: handlePause,
+        enabled: canPause,
+        keywords: ["pause", "break", "interrupt"],
+      },
+      // Debug stepping
+      {
+        id: "debug.go",
+        label: "Go / Continue",
+        group: "Debug",
+        icon: <SkipForward className="size-4" />,
+        keybindingAction: "debug.go",
+        onSelect: handleGo,
+        enabled: canStep,
+        keywords: ["continue", "resume", "run"],
+      },
+      {
+        id: "debug.stepIn",
+        label: "Step Into",
+        group: "Debug",
+        icon: <ArrowDownToLine className="size-4" />,
+        keybindingAction: "debug.stepIn",
+        onSelect: handleStepIn,
+        enabled: canStep,
+        keywords: ["step", "into", "trace"],
+      },
+      {
+        id: "debug.stepOver",
+        label: "Step Over",
+        group: "Debug",
+        icon: <CornerDownRight className="size-4" />,
+        keybindingAction: "debug.stepOver",
+        onSelect: handleStepOver,
+        enabled: canStep,
+        keywords: ["step", "over", "next"],
+      },
+      {
+        id: "debug.stepOut",
+        label: "Step Out",
+        group: "Debug",
+        icon: <ArrowUpFromLine className="size-4" />,
+        keybindingAction: "debug.stepOut",
+        onSelect: handleStepOut,
+        enabled: canStep,
+        keywords: ["step", "out", "return"],
+      },
+      // Panel toggles
+      {
+        id: "panel.disassembly",
+        label: "Toggle Disassembly",
+        group: "Windows",
+        icon: <Code className="size-4" />,
+        keybindingAction: "panel.disassembly",
+        onSelect: () => toggleTabWithBackendUpdate("disassembly"),
+        keywords: ["disassembly", "asm", "code"],
+      },
+      {
+        id: "panel.registers",
+        label: "Toggle Registers",
+        group: "Windows",
+        icon: <Cpu className="size-4" />,
+        keybindingAction: "panel.registers",
+        onSelect: () => toggleTabWithBackendUpdate("registers"),
+        keywords: ["registers", "regs"],
+      },
+      {
+        id: "panel.modules",
+        label: "Toggle Modules",
+        group: "Windows",
+        icon: <Box className="size-4" />,
+        keybindingAction: "panel.modules",
+        onSelect: () => toggleTabWithBackendUpdate("modules"),
+        keywords: ["modules", "dll"],
+      },
+      {
+        id: "panel.threads",
+        label: "Toggle Threads",
+        group: "Windows",
+        icon: <Layers className="size-4" />,
+        keybindingAction: "panel.threads",
+        onSelect: () => toggleTabWithBackendUpdate("threads"),
+        keywords: ["threads"],
+      },
+      {
+        id: "panel.callstack",
+        label: "Toggle Call Stack",
+        group: "Windows",
+        icon: <ListTree className="size-4" />,
+        keybindingAction: "panel.callstack",
+        onSelect: () => toggleTabWithBackendUpdate("callstack"),
+        keywords: ["callstack", "stack", "frames"],
+      },
+      {
+        id: "panel.symbols",
+        label: "Toggle Symbols",
+        group: "Windows",
+        icon: <Search className="size-4" />,
+        keybindingAction: "panel.symbols",
+        onSelect: () => toggleTabWithBackendUpdate("symbols"),
+        keywords: ["symbols", "functions"],
+      },
+      {
+        id: "panel.memoryRegions",
+        label: "Toggle Memory Regions",
+        group: "Windows",
+        icon: <HardDrive className="size-4" />,
+        keybindingAction: "panel.memoryRegions",
+        onSelect: () => toggleTabWithBackendUpdate("memory_regions"),
+        keywords: ["memory", "regions", "map"],
+      },
+      {
+        id: "panel.breakpoints",
+        label: "Toggle Breakpoints",
+        group: "Windows",
+        icon: <MapPin className="size-4" />,
+        keybindingAction: "panel.breakpoints",
+        onSelect: () => toggleTabWithBackendUpdate("breakpoints"),
+        keywords: ["breakpoints", "bp"],
+      },
+      {
+        id: "panel.peViewer",
+        label: "Toggle PE Viewer",
+        group: "Windows",
+        icon: <FileCode className="size-4" />,
+        keybindingAction: "panel.peViewer",
+        onSelect: () => toggleTabWithBackendUpdate("peviewer"),
+        keywords: ["pe", "portable", "executable", "viewer"],
+      },
+      {
+        id: "panel.addMemory",
+        label: "Add Memory Window",
+        group: "Windows",
+        icon: <Plus className="size-4" />,
+        keybindingAction: "panel.addMemory",
+        onSelect: handleAddNewMemoryTab,
+        keywords: ["memory", "hex", "add", "new"],
+      },
+      {
+        id: "panel.resetLayout",
+        label: "Reset Layout",
+        group: "Windows",
+        icon: <RotateCcw className="size-4" />,
+        onSelect: handleResetLayout,
+        keywords: ["reset", "layout", "default"],
+      },
+      // Navigate commands (sub-input mode)
+      {
+        id: "navigate.disassembly",
+        label: "Go to Address (Disassembly)",
+        group: "Navigate",
+        icon: <Navigation className="size-4" />,
+        onSelect: () => {
+          enterSubInput({
+            placeholder: "Enter address (e.g. 0x00007FF...)",
+            onSubmit: handleNavigateToDisassembly,
+          });
+        },
+        enabled: isPaused,
+        keywords: ["goto", "address", "disassembly", "navigate"],
+      },
+      {
+        id: "navigate.memory",
+        label: "Go to Address (Memory)",
+        group: "Navigate",
+        icon: <Navigation className="size-4" />,
+        onSelect: () => {
+          enterSubInput({
+            placeholder: "Enter address (e.g. 0x00007FF...)",
+            onSubmit: handleNavigateToMemory,
+          });
+        },
+        enabled: isPaused,
+        keywords: ["goto", "address", "memory", "navigate", "hex"],
+      },
+    ];
+
+    return registerCommands(commands);
+  }, [
+    canStart, canStop, canPause, canStep, isPaused,
+    handleStart, handleStop, handlePause,
+    handleGo, handleStepIn, handleStepOver, handleStepOut,
+    handleNavigateToDisassembly, handleNavigateToMemory,
+    toggleTabWithBackendUpdate, handleAddNewMemoryTab, handleResetLayout,
+    registerCommands, enterSubInput,
+  ]);
+
   const breakpointState = useBreakpoints(session?.id, isPaused, session?.breakpoints);
 
   const contextValue = useMemo(() => ({
@@ -357,6 +579,12 @@ export default function SessionDocked() {
         id: "symbols",
         title: "Symbols",
         content: dynamicTabContent.symbols,
+        closable: true,
+      },
+      memory: {
+        id: "memory",
+        title: "Memory",
+        content: <ContextHexView memoryViewId="memory" />,
         closable: true,
       },
       memory_regions: {

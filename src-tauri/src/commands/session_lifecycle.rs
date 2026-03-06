@@ -97,8 +97,8 @@ pub fn update_debug_session(
     if let Some(session_state) = states.get(&session_id) {
         let mut state = session_state.lock().unwrap();
 
-        if !matches!(state.status, SessionStatusUI::Stopped) {
-            return Err("Session can only be edited when in 'Stopped' state.".to_string());
+        if !matches!(state.status, SessionStatusUI::Stopped | SessionStatusUI::Error(_)) {
+            return Err("Session can only be edited when in 'Stopped' or 'Error' state.".to_string());
         }
 
         state.name = name;
@@ -175,11 +175,11 @@ pub fn start_debug_session(
 
     {
         let mut state = session_state.lock().unwrap();
-        if state.ui_receiver.is_none() {
-            return Err(Error::InvalidSessionState("Session is already running".to_string()));
-        }
         if matches!(state.status, SessionStatusUI::Stopped | SessionStatusUI::Error(_)) {
             state.reset();
+        }
+        if state.ui_receiver.is_none() {
+            return Err(Error::InvalidSessionState("Session is already running".to_string()));
         }
     }
 

@@ -20,6 +20,8 @@ export type ActionId =
   | "nav.debugger"
   | "nav.logs"
   | "nav.toggleTheme"
+  // Command palette
+  | "palette.open"
   // Assembly view
   | "assembly.goBack"
   | "assembly.goForward";
@@ -52,6 +54,8 @@ export const ACTION_REGISTRY: Record<ActionId, ActionMeta> = {
   "panel.breakpoints":   { label: "Toggle Breakpoints",    category: "Panels", description: "Show or hide the Breakpoints panel",    scope: "session" },
   "panel.peViewer":      { label: "Toggle PE Viewer",      category: "Panels", description: "Show or hide the PE Viewer panel",      scope: "session" },
 
+  "palette.open":    { label: "Command Palette",  category: "Navigation", description: "Open the command palette",                 scope: "global" },
+
   "nav.debugger":    { label: "Go to Debugger",  category: "Navigation", description: "Navigate to the Debugger page",           scope: "global" },
   "nav.logs":        { label: "Go to Logs",      category: "Navigation", description: "Navigate to the Logs page",               scope: "global" },
   "nav.toggleTheme": { label: "Toggle Theme",    category: "Navigation", description: "Switch between light and dark theme",      scope: "global" },
@@ -79,6 +83,8 @@ const SHARED_BINDINGS: Record<string, ChordString> = {
   "panel.memoryRegions": "ctrl+g",
   "panel.breakpoints":   "ctrl+b",
   "panel.peViewer":      "ctrl+p",
+
+  "palette.open":    "ctrl+k",
 
   "nav.debugger":    "ctrl+shift+d",
   "nav.logs":        "ctrl+shift+l",

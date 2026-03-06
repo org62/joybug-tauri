@@ -2167,6 +2167,7 @@ dependencies = [
  "cc",
  "clap",
  "dirs 5.0.1",
+ "keystone-engine",
  "msvc-demangler",
  "pdb",
  "pelite",
@@ -2223,6 +2224,17 @@ dependencies = [
  "bitflags 2.9.1",
  "serde",
  "unicode-segmentation",
+]
+
+[[package]]
+name = "keystone-engine"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ab903ae27e1006cb336cc8af1991690c788892cd2184a3890547581afcf5a1f5"
+dependencies = [
+ "bitflags 1.3.2",
+ "cmake",
+ "libc",
 ]
 
 [[package]]

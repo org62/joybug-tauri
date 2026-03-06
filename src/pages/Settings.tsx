@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { useSearchParams } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -11,9 +12,22 @@ import { SettingsEvents } from "@/components/settings/SettingsEvents";
 const SECTION_GRID = "grid gap-x-6 gap-y-5 items-start";
 const SECTION_GRID_COLS = { gridTemplateColumns: "repeat(auto-fill, minmax(20rem, 1fr))" };
 
+const VALID_TABS = ["all", "general", "keybindings", "events"];
+
 export default function Settings() {
+  const [searchParams] = useSearchParams();
+  const initialTab = VALID_TABS.includes(searchParams.get("tab") ?? "") ? searchParams.get("tab")! : "all";
+
   const [searchQuery, setSearchQuery] = useState("");
-  const [tab, setTab] = useState("all");
+  const [tab, setTab] = useState(initialTab);
+
+  // Sync tab with URL search params (e.g. navigating via command palette)
+  useEffect(() => {
+    const urlTab = searchParams.get("tab") ?? "";
+    if (VALID_TABS.includes(urlTab)) {
+      setTab(urlTab);
+    }
+  }, [searchParams]);
 
   // Auto-switch to "All" tab when user types a search query
   const handleSearchChange = (value: string) => {
@@ -24,7 +38,7 @@ export default function Settings() {
   };
 
   return (
-    <div className="flex flex-col h-[calc(100vh-4rem)] p-6">
+    <div className="flex flex-col h-full p-6 overflow-hidden">
       <Card className="flex flex-col min-h-0 flex-1">
         <CardHeader className="shrink-0">
           <CardTitle className="text-2xl">Settings</CardTitle>
