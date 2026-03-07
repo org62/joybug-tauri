@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useRef } from "react";
 import {
   CommandDialog,
   CommandEmpty,
@@ -16,6 +16,8 @@ export function CommandPalette() {
   const { isOpen, setOpen, commands, subInput, clearSubInput } = useCommandPaletteContext();
   const { getKeybinding } = useKeybindingContext();
   const [subInputValue, setSubInputValue] = useState("");
+  const [flashId, setFlashId] = useState<string | null>(null);
+  const flashTimerRef = useRef<ReturnType<typeof setTimeout>>();
 
   // Filter out disabled commands
   const enabledCommands = commands.filter((cmd) => cmd.enabled !== false);
@@ -35,7 +37,13 @@ export function CommandPalette() {
     (commandId: string) => {
       const cmd = commands.find((c) => c.id === commandId);
       if (cmd) {
-        setOpen(false);
+        if (!cmd.keepOpen) {
+          setOpen(false);
+        } else {
+          clearTimeout(flashTimerRef.current);
+          setFlashId(commandId);
+          flashTimerRef.current = setTimeout(() => setFlashId(null), 350);
+        }
         cmd.onSelect();
       }
     },
@@ -107,6 +115,7 @@ export function CommandPalette() {
                       value={cmd.id}
                       onSelect={handleSelect}
                       keywords={[cmd.label, ...(cmd.keywords ?? [])]}
+                      className={flashId === cmd.id ? "bg-primary/20 transition-colors duration-300" : ""}
                     >
                       {cmd.icon && <span className="mr-2">{cmd.icon}</span>}
                       <span>{cmd.label}</span>

@@ -7,6 +7,8 @@ import {
   RegisterContext,
   SymbolResolver,
 } from '@/lib/hexUtils';
+import { useNavigationChannel } from '@/hooks/useNavigationChannel';
+import { disassemblyNavigation } from '@/lib/navigationStore';
 
 // Instruction interface matching backend SerializableInstruction
 export interface Instruction {
@@ -310,6 +312,13 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
     };
   }, [sessionId]);
 
+  // External navigation (e.g., symbol click). MUST be declared before the
+  // PC-following effect so it runs first on mount and sets userNavigatedAway.
+  useNavigationChannel(disassemblyNavigation, (addr) => {
+    const clean = addr.toLowerCase().startsWith('0x') ? addr.slice(2) : addr;
+    goToAddressDirect(BigInt('0x' + clean));
+  });
+
   // Auto-load when PC changes (stepping)
   // When user steps, ALWAYS follow PC regardless of where they were looking
   useEffect(() => {
@@ -319,29 +328,35 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
     const pcActuallyChanged = lastAutoPcAddress.current === null || pcAddress !== lastAutoPcAddress.current;
 
     // Initial load - no address set yet or no navigation history
-    if (currentAddress === null || navigationHistory.length === 0) {
+    // Skip if user already navigated (e.g., pending symbol navigation consumed in same render)
+    if ((currentAddress === null || navigationHistory.length === 0) && !userNavigatedAway.current) {
       lastAutoPcAddress.current = pcAddress;
-      userNavigatedAway.current = false;
       goToAddressDirect(pcAddress, true);
       return;
     }
 
     // If PC actually changed (user stepped), always follow PC
     if (pcActuallyChanged) {
+      const isRealStep = lastAutoPcAddress.current !== null;
       lastAutoPcAddress.current = pcAddress;
-      userNavigatedAway.current = false;
-      // Clear any previous jump target so PC scroll effect can work
-      setJumpTargetAddress(null);
 
-      // Check if PC is outside current function bounds - need to load new function
-      const pcOutsideFunction = functionStart === null || functionEnd === null ||
-        pcAddress < functionStart || pcAddress >= functionEnd;
+      // Real step (PC moved to a new address) — always follow PC
+      if (isRealStep) {
+        userNavigatedAway.current = false;
+        // Clear any previous jump target so PC scroll effect can work
+        setJumpTargetAddress(null);
 
-      if (pcOutsideFunction) {
-        // PC moved to different function - load it
-        goToAddressDirect(pcAddress, true);
+        // Check if PC is outside current function bounds - need to load new function
+        const pcOutsideFunction = functionStart === null || functionEnd === null ||
+          pcAddress < functionStart || pcAddress >= functionEnd;
+
+        if (pcOutsideFunction) {
+          // PC moved to different function - load it
+          goToAddressDirect(pcAddress, true);
+        }
+        // If PC is still in current function, scroll effect will handle scrolling to it
       }
-      // If PC is still in current function, scroll effect will handle scrolling to it
+      // First time seeing PC (mount) — skip if user already navigated (e.g., symbol click)
     }
     // If PC didn't change, user can freely navigate without being pulled back
   }, [pcAddress, sessionId, currentAddress, navigationHistory.length, functionStart, functionEnd, goToAddressDirect]);

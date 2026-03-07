@@ -190,6 +190,7 @@ function AppContent() {
         icon: isDark ? <Sun className="size-4" /> : <Moon className="size-4" />,
         keybindingAction: "nav.toggleTheme",
         onSelect: () => setTheme(isDark ? "light" : "dark"),
+        keepOpen: true,
         keywords: ["theme", "dark", "light", "mode"],
       },
       // Events & Exceptions toggles
@@ -199,6 +200,7 @@ function AppContent() {
         group: "Events & Exceptions",
         icon: <Zap className="size-4" />,
         onSelect: () => toggleDebugSetting(item.key),
+        keepOpen: true,
         keywords: item.keywords,
       })),
       // Session management

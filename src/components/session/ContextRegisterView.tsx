@@ -16,7 +16,7 @@ function computeChangedRegisters(
   const changed = new Set<string>();
   for (const key of Object.keys(current)) {
     if (key === "arch") continue;
-    if ((current as Record<string, string>)[key] !== (prev as Record<string, string>)[key]) {
+    if ((current as unknown as Record<string, string>)[key] !== (prev as unknown as Record<string, string>)[key]) {
       changed.add(key);
     }
   }

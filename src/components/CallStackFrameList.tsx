@@ -85,7 +85,10 @@ export function CallStackFrameList({ frames, onClickAddress, onClickMemory, comp
 
   if (maxHeight) {
     return (
-      <ScrollArea style={{ maxHeight }}>
+      <ScrollArea
+        style={{ maxHeight }}
+        className="overflow-hidden [&>[data-slot=scroll-area-viewport]]:!h-auto [&>[data-slot=scroll-area-viewport]]:!max-h-[inherit]"
+      >
         {content}
       </ScrollArea>
     );

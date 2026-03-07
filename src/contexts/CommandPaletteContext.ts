@@ -11,6 +11,8 @@ export interface PaletteCommand {
   /** Manual shortcut label (used if keybindingAction is not set) */
   shortcutLabel?: string;
   onSelect: () => void;
+  /** When true, the palette stays open after selecting the command (useful for toggles). */
+  keepOpen?: boolean;
   /** When false, the command is hidden from the palette. Defaults to true. */
   enabled?: boolean;
   /** Extra keywords for fuzzy search matching */

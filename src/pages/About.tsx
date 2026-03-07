@@ -10,7 +10,7 @@ export default function About() {
         <Card className="overflow-hidden">
           <CardHeader className="p-0">
             <div className="flex flex-col items-center text-center">
-              <img src="/joybug.png" className="joybug w-32 h-32 mb-4 rounded-lg" alt="Joybug Logo" />
+              <img src="/joybug-logo.svg" className="joybug w-32 h-32 mb-4 rounded-lg" alt="Joybug Logo" />
             </div>
           </CardHeader>
           <CardContent className="space-y-6">

@@ -329,7 +329,7 @@ export const ContextThreadsView = ({ onNavigateToDisassembly, onNavigateToMemory
       {/* Hover popover - portaled to body to escape rc-dock transforms */}
       {hoveredThreadId !== null && popoverPos && createPortal(
         <div
-          className="fixed z-50 bg-popover border border-border rounded-md shadow-lg p-3 min-w-[320px] max-w-[480px]"
+          className="fixed z-50 bg-popover border border-border rounded-md shadow-lg p-3 min-w-[320px] max-w-[480px] overflow-hidden"
           style={{ left: popoverPos.x, top: popoverPos.y }}
           onMouseEnter={handlePopoverMouseEnter}
           onMouseLeave={handlePopoverMouseLeave}

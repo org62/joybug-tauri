@@ -3,7 +3,8 @@ import { useParams, useNavigate } from "react-router-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { requestDisassemblyNavigation, requestMemoryNavigation } from "@/lib/navigationEvents";
+import { disassemblyNavigation, memoryNavigation } from "@/lib/navigationStore";
+import type { ViewMode } from "@/lib/hexUtils";
 import { ArrowLeft, AlertCircle } from "lucide-react";
 import DockingLayout, { DockingLayoutRef } from "@/components/DockingLayout";
 import { DebuggerDockingConfig } from "@/lib/dockingConfigs";
@@ -127,10 +128,9 @@ export default function SessionDocked() {
   }, []);
 
   // Navigate to disassembly at a specific address (from symbol click)
-  // Uses event-based navigation to avoid React state changes that would cause remounts.
   const handleNavigateToDisassembly = React.useCallback((address: string) => {
     dockingRef.current?.showTab('disassembly');
-    requestDisassemblyNavigation(address);
+    disassemblyNavigation.request(address);
   }, []);
 
   // Parse a hex address string (e.g., "0x00007FF..." -> bigint) to handle 64-bit addresses
@@ -141,12 +141,12 @@ export default function SessionDocked() {
 
   // Navigate to memory view at a specific address, reusing an existing tab if open.
   // initialViewMode is used only when creating a new tab (no existing memory tab).
-  const navigateToMemoryTab = React.useCallback((address: string, initialViewMode?: "byte" | "pointer" | "signed" | "float") => {
+  const navigateToMemoryTab = React.useCallback((address: string, initialViewMode?: ViewMode) => {
     const activeTabs = dockingRef.current?.getActiveTabs() ?? [];
     const existingMemoryTab = activeTabs.find(id => id === 'memory' || id.startsWith('memory-'));
     if (existingMemoryTab) {
       dockingRef.current?.showTab(existingMemoryTab);
-      requestMemoryNavigation(address);
+      memoryNavigation.request(address);
     } else {
       dockingRef.current?.addTypedTab('memory', (tabId) => (
         <ContextHexView memoryViewId={tabId} initialAddress={parseAddress(address)} initialViewMode={initialViewMode} />
@@ -373,6 +373,7 @@ export default function SessionDocked() {
         icon: <Code className="size-4" />,
         keybindingAction: "panel.disassembly",
         onSelect: () => toggleTabWithBackendUpdate("disassembly"),
+        keepOpen: true,
         keywords: ["disassembly", "asm", "code"],
       },
       {
@@ -382,6 +383,7 @@ export default function SessionDocked() {
         icon: <Cpu className="size-4" />,
         keybindingAction: "panel.registers",
         onSelect: () => toggleTabWithBackendUpdate("registers"),
+        keepOpen: true,
         keywords: ["registers", "regs"],
       },
       {
@@ -391,6 +393,7 @@ export default function SessionDocked() {
         icon: <Box className="size-4" />,
         keybindingAction: "panel.modules",
         onSelect: () => toggleTabWithBackendUpdate("modules"),
+        keepOpen: true,
         keywords: ["modules", "dll"],
       },
       {
@@ -400,6 +403,7 @@ export default function SessionDocked() {
         icon: <Layers className="size-4" />,
         keybindingAction: "panel.threads",
         onSelect: () => toggleTabWithBackendUpdate("threads"),
+        keepOpen: true,
         keywords: ["threads"],
       },
       {
@@ -409,6 +413,7 @@ export default function SessionDocked() {
         icon: <ListTree className="size-4" />,
         keybindingAction: "panel.callstack",
         onSelect: () => toggleTabWithBackendUpdate("callstack"),
+        keepOpen: true,
         keywords: ["callstack", "stack", "frames"],
       },
       {
@@ -418,6 +423,7 @@ export default function SessionDocked() {
         icon: <Search className="size-4" />,
         keybindingAction: "panel.symbols",
         onSelect: () => toggleTabWithBackendUpdate("symbols"),
+        keepOpen: true,
         keywords: ["symbols", "functions"],
       },
       {
@@ -427,6 +433,7 @@ export default function SessionDocked() {
         icon: <HardDrive className="size-4" />,
         keybindingAction: "panel.memoryRegions",
         onSelect: () => toggleTabWithBackendUpdate("memory_regions"),
+        keepOpen: true,
         keywords: ["memory", "regions", "map"],
       },
       {
@@ -436,6 +443,7 @@ export default function SessionDocked() {
         icon: <MapPin className="size-4" />,
         keybindingAction: "panel.breakpoints",
         onSelect: () => toggleTabWithBackendUpdate("breakpoints"),
+        keepOpen: true,
         keywords: ["breakpoints", "bp"],
       },
       {
@@ -445,6 +453,7 @@ export default function SessionDocked() {
         icon: <FileCode className="size-4" />,
         keybindingAction: "panel.peViewer",
         onSelect: () => toggleTabWithBackendUpdate("peviewer"),
+        keepOpen: true,
         keywords: ["pe", "portable", "executable", "viewer"],
       },
       {

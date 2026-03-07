@@ -3,7 +3,6 @@ import { Command as CommandPrimitive } from "cmdk"
 import { SearchIcon } from "lucide-react"
 
 import { cn } from "@/lib/utils"
-import { ScrollArea } from "@/components/ui/scroll-area"
 import {
   Dialog,
   DialogContent,
@@ -84,14 +83,12 @@ function CommandList({
     <CommandPrimitive.List
       data-slot="command-list"
       className={cn(
-        "max-h-[300px] overflow-hidden",
+        "max-h-[min(400px,60vh)] scroll-area-thin overflow-y-auto",
         className
       )}
       {...props}
     >
-      <ScrollArea className="h-full max-h-[inherit]">
-        {children}
-      </ScrollArea>
+      {children}
     </CommandPrimitive.List>
   )
 }

@@ -140,6 +140,12 @@
   --sidebar-ring: oklch(0.556 0 0);
 }
 
+/* Thin scrollbar matching ScrollArea style */
+.scroll-area-thin {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;
