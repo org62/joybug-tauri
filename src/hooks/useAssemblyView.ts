@@ -315,8 +315,7 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
   // External navigation (e.g., symbol click). MUST be declared before the
   // PC-following effect so it runs first on mount and sets userNavigatedAway.
   useNavigationChannel(disassemblyNavigation, (addr) => {
-    const clean = addr.toLowerCase().startsWith('0x') ? addr.slice(2) : addr;
-    goToAddressDirect(BigInt('0x' + clean));
+    goToAddress(addr);
   });
 
   // Auto-load when PC changes (stepping)

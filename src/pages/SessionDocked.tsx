@@ -50,6 +50,7 @@ export default function SessionDocked() {
     loadThreads,
     searchSymbols,
     handleGo,
+    handleGoPassException,
     handleStepIn,
     handleStepOver,
     handleStepOut,
@@ -292,7 +293,7 @@ export default function SessionDocked() {
   const isPaused = displayStatus === 'Paused';
 
   // ── Command palette registration ──────────────────────────────────────────
-  const { registerCommands, enterSubInput } = useCommandPaletteContext();
+  const { registerCommands } = useCommandPaletteContext();
 
   useEffect(() => {
     const commands: PaletteCommand[] = [
@@ -334,6 +335,15 @@ export default function SessionDocked() {
         onSelect: handleGo,
         enabled: canStep,
         keywords: ["continue", "resume", "run"],
+      },
+      {
+        id: "debug.goPassException",
+        label: "Go (Pass Exception)",
+        group: "Debug",
+        icon: <SkipForward className="size-4" />,
+        onSelect: handleGoPassException,
+        enabled: canStep && session?.current_event?.event_type === "Exception",
+        keywords: ["continue", "pass", "exception", "forward"],
       },
       {
         id: "debug.stepIn",
@@ -479,11 +489,10 @@ export default function SessionDocked() {
         label: "Go to Address (Disassembly)",
         group: "Navigate",
         icon: <Navigation className="size-4" />,
-        onSelect: () => {
-          enterSubInput({
-            placeholder: "Enter address (e.g. 0x00007FF...)",
-            onSubmit: handleNavigateToDisassembly,
-          });
+        onSelect: () => {},
+        subInput: {
+          placeholder: "Enter address or symbol (e.g. 0x00007FF...)",
+          onSubmit: handleNavigateToDisassembly,
         },
         enabled: isPaused,
         keywords: ["goto", "address", "disassembly", "navigate"],
@@ -493,11 +502,10 @@ export default function SessionDocked() {
         label: "Go to Address (Memory)",
         group: "Navigate",
         icon: <Navigation className="size-4" />,
-        onSelect: () => {
-          enterSubInput({
-            placeholder: "Enter address (e.g. 0x00007FF...)",
-            onSubmit: handleNavigateToMemory,
-          });
+        onSelect: () => {},
+        subInput: {
+          placeholder: "Enter address or symbol (e.g. 0x00007FF...)",
+          onSubmit: handleNavigateToMemory,
         },
         enabled: isPaused,
         keywords: ["goto", "address", "memory", "navigate", "hex"],
@@ -506,12 +514,12 @@ export default function SessionDocked() {
 
     return registerCommands(commands);
   }, [
-    canStart, canStop, canPause, canStep, isPaused,
+    canStart, canStop, canPause, canStep, isPaused, session?.current_event?.event_type,
     handleStart, handleStop, handlePause,
-    handleGo, handleStepIn, handleStepOver, handleStepOut,
+    handleGo, handleGoPassException, handleStepIn, handleStepOver, handleStepOut,
     handleNavigateToDisassembly, handleNavigateToMemory,
     toggleTabWithBackendUpdate, handleAddNewMemoryTab, handleResetLayout,
-    registerCommands, enterSubInput,
+    registerCommands,
   ]);
 
   const breakpointState = useBreakpoints(session?.id, isPaused, session?.breakpoints);
@@ -686,6 +694,7 @@ export default function SessionDocked() {
           session={session}
           busyAction={busyAction}
           handleGo={handleGo}
+          handleGoPassException={handleGoPassException}
           handleStepIn={handleStepIn}
           handleStepOver={handleStepOver}
           handleStepOut={handleStepOut}

@@ -87,6 +87,8 @@ pub struct DebugEventInfo {
     pub can_continue: bool,
     pub address: Option<u64>,
     pub context: Option<SerializableThreadContext>,
+    pub exception_code: Option<u32>,
+    pub exception_first_chance: Option<bool>,
 }
 
 // Session state - the single source of truth for each session
@@ -118,6 +120,9 @@ pub struct SessionStateUI {
 
     // Breakpoints
     pub breakpoints: Vec<BreakpointInfo>,
+
+    // Exception handling
+    pub pass_exception_on_continue: bool,
 }
 
 impl SessionStateUI {
@@ -150,6 +155,7 @@ impl SessionStateUI {
             is_registers_window_open: false,
             is_callstack_window_open: false,
             breakpoints: Vec::new(),
+            pass_exception_on_continue: false,
         }
     }
 
@@ -167,6 +173,8 @@ impl SessionStateUI {
         self.is_disassembly_window_open = false;
         self.is_registers_window_open = false;
         self.is_callstack_window_open = false;
+
+        self.pass_exception_on_continue = false;
 
         // Keep breakpoints but mark all as inactive/unresolved
         for bp in &mut self.breakpoints {

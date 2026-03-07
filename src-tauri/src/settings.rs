@@ -27,6 +27,13 @@ impl Default for KeybindingSettings {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExceptionRule {
+    pub code: u32,
+    pub first_chance: String,  // "stop" | "pass" | "handled"
+    pub second_chance: String, // "stop" | "pass" | "handled"
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DebugSettings {
     pub stop_on_thread_create: bool,
     pub stop_on_thread_exit: bool,
@@ -35,7 +42,11 @@ pub struct DebugSettings {
     pub stop_on_initial_breakpoint: bool,
     pub stop_on_process_create: bool,
     #[serde(default)]
+    pub stop_on_debug_output: bool,
+    #[serde(default)]
     pub keybindings: KeybindingSettings,
+    #[serde(default)]
+    pub exception_rules: Vec<ExceptionRule>,
 }
 
 impl Default for DebugSettings {
@@ -47,7 +58,9 @@ impl Default for DebugSettings {
             stop_on_dll_unload: true,
             stop_on_initial_breakpoint: true,
             stop_on_process_create: true,
+            stop_on_debug_output: false,
             keybindings: KeybindingSettings::default(),
+            exception_rules: Vec::new(),
         }
     }
 }

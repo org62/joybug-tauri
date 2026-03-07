@@ -40,6 +40,8 @@ export interface DebugEventInfo {
   can_continue: boolean;
   address?: number;
   context?: SerializableThreadContext;
+  exception_code?: number;
+  exception_first_chance?: boolean;
 }
 
 export interface Module {

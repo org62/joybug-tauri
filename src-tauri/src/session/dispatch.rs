@@ -37,6 +37,17 @@ pub(crate) fn handle_ui_commands(
                         }
                         return Ok(true);
                     }
+                    UICommand::GoPassException => {
+                        debug!("📤 GoPassException command - continuing with exception passed to application");
+                        if let Some(handle) = app_handle_clone.as_ref() {
+                            let mut s = session.state.lock().unwrap();
+                            s.pass_exception_on_continue = true;
+                            s.status = SessionStatusUI::Running;
+                            drop(s);
+                            emit_session_event(&session.state, handle);
+                        }
+                        return Ok(true);
+                    }
                     UICommand::StepIn => {
                         let pid = event.pid();
                         let tid = event.tid();

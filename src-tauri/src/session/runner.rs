@@ -149,9 +149,41 @@ pub fn run_debug_session(
     }
 
     let app_handle_clone = app_handle.clone();
+    let app_handle_for_exception = app_handle.clone();
 
     let _final_state = joybug2::protocol_io::DebugSession::new(session_state.clone(), Some(&server_url))
         .map_err(|e| Error::ConnectionFailed(e.to_string()))?
+        .on_exception(move |session, _pid, _tid, code, _address, first_chance, _parameters| {
+            // Read and clear pass_exception_on_continue flag from state
+            let pass = {
+                let mut state = session.state.lock().unwrap();
+                let flag = state.pass_exception_on_continue;
+                state.pass_exception_on_continue = false;
+                flag
+            };
+
+            if pass {
+                return Ok(joybug2::protocol_io::ExceptionAction::PassToApplication);
+            }
+
+            // Check per-code exception rules from settings
+            if let Some(ref handle) = app_handle_for_exception {
+                let settings = handle.state::<SettingsState>().inner().lock().unwrap().clone();
+                for rule in &settings.exception_rules {
+                    if rule.code == code {
+                        let action_str = if first_chance { &rule.first_chance } else { &rule.second_chance };
+                        return Ok(match action_str.as_str() {
+                            "pass" => joybug2::protocol_io::ExceptionAction::PassToApplication,
+                            "handled" => joybug2::protocol_io::ExceptionAction::HandledByDebugger,
+                            _ => joybug2::protocol_io::ExceptionAction::HandledByDebugger, // "stop" → handled (on_event controls pausing)
+                        });
+                    }
+                }
+            }
+
+            // Default: handled by debugger (on_event controls whether we pause)
+            Ok(joybug2::protocol_io::ExceptionAction::HandledByDebugger)
+        })
         .on_event(move |session, event| {
             debug!("📥 Received debug event from server: {}", event);
             info!("Debug event: {}", event);
@@ -197,6 +229,12 @@ pub fn run_debug_session(
                     state.events.push(event.clone());
                 }
                 emit_session_event(&session.state, handle);
+
+                let stop = handle.state::<SettingsState>().inner().lock().unwrap().stop_on_debug_output;
+                if !stop {
+                    return Ok(true);
+                }
+                // Fall through to pause path
             }
 
             // ProcessExited: always finalize/continue
@@ -242,6 +280,20 @@ pub fn run_debug_session(
                     joybug2::protocol_io::DebugEvent::InitialBreakpoint { .. } => settings.stop_on_initial_breakpoint,
                     joybug2::protocol_io::DebugEvent::Exception { code, first_chance: true, .. }
                         if *code == 0x80000004 => false,
+                    joybug2::protocol_io::DebugEvent::Exception { code, first_chance, .. } => {
+                        // Check per-code exception rules
+                        let mut found = false;
+                        let mut should_stop = true;
+                        for rule in &settings.exception_rules {
+                            if rule.code == *code {
+                                found = true;
+                                let action_str = if *first_chance { &rule.first_chance } else { &rule.second_chance };
+                                should_stop = action_str == "stop";
+                                break;
+                            }
+                        }
+                        if found { should_stop } else { true }
+                    }
                     _ => true,
                 };
 

@@ -169,6 +169,11 @@ export function useDebugSession(sessionId: string | undefined) {
   const handleSessionUpdate = useCallback((newSession: DebugSession) => {
     setSession(newSession);
     setIsLoading(false);
+    // Persist latest exception code so settings page can pre-populate new rules
+    const exc = newSession.current_event;
+    if (exc?.event_type === "Exception" && exc.exception_code != null) {
+      localStorage.setItem("joybug_last_exception_code", String(exc.exception_code));
+    }
   }, []);
 
   useEffect(() => {
@@ -278,9 +283,22 @@ export function useDebugSession(sessionId: string | undefined) {
     setBusyAction("go");
     try {
       await invoke("step_debug_session", { sessionId });
-      // The session-updated event will refresh the state
     } catch (error) {
       const errorMessage = `Failed to step session: ${error}`;
+      toast.error(errorMessage);
+      console.error(errorMessage);
+    } finally {
+      setBusyAction(null);
+    }
+  }, [sessionId, canStep]);
+
+  const handleGoPassException = useCallback(async () => {
+    if (!sessionId || !canStep) return;
+    setBusyAction("go");
+    try {
+      await invoke("step_pass_exception", { sessionId });
+    } catch (error) {
+      const errorMessage = `Failed to pass exception: ${error}`;
       toast.error(errorMessage);
       console.error(errorMessage);
     } finally {
@@ -390,6 +408,7 @@ export function useDebugSession(sessionId: string | undefined) {
     loadThreads,
     searchSymbols,
     handleGo,
+    handleGoPassException,
     handleStepIn,
     handleStepOut,
     handleStepOver,

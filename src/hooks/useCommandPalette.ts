@@ -17,9 +17,6 @@ export function useCommandPalette(): CommandPaletteContextData {
 
   const setOpen = useCallback((open: boolean) => {
     setIsOpen(open);
-    if (!open) {
-      setSubInput(null);
-    }
   }, []);
 
   const registerCommands = useCallback((commands: PaletteCommand[]) => {

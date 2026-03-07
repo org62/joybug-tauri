@@ -17,11 +17,14 @@ export interface PaletteCommand {
   enabled?: boolean;
   /** Extra keywords for fuzzy search matching */
   keywords?: string[];
+  /** If set, selecting this command enters sub-input mode instead of calling onSelect. */
+  subInput?: { placeholder: string; onSubmit: (value: string) => void };
 }
 
 export type SubInputHandler = (value: string) => void;
 
 export interface SubInputState {
+  label: string;
   placeholder: string;
   onSubmit: SubInputHandler;
 }

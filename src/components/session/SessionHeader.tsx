@@ -1,7 +1,7 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
-import { ArrowLeft, Square, Play, MoveRight, CornerDownRight, CornerUpLeft, Pause, Plus } from 'lucide-react';
+import { ArrowLeft, Square, Play, MoveRight, CornerDownRight, CornerUpLeft, Pause, Plus, ChevronDown } from 'lucide-react';
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -17,6 +17,7 @@ export interface SessionHeaderProps {
   session: DebugSession;
   busyAction: "go" | "stepIn" | "stepOut" | "stepOver" | "stop" | "pause" | null;
   handleGo: () => void;
+  handleGoPassException: () => void;
   handleStepIn: () => void;
   handleStepOver: () => void;
   handleStepOut: () => void;
@@ -38,6 +39,7 @@ export const SessionHeader: React.FC<SessionHeaderProps> = ({
   session,
   busyAction,
   handleGo,
+  handleGoPassException,
   handleStepIn,
   handleStepOver,
   handleStepOut,
@@ -83,7 +85,7 @@ export const SessionHeader: React.FC<SessionHeaderProps> = ({
           </Button>
         )}
         {!canStart && canPause && (
-          <div className="inline-flex items-center gap-1">
+          <div className="inline-flex items-center gap-1 ml-4">
             <Button
               onClick={handlePause}
               disabled={busyAction !== null}
@@ -98,17 +100,44 @@ export const SessionHeader: React.FC<SessionHeaderProps> = ({
         )}
         {/* Step buttons group with tighter spacing */}
         {canStep && (
-          <div className="inline-flex items-center gap-1">
-            <Button
-              onClick={handleGo}
-              disabled={busyAction !== null}
-              size="sm"
-              variant="default"
-              title={`Go (${getKeybinding("debug.go")})`}
-              aria-label="Go"
-            >
-              <Play className="h-4 w-4" />
-            </Button>
+          <div className="inline-flex items-center gap-1 ml-4">
+            <div className="inline-flex">
+              <Button
+                onClick={handleGo}
+                disabled={busyAction !== null}
+                size="sm"
+                variant="default"
+                title={`Go (${getKeybinding("debug.go")})`}
+                aria-label="Go"
+                className="rounded-r-none"
+              >
+                <Play className="h-4 w-4" />
+              </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    disabled={busyAction !== null}
+                    size="sm"
+                    variant="default"
+                    className="rounded-l-none border-l border-l-primary-foreground/20 px-1"
+                    aria-label="Go options"
+                  >
+                    <ChevronDown className="h-3 w-3" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start">
+                  <DropdownMenuItem onSelect={handleGo}>
+                    Go (Handle Exception)
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onSelect={handleGoPassException}
+                    disabled={session.current_event?.event_type !== "Exception"}
+                  >
+                    Go (Pass Exception)
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
             <Button
               onClick={handleStepOver}
               disabled={busyAction !== null}

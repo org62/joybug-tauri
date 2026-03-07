@@ -40,6 +40,7 @@ pub fn run() {
             commands::step_in_debug_session,
             commands::step_over_debug_session,
             commands::step_out_debug_session,
+            commands::step_pass_exception,
             commands::stop_debug_session,
             commands::pause_debug_session,
             commands::terminate_debug_session,

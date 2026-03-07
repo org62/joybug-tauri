@@ -34,3 +34,11 @@ pub fn step_out_debug_session(
 ) -> Result<()> {
     super::send_paused_command(&session_id, &session_states, UICommand::StepOut)
 }
+
+#[tauri::command]
+pub fn step_pass_exception(
+    session_id: String,
+    session_states: State<'_, SessionStatesMap>,
+) -> Result<()> {
+    super::send_paused_command(&session_id, &session_states, UICommand::GoPassException)
+}

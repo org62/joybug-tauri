@@ -105,6 +105,8 @@ pub fn debug_event_to_info(event: &joybug2::protocol_io::DebugEvent) -> DebugEve
             can_continue: true,
             address: Some(*address),
             context: None,
+            exception_code: None,
+            exception_first_chance: None,
         },
         DebugEvent::SingleShotBreakpoint { pid, tid, address } => DebugEventInfo {
             event_type: "SingleShotBreakpoint".to_string(),
@@ -117,6 +119,8 @@ pub fn debug_event_to_info(event: &joybug2::protocol_io::DebugEvent) -> DebugEve
             can_continue: true,
             address: Some(*address),
             context: None,
+            exception_code: None,
+            exception_first_chance: None,
         },
         DebugEvent::ProcessCreated {
             pid,
@@ -141,6 +145,8 @@ pub fn debug_event_to_info(event: &joybug2::protocol_io::DebugEvent) -> DebugEve
             can_continue: true,
             address: None,
             context: None,
+            exception_code: None,
+            exception_first_chance: None,
         },
         DebugEvent::ProcessExited { pid, exit_code } => DebugEventInfo {
             event_type: "ProcessExited".to_string(),
@@ -150,6 +156,8 @@ pub fn debug_event_to_info(event: &joybug2::protocol_io::DebugEvent) -> DebugEve
             can_continue: false,
             address: None,
             context: None,
+            exception_code: None,
+            exception_first_chance: None,
         },
         DebugEvent::ThreadCreated {
             pid,
@@ -166,6 +174,8 @@ pub fn debug_event_to_info(event: &joybug2::protocol_io::DebugEvent) -> DebugEve
             can_continue: true,
             address: Some(*start_address),
             context: None,
+            exception_code: None,
+            exception_first_chance: None,
         },
         DebugEvent::ThreadExited {
             pid,
@@ -182,6 +192,8 @@ pub fn debug_event_to_info(event: &joybug2::protocol_io::DebugEvent) -> DebugEve
             can_continue: true,
             address: None,
             context: None,
+            exception_code: None,
+            exception_first_chance: None,
         },
         DebugEvent::DllLoaded {
             pid,
@@ -206,6 +218,8 @@ pub fn debug_event_to_info(event: &joybug2::protocol_io::DebugEvent) -> DebugEve
             can_continue: true,
             address: None,
             context: None,
+            exception_code: None,
+            exception_first_chance: None,
         },
         DebugEvent::DllUnloaded {
             pid,
@@ -222,6 +236,8 @@ pub fn debug_event_to_info(event: &joybug2::protocol_io::DebugEvent) -> DebugEve
             can_continue: true,
             address: None,
             context: None,
+            exception_code: None,
+            exception_first_chance: None,
         },
         DebugEvent::Breakpoint { pid, tid, address } => DebugEventInfo {
             event_type: "Breakpoint".to_string(),
@@ -234,6 +250,8 @@ pub fn debug_event_to_info(event: &joybug2::protocol_io::DebugEvent) -> DebugEve
             can_continue: true,
             address: Some(*address),
             context: None,
+            exception_code: None,
+            exception_first_chance: None,
         },
         DebugEvent::HardwareBreakpoint { pid, tid, address, dr_index, bp_type } => DebugEventInfo {
             event_type: "HardwareBreakpoint".to_string(),
@@ -246,6 +264,8 @@ pub fn debug_event_to_info(event: &joybug2::protocol_io::DebugEvent) -> DebugEve
             can_continue: true,
             address: Some(*address),
             context: None,
+            exception_code: None,
+            exception_first_chance: None,
         },
         DebugEvent::Exception {
             pid,
@@ -265,6 +285,8 @@ pub fn debug_event_to_info(event: &joybug2::protocol_io::DebugEvent) -> DebugEve
             can_continue: true,
             address: Some(*address),
             context: None,
+            exception_code: Some(*code),
+            exception_first_chance: Some(*first_chance),
         },
         DebugEvent::Output { pid, tid, output } => DebugEventInfo {
             event_type: "Output".to_string(),
@@ -274,6 +296,8 @@ pub fn debug_event_to_info(event: &joybug2::protocol_io::DebugEvent) -> DebugEve
             can_continue: true,
             address: None,
             context: None,
+            exception_code: None,
+            exception_first_chance: None,
         },
         DebugEvent::RipEvent {
             pid,
@@ -291,6 +315,8 @@ pub fn debug_event_to_info(event: &joybug2::protocol_io::DebugEvent) -> DebugEve
             can_continue: true,
             address: None,
             context: None,
+            exception_code: None,
+            exception_first_chance: None,
         },
         DebugEvent::StepComplete {
             pid,
@@ -308,6 +334,8 @@ pub fn debug_event_to_info(event: &joybug2::protocol_io::DebugEvent) -> DebugEve
             can_continue: true,
             address: Some(*address),
             context: None,
+            exception_code: None,
+            exception_first_chance: None,
         },
         DebugEvent::StepFailed { pid, tid, kind, message } => DebugEventInfo {
             event_type: "StepFailed".to_string(),
@@ -320,6 +348,8 @@ pub fn debug_event_to_info(event: &joybug2::protocol_io::DebugEvent) -> DebugEve
             can_continue: false,
             address: None,
             context: None,
+            exception_code: None,
+            exception_first_chance: None,
         },
         DebugEvent::Unknown => DebugEventInfo {
             event_type: "Unknown".to_string(),
@@ -329,6 +359,8 @@ pub fn debug_event_to_info(event: &joybug2::protocol_io::DebugEvent) -> DebugEve
             can_continue: true,
             address: None,
             context: None,
+            exception_code: None,
+            exception_first_chance: None,
         },
     }
 } 

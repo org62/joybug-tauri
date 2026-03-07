@@ -6,6 +6,7 @@ pub type DebugSession = joybug2::protocol_io::DebugSession<Arc<Mutex<SessionStat
 #[derive(Debug, Clone)]
 pub enum UICommand {
     Go,
+    GoPassException,
     StepIn,
     StepOver,
     StepOut,
