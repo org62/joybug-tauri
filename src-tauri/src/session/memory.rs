@@ -199,6 +199,62 @@ pub(crate) fn process_memory_regions_request(
     }
 }
 
+/// Processes a memory search request and emits results to the frontend
+pub(crate) fn process_memory_search(
+    session: &mut DebugSession,
+    app_handle_clone: &Option<AppHandle>,
+    event: &joybug2::protocol_io::DebugEvent,
+    pattern: Vec<u8>,
+    max_results: usize,
+) {
+    let pid = event.pid();
+    debug!("📤 Processing memory search request: pid={}, pattern_len={}, max_results={}", pid, pattern.len(), max_results);
+
+    match session.search_memory(pid, pattern, max_results) {
+        Ok((addresses, capped)) => {
+            debug!("📥 Memory search found {} addresses (capped={})", addresses.len(), capped);
+
+            if let Some(ref handle) = app_handle_clone {
+                let session_id = {
+                    let state = session.state.lock().unwrap();
+                    state.id.clone()
+                };
+
+                let result = MemorySearchResult {
+                    session_id,
+                    addresses: addresses.iter().map(|a| format!("0x{:016X}", a)).collect(),
+                    capped,
+                };
+
+                if let Err(e) = handle.emit("memory-search-result", &result) {
+                    error!("Failed to emit memory-search-result event: {}", e);
+                } else {
+                    debug!("📡 Emitted memory-search-result event with {} addresses", result.addresses.len());
+                }
+            }
+        }
+        Err(e) => {
+            error!("Failed to search memory: {}", e);
+
+            if let Some(ref handle) = app_handle_clone {
+                let session_id = {
+                    let state = session.state.lock().unwrap();
+                    state.id.clone()
+                };
+
+                let error_result = MemorySearchError {
+                    session_id,
+                    error: e.to_string(),
+                };
+
+                if let Err(emit_err) = handle.emit("memory-search-error", &error_result) {
+                    error!("Failed to emit memory-search-error event: {}", emit_err);
+                }
+            }
+        }
+    }
+}
+
 /// Processes a dereference request and emits results to the frontend
 pub(crate) fn process_dereference_request(
     session: &mut DebugSession,

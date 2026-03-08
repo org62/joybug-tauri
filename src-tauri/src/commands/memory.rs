@@ -54,6 +54,18 @@ pub fn request_memory_regions(
 }
 
 #[tauri::command]
+pub fn request_memory_search(
+    session_id: String,
+    pattern: Vec<u8>,
+    max_results: usize,
+    session_states: State<'_, SessionStatesMap>,
+) -> Result<()> {
+    super::send_paused_command(&session_id, &session_states, UICommand::SearchMemory { pattern, max_results })?;
+    info!("Memory search request sent for session {}", session_id);
+    Ok(())
+}
+
+#[tauri::command]
 pub fn request_dereference(
     session_id: String,
     address: String,

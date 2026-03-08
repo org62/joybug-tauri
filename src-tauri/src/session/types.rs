@@ -35,6 +35,7 @@ pub enum UICommand {
     GetThreadCallStack { tid: u32 },
     ResolveThreadSymbols,
     GetModuleExtraInfo { module_base: u64 },
+    SearchMemory { pattern: Vec<u8>, max_results: usize },
 }
 
 /// Event payload for successful memory read (may be partial)
@@ -132,6 +133,21 @@ pub enum SerializableDereferenceValue {
 pub struct DereferenceError {
     pub session_id: String,
     pub address: String,
+    pub error: String,
+}
+
+/// Event payload for successful memory search
+#[derive(serde::Serialize)]
+pub struct MemorySearchResult {
+    pub session_id: String,
+    pub addresses: Vec<String>,
+    pub capped: bool,
+}
+
+/// Event payload for memory search error
+#[derive(serde::Serialize)]
+pub struct MemorySearchError {
+    pub session_id: String,
     pub error: String,
 }
 

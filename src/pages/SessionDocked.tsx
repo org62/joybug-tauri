@@ -19,6 +19,7 @@ import { ContextSymbolsView } from "@/components/session/ContextSymbolsView";
 import { ContextHexView } from "@/components/session/ContextHexView";
 import { ContextMemoryRegionsView } from "@/components/session/ContextMemoryRegionsView";
 import { ContextBreakpointsView } from "@/components/session/ContextBreakpointsView";
+import { ContextMemorySearchView } from "@/components/session/ContextMemorySearchView";
 import { ContextModuleInfoView } from "@/components/session/ContextModuleInfoView";
 import { useDebugSession } from "@/hooks/useDebugSession";
 import { useBreakpoints } from "@/hooks/useBreakpoints";
@@ -278,6 +279,11 @@ export default function SessionDocked() {
           event.stopPropagation();
           toggleTabWithBackendUpdate("breakpoints");
           break;
+        case "panel.memorySearch":
+          event.preventDefault();
+          event.stopPropagation();
+          toggleTabWithBackendUpdate("memory_search");
+          break;
         case "panel.peViewer":
           event.preventDefault();
           event.stopPropagation();
@@ -457,6 +463,16 @@ export default function SessionDocked() {
         keywords: ["breakpoints", "bp"],
       },
       {
+        id: "panel.memorySearch",
+        label: "Toggle Memory Search",
+        group: "Windows",
+        icon: <Search className="size-4" />,
+        keybindingAction: "panel.memorySearch",
+        onSelect: () => toggleTabWithBackendUpdate("memory_search"),
+        keepOpen: true,
+        keywords: ["memory", "search", "find", "pattern"],
+      },
+      {
         id: "panel.peViewer",
         label: "Toggle PE Viewer",
         group: "Windows",
@@ -547,6 +563,7 @@ export default function SessionDocked() {
     symbols: <ContextSymbolsView />,
     memory_regions: <ContextMemoryRegionsView onNavigateToAddress={handleNavigateToMemory} />,
     breakpoints: <ContextBreakpointsView />,
+    memory_search: <ContextMemorySearchView />,
     peviewer: <ContextModuleInfoView />,
   }), [handleNavigateToMemory, handleNavigateToDisassembly, handleNavigateToMemoryPointer, handleOpenModuleInfo]);
 
@@ -614,6 +631,12 @@ export default function SessionDocked() {
         id: "breakpoints",
         title: "Breakpoints",
         content: dynamicTabContent.breakpoints,
+        closable: true,
+      },
+      memory_search: {
+        id: "memory_search",
+        title: "Memory Search",
+        content: dynamicTabContent.memory_search,
         closable: true,
       },
       peviewer: {

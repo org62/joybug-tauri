@@ -189,6 +189,9 @@ pub(crate) fn handle_ui_commands(
                     UICommand::GetModuleExtraInfo { module_base } => {
                         process_module_extra_info_request(session, app_handle_clone, event, module_base);
                     }
+                    UICommand::SearchMemory { pattern, max_results } => {
+                        process_memory_search(session, app_handle_clone, event, pattern, max_results);
+                    }
                     UICommand::Stop => {
                         info!("Stop command received, terminating session");
                         let mut state = session.state.lock().unwrap();

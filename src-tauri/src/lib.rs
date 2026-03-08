@@ -61,6 +61,7 @@ pub fn run() {
             commands::request_set_register,
             commands::request_memory_regions,
             commands::request_dereference,
+            commands::request_memory_search,
             commands::request_emulation,
             commands::update_window_state,
             commands::get_debug_settings,
