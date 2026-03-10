@@ -7,6 +7,7 @@ import {
   RegisterContext,
   SymbolResolver,
 } from '@/lib/hexUtils';
+import { formatTauriError } from '@/lib/sessionHelpers';
 import { useNavigationChannel } from '@/hooks/useNavigationChannel';
 import { disassemblyNavigation } from '@/lib/navigationStore';
 
@@ -125,6 +126,7 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
 
   // Refs
   const lastRequestedAddress = useRef<bigint | null>(null);
+  const requestInFlight = useRef(false);
   const scrollToPCRef = useRef<(() => void) | null>(null);
   // Track the last PC we auto-navigated to, to detect when PC actually changes (stepping)
   const lastAutoPcAddress = useRef<bigint | null>(null);
@@ -142,7 +144,11 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
   const loadDisassembly = useCallback(async (address: bigint) => {
     if (!sessionId) return;
 
+    // Skip duplicate request if already loading the same address
+    if (lastRequestedAddress.current === address && requestInFlight.current) return;
+
     lastRequestedAddress.current = address;
+    requestInFlight.current = true;
     setIsLoading(true);
     setError(null);
 
@@ -154,13 +160,14 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
       });
       setCurrentAddress(address);
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : String(err);
+      const errorMessage = formatTauriError(err);
       // Ignore expected errors when session is running
       if (!errorMessage.includes('InvalidSessionState') && !errorMessage.includes('must be paused')) {
         console.error('Failed to request function disassembly:', err);
         setError(errorMessage);
         toastError(`Failed to request disassembly: ${errorMessage}`, sessionId);
       }
+      requestInFlight.current = false;
       setIsLoading(false);
     }
   }, [sessionId]);
@@ -270,6 +277,7 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
           setFunctionStart(event.payload.function_start ? BigInt(event.payload.function_start) : null);
           setFunctionEnd(event.payload.function_end ? BigInt(event.payload.function_end) : null);
           setFunctionName(event.payload.function_name);
+          requestInFlight.current = false;
           setIsLoading(false);
           setError(null);
         }
@@ -285,6 +293,7 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
             setError(msg);
             toastError(`Disassembly failed: ${msg}`, sessionId);
           }
+          requestInFlight.current = false;
           setIsLoading(false);
         }
       }
@@ -299,6 +308,7 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
           setFunctionStart(null);
           setFunctionEnd(null);
           setFunctionName(null);
+          requestInFlight.current = false;
           setIsLoading(false);
           setError(null);
         }
@@ -373,6 +383,8 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
       setNavigationHistory([]);
       setHistoryIndex(-1);
       lastAutoPcAddress.current = null;
+      lastRequestedAddress.current = null;
+      requestInFlight.current = false;
       userNavigatedAway.current = false;
     }
   }, [sessionId, pcAddress]);

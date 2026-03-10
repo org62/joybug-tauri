@@ -61,6 +61,7 @@ pub fn run() {
             commands::request_set_register,
             commands::request_memory_regions,
             commands::request_dereference,
+            commands::request_dereference_batch,
             commands::request_memory_search,
             commands::request_emulation,
             commands::update_window_state,
@@ -71,6 +72,7 @@ pub fn run() {
             commands::enable_breakpoint,
             commands::enable_breakpoint_group,
             commands::update_breakpoint,
+            commands::set_hardware_breakpoint,
             commands::request_module_extra_info,
         ])
         .run(tauri::generate_context!())

@@ -69,28 +69,31 @@ export function useRegisterDereference(
     return '0x' + cleaned.toUpperCase().padStart(16, '0');
   }, []);
 
-  // Request dereference for a single address
-  const requestDereference = useCallback(async (address: string) => {
-    if (!sessionId) return;
+  // Request dereference for multiple addresses in a single batch command
+  const requestDereferenceBatch = useCallback(async (addresses: string[]) => {
+    if (!sessionId || addresses.length === 0) return;
 
-    const normalizedAddr = normalizeAddress(address);
-
-    // Don't request if already pending or already have data
-    if (pendingAddresses.current.has(normalizedAddr) || requestedAddresses.current.has(normalizedAddr)) {
-      return;
+    const normalized: string[] = [];
+    for (const addr of addresses) {
+      const n = normalizeAddress(addr);
+      if (!pendingAddresses.current.has(n) && !requestedAddresses.current.has(n)) {
+        pendingAddresses.current.add(n);
+        normalized.push(n);
+      }
     }
 
-    pendingAddresses.current.add(normalizedAddr);
+    if (normalized.length === 0) return;
 
     try {
-      await invoke('request_dereference', {
+      await invoke('request_dereference_batch', {
         sessionId,
-        address: normalizedAddr,
-        count: 1, // Just one address per request
+        addresses: normalized,
       });
     } catch (err) {
-      console.error(`Failed to dereference ${normalizedAddr}:`, err);
-      pendingAddresses.current.delete(normalizedAddr);
+      console.error(`Failed to batch dereference:`, err);
+      for (const n of normalized) {
+        pendingAddresses.current.delete(n);
+      }
     }
   }, [sessionId, normalizeAddress]);
 
@@ -145,16 +148,12 @@ export function useRegisterDereference(
     setDereferenceData(new Map());
     setIsLoading(true);
 
-    // Request dereference for each register address
-    const requests: Promise<void>[] = [];
-    for (const [, address] of addresses) {
-      requests.push(requestDereference(address));
-    }
-
-    Promise.all(requests).finally(() => {
+    // Send all addresses in a single batch command to avoid flooding the command queue
+    const addressList = Array.from(addresses.values());
+    requestDereferenceBatch(addressList).finally(() => {
       setIsLoading(false);
     });
-  }, [context, sessionId, sessionStatus, getRegisterAddresses, requestDereference]);
+  }, [context, sessionId, sessionStatus, getRegisterAddresses, requestDereferenceBatch]);
 
   // Reset when session stops
   useEffect(() => {

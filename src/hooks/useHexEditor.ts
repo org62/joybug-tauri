@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { toastError, toastSuccess, toastInfo } from '@/lib/logger';
+import { formatTauriError } from '@/lib/sessionHelpers';
 import {
   ViewMode,
   VIEW_MODE_CONFIGS,
@@ -202,9 +203,7 @@ export function useHexEditor(options: UseHexEditorOptions): HexEditorState & Hex
       });
       // Results will come via event
     } catch (err) {
-      const errorMsg = err instanceof Error ? err.message :
-        (typeof err === 'object' && err !== null && 'message' in err) ? String((err as any).message) :
-        (typeof err === 'string') ? err : JSON.stringify(err);
+      const errorMsg = formatTauriError(err);
       setError(errorMsg);
       toastError(`Failed to read memory: ${errorMsg}`, sessionId);
       setIsLoading(false);
@@ -227,9 +226,7 @@ export function useHexEditor(options: UseHexEditorOptions): HexEditorState & Hex
       });
       // Results will come via event
     } catch (err) {
-      const errorMsg = err instanceof Error ? err.message :
-        (typeof err === 'object' && err !== null && 'message' in err) ? String((err as any).message) :
-        (typeof err === 'string') ? err : JSON.stringify(err);
+      const errorMsg = formatTauriError(err);
       // Don't show error toast for dereference - it's supplementary data
       console.error(`Failed to dereference: ${errorMsg}`);
       pendingDereferenceAddress.current = null;
@@ -666,9 +663,7 @@ export function useHexEditor(options: UseHexEditorOptions): HexEditorState & Hex
       // Refresh to get updated data
       loadMemory(baseAddress);
     } catch (err) {
-      const errorMsg = err instanceof Error ? err.message :
-        (typeof err === 'object' && err !== null && 'message' in err) ? String((err as any).message) :
-        (typeof err === 'string') ? err : JSON.stringify(err);
+      const errorMsg = formatTauriError(err);
       toastError(`Failed to write memory: ${errorMsg}`, sessionId);
       setIsLoading(false);
     }

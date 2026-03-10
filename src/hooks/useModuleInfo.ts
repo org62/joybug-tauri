@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { toastError } from '@/lib/logger';
+import { formatTauriError } from '@/lib/sessionHelpers';
 
 // TypeScript interfaces mirroring joybug2::pe_types
 
@@ -149,7 +150,7 @@ export function useModuleInfo(
         moduleBase: base,
       });
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = formatTauriError(err);
       if (!msg.includes('InvalidSessionState') && !msg.includes('must be paused')) {
         setError(msg);
         toastError(`Failed to request module info: ${msg}`, sessionId);

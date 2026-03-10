@@ -73,6 +73,8 @@ export const ContextHexView = ({ memoryViewId, initialAddress, initialViewMode }
   const sessionStatus = sessionData?.session?.status;
   const statusString = typeof sessionStatus === 'string' ? sessionStatus : undefined;
 
+  const { setHardwareBreakpoint } = sessionData.breakpointState;
+
   return (
     <HexView
       sessionId={sessionData?.session?.id}
@@ -82,6 +84,7 @@ export const ContextHexView = ({ memoryViewId, initialAddress, initialViewMode }
       resolveSymbol={resolveSymbolFn}
       initialAddress={initialAddress}
       initialViewMode={initialViewMode}
+      onSetHardwareBreakpoint={setHardwareBreakpoint}
     />
   );
 };

@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { useSessionContext } from '@/contexts/SessionContext';
+import { formatTauriError } from '@/lib/sessionHelpers';
 import { useContextMenu } from '@/hooks/useContextMenu';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -131,7 +132,7 @@ export const ContextMemorySearchView = () => {
         maxResults: 10000,
       });
     } catch (e) {
-      setError(String(e));
+      setError(formatTauriError(e));
       setIsSearching(false);
     }
   }, [sessionId, isPaused, searchTerm, searchMode]);

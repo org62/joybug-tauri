@@ -9,7 +9,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "./ui/select";
-import { Binary, RefreshCw, Save, X, ArrowRight, Copy, ClipboardPaste, ChevronLeft, ChevronRight } from "lucide-react";
+import { Binary, RefreshCw, Save, X, ArrowRight, Copy, ClipboardPaste, ChevronLeft, ChevronRight, Crosshair } from "lucide-react";
 import { useHexEditor } from "@/hooks/useHexEditor";
 import { useNavigationChannel } from "@/hooks/useNavigationChannel";
 import { memoryNavigation } from "@/lib/navigationStore";
@@ -33,9 +33,10 @@ interface HexViewProps {
   resolveSymbol?: SymbolResolver;
   initialAddress?: bigint;
   initialViewMode?: ViewMode;
+  onSetHardwareBreakpoint?: (address: string, hwType: string, hwSize: number) => void;
 }
 
-export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}, resolveSymbol, initialAddress, initialViewMode }: HexViewProps) {
+export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}, resolveSymbol, initialAddress, initialViewMode, onSetHardwareBreakpoint }: HexViewProps) {
   const {
     baseAddress,
     memoryData,
@@ -729,6 +730,37 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
             <ClipboardPaste className="h-4 w-4" />
             Paste Text
           </button>
+          {onSetHardwareBreakpoint && selectionStart !== null && (() => {
+            const address = baseAddress + BigInt(selectionStart);
+            const selSize = selectionEnd !== null ? Math.abs(selectionEnd - selectionStart) + 1 : 1;
+            const hwSize = selSize >= 8 ? 8 : selSize >= 4 ? 4 : selSize >= 2 ? 2 : 1;
+            const addrStr = `0x${address.toString(16)}`;
+            return (
+              <>
+                <div className="border-t border-border my-1" />
+                <button
+                  className="w-full px-3 py-1.5 text-sm text-left hover:bg-accent hover:text-accent-foreground flex items-center gap-2"
+                  onClick={() => {
+                    onSetHardwareBreakpoint(addrStr, "Write", hwSize);
+                    setContextMenu(null);
+                  }}
+                >
+                  <Crosshair className="h-4 w-4" />
+                  Break on Write ({hwSize}B)
+                </button>
+                <button
+                  className="w-full px-3 py-1.5 text-sm text-left hover:bg-accent hover:text-accent-foreground flex items-center gap-2"
+                  onClick={() => {
+                    onSetHardwareBreakpoint(addrStr, "ReadWrite", hwSize);
+                    setContextMenu(null);
+                  }}
+                >
+                  <Crosshair className="h-4 w-4" />
+                  Break on Read/Write ({hwSize}B)
+                </button>
+              </>
+            );
+          })()}
         </div>
       )}
     </div>

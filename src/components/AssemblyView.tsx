@@ -49,9 +49,10 @@ interface AssemblyViewProps {
   resolveSymbol?: SymbolResolver;
   breakpointAddresses?: Set<string>;
   onToggleBreakpoint?: (address: string) => void;
+  onSetHardwareBreakpoint?: (address: string, hwType: string, hwSize: number) => void;
 }
 
-export function AssemblyView({ sessionId, isPaused, address, registers, resolveSymbol, breakpointAddresses, onToggleBreakpoint }: AssemblyViewProps) {
+export function AssemblyView({ sessionId, isPaused, address, registers, resolveSymbol, breakpointAddresses, onToggleBreakpoint, onSetHardwareBreakpoint }: AssemblyViewProps) {
   const [addressInput, setAddressInput] = useState("");
   const containerRef = useRef<HTMLDivElement>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
@@ -423,6 +424,17 @@ export function AssemblyView({ sessionId, isPaused, address, registers, resolveS
               }}
             >
               {breakpointAddresses?.has(contextMenu.data.address.toUpperCase()) ? "Remove Breakpoint" : "Toggle Breakpoint"}
+            </button>
+          )}
+          {onSetHardwareBreakpoint && (
+            <button
+              className="w-full px-3 py-1.5 text-sm text-left hover:bg-accent hover:text-accent-foreground flex items-center gap-2"
+              onClick={() => {
+                onSetHardwareBreakpoint(contextMenu.data.address, "Execute", 1);
+                closeContextMenu();
+              }}
+            >
+              Add Hardware Breakpoint
             </button>
           )}
           <button

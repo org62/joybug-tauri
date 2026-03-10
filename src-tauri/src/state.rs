@@ -14,6 +14,16 @@ pub struct BreakpointInfo {
     pub symbol: Option<String>,  // resolved symbol e.g. "kernel32!CreateFileW+0x10"
     pub enabled: bool,           // user toggle
     pub is_active: bool,         // currently set in debuggee
+    #[serde(default = "default_bp_kind")]
+    pub bp_kind: String,           // "software" | "hardware"
+    #[serde(default)]
+    pub hw_type: Option<String>,   // "Execute" | "Write" | "ReadWrite"
+    #[serde(default)]
+    pub hw_size: Option<u8>,       // 1, 2, 4, 8
+}
+
+fn default_bp_kind() -> String {
+    "software".to_string()
 }
 
 // Serializable snapshot of session state for frontend communication

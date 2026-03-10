@@ -54,6 +54,9 @@ pub fn load_breakpoints(launch_command: &str) -> Vec<BreakpointInfo> {
                 symbol: bp.symbol.clone(),
                 enabled: bp.enabled,
                 is_active: false,
+                bp_kind: bp.bp_kind.clone(),
+                hw_type: bp.hw_type.clone(),
+                hw_size: bp.hw_size,
             })
             .collect(),
         None => Vec::new(),

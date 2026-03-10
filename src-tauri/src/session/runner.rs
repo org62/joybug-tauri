@@ -313,7 +313,17 @@ pub fn run_debug_session(
                     let session_id = session.state.lock().unwrap().id.clone();
                     emit_dll_events(handle, &session_id, event, unloaded_module_name);
 
-                    emit_session_event(&session.state, handle);
+                    // Skip full session-updated event for DLL events during auto-continue.
+                    // The frontend already receives dll-loaded/dll-unloaded events directly
+                    // and doesn't need a full session state update while running.
+                    let is_dll_event = matches!(
+                        event,
+                        joybug2::protocol_io::DebugEvent::DllLoaded { .. }
+                            | joybug2::protocol_io::DebugEvent::DllUnloaded { .. }
+                    );
+                    if !is_dll_event {
+                        emit_session_event(&session.state, handle);
+                    }
                     return Ok(true);
                 }
 

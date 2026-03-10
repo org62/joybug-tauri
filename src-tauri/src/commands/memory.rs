@@ -79,3 +79,24 @@ pub fn request_dereference(
     info!("Dereference request sent for session {} at address 0x{:X}, count {}", session_id, address, count);
     Ok(())
 }
+
+#[tauri::command]
+pub fn request_dereference_batch(
+    session_id: String,
+    addresses: Vec<String>,
+    session_states: State<'_, SessionStatesMap>,
+) -> Result<()> {
+    let parsed: std::result::Result<Vec<u64>, _> = addresses
+        .iter()
+        .map(|a| {
+            u64::from_str_radix(a.trim_start_matches("0x").trim_start_matches("0X"), 16)
+                .map_err(|e| Error::InvalidParameter(format!("Invalid address '{}': {}", a, e)))
+        })
+        .collect();
+    let addresses = parsed?;
+
+    let count = addresses.len();
+    super::send_paused_command(&session_id, &session_states, UICommand::DereferenceBatch { addresses })?;
+    info!("Batch dereference request sent for session {} with {} addresses", session_id, count);
+    Ok(())
+}

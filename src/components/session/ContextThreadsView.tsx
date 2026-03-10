@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { useSessionContext } from '@/contexts/SessionContext';
+import { formatTauriError } from '@/lib/sessionHelpers';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Cpu, Loader2 } from 'lucide-react';
@@ -209,7 +210,7 @@ export const ContextThreadsView = ({ onNavigateToDisassembly, onNavigateToMemory
         invoke('request_thread_callstack', { sessionId, tid }).catch((err) => {
           console.error('Failed to request thread callstack:', err);
           setLoadingThread(null);
-          setCallstackError({ tid, message: String(err) });
+          setCallstackError({ tid, message: formatTauriError(err) });
         });
       }
     }, 400);

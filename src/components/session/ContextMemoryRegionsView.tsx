@@ -2,6 +2,7 @@ import { useEffect, useState, useMemo } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { useSessionContext } from '@/contexts/SessionContext';
+import { formatTauriError } from '@/lib/sessionHelpers';
 import { AlertCircle, MemoryStick, Loader2 } from 'lucide-react';
 import {
   Select,
@@ -50,7 +51,7 @@ export function ContextMemoryRegionsView({ onNavigateToAddress }: ContextMemoryR
         sessionId: sessionData.session.id,
       });
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : String(err);
+      const errorMessage = formatTauriError(err);
       setError(errorMessage);
       setIsLoading(false);
     }

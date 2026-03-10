@@ -354,3 +354,15 @@ pub(crate) fn process_dereference_request(
         }
     }
 }
+
+/// Processes a batch dereference request (multiple addresses in one command) and emits individual results.
+pub(crate) fn process_dereference_batch(
+    session: &mut DebugSession,
+    app_handle_clone: &Option<AppHandle>,
+    event: &joybug2::protocol_io::DebugEvent,
+    addresses: &[u64],
+) {
+    for &address in addresses {
+        process_dereference_request(session, app_handle_clone, event, address, 1);
+    }
+}

@@ -15,6 +15,9 @@ export interface RawBreakpoint {
   symbol: string | null;
   enabled: boolean;
   is_active: boolean;
+  bp_kind: string;            // "software" | "hardware"
+  hw_type: string | null;     // "Execute" | "Write" | "ReadWrite"
+  hw_size: number | null;     // 1, 2, 4, 8
 }
 
 export interface DebugSession {

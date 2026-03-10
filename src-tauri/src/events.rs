@@ -253,20 +253,27 @@ pub fn debug_event_to_info(event: &joybug2::protocol_io::DebugEvent) -> DebugEve
             exception_code: None,
             exception_first_chance: None,
         },
-        DebugEvent::HardwareBreakpoint { pid, tid, address, dr_index, bp_type } => DebugEventInfo {
-            event_type: "HardwareBreakpoint".to_string(),
-            process_id: *pid,
-            thread_id: *tid,
-            details: format!(
-                "Hardware breakpoint hit: PID={}, TID={}, Address=0x{:X}, DR{}, Type={:?}",
-                pid, tid, address, dr_index, bp_type
-            ),
-            can_continue: true,
-            address: Some(*address),
-            context: None,
-            exception_code: None,
-            exception_first_chance: None,
-        },
+        DebugEvent::HardwareBreakpoint { pid, tid, address, dr_index, bp_type } => {
+            // For Execute HW breakpoints, the address is the instruction address (= RIP).
+            // For Write/ReadWrite HW breakpoints, the address is the *data* address that
+            // was accessed, not the instruction pointer.  Leave address as None so the
+            // frontend falls back to RIP from the thread context.
+            let is_execute = *bp_type == joybug2::protocol::HardwareBreakpointType::Execute;
+            DebugEventInfo {
+                event_type: "HardwareBreakpoint".to_string(),
+                process_id: *pid,
+                thread_id: *tid,
+                details: format!(
+                    "Hardware breakpoint hit: PID={}, TID={}, Address=0x{:X}, DR{}, Type={:?}",
+                    pid, tid, address, dr_index, bp_type
+                ),
+                can_continue: true,
+                address: if is_execute { Some(*address) } else { None },
+                context: None,
+                exception_code: None,
+                exception_first_chance: None,
+            }
+        }
         DebugEvent::Exception {
             pid,
             tid,

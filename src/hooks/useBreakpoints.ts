@@ -16,6 +16,9 @@ export interface Breakpoint {
   symbol: string | null;
   enabled: boolean;
   is_active: boolean;
+  bp_kind: string;            // "software" | "hardware"
+  hw_type: string | null;     // "Execute" | "Write" | "ReadWrite"
+  hw_size: number | null;     // 1, 2, 4, 8
 }
 
 interface BreakpointsUpdatedPayload {
@@ -34,6 +37,9 @@ function convertBreakpoints(raw: RawBreakpoint[]): Breakpoint[] {
     symbol: bp.symbol,
     enabled: bp.enabled,
     is_active: bp.is_active,
+    bp_kind: bp.bp_kind ?? "software",
+    hw_type: bp.hw_type ?? null,
+    hw_size: bp.hw_size ?? null,
   }));
 }
 
@@ -115,6 +121,15 @@ export function useBreakpoints(sessionId?: string, isPaused?: boolean, sessionBr
     }
   }, [sessionId]);
 
+  const setHardwareBreakpoint = useCallback(async (address: string, hwType: string, hwSize: number) => {
+    if (!sessionId) return;
+    try {
+      await invoke('set_hardware_breakpoint', { sessionId, address, hwType, hwSize });
+    } catch (e) {
+      console.error('Failed to set hardware breakpoint:', e);
+    }
+  }, [sessionId]);
+
   return useMemo(() => ({
     breakpoints,
     toggleBreakpoint,
@@ -122,7 +137,8 @@ export function useBreakpoints(sessionId?: string, isPaused?: boolean, sessionBr
     enableBreakpoint,
     enableBreakpointGroup,
     updateBreakpoint,
-  }), [breakpoints, toggleBreakpoint, removeBreakpoint, enableBreakpoint, enableBreakpointGroup, updateBreakpoint]);
+    setHardwareBreakpoint,
+  }), [breakpoints, toggleBreakpoint, removeBreakpoint, enableBreakpoint, enableBreakpointGroup, updateBreakpoint, setHardwareBreakpoint]);
 }
 
 export type BreakpointState = ReturnType<typeof useBreakpoints>;

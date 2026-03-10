@@ -53,6 +53,21 @@ pub fn enable_breakpoint_group(
 }
 
 #[tauri::command]
+pub fn set_hardware_breakpoint(
+    session_id: String,
+    address: String,
+    hw_type: String,
+    hw_size: u8,
+    session_states: State<'_, SessionStatesMap>,
+) -> Result<()> {
+    let address = u64::from_str_radix(address.trim_start_matches("0x").trim_start_matches("0X"), 16)
+        .map_err(|e| Error::InvalidParameter(format!("Invalid address '{}': {}", address, e)))?;
+    super::send_paused_command(&session_id, &session_states, UICommand::SetHardwareBreakpoint { address, hw_type: hw_type.clone(), hw_size })?;
+    info!("Set hardware breakpoint request sent for session {} at address 0x{:X}, type={}, size={}", session_id, address, hw_type, hw_size);
+    Ok(())
+}
+
+#[tauri::command]
 pub fn update_breakpoint(
     session_id: String,
     breakpoint_id: String,

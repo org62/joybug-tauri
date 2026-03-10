@@ -19,6 +19,7 @@ pub enum UICommand {
     WriteMemory{ address: u64, data: Vec<u8> },
     GetMemoryRegions,
     Dereference{ address: u64, count: usize },
+    DereferenceBatch{ addresses: Vec<u64> },
     Emulate {
         max_instructions: usize,
         mode: joybug2::protocol_io::EmulationMode,
@@ -32,6 +33,7 @@ pub enum UICommand {
     EnableBreakpoint { breakpoint_id: String, enabled: bool },
     EnableBreakpointGroup { group: String, enabled: bool },
     UpdateBreakpoint { breakpoint_id: String, name: Option<String>, group: Option<String> },
+    SetHardwareBreakpoint { address: u64, hw_type: String, hw_size: u8 },
     GetThreadCallStack { tid: u32 },
     ResolveThreadSymbols,
     GetModuleExtraInfo { module_base: u64 },

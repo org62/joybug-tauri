@@ -2,6 +2,28 @@ import { invoke } from '@tauri-apps/api/core';
 import { RegisterContext, SymbolResolver } from '@/lib/hexUtils';
 import { SerializableThreadContext } from '@/components/RegisterView';
 
+/**
+ * Extract a human-readable error message from a Tauri invoke error.
+ * Tauri serializes Rust enum errors as objects like {"VariantName": "message"},
+ * which String() renders as "[object Object]".
+ */
+export function formatTauriError(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  if (typeof err === 'string') return err;
+  if (typeof err === 'object' && err !== null) {
+    // Tauri serialized enum: {"VariantName": "message"}
+    const values = Object.values(err as Record<string, unknown>);
+    if (values.length === 1 && typeof values[0] === 'string') {
+      return values[0];
+    }
+    if ('message' in err && typeof (err as any).message === 'string') {
+      return (err as any).message;
+    }
+    return JSON.stringify(err);
+  }
+  return String(err);
+}
+
 /** Convert a thread context snapshot to a flat register name -> value map for address expression parsing. */
 export function contextToRegisters(context: SerializableThreadContext | undefined): RegisterContext {
   if (!context) return {};
