@@ -112,9 +112,11 @@ pub(crate) fn process_toggle_breakpoint(
                 info!("Set breakpoint at 0x{:X} ({}+0x{:X})", address, module_name, module_offset);
             }
             Err(e) => {
-                error!("Failed to set breakpoint at 0x{:X}: {}", address, e);
+                let msg = format!("Failed to set breakpoint at 0x{:X}: {}", address, e);
+                error!("{}", msg);
                 if let Some(ref handle) = app_handle_clone {
-                    crate::ui_logger::toast_error(handle, &format!("Failed to set breakpoint: {}", e));
+                    crate::ui_logger::log_error(handle, &msg, None);
+                    crate::ui_logger::toast_error(handle, &msg);
                 }
             }
         }
@@ -187,6 +189,7 @@ pub(crate) fn process_remove_breakpoint(
 /// Core logic for enabling/disabling a single breakpoint (no emit/persist).
 pub(crate) fn apply_enable_breakpoint(
     session: &mut DebugSession,
+    app_handle_clone: &Option<AppHandle>,
     pid: u32,
     breakpoint_id: &str,
     enabled: bool,
@@ -232,7 +235,12 @@ pub(crate) fn apply_enable_breakpoint(
                     }
                 }
                 Err(e) => {
-                    warn!("Failed to enable breakpoint: {}", e);
+                    let msg = format!("Failed to enable breakpoint at 0x{:X}: {}", address, e);
+                    warn!("{}", msg);
+                    if let Some(ref handle) = app_handle_clone {
+                        crate::ui_logger::log_error(handle, &msg, None);
+                        crate::ui_logger::toast_error(handle, &msg);
+                    }
                     let mut state = session.state.lock().unwrap();
                     if let Some(b) = state.breakpoints.iter_mut().find(|b| b.id == breakpoint_id) {
                         b.enabled = true;
@@ -270,7 +278,7 @@ pub(crate) fn process_enable_breakpoint(
     breakpoint_id: &str,
     enabled: bool,
 ) {
-    apply_enable_breakpoint(session, event.pid(), breakpoint_id, enabled);
+    apply_enable_breakpoint(session, app_handle_clone, event.pid(), breakpoint_id, enabled);
     emit_breakpoints_event(session, app_handle_clone);
     persist_breakpoints(&session.state);
 }
@@ -293,7 +301,7 @@ pub(crate) fn process_enable_breakpoint_group(
 
     let pid = event.pid();
     for bp_id in bp_ids {
-        apply_enable_breakpoint(session, pid, &bp_id, enabled);
+        apply_enable_breakpoint(session, app_handle_clone, pid, &bp_id, enabled);
     }
 
     emit_breakpoints_event(session, app_handle_clone);
@@ -446,9 +454,11 @@ pub(crate) fn process_set_hardware_breakpoint(
             info!("Set hardware breakpoint at 0x{:X} ({}+0x{:X}, type={}, size={})", address, module_name, module_offset, hw_type_str, hw_size_val);
         }
         Err(e) => {
-            error!("Failed to set hardware breakpoint at 0x{:X}: {}", address, e);
+            let msg = format!("Failed to set hardware breakpoint at 0x{:X}: {}", address, e);
+            error!("{}", msg);
             if let Some(ref handle) = app_handle_clone {
-                crate::ui_logger::toast_error(handle, &format!("Failed to set hardware breakpoint: {}", e));
+                crate::ui_logger::log_error(handle, &msg, None);
+                crate::ui_logger::toast_error(handle, &msg);
             }
         }
     }
