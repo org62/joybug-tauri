@@ -20,6 +20,7 @@ import { ContextHexView } from "@/components/session/ContextHexView";
 import { ContextMemoryRegionsView } from "@/components/session/ContextMemoryRegionsView";
 import { ContextBreakpointsView } from "@/components/session/ContextBreakpointsView";
 import { ContextMemorySearchView } from "@/components/session/ContextMemorySearchView";
+import { ContextMemoryScannerView } from "@/components/session/ContextMemoryScannerView";
 import { ContextModuleInfoView } from "@/components/session/ContextModuleInfoView";
 import { useDebugSession } from "@/hooks/useDebugSession";
 import { useBreakpoints } from "@/hooks/useBreakpoints";
@@ -31,7 +32,7 @@ import type { PaletteCommand } from "@/contexts/CommandPaletteContext";
 import {
   Play, Square, Pause, ArrowDownToLine, CornerDownRight, ArrowUpFromLine, SkipForward,
   Code, Cpu, Box, Layers, ListTree, Search, HardDrive, MapPin, FileCode,
-  Plus, RotateCcw, Navigation,
+  Plus, RotateCcw, Navigation, ScanSearch,
 } from "lucide-react";
 
 export default function SessionDocked() {
@@ -284,6 +285,11 @@ export default function SessionDocked() {
           event.stopPropagation();
           toggleTabWithBackendUpdate("memory_search");
           break;
+        case "panel.memoryScanner":
+          event.preventDefault();
+          event.stopPropagation();
+          toggleTabWithBackendUpdate("memory_scanner");
+          break;
         case "panel.peViewer":
           event.preventDefault();
           event.stopPropagation();
@@ -473,6 +479,16 @@ export default function SessionDocked() {
         keywords: ["memory", "search", "find", "pattern"],
       },
       {
+        id: "panel.memoryScanner",
+        label: "Toggle Memory Scanner",
+        group: "Windows",
+        icon: <ScanSearch className="size-4" />,
+        keybindingAction: "panel.memoryScanner",
+        onSelect: () => toggleTabWithBackendUpdate("memory_scanner"),
+        keepOpen: true,
+        keywords: ["memory", "scanner", "scan", "cheat"],
+      },
+      {
         id: "panel.peViewer",
         label: "Toggle PE Viewer",
         group: "Windows",
@@ -564,6 +580,7 @@ export default function SessionDocked() {
     memory_regions: <ContextMemoryRegionsView onNavigateToAddress={handleNavigateToMemory} />,
     breakpoints: <ContextBreakpointsView />,
     memory_search: <ContextMemorySearchView />,
+    memory_scanner: <ContextMemoryScannerView />,
     peviewer: <ContextModuleInfoView />,
   }), [handleNavigateToMemory, handleNavigateToDisassembly, handleNavigateToMemoryPointer, handleOpenModuleInfo]);
 
@@ -637,6 +654,12 @@ export default function SessionDocked() {
         id: "memory_search",
         title: "Memory Search",
         content: dynamicTabContent.memory_search,
+        closable: true,
+      },
+      memory_scanner: {
+        id: "memory_scanner",
+        title: "Memory Scanner",
+        content: dynamicTabContent.memory_scanner,
         closable: true,
       },
       peviewer: {

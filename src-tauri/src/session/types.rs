@@ -38,6 +38,30 @@ pub enum UICommand {
     ResolveThreadSymbols,
     GetModuleExtraInfo { module_base: u64 },
     SearchMemory { pattern: Vec<u8>, max_results: usize },
+    ScanMemoryStart {
+        value_type: String,
+        compare_type: String,
+        value: Option<String>,
+        value2: Option<String>,
+        alignment: Option<usize>,
+        float_tolerance: Option<f64>,
+        writable_only: bool,
+    },
+    ScanMemoryNext {
+        scan_id: u64,
+        value_type: String,
+        compare_type: String,
+        value: Option<String>,
+        value2: Option<String>,
+    },
+    ScanMemoryGetResults {
+        scan_id: u64,
+        offset: u64,
+        count: u64,
+    },
+    ScanMemoryReset {
+        scan_id: u64,
+    },
 }
 
 /// Event payload for successful memory read (may be partial)
@@ -217,4 +241,33 @@ pub struct EmulationResultPayload {
 pub struct MemorySnapshotEntry {
     pub address: String,
     pub data: Vec<u8>,
+}
+
+#[derive(serde::Serialize)]
+pub struct ScanMatchResult {
+    pub session_id: String,
+    pub scan_id: u64,
+    pub match_count: u64,
+    pub scan_time_us: u64,
+}
+
+#[derive(serde::Serialize)]
+pub struct ScanResultsPayload {
+    pub session_id: String,
+    pub scan_id: u64,
+    pub addresses: Vec<String>,
+    pub values: Vec<ScanValueEntry>,
+    pub total_count: u64,
+}
+
+#[derive(serde::Serialize)]
+pub struct ScanValueEntry {
+    pub value_type: String,
+    pub display: String,
+}
+
+#[derive(serde::Serialize)]
+pub struct ScanError {
+    pub session_id: String,
+    pub error: String,
 }

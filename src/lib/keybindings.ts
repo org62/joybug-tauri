@@ -16,6 +16,7 @@ export type ActionId =
   | "panel.memoryRegions"
   | "panel.breakpoints"
   | "panel.memorySearch"
+  | "panel.memoryScanner"
   | "panel.peViewer"
   // Navigation (global)
   | "nav.debugger"
@@ -54,6 +55,7 @@ export const ACTION_REGISTRY: Record<ActionId, ActionMeta> = {
   "panel.memoryRegions": { label: "Toggle Memory Regions", category: "Panels", description: "Show or hide the Memory Regions panel", scope: "session" },
   "panel.breakpoints":   { label: "Toggle Breakpoints",    category: "Panels", description: "Show or hide the Breakpoints panel",    scope: "session" },
   "panel.memorySearch":  { label: "Toggle Memory Search",  category: "Panels", description: "Show or hide the Memory Search panel",  scope: "session" },
+  "panel.memoryScanner": { label: "Toggle Memory Scanner", category: "Panels", description: "Show or hide the Memory Scanner panel", scope: "session" },
   "panel.peViewer":      { label: "Toggle PE Viewer",      category: "Panels", description: "Show or hide the PE Viewer panel",      scope: "session" },
 
   "palette.open":    { label: "Command Palette",  category: "Navigation", description: "Open the command palette",                 scope: "global" },

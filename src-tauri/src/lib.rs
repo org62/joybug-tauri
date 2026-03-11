@@ -2,6 +2,7 @@ mod breakpoint_store;
 mod commands;
 mod error;
 mod events;
+mod pinned_address_store;
 mod ui_logger;
 mod session;
 mod state;
@@ -74,6 +75,14 @@ pub fn run() {
             commands::update_breakpoint,
             commands::set_hardware_breakpoint,
             commands::request_module_extra_info,
+            commands::request_scan_memory_start,
+            commands::request_scan_memory_next,
+            commands::request_scan_memory_get_results,
+            commands::request_scan_memory_reset,
+            commands::add_pinned_address,
+            commands::confirm_pin_raw_address,
+            commands::get_pinned_addresses,
+            commands::remove_pinned_address,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

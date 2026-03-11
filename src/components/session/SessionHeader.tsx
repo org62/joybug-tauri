@@ -258,6 +258,13 @@ export const SessionHeader: React.FC<SessionHeaderProps> = ({
                     <span className="ml-auto text-xs text-muted-foreground">{getKeybinding("panel.memorySearch")}</span>
                   </DropdownMenuCheckboxItem>
                   <DropdownMenuCheckboxItem
+                    checked={active.has('memory_scanner')}
+                    onCheckedChange={() => toggleTab('memory_scanner')}
+                  >
+                    <span className="flex-1">Memory Scanner</span>
+                    <span className="ml-auto text-xs text-muted-foreground">{getKeybinding("panel.memoryScanner")}</span>
+                  </DropdownMenuCheckboxItem>
+                  <DropdownMenuCheckboxItem
                     checked={active.has('peviewer')}
                     onCheckedChange={() => toggleTab('peviewer')}
                   >

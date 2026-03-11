@@ -3,7 +3,7 @@ mod callstack;
 mod dispatch;
 mod disassembly;
 mod emulation;
-mod helpers;
+pub(crate) mod helpers;
 mod memory;
 mod registers;
 mod runner;

@@ -350,6 +350,22 @@ fn process_command(
             process_memory_search(session, app_handle_clone, event, pattern, max_results);
             CommandResult::Continue
         }
+        UICommand::ScanMemoryStart { ref value_type, ref compare_type, ref value, ref value2, alignment, float_tolerance, writable_only } => {
+            process_scan_memory_start(session, app_handle_clone, event, value_type, compare_type, value.clone(), value2.clone(), alignment, float_tolerance, writable_only);
+            CommandResult::Continue
+        }
+        UICommand::ScanMemoryNext { scan_id, ref value_type, ref compare_type, ref value, ref value2 } => {
+            process_scan_memory_next(session, app_handle_clone, scan_id, value_type, compare_type, value.clone(), value2.clone());
+            CommandResult::Continue
+        }
+        UICommand::ScanMemoryGetResults { scan_id, offset, count } => {
+            process_scan_memory_get_results(session, app_handle_clone, scan_id, offset, count);
+            CommandResult::Continue
+        }
+        UICommand::ScanMemoryReset { scan_id } => {
+            process_scan_memory_reset(session, app_handle_clone, scan_id);
+            CommandResult::Continue
+        }
         UICommand::Stop => {
             info!("Stop command received, terminating session");
             let mut state = session.state.lock().unwrap();
