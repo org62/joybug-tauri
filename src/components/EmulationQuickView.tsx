@@ -1,10 +1,10 @@
 import { useState, useRef, useEffect, useMemo, useCallback } from "react";
 import { ChevronDown, ChevronRight, Loader2 } from "lucide-react";
 import { ScrollArea } from "./ui/scroll-area";
+import { VirtualizedList } from "./ui/virtualized-list";
 import { cn } from "@/lib/utils";
 import { useQuickEmulation, QuickEmulationResult } from "@/hooks/useQuickEmulation";
 import { parseTenetTrace } from "@/lib/tenetParser";
-import { useVirtualizer } from "@tanstack/react-virtual";
 
 interface EmulationQuickViewProps {
   sessionId?: string;
@@ -101,15 +101,6 @@ function VirtualizedTraceLines({
   onRowMove: (pos: { x: number; y: number }) => void;
   onRowLeave: () => void;
 }) {
-  const viewportRef = useRef<HTMLDivElement>(null);
-
-  const virtualizer = useVirtualizer({
-    count: traceLines.length,
-    getScrollElement: () => viewportRef.current,
-    estimateSize: () => TRACE_ROW_HEIGHT,
-    overscan: 20,
-  });
-
   if (traceLines.length === 0 && !hasAnyData && !isLoading) {
     return (
       <ScrollArea style={{ height }}>
@@ -125,44 +116,37 @@ function VirtualizedTraceLines({
   }
 
   return (
-    <ScrollArea style={{ height }} viewportRef={viewportRef}>
-      <div
-        className="px-1 py-0.5 relative"
-        style={{ height: virtualizer.getTotalSize() }}
-      >
-        {virtualizer.getVirtualItems().map((virtualRow) => {
-          const line = traceLines[virtualRow.index];
-          return (
-            <div
-              key={virtualRow.index}
-              className="flex items-center px-2 whitespace-nowrap hover:bg-muted/50 absolute left-0 right-0"
-              style={{ height: TRACE_ROW_HEIGHT, top: virtualRow.start }}
-              onMouseEnter={(e) => onRowEnter(line.index, e)}
-              onMouseMove={(e) => onRowMove({ x: e.clientX, y: e.clientY })}
-              onMouseLeave={onRowLeave}
-            >
-              <span className="text-muted-foreground w-8 shrink-0 text-right mr-2">
-                {line.index}
-              </span>
-              <span className="text-muted-foreground shrink-0 mr-3" style={{ minWidth: 180 }}>
-                {line.address.length > 35 ? line.address.slice(0, 34) + "\u2026" : line.address}
-              </span>
-              <span className="shrink-0 mr-3" style={{ minWidth: 140 }}>
-                <span className="text-blue-400">{line.mnemonic}</span>
-                {line.opStr && <> {line.opStr}</>}
-              </span>
-              {(line.changes || line.memory) && (
-                <>
-                  {line.changes && <span className="text-yellow-500 mr-1">{line.changes}</span>}
-                  {line.changes && line.memory && <span className="text-muted-foreground mr-1">, </span>}
-                  {line.memory && <span className="text-blue-500">{line.memory}</span>}
-                </>
-              )}
-            </div>
-          );
-        })}
-      </div>
-    </ScrollArea>
+    <VirtualizedList
+      items={traceLines}
+      rowHeight={TRACE_ROW_HEIGHT}
+      style={{ height }}
+      renderItem={(line) => (
+        <div
+          className="flex items-center px-2 whitespace-nowrap hover:bg-muted/50 h-full"
+          onMouseEnter={(e) => onRowEnter(line.index, e)}
+          onMouseMove={(e) => onRowMove({ x: e.clientX, y: e.clientY })}
+          onMouseLeave={onRowLeave}
+        >
+          <span className="text-muted-foreground w-8 shrink-0 text-right mr-2">
+            {line.index}
+          </span>
+          <span className="text-muted-foreground shrink-0 mr-3" style={{ minWidth: 180 }}>
+            {line.address.length > 35 ? line.address.slice(0, 34) + "\u2026" : line.address}
+          </span>
+          <span className="shrink-0 mr-3" style={{ minWidth: 140 }}>
+            <span className="text-blue-400">{line.mnemonic}</span>
+            {line.opStr && <> {line.opStr}</>}
+          </span>
+          {(line.changes || line.memory) && (
+            <>
+              {line.changes && <span className="text-yellow-500 mr-1">{line.changes}</span>}
+              {line.changes && line.memory && <span className="text-muted-foreground mr-1">, </span>}
+              {line.memory && <span className="text-blue-500">{line.memory}</span>}
+            </>
+          )}
+        </div>
+      )}
+    />
   );
 }
 

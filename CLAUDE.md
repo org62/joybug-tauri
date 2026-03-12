@@ -61,6 +61,7 @@ No tests exist in the Tauri layer. The joybug2 external crate has integration te
 - **Context wrappers**: Thin `Context*View.tsx` components pull session data from `SessionContext` and pass it to feature components. Add new ones following this pattern.
 - **Docking**: rc-dock library. Tab definitions live in `src/lib/dockingConfigs.tsx` (initial layout + tab factory). Dynamic content and keyboard shortcuts in `SessionDocked.tsx`. Menu entries in `SessionHeader.tsx`.
 - **Scrollable areas**: Always use `<ScrollArea>` from `@/components/ui/scroll-area`. Never use plain `overflow-y-auto` divs.
+- **Dock tab root layout**: Components rendered inside rc-dock tabs MUST use `absolute inset-0 flex flex-col overflow-hidden` on their outermost div (not `h-full`). Fixed headers/toolbars inside the tab need `shrink-0`. The scrollable content area uses `flex-1 min-h-0`. Without `absolute inset-0`, the dock panel won't give the component a definite height and the entire content will scroll as one block instead of keeping headers fixed. See `AssemblyView.tsx` and `ModuleInfoView.tsx` for reference.
 - **Session cleanup**: Every hook/component MUST reset state when the session ends or resumes. Pattern:
   ```ts
   useEffect(() => {

@@ -13,10 +13,35 @@ use settings::{SettingsState, load_settings_from_disk};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    // Initialize logging
-    tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-        .init();
+    // Initialize logging.
+    // In debug builds, log to stdout (console subsystem is available).
+    // In release builds, stdout is invalid (GUI subsystem), so log to a file instead.
+    #[cfg(debug_assertions)]
+    {
+        tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .init();
+    }
+    #[cfg(not(debug_assertions))]
+    {
+        let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+            .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+        if let Some(data_dir) = dirs::data_local_dir() {
+            let log_dir = data_dir.join("joybug");
+            let file_appender = tracing_appender::rolling::daily(&log_dir, "joybug.log");
+            tracing_subscriber::fmt()
+                .with_writer(file_appender)
+                .with_env_filter(filter)
+                .with_ansi(false)
+                .init();
+        } else {
+            // Fallback: log to stderr if local data dir is unavailable
+            tracing_subscriber::fmt()
+                .with_env_filter(filter)
+                .with_ansi(false)
+                .init();
+        }
+    }
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())

@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useState } from 'react';
 import { useSessionContext } from '@/contexts/SessionContext';
 import { useMemoryScanner, FIRST_SCAN_COMPARE_TYPES, NEXT_SCAN_COMPARE_TYPES, needsValue, needsSecondValue, ScanValueType, ScanCompareType } from '@/hooks/useMemoryScanner';
 import { usePinnedAddresses } from '@/hooks/usePinnedAddresses';
@@ -7,9 +7,8 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { useVirtualizer } from '@tanstack/react-virtual';
+import { VirtualizedList } from '@/components/ui/virtualized-list';
 import { ScanSearch, Loader2, AlertTriangle, ChevronLeft, ChevronRight, X, Pin } from 'lucide-react';
 
 const VALUE_TYPES: ScanValueType[] = ['U8', 'U16', 'U32', 'U64', 'F32', 'F64'];
@@ -38,7 +37,6 @@ export const ContextMemoryScannerView = () => {
 
   const scanner = useMemoryScanner(sessionId, isPaused);
   const { pinnedAddresses, addPin, confirmPinRaw, removePin } = usePinnedAddresses(sessionId);
-  const scrollParentRef = useRef<HTMLDivElement>(null);
   const { contextMenu, contextMenuRef, openContextMenu, closeContextMenu } = useContextMenu<{ address: string }>();
 
   // State for raw address confirmation dialog
@@ -47,13 +45,6 @@ export const ContextMemoryScannerView = () => {
   const compareTypes = scanner.isFirstScan ? FIRST_SCAN_COMPARE_TYPES : NEXT_SCAN_COMPARE_TYPES;
   const showValue = needsValue(scanner.compareType);
   const showValue2 = needsSecondValue(scanner.compareType);
-
-  const virtualizer = useVirtualizer({
-    count: scanner.results.length,
-    getScrollElement: () => scrollParentRef.current,
-    estimateSize: () => 28,
-    overscan: 20,
-  });
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter') {
@@ -104,6 +95,18 @@ export const ContextMemoryScannerView = () => {
     }
 
     if (scanner.error) {
+      const isUnknownInitialValue = scanner.error.includes("unknown initial value scan");
+      if (isUnknownInitialValue) {
+        return (
+          <div className="flex flex-col items-center justify-center h-full text-muted-foreground p-4">
+            <div className="text-center">
+              <ScanSearch className="h-12 w-12 mx-auto mb-4 opacity-50" />
+              <p className="text-base font-medium">Initial scan complete</p>
+              <p className="text-sm mt-1">Run a next scan to narrow down results and see values</p>
+            </div>
+          </div>
+        );
+      }
       return (
         <div className="flex flex-col items-center justify-center h-full text-muted-foreground p-4">
           <div className="text-center">
@@ -141,34 +144,21 @@ export const ContextMemoryScannerView = () => {
 
     // Results list
     return (
-      <ScrollArea className="h-full" viewportRef={scrollParentRef}>
-        <div
-          style={{
-            height: `${virtualizer.getTotalSize()}px`,
-            width: '100%',
-            position: 'relative',
-          }}
-        >
-          {virtualizer.getVirtualItems().map((virtualRow) => {
-            const entry = scanner.results[virtualRow.index];
-            return (
-              <div
-                key={virtualRow.key}
-                className="absolute w-full px-2 py-0.5 hover:bg-accent cursor-pointer font-mono text-sm flex"
-                style={{
-                  height: `${virtualRow.size}px`,
-                  transform: `translateY(${virtualRow.start}px)`,
-                }}
-                onClick={() => onNavigateToMemory?.(entry.address)}
-                onContextMenu={(e) => openContextMenu(e, { address: entry.address })}
-              >
-                <span className="w-[170px] shrink-0 text-muted-foreground">{entry.address}</span>
-                <span className="flex-1 truncate">{entry.value.display}</span>
-              </div>
-            );
-          })}
-        </div>
-      </ScrollArea>
+      <VirtualizedList
+        items={scanner.results}
+        rowHeight={28}
+        className="h-full"
+        renderItem={(entry) => (
+          <div
+            className="w-full h-full px-2 py-0.5 hover:bg-accent cursor-pointer font-mono text-sm flex"
+            onClick={() => onNavigateToMemory?.(entry.address)}
+            onContextMenu={(e) => openContextMenu(e, { address: entry.address })}
+          >
+            <span className="w-[170px] shrink-0 text-muted-foreground">{entry.address}</span>
+            <span className="flex-1 truncate">{entry.value.display}</span>
+          </div>
+        )}
+      />
     );
   };
 

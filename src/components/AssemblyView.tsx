@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { ScrollArea } from "./ui/scroll-area";
+import { VirtualizedList } from "./ui/virtualized-list";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Switch } from "./ui/switch";
@@ -10,7 +11,7 @@ import { useAssemblyView, Instruction } from "@/hooks/useAssemblyView";
 import { RegisterContext, SymbolResolver, sanitizeAddressInput } from "@/lib/hexUtils";
 import { useContextMenu } from "@/hooks/useContextMenu";
 import { EmulationQuickView } from "./EmulationQuickView";
-import { useVirtualizer } from "@tanstack/react-virtual";
+import { Virtualizer } from "@tanstack/react-virtual";
 import { useKeybindingContext } from "@/contexts/KeybindingContext";
 import { keyboardEventToChord } from "@/lib/keybindings";
 
@@ -55,7 +56,7 @@ interface AssemblyViewProps {
 export function AssemblyView({ sessionId, isPaused, address, registers, resolveSymbol, breakpointAddresses, onToggleBreakpoint, onSetHardwareBreakpoint }: AssemblyViewProps) {
   const [addressInput, setAddressInput] = useState("");
   const containerRef = useRef<HTMLDivElement>(null);
-  const viewportRef = useRef<HTMLDivElement>(null);
+  const virtualizerRef = useRef<Virtualizer<HTMLDivElement, Element>>(null);
   // Track which address is being highlighted (for fade animation)
   const [highlightedAddress, setHighlightedAddress] = useState<bigint | null>(null);
   // Track which jump target is being hovered (for live highlight)
@@ -165,13 +166,6 @@ export function AssemblyView({ sessionId, isPaused, address, registers, resolveS
     return map;
   }, [instructions]);
 
-  const virtualizer = useVirtualizer({
-    count: instructions.length,
-    getScrollElement: () => viewportRef.current,
-    estimateSize: () => ASSEMBLY_ROW_HEIGHT,
-    overscan: 30,
-  });
-
   // Scroll to PC when pcAddress changes or when instructions load
   // But only if there's no jump target (user navigation takes priority)
   useEffect(() => {
@@ -179,7 +173,7 @@ export function AssemblyView({ sessionId, isPaused, address, registers, resolveS
       const pcKey = `0X${pcAddress.toString(16).toUpperCase()}`;
       const index = addressIndexMap.get(pcKey);
       if (index !== undefined) {
-        virtualizer.scrollToIndex(index, { align: 'center' });
+        virtualizerRef.current?.scrollToIndex(index, { align: 'center' });
       }
     }
   }, [pcAddress, instructions, jumpTargetAddress, addressIndexMap]);
@@ -190,7 +184,7 @@ export function AssemblyView({ sessionId, isPaused, address, registers, resolveS
       const targetKey = `0X${jumpTargetAddress.toString(16).toUpperCase()}`;
       const index = addressIndexMap.get(targetKey);
       if (index !== undefined) {
-        virtualizer.scrollToIndex(index, { align: 'center' });
+        virtualizerRef.current?.scrollToIndex(index, { align: 'center' });
       }
       setHighlightedAddress(jumpTargetAddress);
       const timer = setTimeout(() => {
@@ -338,72 +332,66 @@ export function AssemblyView({ sessionId, isPaused, address, registers, resolveS
       )}
 
       {/* Main content area */}
-      <ScrollArea className="flex-1 min-h-0" viewportRef={viewportRef}>
-        {/* Empty state */}
-        {showEmptyState && (
-          <div className="flex flex-col items-center justify-center h-full text-muted-foreground p-4">
-            <div className="text-center">
-              <Cpu className="h-12 w-12 mx-auto mb-4 opacity-50" />
-              <p className="text-base font-medium">No disassembly available</p>
-              <p className="text-sm mt-1">Address information will appear here when debugging</p>
+      {showInstructions ? (
+        <VirtualizedList
+          items={instructions}
+          rowHeight={ASSEMBLY_ROW_HEIGHT}
+          overscan={30}
+          className="flex-1 min-h-0"
+          virtualizerRef={virtualizerRef}
+          renderItem={(inst) => {
+            const instAddrUpper = inst.address.toUpperCase();
+            const isPC = pcAddress !== null && instAddrUpper === `0X${pcAddress.toString(16).toUpperCase()}`;
+            const isHighlighted = highlightedAddress !== null && instAddrUpper === `0X${highlightedAddress.toString(16).toUpperCase()}`;
+            const isHoverTarget = hoveredJumpTarget !== null && instAddrUpper === `0X${hoveredJumpTarget.toString(16).toUpperCase()}`;
+            const hasBreakpoint = breakpointAddresses?.has(instAddrUpper) ?? false;
+
+            return (
+              <InstructionRow
+                instruction={inst}
+                isPC={isPC}
+                isHighlighted={isHighlighted}
+                isHoverTarget={isHoverTarget}
+                hasBreakpoint={hasBreakpoint}
+                showBytes={showBytes}
+                columnWidths={columnWidths}
+                onJumpTargetClick={handleJumpTargetClick}
+                onJumpTargetHover={handleJumpTargetHover}
+                onContextMenu={(e, addr) => openContextMenu(e, { address: addr })}
+                style={{ height: ASSEMBLY_ROW_HEIGHT }}
+              />
+            );
+          }}
+        />
+      ) : (
+        <ScrollArea className="flex-1 min-h-0">
+          {showEmptyState && (
+            <div className="flex flex-col items-center justify-center h-full text-muted-foreground p-4">
+              <div className="text-center">
+                <Cpu className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                <p className="text-base font-medium">No disassembly available</p>
+                <p className="text-sm mt-1">Address information will appear here when debugging</p>
+              </div>
             </div>
-          </div>
-        )}
-
-        {/* Error state */}
-        {showErrorState && (
-          <div className="flex items-center justify-center h-full text-red-500 p-4">
-            <div className="text-center">
-              <p>Error loading disassembly:</p>
-              <p className="text-sm mt-1 font-mono">{error}</p>
+          )}
+          {showErrorState && (
+            <div className="flex items-center justify-center h-full text-red-500 p-4">
+              <div className="text-center">
+                <p>Error loading disassembly:</p>
+                <p className="text-sm mt-1 font-mono">{error}</p>
+              </div>
             </div>
-          </div>
-        )}
-
-        {/* Loading state */}
-        {showLoadingState && (
-          <div className="flex items-center justify-center h-full text-muted-foreground p-4">
-            <div className="text-center">
-              <Cpu className="h-8 w-8 mx-auto mb-2 animate-pulse" />
-              <p>Loading disassembly...</p>
+          )}
+          {showLoadingState && (
+            <div className="flex items-center justify-center h-full text-muted-foreground p-4">
+              <div className="text-center">
+                <Cpu className="h-8 w-8 mx-auto mb-2 animate-pulse" />
+                <p>Loading disassembly...</p>
+              </div>
             </div>
-          </div>
-        )}
-
-        {/* Instructions list - virtualized */}
-        {showInstructions && (
-          <div
-            className="font-mono text-xs relative"
-            style={{ height: virtualizer.getTotalSize() }}
-          >
-            {virtualizer.getVirtualItems().map((virtualRow) => {
-              const inst = instructions[virtualRow.index];
-              const instAddrUpper = inst.address.toUpperCase();
-              const isPC = pcAddress !== null && instAddrUpper === `0X${pcAddress.toString(16).toUpperCase()}`;
-              const isHighlighted = highlightedAddress !== null && instAddrUpper === `0X${highlightedAddress.toString(16).toUpperCase()}`;
-              const isHoverTarget = hoveredJumpTarget !== null && instAddrUpper === `0X${hoveredJumpTarget.toString(16).toUpperCase()}`;
-              const hasBreakpoint = breakpointAddresses?.has(instAddrUpper) ?? false;
-
-              return (
-                <InstructionRow
-                  key={`${inst.address}-${virtualRow.index}`}
-                  instruction={inst}
-                  isPC={isPC}
-                  isHighlighted={isHighlighted}
-                  isHoverTarget={isHoverTarget}
-                  hasBreakpoint={hasBreakpoint}
-                  showBytes={showBytes}
-                  columnWidths={columnWidths}
-                  onJumpTargetClick={handleJumpTargetClick}
-                  onJumpTargetHover={handleJumpTargetHover}
-                  onContextMenu={(e, addr) => openContextMenu(e, { address: addr })}
-                  style={{ position: 'absolute', top: virtualRow.start, left: 0, right: 0, height: ASSEMBLY_ROW_HEIGHT }}
-                />
-              );
-            })}
-          </div>
-        )}
-      </ScrollArea>
+          )}
+        </ScrollArea>
+      )}
 
       {/* Quick Emulation footer */}
       <EmulationQuickView sessionId={sessionId} isPaused={isPaused} pcAddress={address} onNavigateToAddress={(addr) => goToAddressDirect(BigInt(addr))} />

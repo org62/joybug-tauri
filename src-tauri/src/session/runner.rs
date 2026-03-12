@@ -294,6 +294,7 @@ pub fn run_debug_session(
                         }
                         if found { should_stop } else { true }
                     }
+                    joybug2::protocol_io::DebugEvent::Unknown { .. } => false,
                     _ => true,
                 };
 

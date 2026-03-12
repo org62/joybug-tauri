@@ -148,10 +148,10 @@ pub fn debug_event_to_info(event: &joybug2::protocol_io::DebugEvent) -> DebugEve
             exception_code: None,
             exception_first_chance: None,
         },
-        DebugEvent::ProcessExited { pid, exit_code } => DebugEventInfo {
+        DebugEvent::ProcessExited { pid, tid, exit_code } => DebugEventInfo {
             event_type: "ProcessExited".to_string(),
             process_id: *pid,
-            thread_id: 0, // ProcessExited doesn't have a tid field
+            thread_id: *tid,
             details: format!("Process exited: PID={}, Exit Code={}", pid, exit_code),
             can_continue: false,
             address: None,
@@ -358,11 +358,11 @@ pub fn debug_event_to_info(event: &joybug2::protocol_io::DebugEvent) -> DebugEve
             exception_code: None,
             exception_first_chance: None,
         },
-        DebugEvent::Unknown => DebugEventInfo {
+        DebugEvent::Unknown { pid, tid, debug_event_code, ref error } => DebugEventInfo {
             event_type: "Unknown".to_string(),
-            process_id: 0,
-            thread_id: 0,
-            details: "Unknown debug event".to_string(),
+            process_id: *pid,
+            thread_id: *tid,
+            details: format!("Unknown debug event (code={}): {}", debug_event_code, error),
             can_continue: true,
             address: None,
             context: None,

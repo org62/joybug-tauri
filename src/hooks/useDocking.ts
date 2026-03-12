@@ -197,6 +197,7 @@ export function useDocking(config: DockingConfig): DockingState & DockingOperati
         finalTab.closable = initialTabContents[tab.id].closable;
       }
 
+      finalTab.cached = true;
       return finalTab;
     },
     [tabContents, tabContentMap, tabContentFactory, initialTabContents]
@@ -449,6 +450,11 @@ export function useDocking(config: DockingConfig): DockingState & DockingOperati
 
       const activeTabIdSet = new Set(allTabIds);
       setTabContents((currentTabs) => {
+        const currentKeys = Object.keys(currentTabs);
+        // If the same tabs exist, return the same reference to avoid unnecessary re-renders
+        if (currentKeys.length === activeTabIdSet.size && currentKeys.every(k => activeTabIdSet.has(k))) {
+          return currentTabs;
+        }
         const newTabs: { [key: string]: TabData } = {};
         for (const tabId of activeTabIdSet) {
           if (currentTabs[tabId]) {

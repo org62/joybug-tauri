@@ -4,6 +4,7 @@ import { useContextMenu } from '@/hooks/useContextMenu';
 import { invokeToggleBreakpoint } from '@/lib/sessionHelpers';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { VirtualizedList } from '@/components/ui/virtualized-list';
 import { Search, Code, Loader2 } from 'lucide-react';
 
 export const ContextSymbolsView = () => {
@@ -60,7 +61,7 @@ export const ContextSymbolsView = () => {
     setIsSearching(true);
     debounceRef.current = setTimeout(async () => {
       try {
-        const results = await sessionData.searchSymbols(trimmed, 30);
+        const results = await sessionData.searchSymbols(trimmed, 1000);
         setSymbols(results);
         setHasSearched(true);
       } catch (error) {
@@ -126,11 +127,14 @@ export const ContextSymbolsView = () => {
     }
 
     return (
-      <div className="space-y-1">
-        {symbols.map((symbol, index) => (
+      <VirtualizedList
+        items={symbols}
+        rowHeight={32}
+        className="h-full"
+        getItemKey={(symbol, index) => `${symbol.module_name}-${symbol.name}-${index}`}
+        renderItem={(symbol) => (
           <div
-            key={`${symbol.module_name}-${symbol.name}-${index}`}
-            className="px-2 py-1 border-b hover:bg-gray-50 dark:hover:bg-gray-900 cursor-pointer"
+            className="px-2 py-1 border-b hover:bg-gray-50 dark:hover:bg-gray-900 cursor-pointer h-full"
             onClick={() => {
               if (symbol.is_function) {
                 onNavigateToDisassembly?.(symbol.va);
@@ -147,14 +151,14 @@ export const ContextSymbolsView = () => {
               </p>
             </div>
           </div>
-        ))}
-      </div>
+        )}
+      />
     );
   };
 
   return (
-    <div className="flex flex-col h-full">
-      <div className="p-2 border-b">
+    <div className="absolute inset-0 flex flex-col overflow-hidden">
+      <div className="p-2 border-b shrink-0">
         <Input
           type="text"
           placeholder={isPaused ? "Search symbols..." : "Session must be paused to search symbols"}
@@ -163,10 +167,17 @@ export const ContextSymbolsView = () => {
           className="w-full"
           disabled={!sessionId || !isPaused}
         />
+        {hasSearched && !isSearching && symbols.length > 0 && (
+          <p className="text-xs text-muted-foreground mt-1">{symbols.length} symbols found</p>
+        )}
       </div>
-      <ScrollArea className="flex-1 min-h-0">
-        {renderContent()}
-      </ScrollArea>
+      <div className="flex-1 min-h-0">
+        {symbols.length > 0 && hasSearched && !isSearching ? renderContent() : (
+          <ScrollArea className="h-full">
+            {renderContent()}
+          </ScrollArea>
+        )}
+      </div>
 
       {/* Context Menu */}
       {contextMenu && (

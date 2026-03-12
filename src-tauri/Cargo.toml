@@ -28,6 +28,8 @@ joybug2 = { path = "../external/joybug2" }
 tokio = { version = "1.0", features = ["full"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
+tracing-appender = "0.2"
+dirs = "6"
 chrono = { version = "0.4", features = ["serde"] }
 thiserror = "2.0.12"
 uuid = { version = "1", features = ["v4"] }

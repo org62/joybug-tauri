@@ -84,27 +84,26 @@ export const SessionHeader: React.FC<SessionHeaderProps> = ({
             Start
           </Button>
         )}
-        {!canStart && canPause && (
-          <div className="inline-flex items-center gap-1 ml-4">
-            <Button
-              onClick={handlePause}
-              disabled={busyAction !== null}
-              size="sm"
-              variant="default"
-              title="Pause (Ctrl+Break)"
-              aria-label="Pause"
-            >
-              <Pause className="h-4 w-4" />
-            </Button>
-          </div>
+        {!canStart && (
+          <Button
+            onClick={handlePause}
+            disabled={!canPause || busyAction !== null}
+            size="sm"
+            variant="default"
+            title="Pause (Ctrl+Break)"
+            aria-label="Pause"
+            className="ml-4"
+          >
+            <Pause className="h-4 w-4" />
+          </Button>
         )}
         {/* Step buttons group with tighter spacing */}
-        {canStep && (
+        {!canStart && (
           <div className="inline-flex items-center gap-1 ml-4">
             <div className="inline-flex">
               <Button
                 onClick={handleGo}
-                disabled={busyAction !== null}
+                disabled={!canStep || busyAction !== null}
                 size="sm"
                 variant="default"
                 title={`Go (${getKeybinding("debug.go")})`}
@@ -116,7 +115,7 @@ export const SessionHeader: React.FC<SessionHeaderProps> = ({
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button
-                    disabled={busyAction !== null}
+                    disabled={!canStep || busyAction !== null}
                     size="sm"
                     variant="default"
                     className="rounded-l-none border-l border-l-primary-foreground/20 px-1"
@@ -140,7 +139,7 @@ export const SessionHeader: React.FC<SessionHeaderProps> = ({
             </div>
             <Button
               onClick={handleStepOver}
-              disabled={busyAction !== null}
+              disabled={!canStep || busyAction !== null}
               size="sm"
               variant="default"
               title={`Step Over (${getKeybinding("debug.stepOver")})`}
@@ -150,7 +149,7 @@ export const SessionHeader: React.FC<SessionHeaderProps> = ({
             </Button>
             <Button
               onClick={handleStepIn}
-              disabled={busyAction !== null}
+              disabled={!canStep || busyAction !== null}
               size="sm"
               variant="default"
               title={`Step In (${getKeybinding("debug.stepIn")})`}
@@ -160,7 +159,7 @@ export const SessionHeader: React.FC<SessionHeaderProps> = ({
             </Button>
             <Button
               onClick={handleStepOut}
-              disabled={busyAction !== null}
+              disabled={!canStep || busyAction !== null}
               size="sm"
               variant="default"
               title={`Step Out (${getKeybinding("debug.stepOut")})`}
@@ -171,10 +170,10 @@ export const SessionHeader: React.FC<SessionHeaderProps> = ({
           </div>
         )}
 
-        {canStop && (
+        {!canStart && (
           <Button
             onClick={handleStop}
-            disabled={busyAction === "stop"}
+            disabled={!canStop || busyAction === "stop"}
             size="sm"
             variant="destructive"
             className="ml-4 mr-4"

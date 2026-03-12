@@ -14,7 +14,7 @@ pub fn search_session_symbols(
     debug!("Searching for symbols in session {} with pattern '{}'", session_id, pattern);
     super::send_paused_command(&session_id, &session_states, UICommand::SearchSymbols {
         pattern: pattern.clone(),
-        limit: limit.unwrap_or(30) as u32,
+        limit: limit.unwrap_or(1000) as u32,
     })?;
     info!("Symbol search request sent for session {} with pattern '{}'", session_id, pattern);
     Ok(Vec::new())

@@ -1,5 +1,5 @@
-import { useState, useRef, useEffect, useCallback, KeyboardEvent, MouseEvent } from "react";
-import { ScrollArea } from "./ui/scroll-area";
+import { useState, useRef, useEffect, useCallback, useMemo, KeyboardEvent, MouseEvent } from "react";
+import { VirtualizedList } from "./ui/virtualized-list";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import {
@@ -359,6 +359,8 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
   const bytesPerRow = viewMode === 'pointer' ? config.bytesPerUnit : BYTES_PER_ROW;
   const unitsPerRow = viewMode === 'pointer' ? 1 : Math.floor(BYTES_PER_ROW / config.bytesPerUnit);
   const totalRows = Math.ceil(memoryData.length / bytesPerRow);
+  const ROW_HEIGHT = 28;
+  const rowIndices = useMemo(() => Array.from({ length: totalRows }, (_, i) => i), [totalRows]);
 
   // Can navigate to previous page if baseAddress > 0
   const canGoBack = baseAddress > 0n;
@@ -497,23 +499,19 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
         </div>
       </div>
 
-      {/* Hex Data - Scrollable */}
-      <ScrollArea className="flex-1 min-h-0">
-        <div
-          className="font-mono text-sm p-2 pt-1 hex-grid-area select-none"
-          onContextMenu={handleContextMenu}
-        >
-          {/* Rows */}
-          {Array.from({ length: totalRows }).map((_, rowIndex) => {
+      {/* Hex Data - Scrollable + Virtualized */}
+      <div className="flex-1 min-h-0" onContextMenu={handleContextMenu}>
+        <VirtualizedList
+          items={rowIndices}
+          rowHeight={ROW_HEIGHT}
+          className="h-full"
+          renderItem={(rowIndex) => {
             const rowOffset = rowIndex * bytesPerRow;
             const rowAddress = baseAddress + BigInt(rowOffset);
             const rowBytes = memoryData.slice(rowOffset, rowOffset + bytesPerRow);
 
             return (
-              <div
-                key={rowIndex}
-                className="flex items-center hover:bg-muted/30 py-0.5"
-              >
+              <div className="flex items-center hover:bg-muted/30 h-full font-mono text-sm px-2 select-none">
                 {/* Address column */}
                 <span className="w-36 shrink-0 text-muted-foreground text-xs">
                   {formatAddress(rowAddress)}
@@ -559,10 +557,8 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
                     let displayValue = config.formatValue(unitBytes, littleEndian);
                     if (isEditing && editBuffer.length > 0) {
                       if (viewMode === 'float') {
-                        // Float mode: show typed value directly
                         displayValue = editBuffer;
                       } else {
-                        // Hex modes: show typed chars + underscores for remaining
                         const remaining = config.displayWidth - editBuffer.length;
                         displayValue = editBuffer + '_'.repeat(remaining);
                       }
@@ -636,9 +632,9 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
                 )}
               </div>
             );
-          })}
-        </div>
-      </ScrollArea>
+          }}
+        />
+      </div>
 
       {/* Status Bar - Fixed */}
       <div className="shrink-0">

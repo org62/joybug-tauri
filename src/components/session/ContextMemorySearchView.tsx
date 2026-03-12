@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { useSessionContext } from '@/contexts/SessionContext';
@@ -7,7 +7,7 @@ import { useContextMenu } from '@/hooks/useContextMenu';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { useVirtualizer } from '@tanstack/react-virtual';
+import { VirtualizedList } from '@/components/ui/virtualized-list';
 import { Search, HardDrive, Loader2, AlertTriangle } from 'lucide-react';
 
 type SearchMode = 'hex' | 'ascii' | 'utf16';
@@ -45,7 +45,6 @@ export const ContextMemorySearchView = () => {
   const [isSearching, setIsSearching] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const scrollParentRef = useRef<HTMLDivElement>(null);
 
   const displayStatus = sessionData?.displayStatus;
   const isPaused = displayStatus === 'Paused';
@@ -144,13 +143,6 @@ export const ContextMemorySearchView = () => {
     }
   }, [handleSearch]);
 
-  const virtualizer = useVirtualizer({
-    count: addresses.length,
-    getScrollElement: () => scrollParentRef.current,
-    estimateSize: () => 28,
-    overscan: 20,
-  });
-
   const renderContent = () => {
     if (sessionData.session && !isPaused) {
       return (
@@ -210,36 +202,20 @@ export const ContextMemorySearchView = () => {
     }
 
     return (
-      <div
-        ref={scrollParentRef}
-        className="h-full overflow-auto"
-      >
-        <div
-          style={{
-            height: `${virtualizer.getTotalSize()}px`,
-            width: '100%',
-            position: 'relative',
-          }}
-        >
-          {virtualizer.getVirtualItems().map((virtualRow) => {
-            const address = addresses[virtualRow.index];
-            return (
-              <div
-                key={virtualRow.key}
-                className="absolute w-full px-2 py-0.5 hover:bg-gray-50 dark:hover:bg-gray-900 cursor-pointer font-mono text-sm"
-                style={{
-                  height: `${virtualRow.size}px`,
-                  transform: `translateY(${virtualRow.start}px)`,
-                }}
-                onClick={() => onNavigateToMemory?.(address)}
-                onContextMenu={(e) => openContextMenu(e, { address })}
-              >
-                {address}
-              </div>
-            );
-          })}
-        </div>
-      </div>
+      <VirtualizedList
+        items={addresses}
+        rowHeight={28}
+        className="h-full"
+        renderItem={(address) => (
+          <div
+            className="w-full h-full px-2 py-0.5 hover:bg-gray-50 dark:hover:bg-gray-900 cursor-pointer font-mono text-sm"
+            onClick={() => onNavigateToMemory?.(address)}
+            onContextMenu={(e) => openContextMenu(e, { address })}
+          >
+            {address}
+          </div>
+        )}
+      />
     );
   };
 
