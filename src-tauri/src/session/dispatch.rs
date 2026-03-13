@@ -311,19 +311,19 @@ fn process_command(
             CommandResult::Continue
         }
         UICommand::ToggleBreakpoint { address } => {
-            process_toggle_breakpoint(session, app_handle_clone, event, address);
+            process_toggle_breakpoint(session, app_handle_clone, event.pid(), address);
             CommandResult::Continue
         }
         UICommand::RemoveBreakpoint { ref breakpoint_id } => {
-            process_remove_breakpoint(session, app_handle_clone, event, breakpoint_id);
+            process_remove_breakpoint(session, app_handle_clone, event.pid(), breakpoint_id);
             CommandResult::Continue
         }
         UICommand::EnableBreakpoint { ref breakpoint_id, enabled } => {
-            process_enable_breakpoint(session, app_handle_clone, event, breakpoint_id, enabled);
+            process_enable_breakpoint(session, app_handle_clone, event.pid(), breakpoint_id, enabled);
             CommandResult::Continue
         }
         UICommand::EnableBreakpointGroup { ref group, enabled } => {
-            process_enable_breakpoint_group(session, app_handle_clone, event, group, enabled);
+            process_enable_breakpoint_group(session, app_handle_clone, event.pid(), group, enabled);
             CommandResult::Continue
         }
         UICommand::UpdateBreakpoint { ref breakpoint_id, ref name, ref group } => {
@@ -331,7 +331,7 @@ fn process_command(
             CommandResult::Continue
         }
         UICommand::SetHardwareBreakpoint { address, ref hw_type, hw_size } => {
-            process_set_hardware_breakpoint(session, app_handle_clone, event, address, hw_type, hw_size);
+            process_set_hardware_breakpoint(session, app_handle_clone, event.pid(), address, hw_type, hw_size);
             CommandResult::Continue
         }
         UICommand::GetThreadCallStack { tid } => {

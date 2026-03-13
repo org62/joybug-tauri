@@ -61,10 +61,9 @@ pub(crate) fn emit_breakpoints_event(
 pub(crate) fn process_toggle_breakpoint(
     session: &mut DebugSession,
     app_handle_clone: &Option<AppHandle>,
-    event: &joybug2::protocol_io::DebugEvent,
+    pid: u32,
     address: u64,
 ) {
-    let pid = event.pid();
 
     let existing_bp_id = {
         let state = session.state.lock().unwrap();
@@ -155,10 +154,9 @@ pub(crate) fn process_toggle_breakpoint(
 pub(crate) fn process_remove_breakpoint(
     session: &mut DebugSession,
     app_handle_clone: &Option<AppHandle>,
-    event: &joybug2::protocol_io::DebugEvent,
+    pid: u32,
     breakpoint_id: &str,
 ) {
-    let pid = event.pid();
     let bp_info = {
         let state = session.state.lock().unwrap();
         state.breakpoints.iter().find(|bp| bp.id == breakpoint_id).cloned()
@@ -274,11 +272,11 @@ pub(crate) fn apply_enable_breakpoint(
 pub(crate) fn process_enable_breakpoint(
     session: &mut DebugSession,
     app_handle_clone: &Option<AppHandle>,
-    event: &joybug2::protocol_io::DebugEvent,
+    pid: u32,
     breakpoint_id: &str,
     enabled: bool,
 ) {
-    apply_enable_breakpoint(session, app_handle_clone, event.pid(), breakpoint_id, enabled);
+    apply_enable_breakpoint(session, app_handle_clone, pid, breakpoint_id, enabled);
     emit_breakpoints_event(session, app_handle_clone);
     persist_breakpoints(&session.state);
 }
@@ -287,7 +285,7 @@ pub(crate) fn process_enable_breakpoint(
 pub(crate) fn process_enable_breakpoint_group(
     session: &mut DebugSession,
     app_handle_clone: &Option<AppHandle>,
-    event: &joybug2::protocol_io::DebugEvent,
+    pid: u32,
     group: &str,
     enabled: bool,
 ) {
@@ -298,8 +296,6 @@ pub(crate) fn process_enable_breakpoint_group(
             .map(|bp| bp.id.clone())
             .collect()
     };
-
-    let pid = event.pid();
     for bp_id in bp_ids {
         apply_enable_breakpoint(session, app_handle_clone, pid, &bp_id, enabled);
     }
@@ -379,12 +375,11 @@ pub(crate) fn reapply_breakpoints_for_module(
 pub(crate) fn process_set_hardware_breakpoint(
     session: &mut DebugSession,
     app_handle_clone: &Option<AppHandle>,
-    event: &joybug2::protocol_io::DebugEvent,
+    pid: u32,
     address: u64,
     hw_type_str: &str,
     hw_size_val: u8,
 ) {
-    let pid = event.pid();
 
     // If a breakpoint already exists at this address, remove it first
     let existing_bp_id = {

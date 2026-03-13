@@ -15,7 +15,7 @@ export const ContextSymbolsView = () => {
   const [hasSearched, setHasSearched] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const displayStatus = sessionData?.displayStatus;
-  const isPaused = displayStatus === 'Paused';
+  const isActive = displayStatus === 'Paused' || displayStatus === 'Running';
   const sessionId = sessionData?.session?.id;
 
   const onNavigateToDisassembly = sessionData.onNavigateToDisassembly;
@@ -32,14 +32,14 @@ export const ContextSymbolsView = () => {
     }
   }, [sessionId]);
 
-  // Clear results when session changes or is not paused
+  // Clear results when session ends
   useEffect(() => {
-    if (!sessionId || !isPaused) {
+    if (!sessionId) {
       setSymbols([]);
       setHasSearched(false);
       setIsSearching(false);
     }
-  }, [sessionId, isPaused]);
+  }, [sessionId]);
 
   // Debounced search using searchSymbols from context
   const handleSearchChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
@@ -56,7 +56,7 @@ export const ContextSymbolsView = () => {
       return;
     }
 
-    if (!sessionId || !isPaused || !sessionData.searchSymbols) return;
+    if (!sessionId || !isActive || !sessionData.searchSymbols) return;
 
     setIsSearching(true);
     debounceRef.current = setTimeout(async () => {
@@ -71,7 +71,7 @@ export const ContextSymbolsView = () => {
       }
       setIsSearching(false);
     }, 300);
-  }, [sessionId, isPaused, sessionData.searchSymbols]);
+  }, [sessionId, isActive, sessionData.searchSymbols]);
 
   // Cleanup debounce on unmount
   useEffect(() => {
@@ -81,18 +81,6 @@ export const ContextSymbolsView = () => {
   }, []);
 
   const renderContent = () => {
-    if (sessionData.session && !isPaused) {
-      return (
-        <div className="flex flex-col items-center justify-center h-full text-muted-foreground p-4">
-          <div className="text-center">
-            <Code className="h-12 w-12 mx-auto mb-4 opacity-50" />
-            <p className="text-base font-medium">Symbol search unavailable</p>
-            <p className="text-sm mt-1">Session must be paused to search symbols</p>
-          </div>
-        </div>
-      );
-    }
-
     if (isSearching) {
       return (
         <div className="flex flex-col items-center justify-center h-full text-muted-foreground p-4">
@@ -161,11 +149,11 @@ export const ContextSymbolsView = () => {
       <div className="p-2 border-b shrink-0">
         <Input
           type="text"
-          placeholder={isPaused ? "Search symbols..." : "Session must be paused to search symbols"}
+          placeholder={isActive ? "Search symbols..." : "Session must be paused to search symbols"}
           value={searchTerm}
           onChange={handleSearchChange}
           className="w-full"
-          disabled={!sessionId || !isPaused}
+          disabled={!sessionId || !isActive}
         />
         {hasSearched && !isSearching && symbols.length > 0 && (
           <p className="text-xs text-muted-foreground mt-1">{symbols.length} symbols found</p>

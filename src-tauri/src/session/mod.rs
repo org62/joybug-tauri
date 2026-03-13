@@ -1,7 +1,7 @@
-mod breakpoints;
+pub(crate) mod breakpoints;
 mod callstack;
 mod dispatch;
-mod disassembly;
+pub(crate) mod disassembly;
 mod emulation;
 pub(crate) mod helpers;
 mod memory;

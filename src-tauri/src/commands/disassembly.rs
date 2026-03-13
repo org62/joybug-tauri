@@ -1,65 +1,11 @@
 use crate::error::{Error, Result};
+use crate::session::disassembly::serialize_instructions;
+use crate::session::types::SerializableInstruction;
 use crate::session::UICommand;
-use crate::state::{SessionStatesMap, SessionStatusUI};
+use crate::state::SessionStatesMap;
 use super::types::{ModuleData, ThreadData};
-use tauri::State;
-use tracing::{debug, info};
-
-/// Gets the architecture from a paused session's current context and sends a UICommand.
-fn send_disassembly_command(
-    session_id: &str,
-    session_states: &SessionStatesMap,
-    build_command: impl FnOnce(joybug2::interfaces::Architecture) -> UICommand,
-) -> Result<()> {
-    let session_state = {
-        let states = session_states.lock().unwrap();
-        states
-            .get(session_id)
-            .cloned()
-            .ok_or_else(|| Error::SessionNotFound(session_id.to_string()))?
-    };
-
-    let (arch, ui_sender) = {
-        let state = session_state.lock().unwrap();
-
-        if !matches!(state.status, SessionStatusUI::Paused) {
-            return Err(Error::InvalidSessionState(
-                format!("Session must be paused to get disassembly, but is: {:?}", state.status),
-            ));
-        }
-
-        let arch = match &state.current_context {
-            Some(crate::state::SerializableThreadContext::X64(_)) => joybug2::interfaces::Architecture::X64,
-            Some(crate::state::SerializableThreadContext::Arm64(_)) => joybug2::interfaces::Architecture::Arm64,
-            None => {
-                #[cfg(target_arch = "x86_64")]
-                { joybug2::interfaces::Architecture::X64 }
-                #[cfg(target_arch = "aarch64")]
-                { joybug2::interfaces::Architecture::Arm64 }
-                #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-                {
-                    return Err(Error::InvalidSessionState(
-                        "Unsupported target architecture for disassembly".to_string(),
-                    ));
-                }
-            }
-        };
-
-        let sender = state
-            .ui_sender
-            .as_ref()
-            .ok_or_else(|| Error::InternalCommunication("Session UI sender not available".to_string()))?
-            .clone();
-
-        (arch, sender)
-    };
-
-    ui_sender
-        .send(build_command(arch))
-        .map_err(|e| Error::InternalCommunication(format!("Failed to send disassembly command: {}", e)))?;
-
-    Ok(())
-}
+use tauri::{Emitter, State};
+use tracing::{debug, error, info};
 
 #[tauri::command]
 pub fn request_disassembly(
@@ -67,12 +13,43 @@ pub fn request_disassembly(
     address: u64,
     count: usize,
     session_states: State<'_, SessionStatesMap>,
+    app_handle: tauri::AppHandle,
 ) -> Result<()> {
-    debug!("Disassembly request received for session {} at address 0x{:X}", session_id, address);
-    send_disassembly_command(&session_id, &session_states, |arch| {
-        UICommand::Disassembly { arch, address, count: count as u32 }
-    })?;
-    info!("Disassembly request sent for session {} at address 0x{:X}", session_id, address);
+    debug!("Disassembly request for session {} at 0x{:X}", session_id, address);
+    let session_arc = super::get_session_arc(&session_id, &session_states)?;
+    let arch = super::get_session_arch(&session_arc);
+
+    match super::try_send_paused_command(&session_arc, UICommand::Disassembly { arch, address, count: count as u32 }) {
+        Ok(()) => {
+            info!("Disassembly request sent for session {} at 0x{:X}", session_id, address);
+        }
+        Err(_) => {
+            let modules = session_arc.lock().unwrap().modules.clone();
+            let (mut oob, pid) = super::create_oob_client(&session_arc)?;
+            match oob.disassemble_memory(pid, address, count, arch) {
+                Ok(instructions) => {
+                    let serializable = serialize_instructions(&instructions, &modules);
+                    #[derive(serde::Serialize)]
+                    struct DisassemblyResult {
+                        session_id: String,
+                        address: u64,
+                        instructions: Vec<SerializableInstruction>,
+                    }
+                    let result = DisassemblyResult { session_id: session_id.clone(), address, instructions: serializable };
+                    let _ = app_handle.emit("disassembly-updated", &result);
+                    info!("OOB disassembly for session {} at 0x{:X}", session_id, address);
+                }
+                Err(e) => {
+                    error!("OOB disassembly failed: {}", e);
+                    #[derive(serde::Serialize)]
+                    struct DisassemblyError { session_id: String, address: u64, error: String }
+                    let _ = app_handle.emit("disassembly-error", &DisassemblyError {
+                        session_id: session_id.clone(), address, error: e.to_string(),
+                    });
+                }
+            }
+        }
+    }
     Ok(())
 }
 
@@ -82,12 +59,51 @@ pub fn request_function_disassembly(
     address: u64,
     max_instructions: usize,
     session_states: State<'_, SessionStatesMap>,
+    app_handle: tauri::AppHandle,
 ) -> Result<()> {
-    debug!("Function disassembly request received for session {} at address 0x{:X}", session_id, address);
-    send_disassembly_command(&session_id, &session_states, |arch| {
-        UICommand::DisassembleFunction { arch, address, max_instructions: max_instructions as u32 }
-    })?;
-    info!("Function disassembly request sent for session {} at address 0x{:X}", session_id, address);
+    debug!("Function disassembly request for session {} at 0x{:X}", session_id, address);
+    let session_arc = super::get_session_arc(&session_id, &session_states)?;
+    let arch = super::get_session_arch(&session_arc);
+
+    match super::try_send_paused_command(&session_arc, UICommand::DisassembleFunction { arch, address, max_instructions: max_instructions as u32 }) {
+        Ok(()) => {
+            info!("Function disassembly request sent for session {} at 0x{:X}", session_id, address);
+        }
+        Err(_) => {
+            let modules = session_arc.lock().unwrap().modules.clone();
+            let (mut oob, pid) = super::create_oob_client(&session_arc)?;
+            match oob.disassemble_function(pid, address, max_instructions, arch) {
+                Ok((instructions, function_start, function_end, function_name)) => {
+                    let serializable = serialize_instructions(&instructions, &modules);
+                    #[derive(serde::Serialize)]
+                    struct FunctionDisassemblyResult {
+                        session_id: String,
+                        address: u64,
+                        instructions: Vec<SerializableInstruction>,
+                        function_start: Option<String>,
+                        function_end: Option<String>,
+                        function_name: Option<String>,
+                    }
+                    let result = FunctionDisassemblyResult {
+                        session_id: session_id.clone(), address, instructions: serializable,
+                        function_start: function_start.map(|a| format!("{:#X}", a)),
+                        function_end: function_end.map(|a| format!("{:#X}", a)),
+                        function_name,
+                    };
+                    let _ = app_handle.emit("function-disassembly-updated", &result);
+                    info!("OOB function disassembly for session {} at 0x{:X}", session_id, address);
+                }
+                Err(e) => {
+                    error!("OOB function disassembly failed: {}", e);
+                    #[derive(serde::Serialize)]
+                    struct FunctionDisassemblyError { session_id: String, address: u64, error: String }
+                    let _ = app_handle.emit("function-disassembly-error", &FunctionDisassemblyError {
+                        session_id: session_id.clone(), address, error: e.to_string(),
+                    });
+                }
+            }
+        }
+    }
     Ok(())
 }
 
@@ -145,10 +161,43 @@ pub fn request_module_extra_info(
     session_id: String,
     module_base: String,
     session_states: State<'_, SessionStatesMap>,
+    app_handle: tauri::AppHandle,
 ) -> Result<()> {
-    let module_base = u64::from_str_radix(module_base.trim_start_matches("0x").trim_start_matches("0X"), 16)
+    let module_base_val = u64::from_str_radix(module_base.trim_start_matches("0x").trim_start_matches("0X"), 16)
         .map_err(|e| Error::InvalidParameter(format!("Invalid module base '{}': {}", module_base, e)))?;
-    super::send_paused_command(&session_id, &session_states, UICommand::GetModuleExtraInfo { module_base })?;
-    info!("Module extra info request sent for session {} at base 0x{:X}", session_id, module_base);
+
+    let session_arc = super::get_session_arc(&session_id, &session_states)?;
+    match super::try_send_paused_command(&session_arc, UICommand::GetModuleExtraInfo { module_base: module_base_val }) {
+        Ok(()) => {
+            info!("Module extra info request sent for session {} at base 0x{:X}", session_id, module_base_val);
+        }
+        Err(_) => {
+            let (mut oob, pid) = super::create_oob_client(&session_arc)?;
+            let base_str = format!("0x{:X}", module_base_val);
+            match oob.get_module_extra_info(pid, module_base_val) {
+                Ok(info_data) => {
+                    #[derive(serde::Serialize)]
+                    struct ModuleExtraInfoResult {
+                        session_id: String,
+                        module_base: String,
+                        info: joybug2::pe_types::ModuleExtraInfo,
+                    }
+                    let result = ModuleExtraInfoResult {
+                        session_id: session_id.clone(), module_base: base_str, info: info_data,
+                    };
+                    let _ = app_handle.emit("module-extra-info-updated", &result);
+                    info!("OOB module extra info for session {} at 0x{:X}", session_id, module_base_val);
+                }
+                Err(e) => {
+                    error!("OOB module extra info failed: {}", e);
+                    #[derive(serde::Serialize)]
+                    struct ModuleExtraInfoError { session_id: String, module_base: String, error: String }
+                    let _ = app_handle.emit("module-extra-info-error", &ModuleExtraInfoError {
+                        session_id: session_id.clone(), module_base: base_str, error: e.to_string(),
+                    });
+                }
+            }
+        }
+    }
     Ok(())
 }

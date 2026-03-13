@@ -5,7 +5,7 @@ use super::helpers::{find_module_for_address, get_modules_snapshot};
 use super::types::{DebugSession, SerializableInstruction};
 
 /// Converts raw disassembled instructions into serializable form with symbol resolution.
-fn serialize_instructions(
+pub(crate) fn serialize_instructions(
     instructions: &[joybug2::interfaces::Instruction],
     modules: &[joybug2::protocol_io::ModuleInfo],
 ) -> Vec<SerializableInstruction> {

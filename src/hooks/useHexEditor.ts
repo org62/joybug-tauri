@@ -786,7 +786,7 @@ export function useHexEditor(options: UseHexEditorOptions): HexEditorState & Hex
 
   // Load memory on mount: persisted address > initialAddress
   useEffect(() => {
-    if (!sessionId || initialLoadDone.current || !listenersReady || sessionStatus !== 'Paused') return;
+    if (!sessionId || initialLoadDone.current || !listenersReady || (sessionStatus !== 'Paused' && sessionStatus !== 'Running')) return;
 
     // Determine address to load: persisted > initialAddress
     const addressToLoad = persisted?.baseAddress ?? initialAddress;
@@ -796,19 +796,30 @@ export function useHexEditor(options: UseHexEditorOptions): HexEditorState & Hex
     }
   }, [sessionId, loadMemory, initialAddress, sessionStatus, listenersReady, persisted?.baseAddress]);
 
-  // Reset error and data when session stops, ends, or resumes
+  // Reset error and data when session ends (keep data visible while running)
   useEffect(() => {
-    if (!sessionId || !sessionStatus || sessionStatus !== 'Paused') {
+    if (!sessionId) {
       setError(null);
       setMemoryData(new Uint8Array(0));
       setDereferenceData(new Map());
       initialLoadDone.current = false;
     }
-  }, [sessionId, sessionStatus]);
+  }, [sessionId]);
+
+  // Poll memory while session is running
+  useEffect(() => {
+    if (!sessionId || sessionStatus !== 'Running' || !initialLoadDone.current) return;
+
+    const interval = setInterval(() => {
+      loadMemory(baseAddressRef.current);
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [sessionId, sessionStatus, loadMemory]);
 
   // Fetch dereference data when in pointer mode and memory data is available
   useEffect(() => {
-    if (viewMode !== 'pointer' || memoryData.length === 0 || !sessionId || sessionStatus !== 'Paused') {
+    if (viewMode !== 'pointer' || memoryData.length === 0 || !sessionId || (sessionStatus !== 'Paused' && sessionStatus !== 'Running')) {
       // Clear dereference data when not in pointer mode
       if (viewMode !== 'pointer' && dereferenceData.size > 0) {
         setDereferenceData(new Map());

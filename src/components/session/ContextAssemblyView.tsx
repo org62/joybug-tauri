@@ -9,7 +9,8 @@ export const ContextAssemblyView = () => {
 
   // Use displayStatus (debounced) to prevent flicker during stepping
   const displayStatus = sessionData?.displayStatus;
-  const address = displayStatus === "Paused" ? currentEvent?.address : undefined;
+  // Always pass last known address so disassembly stays visible while running
+  const address = currentEvent?.address;
 
   const registers = useMemo(() => {
     return contextToRegisters(currentEvent?.context);

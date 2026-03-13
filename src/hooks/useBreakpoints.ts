@@ -51,12 +51,12 @@ export function useBreakpoints(sessionId?: string, isPaused?: boolean, sessionBr
   const sessionBpRef = useRef(sessionBreakpoints);
   sessionBpRef.current = sessionBreakpoints;
 
-  // Session cleanup / seed: clear when session ends or resumes,
+  // Session cleanup / seed: clear when session ends,
   // seed from session context when isPaused becomes true.
   useEffect(() => {
-    if (!sessionId || !isPaused) {
+    if (!sessionId) {
       setBreakpoints([]);
-    } else if (sessionBpRef.current && sessionBpRef.current.length > 0) {
+    } else if (isPaused && sessionBpRef.current && sessionBpRef.current.length > 0) {
       setBreakpoints(convertBreakpoints(sessionBpRef.current));
     }
   }, [sessionId, isPaused]);

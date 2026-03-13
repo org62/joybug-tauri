@@ -229,7 +229,7 @@ export function useDebugSession(sessionId: string | undefined) {
   useEffect(() => {
     let isCancelled = false;
 
-    if (session?.status === "Paused") {
+    if (session?.status === "Paused" || session?.status === "Running") {
       const fetchData = async () => {
         const [mods, thrs] = await Promise.all([loadModules(), loadThreads()]);
         if (!isCancelled) {
@@ -246,7 +246,7 @@ export function useDebugSession(sessionId: string | undefined) {
     return () => {
       isCancelled = true;
     };
-  }, [session, loadModules, loadThreads]);
+  }, [session?.status, loadModules, loadThreads]);
 
   // Listen for dll load/unload targeted events to refresh modules quickly
   useEffect(() => {

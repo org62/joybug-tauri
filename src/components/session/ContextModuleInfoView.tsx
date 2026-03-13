@@ -11,14 +11,14 @@ export const ContextModuleInfoView: React.FC<{
 }> = ({ initialModuleBase }) => {
   const { session, displayStatus, modules, onNavigateToDisassembly, onNavigateToMemory } = useSessionContext();
   const sessionId = session?.id;
-  const isPaused = displayStatus === 'Paused';
+  const isActive = displayStatus === 'Paused' || displayStatus === 'Running';
 
   const [selectedModuleBase, setSelectedModuleBase] = useState<string | null>(() => {
     // Restore from sessionStorage on mount (survives rc-dock tab moves)
     return initialModuleBase ?? sessionStorage.getItem(STORAGE_KEY);
   });
 
-  const { info, isLoading, error } = useModuleInfo(sessionId, selectedModuleBase, isPaused);
+  const { info, isLoading, error } = useModuleInfo(sessionId, selectedModuleBase, isActive);
 
   // Persist selection to sessionStorage so it survives tab moves
   const handleModuleSelect = useCallback((base: string) => {
@@ -40,11 +40,11 @@ export const ContextModuleInfoView: React.FC<{
 
   // Clear selection when session ends
   useEffect(() => {
-    if (!sessionId || !isPaused) {
+    if (!sessionId) {
       setSelectedModuleBase(null);
       sessionStorage.removeItem(STORAGE_KEY);
     }
-  }, [sessionId, isPaused]);
+  }, [sessionId]);
 
   return (
     <ModuleInfoView

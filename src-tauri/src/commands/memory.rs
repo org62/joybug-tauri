@@ -1,11 +1,11 @@
 use crate::error::{Error, Result};
 use crate::pinned_address_store::{self, PinnedAddress};
-use crate::session::helpers::{extract_module_name, find_module_for_address};
+use crate::session::helpers::{extract_module_name, find_module_for_address, format_bytes};
 use crate::session::UICommand;
 use crate::state::SessionStatesMap;
 use serde::Serialize;
-use tauri::State;
-use tracing::info;
+use tauri::{Emitter, State};
+use tracing::{error, info};
 
 #[tauri::command]
 pub fn request_memory_read(
@@ -13,9 +13,32 @@ pub fn request_memory_read(
     address: u64,
     size: usize,
     session_states: State<'_, SessionStatesMap>,
+    app_handle: tauri::AppHandle,
 ) -> Result<()> {
-    super::send_paused_command(&session_id, &session_states, UICommand::ReadMemory { address, size })?;
-    info!("Memory read request sent for session {} at address 0x{:X}, size {}", session_id, address, size);
+    let session_arc = super::get_session_arc(&session_id, &session_states)?;
+    match super::try_send_paused_command(&session_arc, UICommand::ReadMemory { address, size }) {
+        Ok(()) => {
+            info!("Memory read request sent for session {} at 0x{:X}, size {}", session_id, address, size);
+        }
+        Err(_) => {
+            let (mut oob, pid) = super::create_oob_client(&session_arc)?;
+            match oob.read_memory(pid, address, size) {
+                Ok(data) => {
+                    let result = crate::session::types::MemoryReadResult {
+                        session_id: session_id.clone(), address, requested_size: size, data,
+                    };
+                    let _ = app_handle.emit("memory-read-updated", &result);
+                    info!("OOB memory read for session {} at 0x{:X}", session_id, address);
+                }
+                Err(e) => {
+                    error!("OOB memory read failed: {}", e);
+                    let _ = app_handle.emit("memory-read-error", &crate::session::types::MemoryReadError {
+                        session_id: session_id.clone(), address, error: e.to_string(),
+                    });
+                }
+            }
+        }
+    }
     Ok(())
 }
 
@@ -25,9 +48,32 @@ pub fn request_memory_write(
     address: u64,
     data: Vec<u8>,
     session_states: State<'_, SessionStatesMap>,
+    app_handle: tauri::AppHandle,
 ) -> Result<()> {
-    super::send_paused_command(&session_id, &session_states, UICommand::WriteMemory { address, data })?;
-    info!("Memory write request sent for session {} at address 0x{:X}", session_id, address);
+    let session_arc = super::get_session_arc(&session_id, &session_states)?;
+    match super::try_send_paused_command(&session_arc, UICommand::WriteMemory { address, data: data.clone() }) {
+        Ok(()) => {
+            info!("Memory write request sent for session {} at 0x{:X}", session_id, address);
+        }
+        Err(_) => {
+            let (mut oob, pid) = super::create_oob_client(&session_arc)?;
+            match oob.write_memory(pid, address, data.clone()) {
+                Ok(_) => {
+                    let result = crate::session::types::MemoryWriteResult {
+                        session_id: session_id.clone(), address, success: true, bytes_written: data.len(),
+                    };
+                    let _ = app_handle.emit("memory-write-result", &result);
+                    info!("OOB memory write for session {} at 0x{:X}", session_id, address);
+                }
+                Err(e) => {
+                    error!("OOB memory write failed: {}", e);
+                    let _ = app_handle.emit("memory-write-error", &crate::session::types::MemoryWriteError {
+                        session_id: session_id.clone(), address, error: e.to_string(),
+                    });
+                }
+            }
+        }
+    }
     Ok(())
 }
 
@@ -50,9 +96,46 @@ pub fn request_set_register(
 pub fn request_memory_regions(
     session_id: String,
     session_states: State<'_, SessionStatesMap>,
+    app_handle: tauri::AppHandle,
 ) -> Result<()> {
-    super::send_paused_command(&session_id, &session_states, UICommand::GetMemoryRegions)?;
-    info!("Memory regions request sent for session {}", session_id);
+    let session_arc = super::get_session_arc(&session_id, &session_states)?;
+    match super::try_send_paused_command(&session_arc, UICommand::GetMemoryRegions) {
+        Ok(()) => {
+            info!("Memory regions request sent for session {}", session_id);
+        }
+        Err(_) => {
+            let (mut oob, pid) = super::create_oob_client(&session_arc)?;
+            match oob.enumerate_memory_regions(pid) {
+                Ok(regions) => {
+                    let serializable_regions: Vec<crate::session::types::SerializableMemoryRegion> = regions.iter().map(|r| {
+                        crate::session::types::SerializableMemoryRegion {
+                            base_address: format!("0x{:016X}", r.base_address),
+                            allocation_base: format!("0x{:016X}", r.allocation_base),
+                            region_size: r.region_size,
+                            region_size_formatted: format_bytes(r.region_size),
+                            state: joybug2::formatting::memory::state_to_str(r.state).to_string(),
+                            state_raw: r.state,
+                            protect: joybug2::formatting::memory::protect_to_str(r.protect).to_string(),
+                            protect_raw: r.protect,
+                            region_type: joybug2::formatting::memory::type_to_str(r.region_type).to_string(),
+                            type_raw: r.region_type,
+                        }
+                    }).collect();
+                    let result = crate::session::types::MemoryRegionsResult {
+                        session_id: session_id.clone(), regions: serializable_regions,
+                    };
+                    let _ = app_handle.emit("memory-regions-updated", &result);
+                    info!("OOB memory regions for session {}", session_id);
+                }
+                Err(e) => {
+                    error!("OOB memory regions failed: {}", e);
+                    let _ = app_handle.emit("memory-regions-error", &crate::session::types::MemoryRegionsError {
+                        session_id: session_id.clone(), error: e.to_string(),
+                    });
+                }
+            }
+        }
+    }
     Ok(())
 }
 
@@ -62,9 +145,34 @@ pub fn request_memory_search(
     pattern: Vec<u8>,
     max_results: usize,
     session_states: State<'_, SessionStatesMap>,
+    app_handle: tauri::AppHandle,
 ) -> Result<()> {
-    super::send_paused_command(&session_id, &session_states, UICommand::SearchMemory { pattern, max_results })?;
-    info!("Memory search request sent for session {}", session_id);
+    let session_arc = super::get_session_arc(&session_id, &session_states)?;
+    match super::try_send_paused_command(&session_arc, UICommand::SearchMemory { pattern: pattern.clone(), max_results }) {
+        Ok(()) => {
+            info!("Memory search request sent for session {}", session_id);
+        }
+        Err(_) => {
+            let (mut oob, pid) = super::create_oob_client(&session_arc)?;
+            match oob.search_memory(pid, pattern, max_results) {
+                Ok((addresses, capped)) => {
+                    let result = crate::session::types::MemorySearchResult {
+                        session_id: session_id.clone(),
+                        addresses: addresses.iter().map(|a| format!("0x{:016X}", a)).collect(),
+                        capped,
+                    };
+                    let _ = app_handle.emit("memory-search-result", &result);
+                    info!("OOB memory search for session {}", session_id);
+                }
+                Err(e) => {
+                    error!("OOB memory search failed: {}", e);
+                    let _ = app_handle.emit("memory-search-error", &crate::session::types::MemorySearchError {
+                        session_id: session_id.clone(), error: e.to_string(),
+                    });
+                }
+            }
+        }
+    }
     Ok(())
 }
 
@@ -74,12 +182,73 @@ pub fn request_dereference(
     address: String,
     count: usize,
     session_states: State<'_, SessionStatesMap>,
+    app_handle: tauri::AppHandle,
 ) -> Result<()> {
     let address = u64::from_str_radix(address.trim_start_matches("0x").trim_start_matches("0X"), 16)
         .map_err(|e| Error::InvalidParameter(format!("Invalid address '{}': {}", address, e)))?;
 
-    super::send_paused_command(&session_id, &session_states, UICommand::Dereference { address, count })?;
-    info!("Dereference request sent for session {} at address 0x{:X}, count {}", session_id, address, count);
+    let session_arc = super::get_session_arc(&session_id, &session_states)?;
+    match super::try_send_paused_command(&session_arc, UICommand::Dereference { address, count }) {
+        Ok(()) => {
+            info!("Dereference request sent for session {} at 0x{:X}, count {}", session_id, address, count);
+        }
+        Err(_) => {
+            let (mut oob, pid) = super::create_oob_client(&session_arc)?;
+            match oob.dereference(pid, address, count, None) {
+                Ok(entries) => {
+                    let serializable_entries: Vec<crate::session::types::SerializableDereferenceEntry> = entries.iter().map(|entry| {
+                        let chain: Vec<crate::session::types::SerializableDereferenceValue> = entry.chain.iter().map(|v| {
+                            match v {
+                                joybug2::protocol::DereferenceValue::Pointer(addr, sym) => {
+                                    crate::session::types::SerializableDereferenceValue::Pointer {
+                                        address: format!("0x{:016X}", addr), symbol: sym.clone(),
+                                    }
+                                }
+                                joybug2::protocol::DereferenceValue::Value(val) => {
+                                    crate::session::types::SerializableDereferenceValue::Value {
+                                        value: format!("0x{:X}", val),
+                                    }
+                                }
+                                joybug2::protocol::DereferenceValue::String(s) => {
+                                    crate::session::types::SerializableDereferenceValue::String {
+                                        value: s.clone(),
+                                    }
+                                }
+                                joybug2::protocol::DereferenceValue::Instruction(instr, sym) => {
+                                    crate::session::types::SerializableDereferenceValue::Instruction {
+                                        value: instr.clone(), symbol: sym.clone(),
+                                    }
+                                }
+                                joybug2::protocol::DereferenceValue::LoopDetected(addr) => {
+                                    crate::session::types::SerializableDereferenceValue::LoopDetected {
+                                        address: format!("0x{:016X}", addr),
+                                    }
+                                }
+                            }
+                        }).collect();
+                        crate::session::types::SerializableDereferenceEntry {
+                            address: format!("0x{:016X}", entry.address), offset: entry.offset, chain,
+                        }
+                    }).collect();
+                    let result = crate::session::types::DereferenceResult {
+                        session_id: session_id.clone(),
+                        base_address: format!("0x{:016X}", address),
+                        entries: serializable_entries,
+                    };
+                    let _ = app_handle.emit("dereference-updated", &result);
+                    info!("OOB dereference for session {} at 0x{:X}", session_id, address);
+                }
+                Err(e) => {
+                    error!("OOB dereference failed: {}", e);
+                    let _ = app_handle.emit("dereference-error", &crate::session::types::DereferenceError {
+                        session_id: session_id.clone(),
+                        address: format!("0x{:016X}", address),
+                        error: e.to_string(),
+                    });
+                }
+            }
+        }
+    }
     Ok(())
 }
 
@@ -88,6 +257,7 @@ pub fn request_dereference_batch(
     session_id: String,
     addresses: Vec<String>,
     session_states: State<'_, SessionStatesMap>,
+    app_handle: tauri::AppHandle,
 ) -> Result<()> {
     let parsed: std::result::Result<Vec<u64>, _> = addresses
         .iter()
@@ -99,8 +269,70 @@ pub fn request_dereference_batch(
     let addresses = parsed?;
 
     let count = addresses.len();
-    super::send_paused_command(&session_id, &session_states, UICommand::DereferenceBatch { addresses })?;
-    info!("Batch dereference request sent for session {} with {} addresses", session_id, count);
+    let session_arc = super::get_session_arc(&session_id, &session_states)?;
+    match super::try_send_paused_command(&session_arc, UICommand::DereferenceBatch { addresses: addresses.clone() }) {
+        Ok(()) => {
+            info!("Batch dereference request sent for session {} with {} addresses", session_id, count);
+        }
+        Err(_) => {
+            let (mut oob, pid) = super::create_oob_client(&session_arc)?;
+            for &addr in &addresses {
+                match oob.dereference(pid, addr, 1, None) {
+                    Ok(entries) => {
+                        let serializable_entries: Vec<crate::session::types::SerializableDereferenceEntry> = entries.iter().map(|entry| {
+                            let chain: Vec<crate::session::types::SerializableDereferenceValue> = entry.chain.iter().map(|v| {
+                                match v {
+                                    joybug2::protocol::DereferenceValue::Pointer(a, sym) => {
+                                        crate::session::types::SerializableDereferenceValue::Pointer {
+                                            address: format!("0x{:016X}", a), symbol: sym.clone(),
+                                        }
+                                    }
+                                    joybug2::protocol::DereferenceValue::Value(val) => {
+                                        crate::session::types::SerializableDereferenceValue::Value {
+                                            value: format!("0x{:X}", val),
+                                        }
+                                    }
+                                    joybug2::protocol::DereferenceValue::String(s) => {
+                                        crate::session::types::SerializableDereferenceValue::String {
+                                            value: s.clone(),
+                                        }
+                                    }
+                                    joybug2::protocol::DereferenceValue::Instruction(instr, sym) => {
+                                        crate::session::types::SerializableDereferenceValue::Instruction {
+                                            value: instr.clone(), symbol: sym.clone(),
+                                        }
+                                    }
+                                    joybug2::protocol::DereferenceValue::LoopDetected(a) => {
+                                        crate::session::types::SerializableDereferenceValue::LoopDetected {
+                                            address: format!("0x{:016X}", a),
+                                        }
+                                    }
+                                }
+                            }).collect();
+                            crate::session::types::SerializableDereferenceEntry {
+                                address: format!("0x{:016X}", entry.address), offset: entry.offset, chain,
+                            }
+                        }).collect();
+                        let result = crate::session::types::DereferenceResult {
+                            session_id: session_id.clone(),
+                            base_address: format!("0x{:016X}", addr),
+                            entries: serializable_entries,
+                        };
+                        let _ = app_handle.emit("dereference-updated", &result);
+                    }
+                    Err(e) => {
+                        error!("OOB batch dereference failed for 0x{:X}: {}", addr, e);
+                        let _ = app_handle.emit("dereference-error", &crate::session::types::DereferenceError {
+                            session_id: session_id.clone(),
+                            address: format!("0x{:016X}", addr),
+                            error: e.to_string(),
+                        });
+                    }
+                }
+            }
+            info!("OOB batch dereference for session {} with {} addresses", session_id, count);
+        }
+    }
     Ok(())
 }
 

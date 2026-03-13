@@ -370,9 +370,9 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
     // If PC didn't change, user can freely navigate without being pulled back
   }, [pcAddress, sessionId, currentAddress, navigationHistory.length, functionStart, functionEnd, goToAddressDirect]);
 
-  // Clear state when session changes or session stops (pcAddress becomes null)
+  // Clear state when session ends (keep data visible when running)
   useEffect(() => {
-    if (!sessionId || pcAddress === null) {
+    if (!sessionId) {
       setInstructions([]);
       setCurrentAddress(null);
       setFunctionStart(null);
@@ -387,7 +387,7 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
       requestInFlight.current = false;
       userNavigatedAway.current = false;
     }
-  }, [sessionId, pcAddress]);
+  }, [sessionId]);
 
   return {
     // State
