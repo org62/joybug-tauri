@@ -94,6 +94,15 @@ export function useBreakpoints(sessionId?: string, isPaused?: boolean, sessionBr
     }
   }, [sessionId]);
 
+  const removeBreakpoints = useCallback(async (breakpointIds: string[]) => {
+    if (!sessionId) return;
+    try {
+      await invoke('remove_breakpoints', { sessionId, breakpointIds });
+    } catch (e) {
+      console.error('Failed to remove breakpoints:', e);
+    }
+  }, [sessionId]);
+
   const enableBreakpoint = useCallback(async (breakpointId: string, enabled: boolean) => {
     if (!sessionId) return;
     try {
@@ -134,11 +143,12 @@ export function useBreakpoints(sessionId?: string, isPaused?: boolean, sessionBr
     breakpoints,
     toggleBreakpoint,
     removeBreakpoint,
+    removeBreakpoints,
     enableBreakpoint,
     enableBreakpointGroup,
     updateBreakpoint,
     setHardwareBreakpoint,
-  }), [breakpoints, toggleBreakpoint, removeBreakpoint, enableBreakpoint, enableBreakpointGroup, updateBreakpoint, setHardwareBreakpoint]);
+  }), [breakpoints, toggleBreakpoint, removeBreakpoint, removeBreakpoints, enableBreakpoint, enableBreakpointGroup, updateBreakpoint, setHardwareBreakpoint]);
 }
 
 export type BreakpointState = ReturnType<typeof useBreakpoints>;

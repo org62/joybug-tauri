@@ -33,6 +33,12 @@ export const test = base.extend<TestFixtures>({
       }
     });
 
+    // Disable quick emulation in disassembly view — it consumes CPU without
+    // being tested by e2e and can slow down / interfere with other tests.
+    await page.evaluate(() => {
+      localStorage.setItem("assembly-quick-emulation-collapsed", "true");
+    });
+
     // Clean up any existing sessions and restore settings before test
     await cleanupAllSessions(page);
     await restoreSettings(page);
@@ -82,25 +88,30 @@ async function cleanupAllSessions(page: Page): Promise<void> {
       return;
     }
 
-    // Stop all non-stopped sessions
-    for (const s of sessions) {
-      if (s.status !== "Stopped") {
-        try {
-          await invoke("stop_debug_session", { sessionId: s.id });
-        } catch {
-          // May already be stopped
+    // If all sessions are already stopped, skip straight to deletion
+    if (sessions.every((s: any) => s.status === "Stopped")) {
+      // fall through to delete
+    } else {
+      // Stop all non-stopped sessions
+      for (const s of sessions) {
+        if (s.status !== "Stopped") {
+          try {
+            await invoke("stop_debug_session", { sessionId: s.id });
+          } catch {
+            // May already be stopped
+          }
         }
       }
-    }
 
-    // Poll until all sessions are stopped (up to 10s)
-    for (let attempt = 0; attempt < 20; attempt++) {
-      await new Promise((r) => setTimeout(r, 500));
-      try {
-        sessions = await invoke("get_debug_sessions");
-        if (sessions.every((s: any) => s.status === "Stopped")) break;
-      } catch {
-        break;
+      // Poll until all sessions are stopped (up to 10s)
+      for (let attempt = 0; attempt < 50; attempt++) {
+        await new Promise((r) => setTimeout(r, 200));
+        try {
+          sessions = await invoke("get_debug_sessions");
+          if (sessions.every((s: any) => s.status === "Stopped")) break;
+        } catch {
+          break;
+        }
       }
     }
 

@@ -1,6 +1,7 @@
 import { spawn, ChildProcess } from "child_process";
-import { existsSync } from "fs";
+import { existsSync, mkdirSync } from "fs";
 import path from "path";
+import os from "os";
 import { fileURLToPath } from "url";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -58,11 +59,18 @@ async function globalSetup(): Promise<void> {
   await waitForUrl(VITE_URL, 30_000);
   console.log("Vite dev server ready.");
 
+  // Create isolated data directory so e2e tests don't touch user's real
+  // settings, breakpoints, patches, or pinned addresses.
+  const e2eDataDir = path.join(os.tmpdir(), "joybug-e2e-data");
+  mkdirSync(e2eDataDir, { recursive: true });
+  process.env.JOYBUG_E2E_DATA_DIR = e2eDataDir;
+
   // Launch Tauri binary with CDP enabled on WebView2
   const tauri: ChildProcess = spawn(TAURI_BINARY, [], {
     env: {
       ...process.env,
       WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: "--remote-debugging-port=9222",
+      JOYBUG_DATA_DIR: e2eDataDir,
     },
     stdio: "pipe",
   });

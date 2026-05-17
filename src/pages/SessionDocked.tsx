@@ -4,7 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { disassemblyNavigation, memoryNavigation } from "@/lib/navigationStore";
-import type { ViewMode } from "@/lib/hexUtils";
+import { parseAddress, type ViewMode } from "@/lib/hexUtils";
 import { ArrowLeft, AlertCircle } from "lucide-react";
 import DockingLayout, { DockingLayoutRef } from "@/components/DockingLayout";
 import { DebuggerDockingConfig } from "@/lib/dockingConfigs";
@@ -19,11 +19,13 @@ import { ContextSymbolsView } from "@/components/session/ContextSymbolsView";
 import { ContextHexView } from "@/components/session/ContextHexView";
 import { ContextMemoryRegionsView } from "@/components/session/ContextMemoryRegionsView";
 import { ContextBreakpointsView } from "@/components/session/ContextBreakpointsView";
+import { ContextPatchesView } from "@/components/session/ContextPatchesView";
 import { ContextMemorySearchView } from "@/components/session/ContextMemorySearchView";
 import { ContextMemoryScannerView } from "@/components/session/ContextMemoryScannerView";
 import { ContextModuleInfoView } from "@/components/session/ContextModuleInfoView";
 import { useDebugSession } from "@/hooks/useDebugSession";
 import { useBreakpoints } from "@/hooks/useBreakpoints";
+import { usePatches } from "@/hooks/usePatches";
 import { SessionHeader } from "@/components/session/SessionHeader";
 import { useKeybindingContext } from "@/contexts/KeybindingContext";
 import { keyboardEventToChord } from "@/lib/keybindings";
@@ -32,7 +34,7 @@ import type { PaletteCommand } from "@/contexts/CommandPaletteContext";
 import {
   Play, Square, Pause, ArrowDownToLine, CornerDownRight, ArrowUpFromLine, SkipForward,
   Code, Cpu, Box, Layers, ListTree, Search, HardDrive, MapPin, FileCode,
-  Plus, RotateCcw, Navigation, ScanSearch,
+  Plus, RotateCcw, Navigation, ScanSearch, Puzzle,
 } from "lucide-react";
 
 export default function SessionDocked() {
@@ -123,6 +125,11 @@ export default function SessionDocked() {
     dockingRef.current?.resetLayout();
   }, []);
 
+  // Close the currently focused dock tab
+  const handleCloseActiveTab = React.useCallback(() => {
+    dockingRef.current?.closeActiveTab();
+  }, []);
+
   // Add a new memory tab
   const handleAddNewMemoryTab = React.useCallback(() => {
     dockingRef.current?.addTypedTab('memory', (tabId) => (
@@ -136,14 +143,6 @@ export default function SessionDocked() {
     disassemblyNavigation.request(address);
   }, []);
 
-  // Parse a hex address string (e.g., "0x00007FF..." -> bigint) to handle 64-bit addresses
-  const parseAddress = React.useCallback((address: string): bigint => {
-    const clean = address.toLowerCase().startsWith('0x') ? address.slice(2) : address;
-    return BigInt('0x' + clean);
-  }, []);
-
-  // Navigate to memory view at a specific address, reusing an existing tab if open.
-  // initialViewMode is used only when creating a new tab (no existing memory tab).
   const navigateToMemoryTab = React.useCallback((address: string, initialViewMode?: ViewMode) => {
     const activeTabs = dockingRef.current?.getActiveTabs() ?? [];
     const existingMemoryTab = activeTabs.find(id => id === 'memory' || id.startsWith('memory-'));
@@ -152,10 +151,10 @@ export default function SessionDocked() {
       memoryNavigation.request(address);
     } else {
       dockingRef.current?.addTypedTab('memory', (tabId) => (
-        <ContextHexView memoryViewId={tabId} initialAddress={parseAddress(address)} initialViewMode={initialViewMode} />
+        <ContextHexView memoryViewId={tabId} initialAddress={parseAddress(address) ?? undefined} initialViewMode={initialViewMode} />
       ));
     }
-  }, [parseAddress]);
+  }, []);
 
   const handleNavigateToMemory = React.useCallback((address: string) => {
     navigateToMemoryTab(address);
@@ -203,6 +202,7 @@ export default function SessionDocked() {
 
   // Hotkey handlers — chord-based lookup via keybinding context
   const { reverseLookup } = useKeybindingContext();
+  const { registerCommands, setOpen, enterSubInput } = useCommandPaletteContext();
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -280,6 +280,11 @@ export default function SessionDocked() {
           event.stopPropagation();
           toggleTabWithBackendUpdate("breakpoints");
           break;
+        case "panel.patches":
+          event.preventDefault();
+          event.stopPropagation();
+          toggleTabWithBackendUpdate("patches");
+          break;
         case "panel.memorySearch":
           event.preventDefault();
           event.stopPropagation();
@@ -295,18 +300,42 @@ export default function SessionDocked() {
           event.stopPropagation();
           toggleTabWithBackendUpdate("peviewer");
           break;
+        case "panel.closeTab":
+          event.preventDefault();
+          event.stopPropagation();
+          handleCloseActiveTab();
+          break;
+        // Navigate actions
+        case "navigate.goToDisassembly":
+          event.preventDefault();
+          event.stopPropagation();
+          enterSubInput({
+            label: "Go to Address (Disassembly)",
+            placeholder: "Enter address or symbol (e.g. 0x00007FF...)",
+            onSubmit: handleNavigateToDisassembly,
+          });
+          setOpen(true);
+          break;
+        case "navigate.goToMemory":
+          event.preventDefault();
+          event.stopPropagation();
+          enterSubInput({
+            label: "Go to Address (Memory)",
+            placeholder: "Enter address or symbol (e.g. 0x00007FF...)",
+            onSubmit: handleNavigateToMemory,
+          });
+          setOpen(true);
+          break;
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [handleGo, handleStepIn, handleStepOver, handleStepOut, toggleTabWithBackendUpdate, reverseLookup]);
+  }, [handleGo, handleStepIn, handleStepOver, handleStepOut, toggleTabWithBackendUpdate, handleCloseActiveTab, reverseLookup, setOpen, enterSubInput, handleNavigateToDisassembly, handleNavigateToMemory]);
 
   const isPaused = displayStatus === 'Paused';
 
   // ── Command palette registration ──────────────────────────────────────────
-  const { registerCommands } = useCommandPaletteContext();
-
   useEffect(() => {
     const commands: PaletteCommand[] = [
       // Session lifecycle
@@ -469,6 +498,16 @@ export default function SessionDocked() {
         keywords: ["breakpoints", "bp"],
       },
       {
+        id: "panel.patches",
+        label: "Toggle Patches",
+        group: "Windows",
+        icon: <Puzzle className="size-4" />,
+        keybindingAction: "panel.patches",
+        onSelect: () => toggleTabWithBackendUpdate("patches"),
+        keepOpen: true,
+        keywords: ["patches", "assemble", "patch"],
+      },
+      {
         id: "panel.memorySearch",
         label: "Toggle Memory Search",
         group: "Windows",
@@ -521,6 +560,7 @@ export default function SessionDocked() {
         label: "Go to Address (Disassembly)",
         group: "Navigate",
         icon: <Navigation className="size-4" />,
+        keybindingAction: "navigate.goToDisassembly",
         onSelect: () => {},
         subInput: {
           placeholder: "Enter address or symbol (e.g. 0x00007FF...)",
@@ -534,6 +574,7 @@ export default function SessionDocked() {
         label: "Go to Address (Memory)",
         group: "Navigate",
         icon: <Navigation className="size-4" />,
+        keybindingAction: "navigate.goToMemory",
         onSelect: () => {},
         subInput: {
           placeholder: "Enter address or symbol (e.g. 0x00007FF...)",
@@ -555,6 +596,7 @@ export default function SessionDocked() {
   ]);
 
   const breakpointState = useBreakpoints(session?.id, isPaused, session?.breakpoints);
+  const patchState = usePatches(session?.id, isPaused, session?.patches);
 
   const contextValue = useMemo(() => ({
     session,
@@ -565,9 +607,10 @@ export default function SessionDocked() {
     loadThreads: async () => { await loadThreads(); },
     searchSymbols: async (pattern: string, limit?: number) => { return await searchSymbols(pattern, limit); },
     breakpointState,
+    patchState,
     onNavigateToDisassembly: handleNavigateToDisassembly,
     onNavigateToMemory: handleNavigateToMemory,
-  }), [session, displayStatus, modules, threads, loadModules, loadThreads, searchSymbols, breakpointState, handleNavigateToDisassembly, handleNavigateToMemory]);
+  }), [session, displayStatus, modules, threads, loadModules, loadThreads, searchSymbols, breakpointState, patchState, handleNavigateToDisassembly, handleNavigateToMemory]);
   
   // Static tab content - components will update via context
   const dynamicTabContent = useMemo(() => ({
@@ -579,6 +622,7 @@ export default function SessionDocked() {
     symbols: <ContextSymbolsView />,
     memory_regions: <ContextMemoryRegionsView onNavigateToAddress={handleNavigateToMemory} />,
     breakpoints: <ContextBreakpointsView />,
+    patches: <ContextPatchesView />,
     memory_search: <ContextMemorySearchView />,
     memory_scanner: <ContextMemoryScannerView />,
     peviewer: <ContextModuleInfoView />,
@@ -648,6 +692,12 @@ export default function SessionDocked() {
         id: "breakpoints",
         title: "Breakpoints",
         content: dynamicTabContent.breakpoints,
+        closable: true,
+      },
+      patches: {
+        id: "patches",
+        title: "Patches",
+        content: dynamicTabContent.patches,
         closable: true,
       },
       memory_search: {

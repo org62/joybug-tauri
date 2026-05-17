@@ -13,4 +13,14 @@ export default defineConfig({
   },
   globalSetup: "./global-setup",
   globalTeardown: "./global-teardown",
+  // Run fast tests first to absorb Vite warmup penalty (~10s) on cheap tests
+  testMatch: [
+    "routing.spec.ts",
+    "keyboard-shortcuts.spec.ts",
+    "patches.spec.ts",
+    "disassembly.spec.ts",
+    "registers.spec.ts",
+    "session-lifecycle.spec.ts",
+    "stepping.spec.ts",
+  ],
 });

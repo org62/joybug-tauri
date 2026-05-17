@@ -15,18 +15,24 @@ export type ActionId =
   | "panel.addMemory"
   | "panel.memoryRegions"
   | "panel.breakpoints"
+  | "panel.patches"
   | "panel.memorySearch"
   | "panel.memoryScanner"
   | "panel.peViewer"
+  | "panel.closeTab"
   // Navigation (global)
   | "nav.debugger"
   | "nav.logs"
   | "nav.toggleTheme"
   // Command palette
   | "palette.open"
+  // Navigate
+  | "navigate.goToDisassembly"
+  | "navigate.goToMemory"
   // Assembly view
   | "assembly.goBack"
-  | "assembly.goForward";
+  | "assembly.goForward"
+  | "assembly.toggleBreakpoint";
 
 // ── Action metadata ─────────────────────────────────────────────────────────
 export type ActionCategory = "Debug" | "Panels" | "Navigation" | "Assembly";
@@ -54,18 +60,24 @@ export const ACTION_REGISTRY: Record<ActionId, ActionMeta> = {
   "panel.addMemory":     { label: "Add Memory Window",     category: "Panels", description: "Open a new Memory hex editor tab",      scope: "session" },
   "panel.memoryRegions": { label: "Toggle Memory Regions", category: "Panels", description: "Show or hide the Memory Regions panel", scope: "session" },
   "panel.breakpoints":   { label: "Toggle Breakpoints",    category: "Panels", description: "Show or hide the Breakpoints panel",    scope: "session" },
+  "panel.patches":       { label: "Toggle Patches",        category: "Panels", description: "Show or hide the Patches panel",        scope: "session" },
   "panel.memorySearch":  { label: "Toggle Memory Search",  category: "Panels", description: "Show or hide the Memory Search panel",  scope: "session" },
   "panel.memoryScanner": { label: "Toggle Memory Scanner", category: "Panels", description: "Show or hide the Memory Scanner panel", scope: "session" },
   "panel.peViewer":      { label: "Toggle PE Viewer",      category: "Panels", description: "Show or hide the PE Viewer panel",      scope: "session" },
+  "panel.closeTab":      { label: "Close Active Tab",      category: "Panels", description: "Close the currently focused dock tab",     scope: "session" },
 
   "palette.open":    { label: "Command Palette",  category: "Navigation", description: "Open the command palette",                 scope: "global" },
+
+  "navigate.goToDisassembly": { label: "Go to Address (Disassembly)", category: "Navigation", description: "Open address input to navigate disassembly view", scope: "session" },
+  "navigate.goToMemory":      { label: "Go to Address (Memory)",      category: "Navigation", description: "Open address input to navigate memory view",      scope: "session" },
 
   "nav.debugger":    { label: "Go to Debugger",  category: "Navigation", description: "Navigate to the Debugger page",           scope: "global" },
   "nav.logs":        { label: "Go to Logs",      category: "Navigation", description: "Navigate to the Logs page",               scope: "global" },
   "nav.toggleTheme": { label: "Toggle Theme",    category: "Navigation", description: "Switch between light and dark theme",      scope: "global" },
 
-  "assembly.goBack":    { label: "Go Back",    category: "Assembly", description: "Navigate back in disassembly history",    scope: "assembly" },
-  "assembly.goForward": { label: "Go Forward", category: "Assembly", description: "Navigate forward in disassembly history", scope: "assembly" },
+  "assembly.goBack":            { label: "Go Back",            category: "Assembly", description: "Navigate back in disassembly history",    scope: "assembly" },
+  "assembly.goForward":         { label: "Go Forward",         category: "Assembly", description: "Navigate forward in disassembly history", scope: "assembly" },
+  "assembly.toggleBreakpoint":  { label: "Toggle Breakpoint",  category: "Debug", description: "Toggle breakpoint on selected line",      scope: "assembly" },
 };
 
 // ── Preset definitions ──────────────────────────────────────────────────────
@@ -88,6 +100,10 @@ const SHARED_BINDINGS: Record<string, ChordString> = {
   "panel.breakpoints":   "ctrl+b",
   "panel.memorySearch":  "ctrl+shift+f",
   "panel.peViewer":      "ctrl+p",
+  "panel.closeTab":      "ctrl+w",
+
+  "navigate.goToDisassembly": "ctrl+shift+1",
+  "navigate.goToMemory":      "ctrl+shift+2",
 
   "palette.open":    "ctrl+k",
 
@@ -105,6 +121,7 @@ export const KEYBINDING_PRESETS: Record<PresetName, Record<ActionId, ChordString
     "debug.stepIn":   "f11",
     "debug.stepOver": "f10",
     "debug.stepOut":  "shift+f11",
+    "assembly.toggleBreakpoint": "f9",
     ...SHARED_BINDINGS,
   } as Record<ActionId, ChordString>,
   x64dbg: {
@@ -112,6 +129,7 @@ export const KEYBINDING_PRESETS: Record<PresetName, Record<ActionId, ChordString
     "debug.stepIn":   "f7",
     "debug.stepOver": "f8",
     "debug.stepOut":  "ctrl+f9",
+    "assembly.toggleBreakpoint": "f2",
     ...SHARED_BINDINGS,
   } as Record<ActionId, ChordString>,
 };
@@ -127,8 +145,17 @@ export function keyboardEventToChord(e: KeyboardEvent): ChordString {
   if (e.shiftKey) parts.push("shift");
 
   // Ignore bare modifier presses
-  const key = e.key;
+  let key = e.key;
   if (["Alt", "Control", "Meta", "Shift"].includes(key)) return "";
+
+  // Normalise shifted digit characters back to base digits (e.g. "!" → "1")
+  const SHIFTED_DIGITS: Record<string, string> = {
+    "!": "1", "@": "2", "#": "3", "$": "4", "%": "5",
+    "^": "6", "&": "7", "*": "8", "(": "9", ")": "0",
+  };
+  if (e.shiftKey && SHIFTED_DIGITS[key]) {
+    key = SHIFTED_DIGITS[key];
+  }
 
   parts.push(key.toLowerCase());
   return parts.join("+");

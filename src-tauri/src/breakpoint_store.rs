@@ -6,26 +6,7 @@ use std::path::PathBuf;
 use tracing::error;
 
 fn breakpoints_file_path() -> PathBuf {
-    if cfg!(target_os = "windows") {
-        if let Ok(base) = std::env::var("LOCALAPPDATA") {
-            return PathBuf::from(base).join("JoybugTauri").join("breakpoints.json");
-        }
-        if let Ok(base) = std::env::var("APPDATA") {
-            return PathBuf::from(base).join("JoybugTauri").join("breakpoints.json");
-        }
-    }
-    if let Ok(base) = std::env::var("XDG_CONFIG_HOME") {
-        return PathBuf::from(base).join("joybug-tauri").join("breakpoints.json");
-    }
-    if let Ok(home) = std::env::var("HOME") {
-        return PathBuf::from(home)
-            .join(".config")
-            .join("joybug-tauri")
-            .join("breakpoints.json");
-    }
-    std::env::current_dir()
-        .unwrap_or_else(|_| PathBuf::from("."))
-        .join("joybug_tauri_breakpoints.json")
+    crate::data_dir::joybug_data_dir().join("breakpoints.json")
 }
 
 pub fn load_breakpoints(launch_command: &str) -> Vec<BreakpointInfo> {

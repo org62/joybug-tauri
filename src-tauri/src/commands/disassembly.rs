@@ -1,5 +1,5 @@
 use crate::error::{Error, Result};
-use crate::session::disassembly::serialize_instructions;
+use crate::session::disassembly::{applied_patch_ranges, serialize_instructions};
 use crate::session::types::SerializableInstruction;
 use crate::session::UICommand;
 use crate::state::SessionStatesMap;
@@ -24,11 +24,14 @@ pub fn request_disassembly(
             info!("Disassembly request sent for session {} at 0x{:X}", session_id, address);
         }
         Err(_) => {
-            let modules = session_arc.lock().unwrap().modules.clone();
+            let (modules, patched_ranges) = {
+                let state = session_arc.lock().unwrap();
+                (state.modules.clone(), applied_patch_ranges(&state))
+            };
             let (mut oob, pid) = super::create_oob_client(&session_arc)?;
             match oob.disassemble_memory(pid, address, count, arch) {
                 Ok(instructions) => {
-                    let serializable = serialize_instructions(&instructions, &modules);
+                    let serializable = serialize_instructions(&instructions, &modules, &patched_ranges);
                     #[derive(serde::Serialize)]
                     struct DisassemblyResult {
                         session_id: String,
@@ -70,11 +73,14 @@ pub fn request_function_disassembly(
             info!("Function disassembly request sent for session {} at 0x{:X}", session_id, address);
         }
         Err(_) => {
-            let modules = session_arc.lock().unwrap().modules.clone();
+            let (modules, patched_ranges) = {
+                let state = session_arc.lock().unwrap();
+                (state.modules.clone(), applied_patch_ranges(&state))
+            };
             let (mut oob, pid) = super::create_oob_client(&session_arc)?;
             match oob.disassemble_function(pid, address, max_instructions, arch) {
                 Ok((instructions, function_start, function_end, function_name)) => {
-                    let serializable = serialize_instructions(&instructions, &modules);
+                    let serializable = serialize_instructions(&instructions, &modules, &patched_ranges);
                     #[derive(serde::Serialize)]
                     struct FunctionDisassemblyResult {
                         session_id: String,
@@ -163,8 +169,7 @@ pub fn request_module_extra_info(
     session_states: State<'_, SessionStatesMap>,
     app_handle: tauri::AppHandle,
 ) -> Result<()> {
-    let module_base_val = u64::from_str_radix(module_base.trim_start_matches("0x").trim_start_matches("0X"), 16)
-        .map_err(|e| Error::InvalidParameter(format!("Invalid module base '{}': {}", module_base, e)))?;
+    let module_base_val = super::parse_hex_u64(&module_base, "module base")?;
 
     let session_arc = super::get_session_arc(&session_id, &session_states)?;
     match super::try_send_paused_command(&session_arc, UICommand::GetModuleExtraInfo { module_base: module_base_val }) {

@@ -26,6 +26,22 @@ fn default_bp_kind() -> String {
     "software".to_string()
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PatchInfo {
+    pub id: String,                    // UUID
+    pub address: u64,                  // resolved absolute address (0 if unresolved)
+    pub module_name: String,           // lowercase module short name
+    pub module_offset: u64,            // RVA within module
+    pub original_bytes: Vec<u8>,       // saved for undo
+    pub patched_bytes: Vec<u8>,        // assembled result
+    pub assembly_text: String,         // what the user typed
+    pub original_disassembly: String,  // "mov eax, ebx" — for display
+    pub enabled: bool,                 // user toggle
+    pub is_applied: bool,              // currently written in debuggee
+    #[serde(default)]
+    pub group: Option<String>,         // group name
+}
+
 // Serializable snapshot of session state for frontend communication
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DebugSessionUI {
@@ -41,6 +57,7 @@ pub struct DebugSessionUI {
     pub registers_window_open: bool,
     pub callstack_window_open: bool,
     pub breakpoints: Vec<BreakpointInfo>,
+    pub patches: Vec<PatchInfo>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -131,6 +148,9 @@ pub struct SessionStateUI {
     // Breakpoints
     pub breakpoints: Vec<BreakpointInfo>,
 
+    // Patches
+    pub patches: Vec<PatchInfo>,
+
     // Exception handling
     pub pass_exception_on_continue: bool,
 }
@@ -165,6 +185,7 @@ impl SessionStateUI {
             is_registers_window_open: false,
             is_callstack_window_open: false,
             breakpoints: Vec::new(),
+            patches: Vec::new(),
             pass_exception_on_continue: false,
         }
     }
@@ -190,6 +211,12 @@ impl SessionStateUI {
         for bp in &mut self.breakpoints {
             bp.is_active = false;
             bp.address = 0;
+        }
+
+        // Keep patches but mark all as unapplied/unresolved
+        for patch in &mut self.patches {
+            patch.is_applied = false;
+            patch.address = 0;
         }
 
         let (step_sender, step_receiver) = mpsc::channel();
@@ -233,6 +260,7 @@ impl SessionStateUI {
             registers_window_open: self.is_registers_window_open,
             callstack_window_open: self.is_callstack_window_open,
             breakpoints: self.breakpoints.clone(),
+            patches: self.patches.clone(),
         }
     }
 }

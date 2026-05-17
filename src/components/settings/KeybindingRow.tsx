@@ -11,6 +11,7 @@ import {
 } from "@/lib/keybindings";
 import { KeyCaptureInput } from "./KeyCaptureInput";
 import { cn } from "@/lib/utils";
+import { toast } from "sonner";
 
 interface KeybindingRowProps {
   actionId: ActionId;
@@ -24,30 +25,29 @@ interface KeybindingRowProps {
 
 export function KeybindingRow({ actionId, currentChord, preset, checkConflict, onChange, onReset }: KeybindingRowProps) {
   const [isCapturing, setIsCapturing] = useState(false);
-  const [conflict, setConflict] = useState<string | null>(null);
   const meta = ACTION_REGISTRY[actionId];
   const presetDefault = KEYBINDING_PRESETS[preset][actionId];
   const isCustomized = currentChord !== presetDefault;
 
   const handleCapture = (chord: ChordString) => {
-    setConflict(checkConflict(chord, actionId));
+    const conflictLabel = checkConflict(chord, actionId);
+    if (conflictLabel) {
+      toast.warning(`"${formatKeybinding(chord)}" is already assigned to "${conflictLabel}"`);
+    }
     onChange(actionId, chord);
     setIsCapturing(false);
   };
 
   const handleCancel = () => {
     setIsCapturing(false);
-    setConflict(null);
   };
 
   const handleReset = () => {
     onReset(actionId);
-    setConflict(null);
   };
 
   const handleRemove = () => {
     onChange(actionId, "");
-    setConflict(null);
   };
 
   return (
@@ -55,11 +55,6 @@ export function KeybindingRow({ actionId, currentChord, preset, checkConflict, o
       {/* Command label */}
       <div className="text-sm font-medium truncate min-w-0">
         {meta.label}
-        {conflict && (
-          <span className="text-xs text-yellow-600 dark:text-yellow-400 ml-2 font-normal">
-            (conflicts with {conflict})
-          </span>
-        )}
       </div>
 
       {/* Keybinding + actions */}

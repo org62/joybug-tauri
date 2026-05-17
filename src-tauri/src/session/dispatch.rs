@@ -7,6 +7,7 @@ use super::disassembly::*;
 use super::emulation::*;
 use super::helpers::report_step_error;
 use super::memory::*;
+use super::patches::*;
 use super::registers::*;
 use super::runner::emit_session_event;
 use super::symbols::*;
@@ -318,6 +319,10 @@ fn process_command(
             process_remove_breakpoint(session, app_handle_clone, event.pid(), breakpoint_id);
             CommandResult::Continue
         }
+        UICommand::RemoveBreakpoints { ref breakpoint_ids } => {
+            process_remove_breakpoints(session, app_handle_clone, event.pid(), breakpoint_ids);
+            CommandResult::Continue
+        }
         UICommand::EnableBreakpoint { ref breakpoint_id, enabled } => {
             process_enable_breakpoint(session, app_handle_clone, event.pid(), breakpoint_id, enabled);
             CommandResult::Continue
@@ -364,6 +369,30 @@ fn process_command(
         }
         UICommand::ScanMemoryReset { scan_id } => {
             process_scan_memory_reset(session, app_handle_clone, scan_id);
+            CommandResult::Continue
+        }
+        UICommand::AssemblePatch { address, ref assembly_text, arch, nop_pad } => {
+            process_assemble_patch(session, app_handle_clone, event, address, assembly_text.clone(), arch, nop_pad);
+            CommandResult::Continue
+        }
+        UICommand::UndoPatch { ref patch_id } => {
+            process_undo_patch(session, app_handle_clone, event, patch_id);
+            CommandResult::Continue
+        }
+        UICommand::UndoPatches { ref patch_ids } => {
+            process_undo_patches(session, app_handle_clone, event, patch_ids);
+            CommandResult::Continue
+        }
+        UICommand::EnablePatch { ref patch_id, enabled } => {
+            process_enable_patch(session, app_handle_clone, event, patch_id, enabled);
+            CommandResult::Continue
+        }
+        UICommand::UpdatePatch { ref patch_id, ref group } => {
+            process_update_patch(session, app_handle_clone, patch_id, group.clone());
+            CommandResult::Continue
+        }
+        UICommand::EnablePatchGroup { ref group, enabled } => {
+            process_enable_patch_group(session, app_handle_clone, event, group, enabled);
             CommandResult::Continue
         }
         UICommand::Stop => {

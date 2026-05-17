@@ -112,7 +112,7 @@ export function CommandPalette() {
           </div>
           <div className="flex items-center border-b px-3">
             <input
-              className="placeholder:text-muted-foreground flex h-12 w-full rounded-md bg-transparent py-3 text-sm outline-hidden disabled:cursor-not-allowed disabled:opacity-50"
+              className="placeholder:text-muted-foreground flex h-10 w-full rounded-md bg-transparent py-2 text-sm outline-hidden disabled:cursor-not-allowed disabled:opacity-50"
               placeholder={subInput.placeholder}
               value={subInputValue}
               onChange={(e) => setSubInputValue(e.target.value)}

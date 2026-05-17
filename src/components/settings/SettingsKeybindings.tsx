@@ -122,22 +122,15 @@ export function SettingsKeybindings({ searchQuery, embedded }: SettingsKeybindin
         {isDebugCategory && (
           <div className="flex items-center justify-between py-1.5 px-2 rounded hover:bg-muted/50 border-b border-border/50 mb-0">
             <div className="text-sm font-medium">Preset</div>
-            <div className="flex items-center gap-2">
-              <Select value={localSettings.preset} onValueChange={handlePresetChange}>
-                <SelectTrigger className="h-7 w-[130px] text-sm">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="windbg">WinDbg</SelectItem>
-                  <SelectItem value="x64dbg">x64dbg</SelectItem>
-                </SelectContent>
-              </Select>
-              {hasCustomBindings && (
-                <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={handleResetAll}>
-                  Reset All
-                </Button>
-              )}
-            </div>
+            <Select value={localSettings.preset} onValueChange={handlePresetChange}>
+              <SelectTrigger className="h-7 w-[130px] text-sm">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="windbg">WinDbg</SelectItem>
+                <SelectItem value="x64dbg">x64dbg</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
         )}
         <div>
@@ -163,14 +156,28 @@ export function SettingsKeybindings({ searchQuery, embedded }: SettingsKeybindin
 
   if (visibleCategories.length === 0) return null;
 
+  const resetAllButton = (
+    <div className="flex justify-end">
+      <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={handleResetAll} disabled={!hasCustomBindings}>
+        Reset All to Defaults
+      </Button>
+    </div>
+  );
+
   // Embedded: return bare category blocks as fragments (caller provides the grid)
   if (embedded) {
-    return <>{visibleCategories.map(({ category, actions }) => renderCategoryBlock(category, actions, true))}</>;
+    return (
+      <>
+        {resetAllButton}
+        {visibleCategories.map(({ category, actions }) => renderCategoryBlock(category, actions, true))}
+      </>
+    );
   }
 
   return (
     <div className="flex flex-col min-h-0 h-full">
       <ScrollArea className="flex-1 min-h-0">
+        {resetAllButton}
         <div
           className="grid gap-x-6 gap-y-5 items-start"
           style={{ gridTemplateColumns: "repeat(auto-fill, minmax(20rem, 1fr))" }}

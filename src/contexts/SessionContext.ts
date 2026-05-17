@@ -1,6 +1,7 @@
 import { createContext, useContext } from "react";
 import { SerializableThreadContext } from "@/components/RegisterView";
 import type { BreakpointState } from "@/hooks/useBreakpoints";
+import type { PatchState } from "@/hooks/usePatches";
 
 // Re-export for convenience in other components
 export { type SerializableThreadContext } from "@/components/RegisterView";
@@ -20,6 +21,20 @@ export interface RawBreakpoint {
   hw_size: number | null;     // 1, 2, 4, 8
 }
 
+export interface RawPatch {
+  id: string;
+  address: number;
+  module_name: string;
+  module_offset: number;
+  original_bytes: number[];
+  patched_bytes: number[];
+  assembly_text: string;
+  original_disassembly: string;
+  enabled: boolean;
+  is_applied: boolean;
+  group: string | null;
+}
+
 export interface DebugSession {
   id: string;
   name: string;
@@ -33,6 +48,7 @@ export interface DebugSession {
   registers_window_open: boolean;
   callstack_window_open: boolean;
   breakpoints: RawBreakpoint[];
+  patches: RawPatch[];
 }
 
 export interface DebugEventInfo {
@@ -85,6 +101,7 @@ export interface SessionContextData {
   loadThreads: () => Promise<void>;
   searchSymbols: (pattern: string, limit?: number) => Promise<Symbol[]>;
   breakpointState: BreakpointState;
+  patchState: PatchState;
   onNavigateToDisassembly?: (address: string) => void;
   onNavigateToMemory?: (address: string) => void;
 }

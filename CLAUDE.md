@@ -12,9 +12,17 @@ Joybug UI — a Tauri v2 desktop debugger for Windows. Rust backend manages debu
 npm run tauri dev      # Dev mode (starts Vite dev server + Tauri)
 npm run tauri build    # Production build + installer
 cd src-tauri && cargo build   # Rust-only build (useful for checking compilation)
+npx playwright test --config e2e/playwright.config.ts   # E2E tests (requires dev server + Tauri running)
 ```
 
-No tests exist in the Tauri layer. The joybug2 external crate has integration tests (`external/joybug2/tests/`) that require Windows with debugging privileges.
+### E2E Tests
+
+Run `npx playwright test --config e2e/playwright.config.ts` after every major code change (new features, refactors, bug fixes that touch frontend or backend). The full suite (31 tests) runs in ~1.2 minutes. Keep it fast:
+- Never add hardcoded sleeps (`waitForTimeout`). Poll for the expected state instead using `toPass()` with tight intervals.
+- Use fast polling intervals (start at 50-100ms, not 250-500ms) — backend responses are typically <50ms.
+- When waiting for state transitions, compare state snapshots (e.g. event identity) rather than trying to catch brief intermediate states like "Running".
+
+The joybug2 external crate has integration tests (`external/joybug2/tests/`) that require Windows with debugging privileges.
 
 ## Project Structure
 

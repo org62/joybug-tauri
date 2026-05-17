@@ -15,32 +15,7 @@ pub struct PinnedAddress {
 }
 
 fn pinned_addresses_file_path() -> PathBuf {
-    if cfg!(target_os = "windows") {
-        if let Ok(base) = std::env::var("LOCALAPPDATA") {
-            return PathBuf::from(base)
-                .join("JoybugTauri")
-                .join("pinned_addresses.json");
-        }
-        if let Ok(base) = std::env::var("APPDATA") {
-            return PathBuf::from(base)
-                .join("JoybugTauri")
-                .join("pinned_addresses.json");
-        }
-    }
-    if let Ok(base) = std::env::var("XDG_CONFIG_HOME") {
-        return PathBuf::from(base)
-            .join("joybug-tauri")
-            .join("pinned_addresses.json");
-    }
-    if let Ok(home) = std::env::var("HOME") {
-        return PathBuf::from(home)
-            .join(".config")
-            .join("joybug-tauri")
-            .join("pinned_addresses.json");
-    }
-    std::env::current_dir()
-        .unwrap_or_else(|_| PathBuf::from("."))
-        .join("joybug_tauri_pinned_addresses.json")
+    crate::data_dir::joybug_data_dir().join("pinned_addresses.json")
 }
 
 pub fn load_pinned_addresses(launch_command: &str) -> Vec<PinnedAddress> {

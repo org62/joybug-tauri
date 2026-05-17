@@ -3,11 +3,23 @@ use tracing::{debug, error};
 
 use super::helpers::{find_module_for_address, get_modules_snapshot};
 use super::types::{DebugSession, SerializableInstruction};
+use crate::state::SessionStateUI;
+
+/// Collect (start, end) ranges of currently-applied patches.
+pub(crate) fn applied_patch_ranges(state: &SessionStateUI) -> Vec<(u64, u64)> {
+    state
+        .patches
+        .iter()
+        .filter(|p| p.is_applied && p.address != 0)
+        .map(|p| (p.address, p.address + p.patched_bytes.len() as u64))
+        .collect()
+}
 
 /// Converts raw disassembled instructions into serializable form with symbol resolution.
 pub(crate) fn serialize_instructions(
     instructions: &[joybug2::interfaces::Instruction],
     modules: &[joybug2::protocol_io::ModuleInfo],
+    patched_ranges: &[(u64, u64)],
 ) -> Vec<SerializableInstruction> {
     instructions
         .iter()
@@ -21,6 +33,10 @@ pub(crate) fn serialize_instructions(
             };
 
             let op_str = inst.symbolized_op_str.as_ref().unwrap_or(&inst.op_str);
+
+            let is_patched = patched_ranges
+                .iter()
+                .any(|&(start, end)| inst.address >= start && inst.address < end);
 
             SerializableInstruction {
                 address: format!("{:#X}", inst.address),
@@ -37,6 +53,7 @@ pub(crate) fn serialize_instructions(
                 is_call: inst.is_call,
                 is_ret: inst.is_ret,
                 jump_target: inst.jump_target.map(|addr| format!("{:#X}", addr)),
+                is_patched,
             }
         })
         .collect()
@@ -54,11 +71,12 @@ pub(crate) fn process_disassembly_request(
     let pid = event.pid();
     debug!("📤 Processing disassembly request: pid={}, address=0x{:X}, count={}", pid, address, count);
     let modules = get_modules_snapshot(session);
+    let patched_ranges = applied_patch_ranges(&session.state.lock().unwrap());
     match session.disassemble_memory(pid, address, count as usize, arch) {
         Ok(instructions) => {
             debug!("📥 Received {} instructions from disassemble_memory", instructions.len());
 
-            let serializable_instructions = serialize_instructions(&instructions, &modules);
+            let serializable_instructions = serialize_instructions(&instructions, &modules, &patched_ranges);
 
             if let Some(ref handle) = app_handle_clone {
                 let session_id = {
@@ -129,11 +147,12 @@ pub(crate) fn process_function_disassembly_request(
     debug!("📤 Processing function disassembly request: pid={}, address=0x{:X}, max_instructions={}", pid, address, max_instructions);
 
     let modules = get_modules_snapshot(session);
+    let patched_ranges = applied_patch_ranges(&session.state.lock().unwrap());
     match session.disassemble_function(pid, address, max_instructions as usize, arch) {
         Ok((instructions, function_start, function_end, function_name)) => {
             debug!("📥 Received {} instructions from disassemble_function", instructions.len());
 
-            let serializable_instructions = serialize_instructions(&instructions, &modules);
+            let serializable_instructions = serialize_instructions(&instructions, &modules, &patched_ranges);
 
             if let Some(ref handle) = app_handle_clone {
                 let session_id = {

@@ -6,11 +6,12 @@ use tauri::{AppHandle, Emitter, Manager};
 use tracing::{debug, error, info};
 
 use super::breakpoints::{deactivate_breakpoints_for_module, emit_breakpoints_event, reapply_breakpoints_for_module};
+use super::patches::{deactivate_patches_for_module, emit_patches_event, reapply_patches_for_module};
 use super::dispatch::handle_ui_commands;
 use super::helpers::{module_short_name, update_session_from_event};
 use super::types::DebugSession;
 
-/// Reapply or deactivate breakpoints in response to module load/unload events.
+/// Reapply or deactivate breakpoints and patches in response to module load/unload events.
 /// `state` must NOT be locked when calling this.
 fn handle_event_breakpoints(
     session: &mut DebugSession,
@@ -20,16 +21,23 @@ fn handle_event_breakpoints(
     match event {
         joybug2::protocol_io::DebugEvent::DllLoaded { dll_name, base_of_dll, .. } => {
             let name = dll_name.as_deref().unwrap_or("<unknown>");
-            reapply_breakpoints_for_module(session, event.pid(), &module_short_name(name), *base_of_dll);
+            let short = module_short_name(name);
+            // Patches must be applied BEFORE breakpoints so that patches read real
+            // binary bytes (not 0xCC) and breakpoints store patched bytes as originals.
+            reapply_patches_for_module(session, event.pid(), &short, *base_of_dll);
+            reapply_breakpoints_for_module(session, event.pid(), &short, *base_of_dll);
         }
         joybug2::protocol_io::DebugEvent::ProcessCreated { image_file_name, base_of_image, .. } => {
             let name = image_file_name.as_deref().unwrap_or("main.exe");
-            reapply_breakpoints_for_module(session, event.pid(), &module_short_name(name), *base_of_image);
+            let short = module_short_name(name);
+            reapply_patches_for_module(session, event.pid(), &short, *base_of_image);
+            reapply_breakpoints_for_module(session, event.pid(), &short, *base_of_image);
         }
         joybug2::protocol_io::DebugEvent::DllUnloaded { .. } => {
             if let Some(ref name) = unloaded_module_name {
                 let mut state = session.state.lock().unwrap();
                 deactivate_breakpoints_for_module(&mut state, &module_short_name(name));
+                deactivate_patches_for_module(&mut state, &module_short_name(name));
             }
         }
         _ => {}
@@ -351,20 +359,27 @@ pub fn run_debug_session(
                     unloaded_module_name = get_unloaded_module_name(&state, event);
                     if let Some(ref name) = unloaded_module_name {
                         deactivate_breakpoints_for_module(&mut state, &module_short_name(name));
+                        deactivate_patches_for_module(&mut state, &module_short_name(name));
                     }
 
                     update_session_from_event(&mut state, event);
                 }
 
-                // Reapply breakpoints for newly loaded modules (DllUnloaded already handled above with state locked)
+                // Reapply patches then breakpoints for newly loaded modules.
+                // Patches first so they read real binary bytes; breakpoints then store
+                // patched bytes as originals. (DllUnloaded already handled above with state locked)
                 match event {
                     joybug2::protocol_io::DebugEvent::DllLoaded { dll_name, base_of_dll, .. } => {
                         let name = dll_name.as_deref().unwrap_or("<unknown>");
-                        reapply_breakpoints_for_module(session, event.pid(), &module_short_name(name), *base_of_dll);
+                        let short = module_short_name(name);
+                        reapply_patches_for_module(session, event.pid(), &short, *base_of_dll);
+                        reapply_breakpoints_for_module(session, event.pid(), &short, *base_of_dll);
                     }
                     joybug2::protocol_io::DebugEvent::ProcessCreated { image_file_name, base_of_image, .. } => {
                         let name = image_file_name.as_deref().unwrap_or("main.exe");
-                        reapply_breakpoints_for_module(session, event.pid(), &module_short_name(name), *base_of_image);
+                        let short = module_short_name(name);
+                        reapply_patches_for_module(session, event.pid(), &short, *base_of_image);
+                        reapply_breakpoints_for_module(session, event.pid(), &short, *base_of_image);
                     }
                     _ => {}
                 }
@@ -377,6 +392,7 @@ pub fn run_debug_session(
             // Emit session events
             emit_session_event(&session.state, handle);
             emit_breakpoints_event(session, &app_handle_clone);
+            emit_patches_event(session, &app_handle_clone);
 
             info!("Debug event received, waiting for user command");
 

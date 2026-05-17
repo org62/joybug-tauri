@@ -84,8 +84,7 @@ pub fn request_set_register(
     value: String,
     session_states: State<'_, SessionStatesMap>,
 ) -> Result<()> {
-    let value = u64::from_str_radix(value.trim_start_matches("0x").trim_start_matches("0X"), 16)
-        .map_err(|e| Error::InvalidParameter(format!("Invalid hex value '{}': {}", value, e)))?;
+    let value = super::parse_hex_u64(&value, "hex value")?;
 
     super::send_paused_command(&session_id, &session_states, UICommand::SetRegister { register_name: register_name.clone(), value })?;
     info!("Set register request sent for session {}: {} = 0x{:X}", session_id, register_name, value);
@@ -184,8 +183,7 @@ pub fn request_dereference(
     session_states: State<'_, SessionStatesMap>,
     app_handle: tauri::AppHandle,
 ) -> Result<()> {
-    let address = u64::from_str_radix(address.trim_start_matches("0x").trim_start_matches("0X"), 16)
-        .map_err(|e| Error::InvalidParameter(format!("Invalid address '{}': {}", address, e)))?;
+    let address = super::parse_hex_u64(&address, "address")?;
 
     let session_arc = super::get_session_arc(&session_id, &session_states)?;
     match super::try_send_paused_command(&session_arc, UICommand::Dereference { address, count }) {
@@ -261,10 +259,7 @@ pub fn request_dereference_batch(
 ) -> Result<()> {
     let parsed: std::result::Result<Vec<u64>, _> = addresses
         .iter()
-        .map(|a| {
-            u64::from_str_radix(a.trim_start_matches("0x").trim_start_matches("0X"), 16)
-                .map_err(|e| Error::InvalidParameter(format!("Invalid address '{}': {}", a, e)))
-        })
+        .map(|a| super::parse_hex_u64(a, "address"))
         .collect();
     let addresses = parsed?;
 
@@ -480,10 +475,7 @@ fn parse_module_offset(
     let mod_name_lower = mod_name.to_lowercase();
 
     // Try resolved case: parse as hex address and subtract module base
-    if let Ok(address) = u64::from_str_radix(
-        address_hex.trim_start_matches("0x").trim_start_matches("0X"),
-        16,
-    ) {
+    if let Ok(address) = u64::from_str_radix(address_hex.trim_start_matches("0x").trim_start_matches("0X"), 16) {
         if let Some(base) = modules.iter()
             .find(|m| extract_module_name(&m.name).to_lowercase() == mod_name_lower)
             .map(|m| m.base)
@@ -512,11 +504,7 @@ pub fn add_pinned_address(
 ) -> Result<AddPinResult> {
     let (launch_command, modules) = get_session_info(&session_id, &session_states)?;
 
-    let address = u64::from_str_radix(
-        address_hex.trim_start_matches("0x").trim_start_matches("0X"),
-        16,
-    )
-    .map_err(|e| Error::InvalidParameter(format!("Invalid address '{}': {}", address_hex, e)))?;
+    let address = super::parse_hex_u64(&address_hex, "address")?;
 
     if let Some((mod_name, offset)) = find_module_for_address(&modules, address) {
         let mut pins = pinned_address_store::load_pinned_addresses(&launch_command);

@@ -5,7 +5,7 @@ import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Switch } from "./ui/switch";
 import { Label } from "./ui/label";
-import { Cpu, ArrowLeft, ArrowRight, RefreshCw, ChevronRight, Circle } from "lucide-react";
+import { Cpu, ArrowLeft, ArrowRight, RefreshCw, ChevronRight, Circle, CircleDot, Wrench, Copy } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAssemblyView, Instruction } from "@/hooks/useAssemblyView";
 import { RegisterContext, SymbolResolver, sanitizeAddressInput } from "@/lib/hexUtils";
@@ -16,6 +16,7 @@ import { useKeybindingContext } from "@/contexts/KeybindingContext";
 import { keyboardEventToChord } from "@/lib/keybindings";
 
 const COLUMN_WIDTHS_KEY = "assembly-column-widths";
+const NOP_PAD_KEY = "assembly-nop-pad";
 const MIN_COL_WIDTH = 40;
 
 interface ColumnWidths {
@@ -51,12 +52,22 @@ interface AssemblyViewProps {
   breakpointAddresses?: Set<string>;
   onToggleBreakpoint?: (address: string) => void;
   onSetHardwareBreakpoint?: (address: string, hwType: string, hwSize: number) => void;
+  onAssemblePatch?: (address: string, assemblyText: string, nopPad?: boolean) => Promise<string | null>;
 }
 
-export function AssemblyView({ sessionId, isPaused, address, registers, resolveSymbol, breakpointAddresses, onToggleBreakpoint, onSetHardwareBreakpoint }: AssemblyViewProps) {
+export function AssemblyView({ sessionId, isPaused, address, registers, resolveSymbol, breakpointAddresses, onToggleBreakpoint, onSetHardwareBreakpoint, onAssemblePatch }: AssemblyViewProps) {
   const [addressInput, setAddressInput] = useState("");
+  // Inline assembly input state
+  const [assembleTarget, setAssembleTarget] = useState<{ address: string; defaultText: string } | null>(null);
+  const [assembleError, setAssembleError] = useState<string | null>(null);
+  const [nopPad, setNopPad] = useState(() => {
+    try { return localStorage.getItem(NOP_PAD_KEY) !== "false"; } catch { return true; }
+  });
+  const assembleInputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const virtualizerRef = useRef<Virtualizer<HTMLDivElement, Element>>(null);
+  // Track which line is selected (for keyboard breakpoint toggle)
+  const [selectedAddress, setSelectedAddress] = useState<string | null>(null);
   // Track which address is being highlighted (for fade animation)
   const [highlightedAddress, setHighlightedAddress] = useState<bigint | null>(null);
   // Track which jump target is being hovered (for live highlight)
@@ -64,7 +75,7 @@ export function AssemblyView({ sessionId, isPaused, address, registers, resolveS
   // Resizable column widths
   const [columnWidths, setColumnWidths] = useState<ColumnWidths>(getInitialColumnWidths);
   // Context menu for right-click
-  const { contextMenu, contextMenuRef, openContextMenu, closeContextMenu } = useContextMenu<{ address: string }>();
+  const { contextMenu, contextMenuRef, openContextMenu, closeContextMenu } = useContextMenu<{ address: string; mnemonic: string; op_str: string }>();
 
   const {
     instructions,
@@ -84,6 +95,7 @@ export function AssemblyView({ sessionId, isPaused, address, registers, resolveS
     toggleBytesColumn,
   } = useAssemblyView({
     sessionId,
+    isPaused,
     pcAddress: address,
     registers,
     resolveSymbol,
@@ -209,12 +221,21 @@ export function AssemblyView({ sessionId, isPaused, address, registers, resolveS
       } else if (action === "assembly.goForward") {
         e.preventDefault();
         goForward();
+      } else if (action === "assembly.toggleBreakpoint") {
+        e.preventDefault();
+        const addr = selectedAddress ?? (pcAddress !== null ? `0X${pcAddress.toString(16).toUpperCase()}` : null);
+        if (addr && onToggleBreakpoint) onToggleBreakpoint(addr);
+      } else if (chord === " " && selectedAddress && onAssemblePatch && !assembleTarget) {
+        e.preventDefault();
+        const inst = instructions.find(i => i.address.toUpperCase() === selectedAddress);
+        const defaultText = inst ? `${inst.mnemonic} ${inst.op_str}`.trim() : "";
+        setAssembleTarget({ address: selectedAddress, defaultText });
       }
     };
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [goBack, goForward, reverseLookup]);
+  }, [goBack, goForward, reverseLookup, selectedAddress, pcAddress, onToggleBreakpoint, onAssemblePatch, assembleTarget, instructions]);
 
   // Mouse back/forward button navigation (buttons 3 & 4)
   useEffect(() => {
@@ -312,6 +333,68 @@ export function AssemblyView({ sessionId, isPaused, address, registers, resolveS
         </div>
       </div>
 
+      {/* Inline assembly input */}
+      {assembleTarget && (
+        <div className="shrink-0 border-b border-border bg-muted/40">
+          <div className="flex items-center gap-2 px-2 py-1.5">
+            <span className="text-xs font-mono text-muted-foreground shrink-0">
+              Assemble @ {assembleTarget.address}:
+            </span>
+            <Input
+              ref={assembleInputRef}
+              defaultValue={assembleTarget.defaultText}
+              placeholder="e.g. nop, mov eax, 1"
+              className={cn("flex-1 h-7 text-xs font-mono", assembleError && "border-red-500 focus-visible:ring-red-500")}
+              onChange={() => { if (assembleError) setAssembleError(null); }}
+              onKeyDown={async (e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  const text = (e.target as HTMLInputElement).value.trim();
+                  if (text && onAssemblePatch) {
+                    const err = await onAssemblePatch(assembleTarget.address, text, nopPad);
+                    if (err) {
+                      setAssembleError(err);
+                      return;
+                    }
+                  }
+                  setAssembleError(null);
+                  setAssembleTarget(null);
+                } else if (e.key === "Escape") {
+                  setAssembleError(null);
+                  setAssembleTarget(null);
+                }
+              }}
+              autoFocus
+            />
+            <div className="flex items-center gap-1.5 shrink-0">
+              <Label htmlFor="nop-pad" className="text-xs whitespace-nowrap">NOPs</Label>
+              <Switch
+                id="nop-pad"
+                checked={nopPad}
+                onCheckedChange={(checked) => {
+                  setNopPad(checked);
+                  try { localStorage.setItem(NOP_PAD_KEY, String(checked)); } catch {}
+                }}
+                className="h-4 w-7"
+              />
+            </div>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 px-2 text-xs"
+              onClick={() => { setAssembleError(null); setAssembleTarget(null); }}
+            >
+              Cancel
+            </Button>
+          </div>
+          {assembleError && (
+            <div className="px-2 pb-1.5 text-xs text-red-500 font-mono truncate" title={assembleError}>
+              {assembleError}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Column header - fixed outside scroll area */}
       {showInstructions && (
         <div className="shrink-0 flex items-center px-2 py-0.5 border-b border-border font-mono text-xs text-foreground/60 select-none">
@@ -350,14 +433,17 @@ export function AssemblyView({ sessionId, isPaused, address, registers, resolveS
               <InstructionRow
                 instruction={inst}
                 isPC={isPC}
+                isSelected={selectedAddress === instAddrUpper}
                 isHighlighted={isHighlighted}
                 isHoverTarget={isHoverTarget}
                 hasBreakpoint={hasBreakpoint}
+                isPatched={inst.is_patched ?? false}
                 showBytes={showBytes}
                 columnWidths={columnWidths}
+                onClick={(addr) => setSelectedAddress(addr.toUpperCase())}
                 onJumpTargetClick={handleJumpTargetClick}
                 onJumpTargetHover={handleJumpTargetHover}
-                onContextMenu={(e, addr) => openContextMenu(e, { address: addr })}
+                onContextMenu={(e, addr, mnemonic, opStr) => openContextMenu(e, { address: addr, mnemonic, op_str: opStr })}
                 style={{ height: ASSEMBLY_ROW_HEIGHT }}
               />
             );
@@ -411,6 +497,7 @@ export function AssemblyView({ sessionId, isPaused, address, registers, resolveS
                 closeContextMenu();
               }}
             >
+              <Circle className="h-4 w-4 text-red-500" />
               {breakpointAddresses?.has(contextMenu.data.address.toUpperCase()) ? "Remove Breakpoint" : "Toggle Breakpoint"}
             </button>
           )}
@@ -422,7 +509,21 @@ export function AssemblyView({ sessionId, isPaused, address, registers, resolveS
                 closeContextMenu();
               }}
             >
+              <CircleDot className="h-4 w-4 text-orange-500" />
               Add Hardware Breakpoint
+            </button>
+          )}
+          {onAssemblePatch && (
+            <button
+              className="w-full px-3 py-1.5 text-sm text-left hover:bg-accent hover:text-accent-foreground flex items-center gap-2"
+              onClick={() => {
+                const defaultText = `${contextMenu.data.mnemonic} ${contextMenu.data.op_str}`.trim();
+                setAssembleTarget({ address: contextMenu.data.address, defaultText });
+                closeContextMenu();
+              }}
+            >
+              <Wrench className="h-4 w-4 text-purple-500" />
+              Assemble...
             </button>
           )}
           <button
@@ -432,6 +533,7 @@ export function AssemblyView({ sessionId, isPaused, address, registers, resolveS
               closeContextMenu();
             }}
           >
+            <Copy className="h-4 w-4 text-muted-foreground" />
             Copy Address
           </button>
         </div>
@@ -444,18 +546,21 @@ export function AssemblyView({ sessionId, isPaused, address, registers, resolveS
 interface InstructionRowProps {
   instruction: Instruction;
   isPC: boolean;
+  isSelected: boolean;
   isHighlighted: boolean;
   isHoverTarget: boolean;
   hasBreakpoint: boolean;
+  isPatched: boolean;
   showBytes: boolean;
   columnWidths: ColumnWidths;
+  onClick: (address: string) => void;
   onJumpTargetClick: (target: string) => void;
   onJumpTargetHover: (target: string | null) => void;
-  onContextMenu: (e: React.MouseEvent, address: string) => void;
+  onContextMenu: (e: React.MouseEvent, address: string, mnemonic: string, opStr: string) => void;
   style?: React.CSSProperties;
 }
 
-function InstructionRow({ instruction, isPC, isHighlighted, isHoverTarget, hasBreakpoint, showBytes, columnWidths, onJumpTargetClick, onJumpTargetHover, onContextMenu, style }: InstructionRowProps) {
+function InstructionRow({ instruction, isPC, isSelected, isHighlighted, isHoverTarget, hasBreakpoint, isPatched, showBytes, columnWidths, onClick, onJumpTargetClick, onJumpTargetHover, onContextMenu, style }: InstructionRowProps) {
   const { mnemonic, op_str, is_jump, is_call, is_ret, jump_target } = instruction;
 
   // Render operands with clickable jump target
@@ -479,13 +584,16 @@ function InstructionRow({ instruction, isPC, isHighlighted, isHoverTarget, hasBr
   return (
     <div
       className={cn(
-        "flex items-center hover:bg-muted/30 px-2",
-        isPC && "bg-yellow-100 dark:bg-yellow-900/40",
+        "flex items-center hover:bg-muted/30 px-2 cursor-default",
+        isSelected && "bg-accent/50",
+        isPC && !isSelected && "bg-yellow-100 dark:bg-yellow-900/40",
+        isPatched && !isPC && !isSelected && "bg-purple-100 dark:bg-purple-900/30",
         isHighlighted && "animate-highlight-fade",
-        isHoverTarget && "bg-blue-100 dark:bg-blue-900/40"
+        isHoverTarget && !isSelected && "bg-blue-100 dark:bg-blue-900/40"
       )}
       style={style}
-      onContextMenu={(e) => onContextMenu(e, instruction.address)}
+      onClick={() => onClick(instruction.address)}
+      onContextMenu={(e) => onContextMenu(e, instruction.address, instruction.mnemonic, instruction.op_str)}
     >
       {/* PC indicator */}
       <span className="w-4 shrink-0 text-yellow-600 dark:text-yellow-400">

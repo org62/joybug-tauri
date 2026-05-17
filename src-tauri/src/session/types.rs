@@ -30,6 +30,7 @@ pub enum UICommand {
     SetRegister { register_name: String, value: u64 },
     ToggleBreakpoint { address: u64 },
     RemoveBreakpoint { breakpoint_id: String },
+    RemoveBreakpoints { breakpoint_ids: Vec<String> },
     EnableBreakpoint { breakpoint_id: String, enabled: bool },
     EnableBreakpointGroup { group: String, enabled: bool },
     UpdateBreakpoint { breakpoint_id: String, name: Option<String>, group: Option<String> },
@@ -62,6 +63,12 @@ pub enum UICommand {
     ScanMemoryReset {
         scan_id: u64,
     },
+    AssemblePatch { address: u64, assembly_text: String, arch: joybug2::interfaces::Architecture, nop_pad: bool },
+    UndoPatch { patch_id: String },
+    UndoPatches { patch_ids: Vec<String> },
+    EnablePatch { patch_id: String, enabled: bool },
+    UpdatePatch { patch_id: String, group: Option<String> },
+    EnablePatchGroup { group: String, enabled: bool },
 }
 
 /// Event payload for successful memory read (may be partial)
@@ -190,6 +197,8 @@ pub struct SerializableInstruction {
     pub is_call: bool,
     pub is_ret: bool,
     pub jump_target: Option<String>,
+    #[serde(default)]
+    pub is_patched: bool,
 }
 
 #[derive(serde::Serialize, Clone, Debug)]

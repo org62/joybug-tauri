@@ -16,6 +16,8 @@ export interface DockingOperations {
   resetLayout: () => void;
   toggleTab: (tabId: string) => void;
   showTab: (tabId: string) => void;
+  closeActiveTab: () => void;
+  setFocusedPanelByElement: (element: HTMLElement) => void;
   onLayoutChange: (
     newLayout: LayoutBase
   ) => void;
@@ -471,6 +473,58 @@ export function useDocking(config: DockingConfig): DockingState & DockingOperati
     [LAYOUT_STORAGE_KEY, onTabsChanged]
   );
 
+  /** Identify the focused tab by walking from a DOM element up to its dock-panel,
+   *  then reading the active tabpane's id attribute (which rc-dock sets to the tab ID). */
+  const focusedTabIdRef = React.useRef<string | null>(null);
+
+  const setFocusedPanelByElement = React.useCallback((element: HTMLElement) => {
+    const panel = element.closest('.dock-panel') as HTMLElement | null;
+    if (!panel) return;
+    const activePane = panel.querySelector('.dock-tabpane-active[id]') as HTMLElement | null;
+    if (activePane?.id) {
+      focusedTabIdRef.current = activePane.id;
+    }
+  }, []);
+
+  const closeActiveTab = React.useCallback(() => {
+    const tabId = focusedTabIdRef.current;
+    if (!tabId) return;
+
+    setLayout((currentLayout) => {
+      const { exists } = findTabState(currentLayout.dockbox, tabId);
+      if (!exists) return currentLayout;
+
+      const newLayout = JSON.parse(JSON.stringify(getSerializableLayout(currentLayout)));
+      const removeTab = (box: any) => {
+        if (!box) return;
+        if (box.tabs) {
+          const idx = box.tabs.findIndex((t: any) => t.id === tabId);
+          if (idx !== -1) {
+            box.tabs.splice(idx, 1);
+            if (box.activeId === tabId) {
+              if (box.tabs.length > 0) {
+                const newIdx = Math.min(idx, box.tabs.length - 1);
+                box.activeId = box.tabs[newIdx].id;
+                focusedTabIdRef.current = box.activeId;
+              } else {
+                delete box.activeId;
+                focusedTabIdRef.current = null;
+              }
+            }
+          }
+        }
+        if (box.children) box.children.forEach(removeTab);
+      };
+      removeTab(newLayout.dockbox);
+
+      localStorage.setItem(LAYOUT_STORAGE_KEY, JSON.stringify(newLayout));
+      if (onTabsChanged) {
+        onTabsChanged(collectTabIds(newLayout.dockbox));
+      }
+      return newLayout;
+    });
+  }, [LAYOUT_STORAGE_KEY, onTabsChanged]);
+
   return {
     layout,
     tabContents,
@@ -481,5 +535,7 @@ export function useDocking(config: DockingConfig): DockingState & DockingOperati
     toggleTab,
     showTab,
     onLayoutChange,
+    setFocusedPanelByElement,
+    closeActiveTab,
   };
 }

@@ -38,7 +38,7 @@ export const DebuggerDockingConfig: DockingConfig = {
           ],
         },
         {
-          tabs: [{ id: "disassembly" }, { id: "memory" }, { id: "memory_regions" }, { id: "breakpoints" }, { id: "memory_search" }, { id: "memory_scanner" }, { id: "peviewer" }],
+          tabs: [{ id: "disassembly" }, { id: "memory" }, { id: "memory_regions" }, { id: "breakpoints" }, { id: "patches" }, { id: "memory_search" }, { id: "memory_scanner" }, { id: "peviewer" }],
           activeId: "disassembly",
         },
         {
@@ -68,6 +68,7 @@ export const DebuggerDockingConfig: DockingConfig = {
     memory: { id: "memory", title: "Memory", content: <div>Memory placeholder</div> },
     memory_regions: { id: "memory_regions", title: "Memory Regions", content: <div>Memory Regions placeholder</div> },
     breakpoints: { id: "breakpoints", title: "Breakpoints", content: <div>Breakpoints placeholder</div> },
+    patches: { id: "patches", title: "Patches", content: <div>Patches placeholder</div> },
     memory_search: { id: "memory_search", title: "Memory Search", content: <div>Memory Search placeholder</div> },
     memory_scanner: { id: "memory_scanner", title: "Memory Scanner", content: <div>Memory Scanner placeholder</div> },
     peviewer: { id: "peviewer", title: "PE Viewer", content: <div>PE Viewer placeholder</div> },

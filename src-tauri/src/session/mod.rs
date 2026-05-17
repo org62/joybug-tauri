@@ -5,6 +5,7 @@ pub(crate) mod disassembly;
 mod emulation;
 pub(crate) mod helpers;
 mod memory;
+pub(crate) mod patches;
 mod registers;
 mod runner;
 mod symbols;

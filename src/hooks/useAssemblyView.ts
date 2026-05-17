@@ -22,6 +22,7 @@ export interface Instruction {
   is_call: boolean;
   is_ret: boolean;
   jump_target: string | null;
+  is_patched?: boolean;
 }
 
 // Event payloads from Tauri
@@ -100,13 +101,14 @@ export interface AssemblyViewActions {
 
 export interface UseAssemblyViewOptions {
   sessionId: string | undefined;
+  isPaused?: boolean;
   pcAddress?: number; // Current PC from debug event
   registers?: RegisterContext;
   resolveSymbol?: SymbolResolver;
 }
 
 export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewState & AssemblyViewActions {
-  const { sessionId, pcAddress: pcAddressProp, registers = {}, resolveSymbol } = options;
+  const { sessionId, isPaused, pcAddress: pcAddressProp, registers = {}, resolveSymbol } = options;
 
   // State
   const [instructions, setInstructions] = useState<Instruction[]>([]);
@@ -315,10 +317,28 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
       }
     );
 
+    // Refresh disassembly when patches change so patched instructions are shown
+    const unlistenPatches = listen<{session_id: string}>(
+      'patches-updated',
+      (event) => {
+        if (event.payload.session_id === sessionId && lastRequestedAddress.current !== null) {
+          // Re-request the current disassembly to pick up is_patched flags and new bytes
+          invoke('request_function_disassembly', {
+            sessionId,
+            address: Number(lastRequestedAddress.current),
+            maxInstructions: DEFAULT_MAX_INSTRUCTIONS,
+          }).catch(() => {
+            // Ignore errors (e.g., session ended between patch and refresh)
+          });
+        }
+      }
+    );
+
     return () => {
       unlistenSuccess.then(unlisten => unlisten());
       unlistenError.then(unlisten => unlisten());
       unlistenOldSuccess.then(unlisten => unlisten());
+      unlistenPatches.then(unlisten => unlisten());
     };
   }, [sessionId]);
 
@@ -370,9 +390,9 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
     // If PC didn't change, user can freely navigate without being pulled back
   }, [pcAddress, sessionId, currentAddress, navigationHistory.length, functionStart, functionEnd, goToAddressDirect]);
 
-  // Clear state when session ends (keep data visible when running)
+  // Clear state when session ends or stops
   useEffect(() => {
-    if (!sessionId) {
+    if (!sessionId || isPaused === false) {
       setInstructions([]);
       setCurrentAddress(null);
       setFunctionStart(null);
@@ -387,7 +407,7 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
       requestInFlight.current = false;
       userNavigatedAway.current = false;
     }
-  }, [sessionId]);
+  }, [sessionId, isPaused]);
 
   return {
     // State

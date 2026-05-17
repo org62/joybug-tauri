@@ -11,6 +11,7 @@ export function ContextBreakpointsView() {
     breakpoints,
     toggleBreakpoint,
     removeBreakpoint,
+    removeBreakpoints,
     enableBreakpoint,
     enableBreakpointGroup,
     updateBreakpoint,
@@ -30,6 +31,7 @@ export function ContextBreakpointsView() {
       breakpoints={breakpoints}
       onToggleBreakpoint={toggleBreakpoint}
       onRemoveBreakpoint={removeBreakpoint}
+      onRemoveBreakpoints={removeBreakpoints}
       onEnableBreakpoint={enableBreakpoint}
       onEnableBreakpointGroup={enableBreakpointGroup}
       onUpdateBreakpoint={updateBreakpoint}

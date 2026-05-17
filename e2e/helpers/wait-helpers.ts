@@ -21,7 +21,7 @@ export async function waitForPaused(
         return s?.status;
       }, sessionId);
       expect(status).toBe("Paused");
-    }).toPass({ timeout, intervals: [250, 500, 1_000] });
+    }).toPass({ timeout, intervals: [100, 250, 500] });
 
     // 2. Wait for UI to reflect the Paused state (React processes session-updated event)
     try {
@@ -68,7 +68,7 @@ export async function waitForStopped(
         return s?.status;
       }, sessionId);
       expect(status).toBe("Stopped");
-    }).toPass({ timeout, intervals: [250, 500, 1_000] });
+    }).toPass({ timeout, intervals: [100, 250, 500] });
 
     // 2. Wait for UI to reflect the Stopped state
     try {

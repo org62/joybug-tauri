@@ -68,29 +68,7 @@ impl Default for DebugSettings {
 pub type SettingsState = Mutex<DebugSettings>;
 
 fn settings_file_path() -> PathBuf {
-    // Windows: %LOCALAPPDATA%\JoybugTauri\settings.json
-    if cfg!(target_os = "windows") {
-        if let Ok(base) = std::env::var("LOCALAPPDATA") {
-            return PathBuf::from(base).join("JoybugTauri").join("settings.json");
-        }
-        if let Ok(base) = std::env::var("APPDATA") {
-            return PathBuf::from(base).join("JoybugTauri").join("settings.json");
-        }
-    }
-    // Unix: $XDG_CONFIG_HOME/joybug-tauri/settings.json or ~/.config/joybug-tauri/settings.json
-    if let Ok(base) = std::env::var("XDG_CONFIG_HOME") {
-        return PathBuf::from(base).join("joybug-tauri").join("settings.json");
-    }
-    if let Ok(home) = std::env::var("HOME") {
-        return PathBuf::from(home)
-            .join(".config")
-            .join("joybug-tauri")
-            .join("settings.json");
-    }
-    // Fallback: current dir (dev only). This may cause hot-reload on file change.
-    std::env::current_dir()
-        .unwrap_or_else(|_| PathBuf::from("."))
-        .join("joybug_tauri_settings.json")
+    crate::data_dir::joybug_data_dir().join("settings.json")
 }
 
 pub fn load_settings_from_disk() -> DebugSettings {

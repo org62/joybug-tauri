@@ -1,7 +1,9 @@
 mod breakpoint_store;
 mod commands;
+mod data_dir;
 mod error;
 mod events;
+mod patch_store;
 mod pinned_address_store;
 mod ui_logger;
 mod session;
@@ -95,6 +97,7 @@ pub fn run() {
             commands::update_debug_settings,
             commands::toggle_breakpoint,
             commands::remove_breakpoint,
+            commands::remove_breakpoints,
             commands::enable_breakpoint,
             commands::enable_breakpoint_group,
             commands::update_breakpoint,
@@ -108,6 +111,13 @@ pub fn run() {
             commands::confirm_pin_raw_address,
             commands::get_pinned_addresses,
             commands::remove_pinned_address,
+            commands::assemble_patch,
+            commands::undo_patch,
+            commands::undo_patches,
+            commands::enable_patch,
+            commands::update_patch,
+            commands::enable_patch_group,
+            commands::get_patches,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

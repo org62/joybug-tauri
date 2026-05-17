@@ -184,6 +184,42 @@ pub(crate) fn process_remove_breakpoint(
     persist_breakpoints(&session.state);
 }
 
+/// Processes a batch remove breakpoints request (single event + persist at the end)
+pub(crate) fn process_remove_breakpoints(
+    session: &mut DebugSession,
+    app_handle_clone: &Option<AppHandle>,
+    pid: u32,
+    breakpoint_ids: &[String],
+) {
+    for breakpoint_id in breakpoint_ids {
+        let bp_info = {
+            let state = session.state.lock().unwrap();
+            state.breakpoints.iter().find(|bp| bp.id == *breakpoint_id).cloned()
+        };
+
+        if let Some(bp) = bp_info {
+            if bp.is_active {
+                let result = if bp.bp_kind == "hardware" {
+                    session.remove_hardware_breakpoint(pid, bp.address)
+                } else {
+                    session.remove_breakpoint(pid, bp.address)
+                };
+                if let Err(e) = result {
+                    warn!("Failed to remove breakpoint at 0x{:X}: {}", bp.address, e);
+                }
+            }
+            {
+                let mut state = session.state.lock().unwrap();
+                state.breakpoints.retain(|b| b.id != *breakpoint_id);
+            }
+            info!("Removed breakpoint {}", breakpoint_id);
+        }
+    }
+
+    emit_breakpoints_event(session, app_handle_clone);
+    persist_breakpoints(&session.state);
+}
+
 /// Core logic for enabling/disabling a single breakpoint (no emit/persist).
 pub(crate) fn apply_enable_breakpoint(
     session: &mut DebugSession,

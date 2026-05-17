@@ -53,6 +53,7 @@ pub fn create_debug_session(
     {
         let mut state = session_state_arc.lock().unwrap();
         state.breakpoints = crate::breakpoint_store::load_breakpoints(&state.launch_command);
+        state.patches = crate::patch_store::load_patches(&state.launch_command);
     }
 
     states.insert(session_id.clone(), session_state_arc.clone());

@@ -43,39 +43,46 @@ test.describe("Stepping Controls", () => {
           break; // Session stopped or timed out
         }
 
-        // Check event type with short-lived evaluate
-        let eventType: string | null;
+        // Get current event snapshot
+        let currentEvent: any;
         try {
-          eventType = await page.evaluate(async (id: string) => {
+          currentEvent = await page.evaluate(async (id: string) => {
             const s = await (window as any).__TAURI_INTERNALS__.invoke(
               "get_debug_session",
               { sessionId: id },
             );
-            return s?.current_event?.event_type ?? null;
+            return s?.current_event ?? null;
           }, sessionId);
         } catch {
           continue; // Context destroyed — retry
         }
 
-        if (eventType === "InitialBreakpoint") {
+        if (currentEvent?.event_type === "InitialBreakpoint") {
           foundInitialBreakpoint = true;
           break;
         }
 
-        // Continue and wait for the backend to actually process the Go command
-        // (prevents double-Go from stale Paused reads that skip events)
+        // Continue and wait for a NEW event to arrive (or session to leave Paused).
+        // We compare events rather than waiting for "not Paused" because the debugger
+        // often re-pauses on the next event in microseconds — too fast to catch Running.
+        const prevEventJson = JSON.stringify(currentEvent);
         try {
           await continueSession(page, sessionId);
-          // Wait for session to leave Paused state before next iteration
           await expect(async () => {
-            const status = await page.evaluate(async (id: string) => {
+            const snapshot = await page.evaluate(async (id: string) => {
               const s = await (window as any).__TAURI_INTERNALS__.invoke(
                 "get_debug_session",
                 { sessionId: id },
               );
-              return s?.status;
+              return {
+                status: s?.status,
+                currentEvent: s?.current_event ?? null,
+              };
             }, sessionId);
-            expect(status).not.toBe("Paused");
+            const newEventJson = JSON.stringify(snapshot.currentEvent);
+            expect(
+              snapshot.status !== "Paused" || newEventJson !== prevEventJson,
+            ).toBe(true);
           }).toPass({ timeout: 5_000, intervals: [50, 100, 250] });
         } catch {
           // Session might have stopped or context destroyed — next iteration handles it

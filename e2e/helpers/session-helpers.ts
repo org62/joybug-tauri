@@ -99,7 +99,16 @@ export async function cleanupSession(
       // May already be stopped
     }
 
-    await new Promise((r) => setTimeout(r, 500));
+    // Poll until stopped instead of hardcoded sleep
+    for (let attempt = 0; attempt < 50; attempt++) {
+      try {
+        const s = await invoke("get_debug_session", { sessionId: id });
+        if (s.status === "Stopped") break;
+      } catch {
+        break; // Session may not exist
+      }
+      await new Promise((r) => setTimeout(r, 50 + attempt * 50));
+    }
 
     try {
       await invoke("delete_debug_session", { sessionId: id });

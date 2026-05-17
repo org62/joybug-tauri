@@ -25,6 +25,7 @@ export const ContextAssemblyView = () => {
   const sessionId = sessionData?.session?.id;
 
   const { breakpoints, toggleBreakpoint, setHardwareBreakpoint } = sessionData.breakpointState;
+  const { assemblePatch } = sessionData.patchState;
 
   // Build a set of breakpoint addresses (uppercase hex) for quick lookup.
   // Exclude unresolved breakpoints (address "0x0") since they have no real location yet.
@@ -48,6 +49,7 @@ export const ContextAssemblyView = () => {
       breakpointAddresses={breakpointAddresses}
       onToggleBreakpoint={toggleBreakpoint}
       onSetHardwareBreakpoint={setHardwareBreakpoint}
+      onAssemblePatch={assemblePatch}
     />
   );
 };

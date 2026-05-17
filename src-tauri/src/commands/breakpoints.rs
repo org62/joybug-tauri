@@ -1,9 +1,9 @@
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::session::UICommand;
 use crate::session::breakpoints::{
     process_enable_breakpoint, process_enable_breakpoint_group,
-    process_remove_breakpoint, process_set_hardware_breakpoint, process_toggle_breakpoint,
-    process_update_breakpoint,
+    process_remove_breakpoint, process_remove_breakpoints, process_set_hardware_breakpoint,
+    process_toggle_breakpoint, process_update_breakpoint,
 };
 use crate::state::SessionStatesMap;
 use tauri::State;
@@ -16,8 +16,7 @@ pub fn toggle_breakpoint(
     session_states: State<'_, SessionStatesMap>,
     app_handle: tauri::AppHandle,
 ) -> Result<()> {
-    let address = u64::from_str_radix(address.trim_start_matches("0x").trim_start_matches("0X"), 16)
-        .map_err(|e| Error::InvalidParameter(format!("Invalid address '{}': {}", address, e)))?;
+    let address = super::parse_hex_u64(&address, "address")?;
 
     let session_arc = super::get_session_arc(&session_id, &session_states)?;
     match super::try_send_paused_command(&session_arc, UICommand::ToggleBreakpoint { address }) {
@@ -49,6 +48,27 @@ pub fn remove_breakpoint(
             let (mut oob, pid) = super::create_oob_client(&session_arc)?;
             process_remove_breakpoint(&mut oob, &Some(app_handle), pid, &breakpoint_id);
             info!("OOB remove breakpoint for session {}, bp_id {}", session_id, breakpoint_id);
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn remove_breakpoints(
+    session_id: String,
+    breakpoint_ids: Vec<String>,
+    session_states: State<'_, SessionStatesMap>,
+    app_handle: tauri::AppHandle,
+) -> Result<()> {
+    let session_arc = super::get_session_arc(&session_id, &session_states)?;
+    match super::try_send_paused_command(&session_arc, UICommand::RemoveBreakpoints { breakpoint_ids: breakpoint_ids.clone() }) {
+        Ok(()) => {
+            info!("Remove breakpoints request sent for session {}, {} breakpoints", session_id, breakpoint_ids.len());
+        }
+        Err(_) => {
+            let (mut oob, pid) = super::create_oob_client(&session_arc)?;
+            process_remove_breakpoints(&mut oob, &Some(app_handle), pid, &breakpoint_ids);
+            info!("OOB remove breakpoints for session {}, {} breakpoints", session_id, breakpoint_ids.len());
         }
     }
     Ok(())
@@ -107,8 +127,7 @@ pub fn set_hardware_breakpoint(
     session_states: State<'_, SessionStatesMap>,
     app_handle: tauri::AppHandle,
 ) -> Result<()> {
-    let address = u64::from_str_radix(address.trim_start_matches("0x").trim_start_matches("0X"), 16)
-        .map_err(|e| Error::InvalidParameter(format!("Invalid address '{}': {}", address, e)))?;
+    let address = super::parse_hex_u64(&address, "address")?;
 
     let session_arc = super::get_session_arc(&session_id, &session_states)?;
     match super::try_send_paused_command(&session_arc, UICommand::SetHardwareBreakpoint { address, hw_type: hw_type.clone(), hw_size }) {

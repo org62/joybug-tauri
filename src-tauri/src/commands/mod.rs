@@ -3,6 +3,7 @@ mod disassembly;
 mod emulation;
 mod logging;
 mod memory;
+mod patches;
 mod session_lifecycle;
 mod settings;
 mod stepping;
@@ -15,6 +16,7 @@ pub use disassembly::*;
 pub use emulation::*;
 pub use logging::*;
 pub use memory::*;
+pub use patches::*;
 pub use session_lifecycle::*;
 pub use settings::*;
 pub use stepping::*;
@@ -25,6 +27,12 @@ use std::sync::{Arc, Mutex};
 use crate::error::{Error, Result};
 use crate::session::UICommand;
 use crate::state::{SessionStateUI, SessionStatesMap, SessionStatusUI};
+
+/// Parse a hex string (with or without "0x" prefix) into u64.
+pub(crate) fn parse_hex_u64(s: &str, label: &str) -> Result<u64> {
+    u64::from_str_radix(s.trim_start_matches("0x").trim_start_matches("0X"), 16)
+        .map_err(|e| Error::InvalidParameter(format!("Invalid {} '{}': {}", label, s, e)))
+}
 
 /// Sends a UICommand to a paused session. Shared helper for breakpoint, symbol, and disassembly commands.
 fn send_paused_command(

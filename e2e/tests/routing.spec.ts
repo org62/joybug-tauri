@@ -22,7 +22,7 @@ test.describe("Routing", () => {
 
   test("settings page loads", async ({ tauriPage: page }) => {
     await navigateTo(page, "/settings");
-    await expect(page.getByText("Application Settings")).toBeVisible({
+    await expect(page.getByText("Settings")).toBeVisible({
       timeout: 5_000,
     });
   });
