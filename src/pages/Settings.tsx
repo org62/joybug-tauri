@@ -8,11 +8,12 @@ import { Search } from "lucide-react";
 import { SettingsGeneral } from "@/components/settings/SettingsGeneral";
 import { SettingsKeybindings } from "@/components/settings/SettingsKeybindings";
 import { SettingsEvents } from "@/components/settings/SettingsEvents";
+import { SettingsDebuggerHiding } from "@/components/settings/SettingsDebuggerHiding";
 
 const SECTION_GRID = "grid gap-x-6 gap-y-5 items-start";
 const SECTION_GRID_COLS = { gridTemplateColumns: "repeat(auto-fill, minmax(20rem, 1fr))" };
 
-const VALID_TABS = ["all", "general", "keybindings", "events"];
+const VALID_TABS = ["all", "general", "keybindings", "events", "hiding"];
 
 export default function Settings() {
   const [searchParams] = useSearchParams();
@@ -59,6 +60,7 @@ export default function Settings() {
               <TabsTrigger value="general">General</TabsTrigger>
               <TabsTrigger value="keybindings">Keyboard Shortcuts</TabsTrigger>
               <TabsTrigger value="events">Events and Exceptions</TabsTrigger>
+              <TabsTrigger value="hiding">Debugger Hiding</TabsTrigger>
             </TabsList>
 
             {/* All: one flat grid with every section as a grid item */}
@@ -67,6 +69,7 @@ export default function Settings() {
                 <div className={SECTION_GRID} style={SECTION_GRID_COLS}>
                   <SettingsGeneral searchQuery={searchQuery} />
                   <SettingsEvents searchQuery={searchQuery} />
+                  <SettingsDebuggerHiding searchQuery={searchQuery} />
                   <SettingsKeybindings searchQuery={searchQuery} embedded />
                 </div>
               </ScrollArea>
@@ -91,6 +94,15 @@ export default function Settings() {
               <ScrollArea className="h-full">
                 <div className={SECTION_GRID} style={SECTION_GRID_COLS}>
                   <SettingsEvents searchQuery={searchQuery} />
+                </div>
+              </ScrollArea>
+            </TabsContent>
+
+            {/* Debugger Hiding only */}
+            <TabsContent value="hiding" className="mt-4 min-h-0 flex-1">
+              <ScrollArea className="h-full">
+                <div className={SECTION_GRID} style={SECTION_GRID_COLS}>
+                  <SettingsDebuggerHiding searchQuery={searchQuery} />
                 </div>
               </ScrollArea>
             </TabsContent>

@@ -33,6 +33,40 @@ pub struct ExceptionRule {
     pub second_chance: String, // "stop" | "pass" | "handled"
 }
 
+fn default_true() -> bool { true }
+
+/// "Debugger Hiding" — anti-anti-debug toggles applied on process start.
+/// `hide_from_peb` is the parent switch; the five child flags pick which
+/// individual PEB techniques run when the parent is enabled.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DebuggerHidingSettings {
+    #[serde(default)]
+    pub hide_from_peb: bool,
+    #[serde(default = "default_true")]
+    pub being_debugged: bool,
+    #[serde(default = "default_true")]
+    pub heap_flags: bool,
+    #[serde(default = "default_true")]
+    pub nt_global_flag: bool,
+    #[serde(default = "default_true")]
+    pub startup_info: bool,
+    #[serde(default = "default_true")]
+    pub os_build_number: bool,
+}
+
+impl Default for DebuggerHidingSettings {
+    fn default() -> Self {
+        Self {
+            hide_from_peb: false,
+            being_debugged: true,
+            heap_flags: true,
+            nt_global_flag: true,
+            startup_info: true,
+            os_build_number: true,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DebugSettings {
     pub stop_on_thread_create: bool,
@@ -47,6 +81,8 @@ pub struct DebugSettings {
     pub keybindings: KeybindingSettings,
     #[serde(default)]
     pub exception_rules: Vec<ExceptionRule>,
+    #[serde(default)]
+    pub debugger_hiding: DebuggerHidingSettings,
 }
 
 impl Default for DebugSettings {
@@ -61,6 +97,7 @@ impl Default for DebugSettings {
             stop_on_debug_output: false,
             keybindings: KeybindingSettings::default(),
             exception_rules: Vec::new(),
+            debugger_hiding: DebuggerHidingSettings::default(),
         }
     }
 }

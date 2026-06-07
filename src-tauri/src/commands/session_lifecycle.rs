@@ -19,6 +19,7 @@ pub fn create_debug_session(
     name: String,
     server_url: String,
     launch_command: String,
+    working_directory: Option<String>,
     is_local_run: bool,
     session_states: State<'_, SessionStatesMap>,
     app_handle: tauri::AppHandle,
@@ -42,11 +43,14 @@ pub fn create_debug_session(
         server_url
     };
 
+    let working_directory = working_directory.filter(|w| !w.trim().is_empty());
+
     let session_state_arc = Arc::new(Mutex::new(SessionStateUI::new(
         session_id.clone(),
         name,
         effective_server_url,
         launch_command,
+        working_directory,
         is_local_run,
     )));
 
@@ -78,6 +82,7 @@ pub fn update_debug_session(
     name: String,
     server_url: String,
     launch_command: String,
+    working_directory: Option<String>,
     is_local_run: bool,
     session_states: State<'_, SessionStatesMap>,
     app_handle: tauri::AppHandle,
@@ -106,6 +111,7 @@ pub fn update_debug_session(
         state.is_local_run = is_local_run;
         state.server_url = if is_local_run { String::new() } else { server_url };
         state.launch_command = launch_command;
+        state.working_directory = working_directory.filter(|w| !w.trim().is_empty());
 
         let session_state_arc = session_state.clone();
 
@@ -346,6 +352,7 @@ fn send_out_of_band_request(server_url: &str, req: DebuggerRequest) -> Result<()
         "tmp".to_string(),
         server_url.to_string(),
         "".to_string(),
+        None,
         false,
     )));
     let mut client = joybug2::protocol_io::DebugSession::new(tmp_state, Some(server_url))

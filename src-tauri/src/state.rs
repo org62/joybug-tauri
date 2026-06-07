@@ -49,6 +49,7 @@ pub struct DebugSessionUI {
     pub name: String,
     pub server_url: String,
     pub launch_command: String,
+    pub working_directory: Option<String>,
     pub is_local_run: bool,
     pub status: SessionStatusUI,
     pub current_event: Option<DebugEventInfo>,
@@ -125,6 +126,7 @@ pub struct SessionStateUI {
     pub name: String,
     pub server_url: String,
     pub launch_command: String,
+    pub working_directory: Option<String>,
     pub is_local_run: bool,
     pub embedded_server_port: Option<u16>,
     pub created_at: String,
@@ -161,6 +163,7 @@ impl SessionStateUI {
         name: String,
         server_url: String,
         launch_command: String,
+        working_directory: Option<String>,
         is_local_run: bool,
     ) -> Self {
         let (step_sender, step_receiver) = mpsc::channel();
@@ -169,6 +172,7 @@ impl SessionStateUI {
             name,
             server_url,
             launch_command,
+            working_directory,
             is_local_run,
             embedded_server_port: None,
             created_at: chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string(),
@@ -231,6 +235,7 @@ impl SessionStateUI {
             name: self.name.clone(),
             server_url: self.server_url.clone(),
             launch_command: self.launch_command.clone(),
+            working_directory: self.working_directory.clone(),
             is_local_run: self.is_local_run,
             status: self.status.clone(),
             current_event: self.current_event.as_ref().map(|event| {

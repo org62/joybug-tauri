@@ -78,6 +78,36 @@ test.describe("Session Lifecycle", () => {
     }
   });
 
+  test("create session with working directory persists it to backend", async ({
+    tauriPage: page,
+  }) => {
+    await navigateTo(page, "/debugger");
+
+    await page.getByRole("button", { name: /New Session/i }).click();
+    await page.getByLabel("Session Name").fill("WorkingDir Test");
+    await page.getByLabel(/Working Directory/i).fill("C:\\Windows");
+    await page
+      .getByRole("button", { name: "Create Session", exact: true })
+      .click();
+
+    await expect(page.getByText("WorkingDir Test")).toBeVisible({
+      timeout: 5_000,
+    });
+
+    // The backend should have stored the working directory we entered.
+    const session = await page.evaluate(async () => {
+      const sessions = await (window as any).__TAURI_INTERNALS__.invoke(
+        "get_debug_sessions",
+      );
+      return sessions.find((s: any) => s.name === "WorkingDir Test");
+    });
+
+    expect(session?.working_directory).toBe("C:\\Windows");
+
+    // Cleanup
+    await cleanupSession(page, session.id);
+  });
+
   test("delete session removes card from list", async ({
     tauriPage: page,
   }) => {

@@ -40,6 +40,7 @@ export interface DebugSession {
   name: string;
   server_url: string;
   launch_command: string;
+  working_directory: string | null;
   is_local_run: boolean;
   status: SessionStatus;
   current_event: DebugEventInfo | null;

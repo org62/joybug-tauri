@@ -37,6 +37,7 @@ interface DebugSession {
   name: string;
   server_url: string;
   launch_command: string;
+  working_directory: string | null;
   is_local_run: boolean;
   status: SessionStatus;
   current_event: DebugEventInfo | null;
@@ -67,6 +68,7 @@ export default function Debugger() {
   const [formName, setFormName] = useState("");
   const [formServerUrl, setFormServerUrl] = useState("127.0.0.1:9000");
   const [formLaunchCommand, setFormLaunchCommand] = useState("cmd.exe /c echo Hello World!");
+  const [formWorkingDirectory, setFormWorkingDirectory] = useState("");
   const [formLocalRun, setFormLocalRun] = useState(true);
 
   // Load sessions from backend with storage restoration
@@ -106,6 +108,7 @@ export default function Debugger() {
               name: config.name,
               serverUrl: config.server_url,
               launchCommand: config.launch_command,
+              workingDirectory: config.working_directory ?? null,
               isLocalRun: config.is_local_run ?? true,
             });
             existingByContent.add(contentKey);
@@ -199,11 +202,27 @@ export default function Debugger() {
     }
   };
 
+  const handleBrowseWorkingDirectory = async () => {
+    try {
+      const selected = await open({
+        multiple: false,
+        directory: true,
+      });
+      if (selected) {
+        setFormWorkingDirectory(selected);
+      }
+    } catch (error) {
+      console.error("Failed to open directory dialog:", error);
+      toast.error(`Failed to open directory dialog: ${error}`);
+    }
+  };
+
   const handleOpenNewSessionDialog = () => {
     setSessionToEdit(null);
     setFormName("");
     setFormServerUrl("127.0.0.1:9000");
     setFormLaunchCommand("cmd.exe /c echo Hello World!");
+    setFormWorkingDirectory("");
     setFormLocalRun(true);
     setIsSessionDialogOpen(true);
   };
@@ -213,6 +232,7 @@ export default function Debugger() {
     setFormName(session.name === DEFAULT_SESSION_NAME ? "" : session.name);
     setFormServerUrl(session.server_url);
     setFormLaunchCommand(session.launch_command);
+    setFormWorkingDirectory(session.working_directory ?? "");
     setFormLocalRun(session.is_local_run);
     setIsSessionDialogOpen(true);
   };
@@ -221,10 +241,13 @@ export default function Debugger() {
     const sessionName = formName.trim() || DEFAULT_SESSION_NAME;
 
     try {
+      const workingDirectory = formWorkingDirectory.trim() || null;
+
       const sessionId = await invoke<string>("create_debug_session", {
         name: sessionName,
         serverUrl: formLocalRun ? "" : formServerUrl,
         launchCommand: formLaunchCommand,
+        workingDirectory,
         isLocalRun: formLocalRun,
       });
 
@@ -234,6 +257,7 @@ export default function Debugger() {
         name: sessionName,
         server_url: formLocalRun ? "" : formServerUrl,
         launch_command: formLaunchCommand,
+        working_directory: workingDirectory,
         is_local_run: formLocalRun,
         created_at: new Date().toISOString(),
       });
@@ -245,6 +269,7 @@ export default function Debugger() {
       setFormName("");
       setFormServerUrl("127.0.0.1:9000");
       setFormLaunchCommand("cmd.exe /c echo Hello World!");
+      setFormWorkingDirectory("");
       setFormLocalRun(true);
 
       // Live updates will arrive via events; no manual refresh
@@ -263,11 +288,14 @@ export default function Debugger() {
     const sessionName = formName.trim() || DEFAULT_SESSION_NAME;
 
     try {
+      const workingDirectory = formWorkingDirectory.trim() || null;
+
       await invoke("update_debug_session", {
         sessionId: sessionToEdit.id,
         name: sessionName,
         serverUrl: formLocalRun ? "" : formServerUrl,
         launchCommand: formLaunchCommand,
+        workingDirectory,
         isLocalRun: formLocalRun,
       });
 
@@ -277,6 +305,7 @@ export default function Debugger() {
         name: sessionName,
         server_url: formLocalRun ? "" : formServerUrl,
         launch_command: formLaunchCommand,
+        working_directory: workingDirectory,
         is_local_run: formLocalRun,
         created_at: sessionToEdit.created_at,
       });
@@ -480,6 +509,22 @@ export default function Debugger() {
                     />
                     {formLocalRun && (
                       <Button variant="outline" size="icon" onClick={handleBrowseExecutable} title="Browse for executable" type="button">
+                        <FolderOpen className="h-4 w-4" />
+                      </Button>
+                    )}
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="workingDirectory">Working Directory (optional)</Label>
+                  <div className="flex gap-2">
+                    <Input
+                      id="workingDirectory"
+                      value={formWorkingDirectory}
+                      onChange={(e) => setFormWorkingDirectory(e.target.value)}
+                      placeholder="Defaults to the debugger's directory"
+                    />
+                    {formLocalRun && (
+                      <Button variant="outline" size="icon" onClick={handleBrowseWorkingDirectory} title="Browse for working directory" type="button">
                         <FolderOpen className="h-4 w-4" />
                       </Button>
                     )}
