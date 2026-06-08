@@ -38,7 +38,7 @@ export const DebuggerDockingConfig: DockingConfig = {
           ],
         },
         {
-          tabs: [{ id: "disassembly" }],
+          tabs: [{ id: "disassembly" }, { id: "memory" }, { id: "memory_regions" }, { id: "breakpoints" }, { id: "patches" }, { id: "memory_search" }, { id: "memory_scanner" }, { id: "peviewer" }],
           activeId: "disassembly",
         },
         {
@@ -65,6 +65,13 @@ export const DebuggerDockingConfig: DockingConfig = {
     threads: { id: "threads", title: "Threads", content: <div>Threads placeholder</div> },
     callstack: { id: "callstack", title: "Call Stack", content: <div>Call Stack placeholder</div> },
     symbols: { id: "symbols", title: "Symbols", content: <div>Symbols placeholder</div> },
+    memory: { id: "memory", title: "Memory", content: <div>Memory placeholder</div> },
+    memory_regions: { id: "memory_regions", title: "Memory Regions", content: <div>Memory Regions placeholder</div> },
+    breakpoints: { id: "breakpoints", title: "Breakpoints", content: <div>Breakpoints placeholder</div> },
+    patches: { id: "patches", title: "Patches", content: <div>Patches placeholder</div> },
+    memory_search: { id: "memory_search", title: "Memory Search", content: <div>Memory Search placeholder</div> },
+    memory_scanner: { id: "memory_scanner", title: "Memory Scanner", content: <div>Memory Scanner placeholder</div> },
+    peviewer: { id: "peviewer", title: "PE Viewer", content: <div>PE Viewer placeholder</div> },
   } as { [key: string]: TabData },
   tabContentMap: {
     registers: <StaticRegisterView context={mockContext} />,

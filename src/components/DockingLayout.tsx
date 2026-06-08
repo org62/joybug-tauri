@@ -19,7 +19,9 @@ export interface DockingLayoutRef {
   addTypedTab: (type: string, contentFactory: (tabId: string) => React.ReactElement) => string;
   resetLayout: () => void;
   toggleTab: (tabId: string) => void;
+  showTab: (tabId: string) => void;
   getActiveTabs: () => string[];
+  closeActiveTab: () => void;
 }
 
 const DockingLayoutComponent = React.forwardRef<DockingLayoutRef, DockingLayoutProps>(
@@ -27,12 +29,19 @@ const DockingLayoutComponent = React.forwardRef<DockingLayoutRef, DockingLayoutP
     const { resolvedTheme } = useTheme();
     const docking = useDocking({ ...config, onTabsChanged });
 
+    // Track focused panel via mousedown on the dock container
+    const handleMouseDown = React.useCallback((e: React.MouseEvent) => {
+      docking.setFocusedPanelByElement(e.target as HTMLElement);
+    }, [docking.setFocusedPanelByElement]);
+
     // Expose operations through ref
     React.useImperativeHandle(ref, () => ({
       addTab: docking.addTab,
       addTypedTab: docking.addTypedTab,
       resetLayout: docking.resetLayout,
       toggleTab: docking.toggleTab,
+      showTab: docking.showTab,
+      closeActiveTab: docking.closeActiveTab,
       getActiveTabs: () => {
         const activeTabIds: string[] = [];
         const findTabIds = (box: any) => {
@@ -94,7 +103,7 @@ const DockingLayoutComponent = React.forwardRef<DockingLayoutRef, DockingLayoutP
     );
 
     return (
-      <div className={className} style={style}>
+      <div className={className} style={style} onMouseDown={handleMouseDown}>
         {children}
         <DockLayout
           key={resolvedTheme}

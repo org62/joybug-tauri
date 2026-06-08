@@ -12,6 +12,105 @@ export interface ViewModeConfig {
 }
 
 /**
+ * Sanitize address input by removing backticks and other invalid characters.
+ * Useful when pasting addresses from tools that format them like: 7ffe`97b87000
+ */
+export function sanitizeAddressInput(input: string): string {
+  return input.replace(/`/g, '');
+}
+
+/**
+ * Dereference value types - matches the Rust SerializableDereferenceValue enum
+ */
+export type DereferenceValue =
+  | { type: 'Pointer'; address: string; symbol?: string }
+  | { type: 'Value'; value: string }
+  | { type: 'String'; value: string }
+  | { type: 'Instruction'; value: string; symbol?: string }
+  | { type: 'LoopDetected'; address: string };
+
+/**
+ * Dereference entry - represents one address in the dereference result
+ */
+export interface DereferenceEntry {
+  address: string;
+  offset: number;
+  chain: DereferenceValue[];
+}
+
+/**
+ * Dereference result event payload
+ */
+export interface DereferenceResultPayload {
+  session_id: string;
+  base_address: string;
+  entries: DereferenceEntry[];
+}
+
+/**
+ * Get the symbol from the first chain item (if it's a pointer with symbol)
+ */
+export function getFirstChainSymbol(chain: DereferenceValue[]): string | null {
+  if (chain.length === 0) return null;
+  const first = chain[0];
+  if (first.type === 'Pointer' && first.symbol) {
+    return first.symbol;
+  }
+  return null;
+}
+
+/**
+ * Format a dereference chain as a string for inline display
+ * Skips first item - use getFirstChainSymbol to get symbol for pointer column
+ */
+export function formatDereferenceChain(chain: DereferenceValue[], maxItems: number = 8): string {
+  if (chain.length === 0) return '';
+
+  const items: string[] = [];
+  // Start from index 1 - first item symbol shown with pointer value
+  for (let i = 1; i < Math.min(chain.length, maxItems + 1); i++) {
+    const value = chain[i];
+    if (!value) break;
+
+    switch (value.type) {
+      case 'Pointer':
+        const addr = value.address.replace(/^0x0+/, '0x');
+        if (value.symbol) {
+          // Show address with symbol in brackets
+          items.push(addr + ' (' + value.symbol + ')');
+        } else {
+          items.push(addr);
+        }
+        break;
+      case 'Value':
+        items.push(value.value);
+        break;
+      case 'String':
+        items.push(value.value);
+        break;
+      case 'Instruction':
+        if (value.symbol) {
+          items.push('(' + value.symbol + ') <' + value.value + '>');
+        } else {
+          items.push('<' + value.value + '>');
+        }
+        break;
+      case 'LoopDetected':
+        items.push('[loop]');
+        break;
+    }
+  }
+
+  if (items.length === 0) return '';
+
+  let result = items.join(' \u2192 ');
+  if (chain.length > maxItems + 1) {
+    result += ' \u2192 ...';
+  }
+  return result;
+}
+
+/**
  * View mode configurations - designed for extensibility
  * To add a new view mode, simply add an entry here
  */
@@ -287,6 +386,185 @@ function parseTerm(
   // Assume it's a symbol that needs resolution
   return { value: null, needsSymbolResolution: true, symbolName: trimmed };
 }
+
+// ============================================================================
+// Selection utilities
+// ============================================================================
+
+/**
+ * Get normalized selection range (start <= end)
+ */
+export function getNormalizedSelection(
+  start: number | null,
+  end: number | null
+): { start: number; end: number } | null {
+  if (start === null || end === null) return null;
+  return {
+    start: Math.min(start, end),
+    end: Math.max(start, end),
+  };
+}
+
+/**
+ * Get bytes from memory for a selection range
+ */
+export function getSelectedBytes(
+  memoryData: Uint8Array,
+  startOffset: number,
+  endOffset: number
+): Uint8Array {
+  const start = Math.min(startOffset, endOffset);
+  const end = Math.max(startOffset, endOffset);
+  return memoryData.slice(start, end + 1);
+}
+
+// ============================================================================
+// Clipboard format utilities
+// ============================================================================
+
+/**
+ * Format bytes as ASCII text (non-printable chars become '.')
+ */
+export function formatBytesAsText(bytes: Uint8Array): string {
+  return Array.from(bytes).map(byteToAscii).join('');
+}
+
+/**
+ * Format bytes as space-separated hex (e.g., "48 65 6C 6C 6F")
+ */
+export function formatBytesAsHex(bytes: Uint8Array): string {
+  return Array.from(bytes)
+    .map((b) => b.toString(16).padStart(2, '0').toUpperCase())
+    .join(' ');
+}
+
+/**
+ * Format bytes as hex units according to view mode
+ * - byte: "AB CD EF"
+ * - word: "CDAB 1234" (little-endian 16-bit)
+ * - dword: "12345678" (little-endian 32-bit)
+ * - qword: "0123456789ABCDEF" (little-endian 64-bit)
+ * - float: treated as dword (4 bytes hex)
+ * - pointer: treated as qword (8 bytes hex)
+ */
+export function formatBytesAsHexUnits(bytes: Uint8Array, viewMode: ViewMode): string {
+  // For float/pointer, use the equivalent integer hex format
+  let effectiveMode = viewMode;
+  if (viewMode === 'float') {
+    effectiveMode = 'dword';
+  } else if (viewMode === 'pointer') {
+    effectiveMode = 'qword';
+  }
+
+  const config = VIEW_MODE_CONFIGS[effectiveMode];
+  const units: string[] = [];
+
+  for (let i = 0; i < bytes.length; i += config.bytesPerUnit) {
+    const unitBytes = bytes.slice(i, i + config.bytesPerUnit);
+    if (unitBytes.length === config.bytesPerUnit) {
+      units.push(config.formatValue(unitBytes, true)); // true = little-endian
+    } else {
+      // Partial unit at end - format remaining bytes individually
+      for (const b of unitBytes) {
+        units.push(b.toString(16).padStart(2, '0').toUpperCase());
+      }
+    }
+  }
+
+  return units.join(' ');
+}
+
+/**
+ * Format bytes as hex dump (full 16-byte rows only)
+ * Example: 00007FF812340000: 48 65 6C 6C 6F 20 57 6F 72 6C 64 21 00 00 00 00  Hello World!....
+ */
+export function formatBytesAsDump(
+  memoryData: Uint8Array,
+  baseAddress: bigint,
+  startOffset: number,
+  endOffset: number
+): string {
+  // Normalize range
+  const rangeStart = Math.min(startOffset, endOffset);
+  const rangeEnd = Math.max(startOffset, endOffset);
+
+  // Round to row boundaries (full lines only)
+  const rowStart = Math.floor(rangeStart / BYTES_PER_ROW) * BYTES_PER_ROW;
+  const rowEnd = Math.ceil((rangeEnd + 1) / BYTES_PER_ROW) * BYTES_PER_ROW;
+
+  const lines: string[] = [];
+
+  for (let offset = rowStart; offset < rowEnd && offset < memoryData.length; offset += BYTES_PER_ROW) {
+    const rowAddress = baseAddress + BigInt(offset);
+    const rowBytes = memoryData.slice(offset, Math.min(offset + BYTES_PER_ROW, memoryData.length));
+
+    // Hex part (space-separated)
+    const hexParts: string[] = [];
+    for (let i = 0; i < BYTES_PER_ROW; i++) {
+      if (i < rowBytes.length) {
+        hexParts.push(rowBytes[i].toString(16).padStart(2, '0').toUpperCase());
+      } else {
+        hexParts.push('  ');
+      }
+    }
+    const hexPart = hexParts.join(' ');
+
+    // ASCII part
+    const asciiParts: string[] = [];
+    for (let i = 0; i < BYTES_PER_ROW; i++) {
+      if (i < rowBytes.length) {
+        asciiParts.push(byteToAscii(rowBytes[i]));
+      } else {
+        asciiParts.push(' ');
+      }
+    }
+    const asciiPart = asciiParts.join('');
+
+    lines.push(`${formatAddress(rowAddress)}: ${hexPart}  ${asciiPart}`);
+  }
+
+  return lines.join('\n');
+}
+
+/**
+ * Parse hex string to bytes
+ * Accepts: "48656C6C6F", "48 65 6C 6C 6F", "0x48 0x65", "0x48, 0x65"
+ * Returns null if invalid
+ */
+export function parseHexToBytes(hex: string): Uint8Array | null {
+  // Remove 0x prefixes, spaces, commas, and other separators
+  const cleaned = hex
+    .replace(/0x/gi, '')
+    .replace(/[\s,;]/g, '')
+    .replace(/[^0-9A-Fa-f]/g, '');
+
+  if (cleaned.length === 0) {
+    return null;
+  }
+
+  // Pad with leading zero if odd length
+  const padded = cleaned.length % 2 === 1 ? '0' + cleaned : cleaned;
+
+  const bytes: number[] = [];
+  for (let i = 0; i < padded.length; i += 2) {
+    const byte = parseInt(padded.substring(i, i + 2), 16);
+    if (isNaN(byte)) return null;
+    bytes.push(byte);
+  }
+
+  return new Uint8Array(bytes);
+}
+
+/**
+ * Check if a character is a valid hex digit
+ */
+export function isHexChar(char: string): boolean {
+  return /^[0-9A-Fa-f]$/.test(char);
+}
+
+// ============================================================================
+// Address expression parsing
+// ============================================================================
 
 /**
  * Parse an address expression with support for:

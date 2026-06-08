@@ -1,8 +1,8 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { toast } from 'sonner';
-import { DebugSession, Module, Thread, Symbol } from '@/contexts/SessionContext';
+import { DebugSession, Module, Thread, Symbol, SessionStatus } from '@/contexts/SessionContext';
 
 export function useDebugSession(sessionId: string | undefined) {
   const [session, setSession] = useState<DebugSession | null>(null);
@@ -13,7 +13,61 @@ export function useDebugSession(sessionId: string | undefined) {
   const [modules, setModules] = useState<Module[]>([]);
   const [threads, setThreads] = useState<Thread[]>([]);
 
-  const canStep = useMemo(() => session?.status === "Paused", [session]);
+  // Debounced display status - prevents UI flicker during quick stepping operations
+  const [displayStatus, setDisplayStatus] = useState<SessionStatus>("Stopped");
+  const statusTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Debounce logic: delay Paused → Running transitions to prevent flicker on stepping
+  useEffect(() => {
+    const actualStatus = session?.status;
+
+    // Clear any pending timeout
+    if (statusTimeoutRef.current) {
+      clearTimeout(statusTimeoutRef.current);
+      statusTimeoutRef.current = null;
+    }
+
+    if (!actualStatus) {
+      setDisplayStatus("Stopped");
+      return;
+    }
+
+    // Immediate transition for these cases:
+    // - Going to Paused (step completed, show results immediately)
+    // - Going to Stopped (session ended)
+    // - Going to Error
+    // - Initial state when displayStatus is Stopped
+    if (actualStatus === "Paused" ||
+        actualStatus === "Stopped" ||
+        typeof actualStatus === "object" ||  // Error state
+        displayStatus === "Stopped") {
+      setDisplayStatus(actualStatus);
+      return;
+    }
+
+    // Debounce transition TO Running (from Paused)
+    // This prevents flicker during quick step operations
+    if (actualStatus === "Running" && displayStatus === "Paused") {
+      statusTimeoutRef.current = setTimeout(() => {
+        setDisplayStatus("Running");
+      }, 250); // 250ms debounce
+      return;
+    }
+
+    // For any other case, update immediately
+    setDisplayStatus(actualStatus);
+  }, [session?.status]);
+
+  // Cleanup timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (statusTimeoutRef.current) {
+        clearTimeout(statusTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  const canStep = useMemo(() => displayStatus === "Paused", [displayStatus]);
   const canStop = useMemo(() => {
     if (!session || typeof session.status !== "string") return false;
     return ["Running", "Paused"].includes(session.status);
@@ -57,8 +111,19 @@ export function useDebugSession(sessionId: string | undefined) {
 
     // Create a promise that will resolve when we receive the symbols-updated event
     return new Promise(async (resolve) => {
+      let settled = false;
+
+      const cleanup = () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+        unlisten();
+        unlistenError();
+      };
+
       const timeout = setTimeout(() => {
-        console.warn('Symbol search timed out');
+        console.warn('Symbol search timed out for pattern:', pattern);
+        cleanup();
         resolve([]);
       }, 5000); // 5 second timeout
 
@@ -67,8 +132,7 @@ export function useDebugSession(sessionId: string | undefined) {
         'symbols-updated',
         (event) => {
           if (event.payload.session_id === sessionId && event.payload.pattern === pattern) {
-            clearTimeout(timeout);
-            unlisten();
+            cleanup();
             resolve(event.payload.symbols);
           }
         }
@@ -79,9 +143,7 @@ export function useDebugSession(sessionId: string | undefined) {
         'symbols-error',
         (event) => {
           if (event.payload.session_id === sessionId && event.payload.pattern === pattern) {
-            clearTimeout(timeout);
-            unlisten();
-            unlistenError();
+            cleanup();
             console.error(`Symbol search error: ${event.payload.error}`);
             resolve([]);
           }
@@ -95,9 +157,7 @@ export function useDebugSession(sessionId: string | undefined) {
           limit: limit || 30
         });
       } catch (error) {
-        clearTimeout(timeout);
-        unlisten();
-        unlistenError();
+        cleanup();
         const errorMessage = `Failed to search symbols: ${error}`;
         toast.error(errorMessage);
         console.error(errorMessage);
@@ -106,27 +166,41 @@ export function useDebugSession(sessionId: string | undefined) {
     });
   }, [sessionId]);
 
-  const loadSession = useCallback(async () => {
-    if (!sessionId) return;
-    try {
-      const result = await invoke<DebugSession>("get_debug_session", { sessionId });
-      setSession(result);
-    } catch (error) {
-      const errorMessage = `Failed to load session: ${error}`;
-      toast.error(errorMessage);
-      console.error(errorMessage);
-      setSession(null);
-    } finally {
-      setIsLoading(false);
-    }
-  }, [sessionId]);
-
   const handleSessionUpdate = useCallback((newSession: DebugSession) => {
     setSession(newSession);
+    setIsLoading(false);
+    // Persist latest exception code so settings page can pre-populate new rules
+    const exc = newSession.current_event;
+    if (exc?.event_type === "Exception" && exc.exception_code != null) {
+      localStorage.setItem("joybug_last_exception_code", String(exc.exception_code));
+    }
   }, []);
 
   useEffect(() => {
-    loadSession();
+    // Track fetch ordering to prevent stale responses from overwriting fresh data.
+    // Each fetch increments the counter; only the latest fetch applies its result.
+    let fetchSeq = 0;
+    const fetchSession = async () => {
+      if (!sessionId) return;
+      const mySeq = ++fetchSeq;
+      try {
+        const result = await invoke<DebugSession>("get_debug_session", { sessionId });
+        if (mySeq === fetchSeq) {
+          setSession(result);
+          setIsLoading(false);
+        }
+      } catch (error) {
+        if (mySeq === fetchSeq) {
+          const errorMessage = `Failed to load session: ${error}`;
+          toast.error(errorMessage);
+          console.error(errorMessage);
+          setSession(null);
+          setIsLoading(false);
+        }
+      }
+    };
+
+    fetchSession();
 
     const listenToSessionUpdates = async () => {
       const unlisten = await listen<DebugSession>(
@@ -137,6 +211,9 @@ export function useDebugSession(sessionId: string | undefined) {
           }
         }
       );
+      // Re-fetch after listener is active to catch events that fired
+      // between the initial fetch and listener setup
+      fetchSession();
       return unlisten;
     };
 
@@ -147,12 +224,12 @@ export function useDebugSession(sessionId: string | undefined) {
         if (unlisten) unlisten();
       });
     };
-  }, [sessionId, loadSession, handleSessionUpdate]);
+  }, [sessionId, handleSessionUpdate]);
 
   useEffect(() => {
     let isCancelled = false;
 
-    if (session?.status === "Paused") {
+    if (session?.status === "Paused" || session?.status === "Running") {
       const fetchData = async () => {
         const [mods, thrs] = await Promise.all([loadModules(), loadThreads()]);
         if (!isCancelled) {
@@ -169,7 +246,7 @@ export function useDebugSession(sessionId: string | undefined) {
     return () => {
       isCancelled = true;
     };
-  }, [session, loadModules, loadThreads]);
+  }, [session?.status, loadModules, loadThreads]);
 
   // Listen for dll load/unload targeted events to refresh modules quickly
   useEffect(() => {
@@ -206,9 +283,22 @@ export function useDebugSession(sessionId: string | undefined) {
     setBusyAction("go");
     try {
       await invoke("step_debug_session", { sessionId });
-      // The session-updated event will refresh the state
     } catch (error) {
       const errorMessage = `Failed to step session: ${error}`;
+      toast.error(errorMessage);
+      console.error(errorMessage);
+    } finally {
+      setBusyAction(null);
+    }
+  }, [sessionId, canStep]);
+
+  const handleGoPassException = useCallback(async () => {
+    if (!sessionId || !canStep) return;
+    setBusyAction("go");
+    try {
+      await invoke("step_pass_exception", { sessionId });
+    } catch (error) {
+      const errorMessage = `Failed to pass exception: ${error}`;
       toast.error(errorMessage);
       console.error(errorMessage);
     } finally {
@@ -309,6 +399,7 @@ export function useDebugSession(sessionId: string | undefined) {
 
   return {
     session,
+    displayStatus,
     isLoading,
     busyAction,
     modules,
@@ -317,6 +408,7 @@ export function useDebugSession(sessionId: string | undefined) {
     loadThreads,
     searchSymbols,
     handleGo,
+    handleGoPassException,
     handleStepIn,
     handleStepOut,
     handleStepOver,

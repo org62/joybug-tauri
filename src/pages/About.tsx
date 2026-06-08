@@ -1,20 +1,22 @@
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import reactLogo from "../assets/react.svg";
 
 export default function About() {
   return (
+    <ScrollArea className="h-full">
     <div className="container mx-auto p-6 flex justify-center">
       <div className="max-w-2xl w-full">
         <Card className="overflow-hidden">
           <CardHeader className="p-0">
             <div className="flex flex-col items-center text-center">
-              <img src="/joybug.png" className="joybug w-32 h-32 mb-4 rounded-lg" alt="Joybug Logo" />
+              <img src="/joybug-logo.svg" className="joybug w-32 h-32 mb-4 rounded-lg" alt="Joybug Logo" />
             </div>
           </CardHeader>
           <CardContent className="space-y-6">
             <div>
               <p className="text-center text-lg text-gray-700 dark:text-neutral-300">
-                This project was crafted with a simple philosophy: to enjoy its design, development, and maintenance. The author hopes you'll love using it as much as they loved creating it.
+                This project was crafted with a simple philosophy: to enjoy its design, development, and maintenance. The author hopes you'll love using it as much as he loved creating it.
               </p>
             </div>
 
@@ -72,5 +74,6 @@ export default function About() {
         </Card>
       </div>
     </div>
+    </ScrollArea>
   );
-} 
+}

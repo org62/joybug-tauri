@@ -1,9 +1,9 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ScrollArea } from "@/components/ui/scroll-area";
+import { VirtualizedList } from "@/components/ui/virtualized-list";
 import { Trash2, Filter } from "lucide-react";
 import { toast } from "sonner";
 
@@ -76,28 +76,32 @@ export default function Logs() {
     }
   };
 
-  const filteredLogs = logs.filter(log => {
-    // Priority-based level filtering
+  const reversedFilteredLogs = useMemo(() => {
     const levelPriority: Record<string, number> = {
       'debug': 0,
       'info': 1,
       'warning': 2,
       'error': 3
     };
-    
-    const logLevel = log.level.toLowerCase();
     const selectedLevel = levelFilter.toLowerCase();
-    
-    const matchesLevel = levelFilter === "all" || 
-      (levelPriority[logLevel] !== undefined && 
-       levelPriority[selectedLevel] !== undefined &&
-       levelPriority[logLevel] >= levelPriority[selectedLevel]);
-    
-    const matchesSearch = searchFilter === "" || 
-      log.message.toLowerCase().includes(searchFilter.toLowerCase()) ||
-      log.timestamp.toLowerCase().includes(searchFilter.toLowerCase());
-    return matchesLevel && matchesSearch;
-  });
+    const searchLower = searchFilter.toLowerCase();
+
+    const filtered = logs.filter(log => {
+      const logLevel = log.level.toLowerCase();
+      const matchesLevel = levelFilter === "all" ||
+        (levelPriority[logLevel] !== undefined &&
+         levelPriority[selectedLevel] !== undefined &&
+         levelPriority[logLevel] >= levelPriority[selectedLevel]);
+      const matchesSearch = searchFilter === "" ||
+        log.message.toLowerCase().includes(searchLower) ||
+        log.timestamp.toLowerCase().includes(searchLower);
+      return matchesLevel && matchesSearch;
+    });
+
+    return { filtered, reversed: filtered.slice().reverse() };
+  }, [logs, levelFilter, searchFilter]);
+
+  const filteredLogs = reversedFilteredLogs.filtered;
 
   return (
     <div className="h-[calc(100vh-4.1rem)] flex flex-col p-6">
@@ -144,30 +148,35 @@ export default function Logs() {
           <div className="mb-4 text-sm text-gray-500 dark:text-gray-400 flex-shrink-0">
             Showing {filteredLogs.length} of {logs.length} logs
           </div>
-          <ScrollArea className="flex-1 w-full rounded-md border min-h-0">
-            <div className="p-0">
-              {logs.length === 0 ? (
-                <div className="text-center text-gray-500 dark:text-gray-400 py-8">
-                  No logs available. Try using the debugger to generate some logs.
-                </div>
-              ) : filteredLogs.length === 0 ? (
-                <div className="text-center text-gray-500 dark:text-gray-400 py-8">
-                  No logs match the current filters.
-                </div>
-              ) : (
-                filteredLogs.slice().reverse().map((log, index) => (
-                  <div key={index} className="flex items-start gap-2 px-3 py-2 border-b hover:bg-gray-50 dark:hover:bg-gray-900">
-                    <div className="text-xs text-gray-500 dark:text-neutral-400 font-mono shrink-0 min-w-0">
-                      {log.timestamp}
-                    </div>
-                    <div className={`text-sm ${getLogColor(log.level)} min-w-0 flex-1`}>
-                      {log.message.match(/^[✓✗ℹ•]/) ? log.message : `${getLogIcon(log.level)} ${log.message}`}
-                    </div>
-                  </div>
-                ))
-              )}
+          {logs.length === 0 ? (
+            <div className="flex-1 w-full rounded-md border min-h-0 flex items-center justify-center">
+              <div className="text-center text-gray-500 dark:text-gray-400 py-8">
+                No logs available. Try using the debugger to generate some logs.
+              </div>
             </div>
-          </ScrollArea>
+          ) : filteredLogs.length === 0 ? (
+            <div className="flex-1 w-full rounded-md border min-h-0 flex items-center justify-center">
+              <div className="text-center text-gray-500 dark:text-gray-400 py-8">
+                No logs match the current filters.
+              </div>
+            </div>
+          ) : (
+            <VirtualizedList
+              items={reversedFilteredLogs.reversed}
+              rowHeight={36}
+              className="flex-1 w-full rounded-md border min-h-0"
+              renderItem={(log) => (
+                <div className="flex items-start gap-2 px-3 py-2 border-b hover:bg-gray-50 dark:hover:bg-gray-900 h-full">
+                  <div className="text-xs text-gray-500 dark:text-neutral-400 font-mono shrink-0 min-w-0">
+                    {log.timestamp}
+                  </div>
+                  <div className={`text-sm ${getLogColor(log.level)} min-w-0 flex-1`}>
+                    {log.message.match(/^[✓✗ℹ•]/) ? log.message : `${getLogIcon(log.level)} ${log.message}`}
+                  </div>
+                </div>
+              )}
+            />
+          )}
         </div>
       </div>
     </div>

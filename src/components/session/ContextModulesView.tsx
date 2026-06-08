@@ -3,9 +3,13 @@ import { useSessionContext } from '@/contexts/SessionContext';
 import { Badge } from '@/components/ui/badge';
 import { Layers } from 'lucide-react';
 
-export const ContextModulesView = () => {
+interface ContextModulesViewProps {
+  onOpenModuleInfo?: (moduleBase: string) => void;
+}
+
+export const ContextModulesView: React.FC<ContextModulesViewProps> = ({ onOpenModuleInfo }) => {
   const sessionData = useSessionContext();
-  
+
   // Load modules when component mounts or session changes
   useEffect(() => {
     if (sessionData?.session?.id) {
@@ -17,12 +21,12 @@ export const ContextModulesView = () => {
     const units = ['B', 'KB', 'MB', 'GB'];
     let size = bytes;
     let unitIndex = 0;
-    
+
     while (size >= 1024 && unitIndex < units.length - 1) {
       size /= 1024;
       unitIndex++;
     }
-    
+
     return `${size.toFixed(1)} ${units[unitIndex]}`;
   };
 
@@ -36,9 +40,10 @@ export const ContextModulesView = () => {
       {sessionData?.modules && sessionData.modules.length > 0 ? (
         <div className="space-y-1">
           {sessionData.modules.map((module, index) => (
-            <div 
+            <div
               key={index}
-              className="flex items-center justify-between px-2 py-1 border-b hover:bg-gray-50 dark:hover:bg-gray-900"
+              className={`flex items-center justify-between px-2 py-1 border-b hover:bg-gray-50 dark:hover:bg-gray-900${onOpenModuleInfo ? ' cursor-pointer' : ''}`}
+              onClick={onOpenModuleInfo ? () => onOpenModuleInfo(module.base_address) : undefined}
             >
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 mb-1">
@@ -68,4 +73,4 @@ export const ContextModulesView = () => {
       )}
     </div>
   );
-}; 
+};

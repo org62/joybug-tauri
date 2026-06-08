@@ -3,16 +3,14 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { useSessionContext } from '@/contexts/SessionContext';
 import { AlertCircle, List } from 'lucide-react';
+import { CallStackFrameList, CallStackFrame } from '@/components/CallStackFrameList';
 
-interface CallStackFrame {
-  frame_number: number;
-  instruction_pointer: string;
-  stack_pointer: string;
-  frame_pointer: string;
-  symbol_info: string | null;
+interface ContextCallStackViewProps {
+  onNavigateToDisassembly?: (address: string) => void;
+  onNavigateToMemoryPointer?: (address: string) => void;
 }
 
-export function ContextCallStackView() {
+export function ContextCallStackView({ onNavigateToDisassembly, onNavigateToMemoryPointer }: ContextCallStackViewProps) {
   const sessionData = useSessionContext();
   const [callStack, setCallStack] = useState<CallStackFrame[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -20,9 +18,9 @@ export function ContextCallStackView() {
 
   const fetchCallStack = async () => {
     if (!sessionData?.session?.id) return;
-    
+
     setError(null);
-    
+
     try {
       await invoke('request_session_callstack', {
         sessionId: sessionData.session.id,
@@ -80,11 +78,6 @@ export function ContextCallStackView() {
     };
   }, []);
 
-  const formatSymbol = (symbol: string | null) => {
-    if (!symbol) return 'Unknown';
-    return symbol;
-  };
-
   if (!sessionData?.session) {
     return (
       <div className="flex flex-col items-center justify-center h-full text-muted-foreground p-4">
@@ -97,30 +90,13 @@ export function ContextCallStackView() {
   }
 
   return (
-    <div className="h-full overflow-auto">
+    <div className="h-full">
       {callStack.length > 0 ? (
-        <div className="space-y-1">
-          {callStack.map((frame) => (
-            <div 
-              key={frame.frame_number}
-              className="flex items-center justify-between px-2 py-1 border-b hover:bg-gray-50 dark:hover:bg-gray-900"
-            >
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 mb-1">
-                  <span className="text-muted-foreground">#{frame.frame_number}</span>
-                  <p className="font-medium truncate">
-                    {formatSymbol(frame.symbol_info)}
-                  </p>
-                </div>
-                <p className="text-xs text-muted-foreground truncate">
-                  RIP: <span className="font-mono">{frame.instruction_pointer}</span> | 
-                  SP: <span className="font-mono">{frame.stack_pointer}</span> | 
-                  FP: <span className="font-mono">{frame.frame_pointer}</span>
-                </p>
-              </div>
-            </div>
-          ))}
-        </div>
+        <CallStackFrameList
+          frames={callStack}
+          onClickAddress={onNavigateToDisassembly}
+          onClickMemory={onNavigateToMemoryPointer}
+        />
       ) : error ? (
         <div className="flex flex-col items-center justify-center h-full text-muted-foreground p-4">
           <div className="text-center">
@@ -149,4 +125,4 @@ export function ContextCallStackView() {
       )}
     </div>
   );
-} 
+}

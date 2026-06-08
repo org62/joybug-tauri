@@ -1,4 +1,8 @@
+import { useCallback } from "react";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { DereferenceEntry } from "@/lib/hexUtils";
+import { RegisterDereferenceDisplay } from "@/components/DereferenceDisplay";
+import { cn } from "@/lib/utils";
 
 interface Serializablex64ThreadContext {
   arch: "X64";
@@ -29,107 +33,128 @@ export type SerializableThreadContext =
 
 interface RegisterViewProps {
   context: SerializableThreadContext;
+  getDereferenceForAddress?: (address: string) => DereferenceEntry | undefined;
+  changedRegisters?: Set<string>;
+  onRegisterEdit?: (field: string, hexValue: string) => void;
 }
 
-const RegisterPair = ({ name, value }: { name: string, value: string }) => (
-    <div className="flex items-center py-0.5 px-1 hover:bg-muted/50 rounded-sm text-xs">
-        <span className="w-8 font-semibold text-muted-foreground min-w-0 shrink-0">{name}</span>
-        <span className="font-mono ml-1">{value}</span>
+interface RegisterPairProps {
+  name: string;
+  field: string;
+  value: string;
+  dereferenceEntry?: DereferenceEntry;
+  showDereference?: boolean;
+  isChanged?: boolean;
+  onRegisterEdit?: (field: string, hexValue: string) => void;
+}
+
+const RegisterPair = ({ name, field, value, dereferenceEntry, showDereference = true, isChanged, onRegisterEdit }: RegisterPairProps) => {
+  const handleDoubleClick = useCallback(() => {
+    onRegisterEdit?.(field, value);
+  }, [onRegisterEdit, field, value]);
+
+  return (
+    <div className="flex items-center py-0.5 px-1 hover:bg-muted/50 rounded-sm text-xs min-w-0">
+      <span className="w-8 font-semibold text-muted-foreground shrink-0">{name}</span>
+      <span
+        className={cn(
+          "font-mono ml-1 shrink-0",
+          isChanged && "text-red-400",
+          onRegisterEdit && "cursor-pointer hover:underline"
+        )}
+        onDoubleClick={handleDoubleClick}
+      >
+        {value}
+      </span>
+      {showDereference && (
+        <span className="ml-1 min-w-0 truncate">
+          <RegisterDereferenceDisplay entry={dereferenceEntry} maxItems={6} />
+        </span>
+      )}
     </div>
-);
+  );
+};
 
-export function RegisterView({ context }: RegisterViewProps) {
+export interface RegisterDef {
+  name: string;
+  field: string;
+  showDereference?: boolean;
+}
+
+export const X64_REGISTERS: RegisterDef[] = [
+  { name: "RAX", field: "rax" }, { name: "RBX", field: "rbx" },
+  { name: "RCX", field: "rcx" }, { name: "RDX", field: "rdx" },
+  { name: "RSI", field: "rsi" }, { name: "RDI", field: "rdi" },
+  { name: "RBP", field: "rbp" }, { name: "RSP", field: "rsp" },
+  { name: "RIP", field: "rip" },
+  { name: "R8", field: "r8" }, { name: "R9", field: "r9" },
+  { name: "R10", field: "r10" }, { name: "R11", field: "r11" },
+  { name: "R12", field: "r12" }, { name: "R13", field: "r13" },
+  { name: "R14", field: "r14" }, { name: "R15", field: "r15" },
+  { name: "EFL", field: "eflags", showDereference: false },
+];
+
+export const ARM64_REGISTERS: RegisterDef[] = [
+  { name: "X0", field: "x0" }, { name: "X1", field: "x1" },
+  { name: "X2", field: "x2" }, { name: "X3", field: "x3" },
+  { name: "X4", field: "x4" }, { name: "X5", field: "x5" },
+  { name: "X6", field: "x6" }, { name: "X7", field: "x7" },
+  { name: "X8", field: "x8" }, { name: "X9", field: "x9" },
+  { name: "X10", field: "x10" }, { name: "X11", field: "x11" },
+  { name: "X12", field: "x12" }, { name: "X13", field: "x13" },
+  { name: "X14", field: "x14" }, { name: "X15", field: "x15" },
+  { name: "X16", field: "x16" }, { name: "X17", field: "x17" },
+  { name: "X18", field: "x18" }, { name: "X19", field: "x19" },
+  { name: "X20", field: "x20" }, { name: "X21", field: "x21" },
+  { name: "X22", field: "x22" }, { name: "X23", field: "x23" },
+  { name: "X24", field: "x24" }, { name: "X25", field: "x25" },
+  { name: "X26", field: "x26" }, { name: "X27", field: "x27" },
+  { name: "X28", field: "x28" },
+  { name: "FP", field: "x29" }, { name: "LR", field: "x30" },
+  { name: "SP", field: "sp" }, { name: "PC", field: "pc" },
+  { name: "CPSR", field: "cpsr", showDereference: false },
+];
+
+function renderRegisterList(
+  registers: Record<string, string>,
+  defs: RegisterDef[],
+  getDeref: (value: string) => DereferenceEntry | undefined,
+  isChanged: (field: string) => boolean,
+  onRegisterEdit?: (field: string, hexValue: string) => void,
+) {
+  return (
+    <ScrollArea className="h-full w-full">
+      <div className="p-1 flex flex-col gap-0.5">
+        {defs.map(({ name, field, showDereference }) => {
+          const value = registers[field];
+          return (
+            <RegisterPair
+              key={field}
+              name={name}
+              field={field}
+              value={value}
+              dereferenceEntry={showDereference !== false ? getDeref(value) : undefined}
+              showDereference={showDereference}
+              isChanged={isChanged(field)}
+              onRegisterEdit={onRegisterEdit}
+            />
+          );
+        })}
+      </div>
+    </ScrollArea>
+  );
+}
+
+export function RegisterView({ context, getDereferenceForAddress, changedRegisters, onRegisterEdit }: RegisterViewProps) {
+  const getDeref = (value: string) => getDereferenceForAddress?.(value);
+  const isChanged = (field: string) => changedRegisters?.has(field) ?? false;
+
   if (context.arch === "X64") {
-    const registers = context;
-
-    return (
-      <ScrollArea className="h-full w-full">
-        <div className="p-1">
-          <div 
-            className="gap-0.5"
-            style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))'
-            }}
-          >
-              <RegisterPair name="RAX" value={registers.rax} />
-              <RegisterPair name="RBX" value={registers.rbx} />
-              <RegisterPair name="RCX" value={registers.rcx} />
-              <RegisterPair name="RDX" value={registers.rdx} />
-              <RegisterPair name="RSI" value={registers.rsi} />
-              <RegisterPair name="RDI" value={registers.rdi} />
-              <RegisterPair name="RBP" value={registers.rbp} />
-              <RegisterPair name="RSP" value={registers.rsp} />
-              <RegisterPair name="RIP" value={registers.rip} />
-              <RegisterPair name="R8" value={registers.r8} />
-              <RegisterPair name="R9" value={registers.r9} />
-              <RegisterPair name="R10" value={registers.r10} />
-              <RegisterPair name="R11" value={registers.r11} />
-              <RegisterPair name="R12" value={registers.r12} />
-              <RegisterPair name="R13" value={registers.r13} />
-              <RegisterPair name="R14" value={registers.r14} />
-              <RegisterPair name="R15" value={registers.r15} />
-              <RegisterPair name="EFL" value={registers.eflags} />
-          </div>
-        </div>
-      </ScrollArea>
-    );
+    return renderRegisterList(context as unknown as Record<string, string>, X64_REGISTERS, getDeref, isChanged, onRegisterEdit);
   }
-  
-  if (context.arch === "Arm64") {
-    const registers = context;
 
-    return (
-      <ScrollArea className="h-full w-full">
-        <div className="p-1">
-          <div 
-            className="gap-0.5"
-            style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))'
-            }}
-          >
-              {/* General Purpose Registers X0-X30 */}
-              <RegisterPair name="X0" value={registers.x0} />
-              <RegisterPair name="X1" value={registers.x1} />
-              <RegisterPair name="X2" value={registers.x2} />
-              <RegisterPair name="X3" value={registers.x3} />
-              <RegisterPair name="X4" value={registers.x4} />
-              <RegisterPair name="X5" value={registers.x5} />
-              <RegisterPair name="X6" value={registers.x6} />
-              <RegisterPair name="X7" value={registers.x7} />
-              <RegisterPair name="X8" value={registers.x8} />
-              <RegisterPair name="X9" value={registers.x9} />
-              <RegisterPair name="X10" value={registers.x10} />
-              <RegisterPair name="X11" value={registers.x11} />
-              <RegisterPair name="X12" value={registers.x12} />
-              <RegisterPair name="X13" value={registers.x13} />
-              <RegisterPair name="X14" value={registers.x14} />
-              <RegisterPair name="X15" value={registers.x15} />
-              <RegisterPair name="X16" value={registers.x16} />
-              <RegisterPair name="X17" value={registers.x17} />
-              <RegisterPair name="X18" value={registers.x18} />
-              <RegisterPair name="X19" value={registers.x19} />
-              <RegisterPair name="X20" value={registers.x20} />
-              <RegisterPair name="X21" value={registers.x21} />
-              <RegisterPair name="X22" value={registers.x22} />
-              <RegisterPair name="X23" value={registers.x23} />
-              <RegisterPair name="X24" value={registers.x24} />
-              <RegisterPair name="X25" value={registers.x25} />
-              <RegisterPair name="X26" value={registers.x26} />
-              <RegisterPair name="X27" value={registers.x27} />
-              <RegisterPair name="X28" value={registers.x28} />
-              <RegisterPair name="FP" value={registers.x29} />
-              <RegisterPair name="LR" value={registers.x30} />
-              
-              {/* Special Registers */}
-              <RegisterPair name="SP" value={registers.sp} />
-              <RegisterPair name="PC" value={registers.pc} />
-              <RegisterPair name="CPSR" value={registers.cpsr} />
-          </div>
-        </div>
-      </ScrollArea>
-    );
+  if (context.arch === "Arm64") {
+    return renderRegisterList(context as unknown as Record<string, string>, ARM64_REGISTERS, getDeref, isChanged, onRegisterEdit);
   }
 
   return (
@@ -139,4 +164,4 @@ export function RegisterView({ context }: RegisterViewProps) {
       </div>
     </ScrollArea>
   );
-} 
+}

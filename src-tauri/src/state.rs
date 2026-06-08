@@ -3,6 +3,45 @@ use std::collections::HashMap;
 use std::sync::{mpsc, Arc, Mutex};
 use crate::session::UICommand;
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BreakpointInfo {
+    pub id: String,              // UUID
+    pub address: u64,            // current resolved absolute address (0 if unresolved)
+    pub module_name: String,     // e.g. "ntdll.dll" (lowercase for matching)
+    pub module_offset: u64,      // RVA within module
+    pub name: Option<String>,    // user-assigned label
+    pub group: Option<String>,   // group name
+    pub symbol: Option<String>,  // resolved symbol e.g. "kernel32!CreateFileW+0x10"
+    pub enabled: bool,           // user toggle
+    pub is_active: bool,         // currently set in debuggee
+    #[serde(default = "default_bp_kind")]
+    pub bp_kind: String,           // "software" | "hardware"
+    #[serde(default)]
+    pub hw_type: Option<String>,   // "Execute" | "Write" | "ReadWrite"
+    #[serde(default)]
+    pub hw_size: Option<u8>,       // 1, 2, 4, 8
+}
+
+fn default_bp_kind() -> String {
+    "software".to_string()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PatchInfo {
+    pub id: String,                    // UUID
+    pub address: u64,                  // resolved absolute address (0 if unresolved)
+    pub module_name: String,           // lowercase module short name
+    pub module_offset: u64,            // RVA within module
+    pub original_bytes: Vec<u8>,       // saved for undo
+    pub patched_bytes: Vec<u8>,        // assembled result
+    pub assembly_text: String,         // what the user typed
+    pub original_disassembly: String,  // "mov eax, ebx" — for display
+    pub enabled: bool,                 // user toggle
+    pub is_applied: bool,              // currently written in debuggee
+    #[serde(default)]
+    pub group: Option<String>,         // group name
+}
+
 // Serializable snapshot of session state for frontend communication
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DebugSessionUI {
@@ -10,12 +49,16 @@ pub struct DebugSessionUI {
     pub name: String,
     pub server_url: String,
     pub launch_command: String,
+    pub working_directory: Option<String>,
+    pub is_local_run: bool,
     pub status: SessionStatusUI,
     pub current_event: Option<DebugEventInfo>,
     pub created_at: String,
     pub disassembly_window_open: bool,
     pub registers_window_open: bool,
     pub callstack_window_open: bool,
+    pub breakpoints: Vec<BreakpointInfo>,
+    pub patches: Vec<PatchInfo>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -72,6 +115,8 @@ pub struct DebugEventInfo {
     pub can_continue: bool,
     pub address: Option<u64>,
     pub context: Option<SerializableThreadContext>,
+    pub exception_code: Option<u32>,
+    pub exception_first_chance: Option<bool>,
 }
 
 // Session state - the single source of truth for each session
@@ -81,8 +126,11 @@ pub struct SessionStateUI {
     pub name: String,
     pub server_url: String,
     pub launch_command: String,
+    pub working_directory: Option<String>,
+    pub is_local_run: bool,
+    pub embedded_server_port: Option<u16>,
     pub created_at: String,
-    
+
     // Runtime state
     pub status: SessionStatusUI,
     pub events: Vec<joybug2::protocol_io::DebugEvent>,
@@ -98,6 +146,15 @@ pub struct SessionStateUI {
     pub is_disassembly_window_open: bool,
     pub is_registers_window_open: bool,
     pub is_callstack_window_open: bool,
+
+    // Breakpoints
+    pub breakpoints: Vec<BreakpointInfo>,
+
+    // Patches
+    pub patches: Vec<PatchInfo>,
+
+    // Exception handling
+    pub pass_exception_on_continue: bool,
 }
 
 impl SessionStateUI {
@@ -106,6 +163,8 @@ impl SessionStateUI {
         name: String,
         server_url: String,
         launch_command: String,
+        working_directory: Option<String>,
+        is_local_run: bool,
     ) -> Self {
         let (step_sender, step_receiver) = mpsc::channel();
         Self {
@@ -113,6 +172,9 @@ impl SessionStateUI {
             name,
             server_url,
             launch_command,
+            working_directory,
+            is_local_run,
+            embedded_server_port: None,
             created_at: chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string(),
             status: SessionStatusUI::Stopped,
             events: Vec::new(),
@@ -126,6 +188,9 @@ impl SessionStateUI {
             is_disassembly_window_open: false,
             is_registers_window_open: false,
             is_callstack_window_open: false,
+            breakpoints: Vec::new(),
+            patches: Vec::new(),
+            pass_exception_on_continue: false,
         }
     }
 
@@ -137,11 +202,26 @@ impl SessionStateUI {
         self.current_event = None;
         self.current_context = None;
         self.debug_result = None;
+        self.embedded_server_port = None;
 
         // Reset window states
         self.is_disassembly_window_open = false;
         self.is_registers_window_open = false;
         self.is_callstack_window_open = false;
+
+        self.pass_exception_on_continue = false;
+
+        // Keep breakpoints but mark all as inactive/unresolved
+        for bp in &mut self.breakpoints {
+            bp.is_active = false;
+            bp.address = 0;
+        }
+
+        // Keep patches but mark all as unapplied/unresolved
+        for patch in &mut self.patches {
+            patch.is_applied = false;
+            patch.address = 0;
+        }
 
         let (step_sender, step_receiver) = mpsc::channel();
         self.ui_sender = Some(step_sender);
@@ -155,6 +235,8 @@ impl SessionStateUI {
             name: self.name.clone(),
             server_url: self.server_url.clone(),
             launch_command: self.launch_command.clone(),
+            working_directory: self.working_directory.clone(),
+            is_local_run: self.is_local_run,
             status: self.status.clone(),
             current_event: self.current_event.as_ref().map(|event| {
                 let mut info = crate::events::debug_event_to_info(event);
@@ -182,6 +264,8 @@ impl SessionStateUI {
             disassembly_window_open: self.is_disassembly_window_open,
             registers_window_open: self.is_registers_window_open,
             callstack_window_open: self.is_callstack_window_open,
+            breakpoints: self.breakpoints.clone(),
+            patches: self.patches.clone(),
         }
     }
 }
@@ -189,6 +273,7 @@ impl SessionStateUI {
 // Global state - now just holding session states, no duplicate session storage
 pub type SessionStatesMap = Mutex<HashMap<String, Arc<Mutex<SessionStateUI>>>>;
 pub type LogsState = Mutex<Vec<LogEntry>>;
+pub type EmbeddedServersMap = Mutex<HashMap<String, joybug2::local_server::LocalServer>>;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LogEntry {

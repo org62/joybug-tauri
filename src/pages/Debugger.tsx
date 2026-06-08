@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import {
   Dialog,
   DialogClose,
@@ -17,7 +18,8 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
-import { Plus, Play, Eye, Pencil, Trash2, XSquare, FileCode2 } from "lucide-react";
+import { Plus, Play, Eye, Pencil, Trash2, XSquare, FileCode2, FolderOpen } from "lucide-react";
+import { open } from "@tauri-apps/plugin-dialog";
 import { toast } from "sonner";
 import { 
   loadSessionsFromStorage, 
@@ -35,6 +37,8 @@ interface DebugSession {
   name: string;
   server_url: string;
   launch_command: string;
+  working_directory: string | null;
+  is_local_run: boolean;
   status: SessionStatus;
   current_event: DebugEventInfo | null;
   created_at: string;
@@ -64,6 +68,8 @@ export default function Debugger() {
   const [formName, setFormName] = useState("");
   const [formServerUrl, setFormServerUrl] = useState("127.0.0.1:9000");
   const [formLaunchCommand, setFormLaunchCommand] = useState("cmd.exe /c echo Hello World!");
+  const [formWorkingDirectory, setFormWorkingDirectory] = useState("");
+  const [formLocalRun, setFormLocalRun] = useState(true);
 
   // Load sessions from backend with storage restoration
   const loadSessions = async () => {
@@ -84,26 +90,34 @@ export default function Debugger() {
   const restoreSessionsFromStorage = async () => {
     try {
       const storedSessions = loadSessionsFromStorage();
-      
+
       // First, get existing sessions from backend
       const existingSessions = await invoke<DebugSession[]>("get_debug_sessions");
-      const existingIds = new Set(existingSessions.map(s => s.id));
-      
+
+      // Match by content (name + command + mode), not by ID, because IDs change across restarts
+      const existingByContent = new Set(
+        existingSessions.map(s => `${s.name}\0${s.launch_command}\0${s.is_local_run}`)
+      );
+
       // Create sessions in backend from stored configs that don't already exist
       for (const config of storedSessions) {
-        if (!existingIds.has(config.id)) {
+        const contentKey = `${config.name}\0${config.launch_command}\0${config.is_local_run}`;
+        if (!existingByContent.has(contentKey)) {
           try {
             await invoke("create_debug_session", {
               name: config.name,
               serverUrl: config.server_url,
               launchCommand: config.launch_command,
+              workingDirectory: config.working_directory ?? null,
+              isLocalRun: config.is_local_run ?? true,
             });
+            existingByContent.add(contentKey);
           } catch (error) {
             console.warn(`Failed to restore session ${config.name}:`, error);
           }
         }
       }
-      
+
       // Load current state from backend
       await loadSessions();
     } catch (error) {
@@ -113,8 +127,11 @@ export default function Debugger() {
     }
   };
 
-  // Initial load - restore sessions from storage
+  // Initial load - restore sessions from storage (useRef guard prevents StrictMode double-execution)
+  const hasRestoredRef = useRef(false);
   useEffect(() => {
+    if (hasRestoredRef.current) return;
+    hasRestoredRef.current = true;
     restoreSessionsFromStorage();
   }, []);
 
@@ -166,11 +183,47 @@ export default function Debugger() {
     };
   }, []); // Empty dependency array ensures this runs only once
 
+  const handleBrowseExecutable = async () => {
+    try {
+      const selected = await open({
+        multiple: false,
+        directory: false,
+        filters: [
+          { name: "Executables", extensions: ["exe", "com", "bat", "cmd"] },
+          { name: "All Files", extensions: ["*"] },
+        ],
+      });
+      if (selected) {
+        setFormLaunchCommand(selected);
+      }
+    } catch (error) {
+      console.error("Failed to open file dialog:", error);
+      toast.error(`Failed to open file dialog: ${error}`);
+    }
+  };
+
+  const handleBrowseWorkingDirectory = async () => {
+    try {
+      const selected = await open({
+        multiple: false,
+        directory: true,
+      });
+      if (selected) {
+        setFormWorkingDirectory(selected);
+      }
+    } catch (error) {
+      console.error("Failed to open directory dialog:", error);
+      toast.error(`Failed to open directory dialog: ${error}`);
+    }
+  };
+
   const handleOpenNewSessionDialog = () => {
     setSessionToEdit(null);
     setFormName("");
     setFormServerUrl("127.0.0.1:9000");
     setFormLaunchCommand("cmd.exe /c echo Hello World!");
+    setFormWorkingDirectory("");
+    setFormLocalRun(true);
     setIsSessionDialogOpen(true);
   };
 
@@ -179,6 +232,8 @@ export default function Debugger() {
     setFormName(session.name === DEFAULT_SESSION_NAME ? "" : session.name);
     setFormServerUrl(session.server_url);
     setFormLaunchCommand(session.launch_command);
+    setFormWorkingDirectory(session.working_directory ?? "");
+    setFormLocalRun(session.is_local_run);
     setIsSessionDialogOpen(true);
   };
 
@@ -186,31 +241,39 @@ export default function Debugger() {
     const sessionName = formName.trim() || DEFAULT_SESSION_NAME;
 
     try {
+      const workingDirectory = formWorkingDirectory.trim() || null;
+
       const sessionId = await invoke<string>("create_debug_session", {
         name: sessionName,
-        serverUrl: formServerUrl,
+        serverUrl: formLocalRun ? "" : formServerUrl,
         launchCommand: formLaunchCommand,
+        workingDirectory,
+        isLocalRun: formLocalRun,
       });
 
       // Save session config to storage
       addSessionToStorage({
         id: sessionId,
         name: sessionName,
-        server_url: formServerUrl,
+        server_url: formLocalRun ? "" : formServerUrl,
         launch_command: formLaunchCommand,
+        working_directory: workingDirectory,
+        is_local_run: formLocalRun,
         created_at: new Date().toISOString(),
       });
 
       toast.success("Debug session created successfully");
       setIsSessionDialogOpen(false);
-      
+
       // Clear form
       setFormName("");
       setFormServerUrl("127.0.0.1:9000");
       setFormLaunchCommand("cmd.exe /c echo Hello World!");
-      
+      setFormWorkingDirectory("");
+      setFormLocalRun(true);
+
       // Live updates will arrive via events; no manual refresh
-      
+
       return sessionId;
     } catch (error) {
       console.error("Failed to create debug session:", error);
@@ -225,19 +288,25 @@ export default function Debugger() {
     const sessionName = formName.trim() || DEFAULT_SESSION_NAME;
 
     try {
+      const workingDirectory = formWorkingDirectory.trim() || null;
+
       await invoke("update_debug_session", {
         sessionId: sessionToEdit.id,
         name: sessionName,
-        serverUrl: formServerUrl,
+        serverUrl: formLocalRun ? "" : formServerUrl,
         launchCommand: formLaunchCommand,
+        workingDirectory,
+        isLocalRun: formLocalRun,
       });
 
       // Update session config in storage
       updateSessionInStorage({
         id: sessionToEdit.id,
         name: sessionName,
-        server_url: formServerUrl,
+        server_url: formLocalRun ? "" : formServerUrl,
         launch_command: formLaunchCommand,
+        working_directory: workingDirectory,
+        is_local_run: formLocalRun,
         created_at: sessionToEdit.created_at,
       });
 
@@ -256,7 +325,8 @@ export default function Debugger() {
     try {
       await invoke("start_debug_session", { sessionId });
       toast.success("Debug session started");
-      // Live updates will arrive via events; no manual refresh
+      // Navigate to session view
+      navigate(`/session/${sessionId}`);
     } catch (error) {
       console.error("Failed to start debug session:", error);
       toast.error(`Failed to start debug session: ${error}`);
@@ -291,9 +361,12 @@ export default function Debugger() {
 
   const handleCreateAndStart = async () => {
     try {
-      await handleCreateSession();
+      const sessionId = await handleCreateSession();
+      if (sessionId) {
+        await handleStartSession(sessionId);
+      }
     } catch (error) {
-      // Error already handled in handleCreateSession
+      // Error already handled in handleCreateSession/handleStartSession
     }
   };
 
@@ -401,23 +474,61 @@ export default function Debugger() {
                     placeholder="My Debug Session"
                   />
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor="serverUrl">Debug Server URL</Label>
-                  <Input
-                    id="serverUrl"
-                    value={formServerUrl}
-                    onChange={(e) => setFormServerUrl(e.target.value)}
-                    placeholder="127.0.0.1:9000"
+                <div className="flex items-center space-x-2">
+                  <Switch
+                    id="localRun"
+                    checked={formLocalRun}
+                    onCheckedChange={(checked: boolean) => setFormLocalRun(checked)}
                   />
+                  <Label
+                    htmlFor="localRun"
+                    className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
+                  >
+                    Local Run (start embedded debug server)
+                  </Label>
                 </div>
+                {!formLocalRun && (
+                  <div className="space-y-2">
+                    <Label htmlFor="serverUrl">Debug Server URL</Label>
+                    <Input
+                      id="serverUrl"
+                      value={formServerUrl}
+                      onChange={(e) => setFormServerUrl(e.target.value)}
+                      placeholder="127.0.0.1:9000"
+                    />
+                  </div>
+                )}
                 <div className="space-y-2">
                   <Label htmlFor="launchCommand">Launch Command</Label>
-                  <Input
-                    id="launchCommand"
-                    value={formLaunchCommand}
-                    onChange={(e) => setFormLaunchCommand(e.target.value)}
-                    placeholder="cmd.exe /c echo Hello World!"
-                  />
+                  <div className="flex gap-2">
+                    <Input
+                      id="launchCommand"
+                      value={formLaunchCommand}
+                      onChange={(e) => setFormLaunchCommand(e.target.value)}
+                      placeholder="cmd.exe /c echo Hello World!"
+                    />
+                    {formLocalRun && (
+                      <Button variant="outline" size="icon" onClick={handleBrowseExecutable} title="Browse for executable" type="button">
+                        <FolderOpen className="h-4 w-4" />
+                      </Button>
+                    )}
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="workingDirectory">Working Directory (optional)</Label>
+                  <div className="flex gap-2">
+                    <Input
+                      id="workingDirectory"
+                      value={formWorkingDirectory}
+                      onChange={(e) => setFormWorkingDirectory(e.target.value)}
+                      placeholder="Defaults to the debugger's directory"
+                    />
+                    {formLocalRun && (
+                      <Button variant="outline" size="icon" onClick={handleBrowseWorkingDirectory} title="Browse for working directory" type="button">
+                        <FolderOpen className="h-4 w-4" />
+                      </Button>
+                    )}
+                  </div>
                 </div>
               </div>
               <div className="flex justify-end gap-2">
@@ -521,7 +632,12 @@ export default function Debugger() {
                 <CardContent>
                   <div className="space-y-2 text-sm">
                     <div>
-                      <strong>Server:</strong> {session.server_url}
+                      <strong>Server:</strong>{" "}
+                      {session.is_local_run
+                        ? session.server_url
+                          ? `Local (${session.server_url})`
+                          : "Local (pending)"
+                        : session.server_url}
                     </div>
                     <div>
                       <strong>Command:</strong> {session.launch_command}
