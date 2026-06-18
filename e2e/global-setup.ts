@@ -7,9 +7,13 @@ import { fileURLToPath } from "url";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// In release mode (CI) the Tauri app embeds the built frontend, so we test
+// against target/release and skip the Vite dev server. Locally we use the
+// debug binary served by Vite.
+const RELEASE = process.env.JOYBUG_E2E_RELEASE === "1";
 const TAURI_BINARY = path.resolve(
   __dirname,
-  "../src-tauri/target/debug/joybug-tauri.exe",
+  `../src-tauri/target/${RELEASE ? "release" : "debug"}/joybug-tauri.exe`,
 );
 const VITE_URL = "http://localhost:1420";
 const CDP_URL = "http://localhost:9222/json/version";
@@ -33,31 +37,34 @@ async function globalSetup(): Promise<void> {
   if (!existsSync(TAURI_BINARY)) {
     throw new Error(
       `Tauri binary not found at ${TAURI_BINARY}.\n` +
-        `Run 'cd src-tauri && cargo build' first.`,
+        `Run '${RELEASE ? "npm run tauri build" : "cd src-tauri && cargo build"}' first.`,
     );
   }
 
-  // Start Vite dev server
-  const vite: ChildProcess = spawn("npm", ["run", "dev"], {
-    cwd: path.resolve(__dirname, ".."),
-    stdio: "pipe",
-    shell: true,
-  });
+  // The release binary embeds the built frontend, so no dev server is needed.
+  if (!RELEASE) {
+    // Start Vite dev server
+    const vite: ChildProcess = spawn("npm", ["run", "dev"], {
+      cwd: path.resolve(__dirname, ".."),
+      stdio: "pipe",
+      shell: true,
+    });
 
-  // Store PID for teardown
-  process.env.VITE_PID = String(vite.pid);
+    // Store PID for teardown
+    process.env.VITE_PID = String(vite.pid);
 
-  // Forward Vite errors to console for debugging
-  vite.stderr?.on("data", (data) => {
-    const msg = data.toString();
-    if (msg.includes("error")) {
-      console.error("[vite]", msg.trim());
-    }
-  });
+    // Forward Vite errors to console for debugging
+    vite.stderr?.on("data", (data) => {
+      const msg = data.toString();
+      if (msg.includes("error")) {
+        console.error("[vite]", msg.trim());
+      }
+    });
 
-  console.log("Waiting for Vite dev server...");
-  await waitForUrl(VITE_URL, 30_000);
-  console.log("Vite dev server ready.");
+    console.log("Waiting for Vite dev server...");
+    await waitForUrl(VITE_URL, 30_000);
+    console.log("Vite dev server ready.");
+  }
 
   // Create isolated data directory so e2e tests don't touch user's real
   // settings, breakpoints, patches, or pinned addresses.
