@@ -1,4 +1,4 @@
-import { spawn, ChildProcess } from "child_process";
+import { spawn, ChildProcess, execSync } from "child_process";
 import { existsSync, mkdirSync } from "fs";
 import path from "path";
 import os from "os";
@@ -64,6 +64,19 @@ async function globalSetup(): Promise<void> {
     console.log("Waiting for Vite dev server...");
     await waitForUrl(VITE_URL, 30_000);
     console.log("Vite dev server ready.");
+  }
+
+  // On persistent (self-hosted) CI runners a crashed prior run can leave a
+  // stray joybug-tauri.exe alive. Because WebView2 keys its browser process by
+  // the shared user-data folder, a new instance would attach to the stale one
+  // and never open the --remote-debugging-port, breaking CDP. Kill strays
+  // first. Guarded to release/CI so it never kills a developer's running app.
+  if (RELEASE && process.platform === "win32") {
+    try {
+      execSync("taskkill /IM joybug-tauri.exe /T /F", { stdio: "ignore" });
+    } catch {
+      // No stray process — nothing to kill.
+    }
   }
 
   // Create isolated data directory so e2e tests don't touch user's real

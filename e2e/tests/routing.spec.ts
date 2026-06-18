@@ -22,9 +22,11 @@ test.describe("Routing", () => {
 
   test("settings page loads", async ({ tauriPage: page }) => {
     await navigateTo(page, "/settings");
-    await expect(page.getByText("Settings")).toBeVisible({
-      timeout: 5_000,
-    });
+    // Scope to main content — "Settings" also appears as a nav link in the
+    // header, which would make a bare getByText ambiguous (strict-mode).
+    await expect(
+      page.getByRole("main").getByText("Settings"),
+    ).toBeVisible({ timeout: 5_000 });
   });
 
   test("about page loads", async ({ tauriPage: page }) => {

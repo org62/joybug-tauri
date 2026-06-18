@@ -1,7 +1,12 @@
 import { test as base, chromium, Page, TestInfo } from "@playwright/test";
 
 const CDP_ENDPOINT = "http://localhost:9222";
-const APP_ORIGIN = "http://localhost:1420";
+// In release mode the app serves its frontend over the Tauri custom protocol
+// (tauri.localhost); in dev it's the Vite dev server (localhost:1420).
+const APP_ORIGIN =
+  process.env.JOYBUG_E2E_RELEASE === "1"
+    ? "http://tauri.localhost"
+    : "http://localhost:1420";
 
 type TestFixtures = {
   tauriPage: Page;
