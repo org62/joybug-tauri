@@ -16,16 +16,21 @@ test.describe("Registers View", () => {
       const sessionId = await createAndStartSession(page, "Registers Test");
       await waitForPaused(page, sessionId);
 
-      // At InitialBreakpoint, we should see x64 register names and hex values
-      // The registers panel should show rip, rax, rsp, etc.
+      // Register names depend on the *debuggee* architecture, not the test
+      // runner's. (On Windows ARM64 the Node process may be x64-emulated while
+      // the debuggee is native ARM64, so process.arch is not a reliable proxy.)
+      // Detect from the rendered registers using collision-safe tokens: "rax"
+      // and "rsp" only appear on x86-64; "cpsr" only appears on ARM64. Avoid
+      // x-registers ("x0".."x28") — they're substrings of hex addresses (0x0..).
       await expect(async () => {
         const text = await page.evaluate(() =>
           document.body.innerText.toLowerCase(),
         );
-        // Check for key x64 register names
-        expect(text).toContain("rip");
-        expect(text).toContain("rax");
-        expect(text).toContain("rsp");
+        const hasX64 = text.includes("rax") && text.includes("rsp");
+        const hasArm64 = text.includes("cpsr");
+        // At InitialBreakpoint we should see a real register set for whichever
+        // architecture the debuggee is.
+        expect(hasX64 || hasArm64).toBe(true);
       }).toPass({ timeout: 15_000 });
 
       // Check for hex values (0x...)
