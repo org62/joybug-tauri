@@ -83,6 +83,9 @@ pub struct DebugSettings {
     pub exception_rules: Vec<ExceptionRule>,
     #[serde(default)]
     pub debugger_hiding: DebuggerHidingSettings,
+    /// Number of threads to use for memory scanning. `0` = all CPU cores.
+    #[serde(default)]
+    pub scan_thread_count: usize,
 }
 
 impl Default for DebugSettings {
@@ -98,6 +101,7 @@ impl Default for DebugSettings {
             keybindings: KeybindingSettings::default(),
             exception_rules: Vec::new(),
             debugger_hiding: DebuggerHidingSettings::default(),
+            scan_thread_count: 0, // 0 = all cores
         }
     }
 }

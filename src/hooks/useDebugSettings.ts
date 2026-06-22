@@ -26,10 +26,11 @@ export interface DebugSettings {
   stop_on_debug_output: boolean;
   exception_rules: ExceptionRule[];
   debugger_hiding: DebuggerHidingSettings;
+  scan_thread_count: number; // 0 = all CPU cores
 }
 
 export interface EventSettingItem {
-  key: keyof Omit<DebugSettings, 'exception_rules' | 'debugger_hiding'>;
+  key: keyof Omit<DebugSettings, 'exception_rules' | 'debugger_hiding' | 'scan_thread_count'>;
   id: string;
   label: string;
   keywords: string[];
@@ -64,6 +65,7 @@ const DEFAULTS: DebugSettings = {
   stop_on_debug_output: false,
   exception_rules: [],
   debugger_hiding: DEFAULT_HIDING,
+  scan_thread_count: 0,
 };
 
 export function useDebugSettings() {
@@ -78,7 +80,7 @@ export function useDebugSettings() {
     }
   }, []);
 
-  const toggle = useCallback(async (key: keyof Omit<DebugSettings, 'exception_rules' | 'debugger_hiding'>) => {
+  const toggle = useCallback(async (key: keyof Omit<DebugSettings, 'exception_rules' | 'debugger_hiding' | 'scan_thread_count'>) => {
     let next!: DebugSettings;
     setSettings(prev => {
       next = { ...prev, [key]: !prev[key] };
@@ -122,5 +124,19 @@ export function useDebugSettings() {
     }
   }, []);
 
-  return { settings, toggle, updateExceptionRules, toggleHiding };
+  const setScanThreadCount = useCallback(async (count: number) => {
+    const sanitized = Number.isFinite(count) && count > 0 ? Math.floor(count) : 0;
+    let next!: DebugSettings;
+    setSettings(prev => {
+      next = { ...prev, scan_thread_count: sanitized };
+      return next;
+    });
+    try {
+      await invoke("update_debug_settings", { newSettings: next });
+    } catch (e) {
+      console.error("Failed to update scan thread count:", e);
+    }
+  }, []);
+
+  return { settings, toggle, updateExceptionRules, toggleHiding, setScanThreadCount };
 }

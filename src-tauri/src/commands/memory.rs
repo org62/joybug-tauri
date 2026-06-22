@@ -342,9 +342,15 @@ pub fn request_scan_memory_start(
     float_tolerance: Option<f64>,
     writable_only: bool,
     session_states: State<'_, SessionStatesMap>,
+    settings: State<'_, crate::settings::SettingsState>,
 ) -> Result<()> {
+    // `0` (the default) means "all cores"; map it to `None` for the scanner.
+    let thread_count = match settings.lock().map(|s| s.scan_thread_count).unwrap_or(0) {
+        0 => None,
+        n => Some(n),
+    };
     super::send_paused_command(&session_id, &session_states, UICommand::ScanMemoryStart {
-        value_type, compare_type, value, value2, alignment, float_tolerance, writable_only,
+        value_type, compare_type, value, value2, alignment, float_tolerance, writable_only, thread_count,
     })?;
     info!("Scan memory start request sent for session {}", session_id);
     Ok(())

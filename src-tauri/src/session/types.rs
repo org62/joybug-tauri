@@ -47,6 +47,7 @@ pub enum UICommand {
         alignment: Option<usize>,
         float_tolerance: Option<f64>,
         writable_only: bool,
+        thread_count: Option<usize>,
     },
     ScanMemoryNext {
         scan_id: u64,

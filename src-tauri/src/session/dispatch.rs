@@ -355,8 +355,8 @@ fn process_command(
             process_memory_search(session, app_handle_clone, event, pattern, max_results);
             CommandResult::Continue
         }
-        UICommand::ScanMemoryStart { ref value_type, ref compare_type, ref value, ref value2, alignment, float_tolerance, writable_only } => {
-            process_scan_memory_start(session, app_handle_clone, event, value_type, compare_type, value.clone(), value2.clone(), alignment, float_tolerance, writable_only);
+        UICommand::ScanMemoryStart { ref value_type, ref compare_type, ref value, ref value2, alignment, float_tolerance, writable_only, thread_count } => {
+            process_scan_memory_start(session, app_handle_clone, event, value_type, compare_type, value.clone(), value2.clone(), alignment, float_tolerance, writable_only, thread_count);
             CommandResult::Continue
         }
         UICommand::ScanMemoryNext { scan_id, ref value_type, ref compare_type, ref value, ref value2 } => {

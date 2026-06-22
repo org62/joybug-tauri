@@ -448,6 +448,7 @@ pub(crate) fn process_scan_memory_start(
     alignment: Option<usize>,
     float_tolerance: Option<f64>,
     writable_only: bool,
+    thread_count: Option<usize>,
 ) {
     let pid = event.pid();
     let vt = parse_scan_value_type(value_type_str);
@@ -455,12 +456,12 @@ pub(crate) fn process_scan_memory_start(
     let val = value.as_deref().and_then(|s| parse_scan_value(vt, s));
     let val2 = value2.as_deref().and_then(|s| parse_scan_value(vt, s));
 
-    debug!("📤 Processing scan memory start: pid={}, type={:?}, compare={:?}", pid, vt, ct);
+    debug!("📤 Processing scan memory start: pid={}, type={:?}, compare={:?}, threads={:?}", pid, vt, ct, thread_count);
 
     let Some(ref handle) = app_handle_clone else { return };
     let session_id = session.state.lock().unwrap().id.clone();
 
-    match session.scan_memory_start(pid, vt, ct, val, val2, alignment, float_tolerance, writable_only) {
+    match session.scan_memory_start(pid, vt, ct, val, val2, alignment, float_tolerance, writable_only, thread_count) {
         Ok((scan_id, match_count, scan_time_us)) => {
             info!("📥 Scan started: scan_id={}, matches={}, time={}μs", scan_id, match_count, scan_time_us);
             let result = ScanMatchResult { session_id, scan_id, match_count, scan_time_us };

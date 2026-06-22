@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useTheme } from "next-themes";
 import {
   Select,
@@ -6,6 +7,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Input } from "@/components/ui/input";
+import { useDebugSettings } from "@/hooks/useDebugSettings";
 
 interface SettingItem {
   key: string;
@@ -15,6 +18,7 @@ interface SettingItem {
 
 const SETTING_ITEMS: SettingItem[] = [
   { key: "theme", label: "Theme", keywords: ["dark", "light", "system", "appearance", "color"] },
+  { key: "scanThreads", label: "Memory scan threads (0 = all cores)", keywords: ["scan", "thread", "threads", "memory", "performance", "cores", "parallel", "cpu"] },
 ];
 
 interface SettingsGeneralProps {
@@ -24,6 +28,8 @@ interface SettingsGeneralProps {
 /** Renders a "General" category block matching the keybinding section style. */
 export function SettingsGeneral({ searchQuery }: SettingsGeneralProps) {
   const { theme, setTheme } = useTheme();
+  const { settings, setScanThreadCount } = useDebugSettings();
+  const [scanThreadsDraft, setScanThreadsDraft] = useState<string | null>(null);
 
   const matchesSearch = (item: SettingItem): boolean => {
     if (!searchQuery) return true;
@@ -60,6 +66,23 @@ export function SettingsGeneral({ searchQuery }: SettingsGeneralProps) {
                   <SelectItem value="system">System</SelectItem>
                 </SelectContent>
               </Select>
+            )}
+            {item.key === "scanThreads" && (
+              <Input
+                type="number"
+                min={0}
+                step={1}
+                className="w-[130px] h-7 text-sm"
+                value={scanThreadsDraft ?? String(settings.scan_thread_count)}
+                onChange={(e) => setScanThreadsDraft(e.target.value)}
+                onBlur={() => {
+                  if (scanThreadsDraft !== null) {
+                    const parsed = parseInt(scanThreadsDraft, 10);
+                    setScanThreadCount(Number.isNaN(parsed) ? 0 : parsed);
+                    setScanThreadsDraft(null);
+                  }
+                }}
+              />
             )}
           </div>
         ))}
