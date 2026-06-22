@@ -5,7 +5,7 @@ import { listen } from '@tauri-apps/api/event';
 import { useSessionContext } from '@/contexts/SessionContext';
 import { formatTauriError } from '@/lib/sessionHelpers';
 import { Badge } from '@/components/ui/badge';
-import { ScrollArea } from '@/components/ui/scroll-area';
+import { VirtualizedList } from '@/components/ui/virtualized-list';
 import { Cpu, Loader2 } from 'lucide-react';
 import { CallStackFrameList, CallStackFrame } from '@/components/CallStackFrameList';
 
@@ -20,6 +20,10 @@ interface ContextThreadsViewProps {
   onNavigateToDisassembly?: (address: string) => void;
   onNavigateToMemoryPointer?: (address: string) => void;
 }
+
+// Fixed row height (px) for the virtualized thread list. Rows are uniform (2 lines
+// of truncated text), so a fixed height avoids per-row getBoundingClientRect measurement.
+const THREAD_ROW_HEIGHT = 50;
 
 export const ContextThreadsView = ({ onNavigateToDisassembly, onNavigateToMemoryPointer }: ContextThreadsViewProps) => {
   const sessionData = useSessionContext();
@@ -272,60 +276,64 @@ export const ContextThreadsView = ({ onNavigateToDisassembly, onNavigateToMemory
   const isLoadingPopover = hoveredThreadId !== null && loadingThreadId === hoveredThreadId;
   const popoverError = hoveredThreadId !== null && callstackError?.tid === hoveredThreadId ? callstackError.message : null;
 
-  return (
-    <div className="h-full">
-      <ScrollArea className="h-full">
-        {sessionData?.threads && sessionData.threads.length > 0 ? (
-          <div className="space-y-1">
-            {sessionData.threads.map((thread, index) => {
-              const symInfo = threadSymbols.get(thread.id);
-              const displayText = symInfo?.symbol_info ?? thread.start_address;
-              const isFunction = symInfo?.is_function ?? true;
-              const clickColor = isFunction
-                ? 'hover:text-blue-600 dark:hover:text-blue-400'
-                : 'hover:text-green-600 dark:hover:text-green-400';
+  const threads = sessionData?.threads ?? [];
 
-              return (
-                <div
-                  key={index}
-                  className="flex items-center justify-between px-2 py-1 border-b hover:bg-gray-50 dark:hover:bg-gray-900"
-                  onMouseEnter={(e) => handleThreadMouseEnter(thread.id, e)}
-                  onMouseLeave={handleThreadMouseLeave}
-                >
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-1">
-                      <h3 className="font-medium text-sm">Thread {thread.id}</h3>
-                      <Badge
-                        variant="outline"
-                        className={`${getThreadStatusColor(thread.status)} border text-xs px-1 py-0`}
-                      >
-                        {thread.status}
-                      </Badge>
-                    </div>
-                    <p className="text-xs text-muted-foreground truncate">
-                      Start:{' '}
-                      <button
-                        className={`font-mono ${clickColor} hover:underline cursor-pointer`}
-                        onClick={(e) => { e.stopPropagation(); handleStartAddressClick(thread.start_address, isFunction); }}
-                      >
-                        {displayText}
-                      </button>
-                    </p>
+  return (
+    <div className="absolute inset-0 flex flex-col overflow-hidden">
+      {threads.length > 0 ? (
+        <VirtualizedList
+          items={threads}
+          rowHeight={THREAD_ROW_HEIGHT}
+          overscan={15}
+          className="flex-1 min-h-0"
+          getItemKey={(_thread, index) => index}
+          renderItem={(thread) => {
+            const symInfo = threadSymbols.get(thread.id);
+            const displayText = symInfo?.symbol_info ?? thread.start_address;
+            const isFunction = symInfo?.is_function ?? true;
+            const clickColor = isFunction
+              ? 'hover:text-blue-600 dark:hover:text-blue-400'
+              : 'hover:text-green-600 dark:hover:text-green-400';
+
+            return (
+              <div
+                className="flex items-center justify-between px-2 py-1 border-b hover:bg-gray-50 dark:hover:bg-gray-900 h-full"
+                onMouseEnter={(e) => handleThreadMouseEnter(thread.id, e)}
+                onMouseLeave={handleThreadMouseLeave}
+              >
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 mb-1">
+                    <h3 className="font-medium text-sm">Thread {thread.id}</h3>
+                    <Badge
+                      variant="outline"
+                      className={`${getThreadStatusColor(thread.status)} border text-xs px-1 py-0`}
+                    >
+                      {thread.status}
+                    </Badge>
                   </div>
+                  <p className="text-xs text-muted-foreground truncate">
+                    Start:{' '}
+                    <button
+                      className={`font-mono ${clickColor} hover:underline cursor-pointer`}
+                      onClick={(e) => { e.stopPropagation(); handleStartAddressClick(thread.start_address, isFunction); }}
+                    >
+                      {displayText}
+                    </button>
+                  </p>
                 </div>
-              );
-            })}
+              </div>
+            );
+          }}
+        />
+      ) : (
+        <div className="flex flex-col items-center justify-center h-full text-muted-foreground p-4">
+          <div className="text-center">
+            <Cpu className="h-12 w-12 mx-auto mb-4 opacity-50" />
+            <p className="text-base font-medium">No threads found</p>
+            <p className="text-sm mt-1">Threads will appear here during debugging</p>
           </div>
-        ) : (
-          <div className="flex flex-col items-center justify-center h-full text-muted-foreground p-4">
-            <div className="text-center">
-              <Cpu className="h-12 w-12 mx-auto mb-4 opacity-50" />
-              <p className="text-base font-medium">No threads found</p>
-              <p className="text-sm mt-1">Threads will appear here during debugging</p>
-            </div>
-          </div>
-        )}
-      </ScrollArea>
+        </div>
+      )}
 
       {/* Hover popover - portaled to body to escape rc-dock transforms */}
       {hoveredThreadId !== null && popoverPos && createPortal(

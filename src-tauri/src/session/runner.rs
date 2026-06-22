@@ -78,6 +78,7 @@ fn emit_dll_events(
                 None => format!("DLL unloaded @ 0x{:X}", base_of_dll),
             };
             crate::ui_logger::log_info(handle, &message, Some(session_id.to_string()));
+            // The frontend dispatcher coalesces bursts of these into a summary toast.
             crate::ui_logger::toast_info(handle, &message);
         }
         joybug2::protocol_io::DebugEvent::DllLoaded { pid, tid, dll_name, base_of_dll, size_of_dll } => {
@@ -109,6 +110,7 @@ fn emit_dll_events(
                 None => format!("DLL loaded: {} @ 0x{:X}", name, base_of_dll),
             };
             crate::ui_logger::log_info(handle, &message, Some(session_id.to_string()));
+            // The frontend dispatcher coalesces bursts of these into a summary toast.
             crate::ui_logger::toast_info(handle, &message);
         }
         _ => {}
@@ -275,6 +277,9 @@ pub fn run_debug_session(
                 joybug2::protocol_io::DebugEvent::Exception { code, first_chance: true, .. }
                     if *code == 0x80000004
             );
+            // Toast for events here; Output/DllLoaded/DllUnloaded are toasted separately
+            // below / above (with richer messages). The frontend dispatcher coalesces any
+            // bursts (e.g. thousands of thread-creates) into a single summary toast.
             if !matches!(
                 event,
                 joybug2::protocol_io::DebugEvent::Output { .. }
@@ -299,6 +304,7 @@ pub fn run_debug_session(
                 };
                 let output = format!("OutputDebugString: {}", output);
                 crate::ui_logger::log_info(handle, &output, Some(session_id));
+                // The frontend dispatcher coalesces bursts of these into a summary toast.
                 crate::ui_logger::toast_info(handle, &output);
 
                 {

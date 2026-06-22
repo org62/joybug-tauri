@@ -2,8 +2,8 @@ import { BrowserRouter as Router, Routes, Route, useNavigate } from "react-route
 import React, { Suspense, useEffect, useState, useCallback, useRef } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
-import { toast } from "sonner";
 import { useTheme } from "next-themes";
+import { dispatchToast } from "@/lib/toastDispatcher";
 import Header from "@/components/Header";
 import { KeybindingContext, useKeybindingContext } from "@/contexts/KeybindingContext";
 import { useKeybindings } from "@/hooks/useKeybindings";
@@ -66,12 +66,14 @@ function AppContent() {
 
     window.addEventListener('keydown', handleKeyDown);
 
-    // Global toast listeners
+    // Global toast listeners. Routed through the burst-aware dispatcher so rare
+    // events show their full message while bursts collapse into a single
+    // "N× category" summary (prevents sonner's per-toast reflow from freezing the UI).
     const unlistenInfo = listen<string>("show-toast", (event) => {
-      toast.info(event.payload);
+      dispatchToast("info", event.payload);
     });
     const unlistenError = listen<string>("show-toast-error", (event) => {
-      toast.error(event.payload);
+      dispatchToast("error", event.payload);
     });
 
     return () => {
