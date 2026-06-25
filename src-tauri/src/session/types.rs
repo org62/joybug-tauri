@@ -64,6 +64,21 @@ pub enum UICommand {
     ScanMemoryReset {
         scan_id: u64,
     },
+    PointerScanStart {
+        target_address: u64,
+        max_offset: u64,
+        max_depth: u32,
+        max_results: Option<u64>,
+        modules: Option<Vec<u64>>,
+    },
+    PointerScanGetResults {
+        scan_id: u64,
+        offset: u64,
+        count: u64,
+    },
+    PointerScanReset {
+        scan_id: u64,
+    },
     AssemblePatch { address: u64, assembly_text: String, arch: joybug2::interfaces::Architecture, nop_pad: bool },
     UndoPatch { patch_id: String },
     UndoPatches { patch_ids: Vec<String> },
@@ -280,4 +295,35 @@ pub struct ScanValueEntry {
 pub struct ScanError {
     pub session_id: String,
     pub error: String,
+}
+
+/// Event payload for a started pointer scan.
+#[derive(serde::Serialize)]
+pub struct PointerScanStartResult {
+    pub session_id: String,
+    pub scan_id: u64,
+    pub match_count: u64,
+    pub scan_time_us: u64,
+}
+
+/// A single pointer path, with all addresses formatted as hex strings so 64-bit
+/// values survive the trip to JavaScript without precision loss.
+#[derive(serde::Serialize)]
+pub struct PointerPathEntry {
+    pub module_index: i32,
+    pub module_base: String,
+    pub base_offset: String,
+    /// Symbolized static base ("module!name+0xoff"), if resolvable.
+    pub base_symbol: Option<String>,
+    pub offsets: Vec<String>,
+    pub resolved: String,
+}
+
+/// Event payload for a page of pointer scan results.
+#[derive(serde::Serialize)]
+pub struct PointerScanResultsPayload {
+    pub session_id: String,
+    pub scan_id: u64,
+    pub paths: Vec<PointerPathEntry>,
+    pub total_count: u64,
 }

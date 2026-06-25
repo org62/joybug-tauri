@@ -399,6 +399,51 @@ pub fn request_scan_memory_reset(
     Ok(())
 }
 
+// --- Pointer Scan ---
+
+#[tauri::command]
+pub fn request_pointer_scan_start(
+    session_id: String,
+    target_address: u64,
+    max_offset: u64,
+    max_depth: u32,
+    max_results: Option<u64>,
+    modules: Option<Vec<u64>>,
+    session_states: State<'_, SessionStatesMap>,
+) -> Result<()> {
+    super::send_paused_command(&session_id, &session_states, UICommand::PointerScanStart {
+        target_address, max_offset, max_depth, max_results, modules,
+    })?;
+    info!("Pointer scan start request sent for session {}", session_id);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn request_pointer_scan_get_results(
+    session_id: String,
+    scan_id: u64,
+    offset: u64,
+    count: u64,
+    session_states: State<'_, SessionStatesMap>,
+) -> Result<()> {
+    super::send_paused_command(&session_id, &session_states, UICommand::PointerScanGetResults {
+        scan_id, offset, count,
+    })?;
+    info!("Pointer scan get results request sent for session {}", session_id);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn request_pointer_scan_reset(
+    session_id: String,
+    scan_id: u64,
+    session_states: State<'_, SessionStatesMap>,
+) -> Result<()> {
+    super::send_paused_command(&session_id, &session_states, UICommand::PointerScanReset { scan_id })?;
+    info!("Pointer scan reset request sent for session {}", session_id);
+    Ok(())
+}
+
 // --- Pinned Addresses ---
 
 #[derive(Debug, Clone, Serialize)]

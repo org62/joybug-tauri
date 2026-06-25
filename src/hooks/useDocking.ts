@@ -32,6 +32,13 @@ export interface DockingState {
 const getSerializableLayout = (l: LayoutBase): LayoutData => {
   function clean(box: any): any {
     const newBox: any = {};
+    // Preserve panel/box id. rc-dock keys panels/boxes by id (DockBox.js),
+    // and fixLayoutData() assigns a brand-new generated id to any box whose
+    // id is missing. Dropping the id here makes every toggleTab/showTab/addTab
+    // (which re-serialize the layout) produce fresh panel ids, which changes
+    // the React keys and forces rc-dock to unmount + remount every cached tab —
+    // wiping all in-component state (e.g. memory scanner results) on tab switch.
+    if (box.id) newBox.id = box.id;
     if (box.mode) newBox.mode = box.mode;
     if (box.size) newBox.size = box.size;
 

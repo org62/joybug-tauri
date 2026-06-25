@@ -8,6 +8,7 @@ use super::emulation::*;
 use super::helpers::report_step_error;
 use super::memory::*;
 use super::patches::*;
+use super::pointer_scan::*;
 use super::registers::*;
 use super::runner::emit_session_event;
 use super::symbols::*;
@@ -369,6 +370,18 @@ fn process_command(
         }
         UICommand::ScanMemoryReset { scan_id } => {
             process_scan_memory_reset(session, app_handle_clone, scan_id);
+            CommandResult::Continue
+        }
+        UICommand::PointerScanStart { target_address, max_offset, max_depth, max_results, ref modules } => {
+            process_pointer_scan_start(session, app_handle_clone, event, target_address, max_offset, max_depth, max_results, modules.clone());
+            CommandResult::Continue
+        }
+        UICommand::PointerScanGetResults { scan_id, offset, count } => {
+            process_pointer_scan_get_results(session, app_handle_clone, event, scan_id, offset, count);
+            CommandResult::Continue
+        }
+        UICommand::PointerScanReset { scan_id } => {
+            process_pointer_scan_reset(session, app_handle_clone, scan_id);
             CommandResult::Continue
         }
         UICommand::AssemblePatch { address, ref assembly_text, arch, nop_pad } => {

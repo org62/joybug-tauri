@@ -22,6 +22,7 @@ import { ContextBreakpointsView } from "@/components/session/ContextBreakpointsV
 import { ContextPatchesView } from "@/components/session/ContextPatchesView";
 import { ContextMemorySearchView } from "@/components/session/ContextMemorySearchView";
 import { ContextMemoryScannerView } from "@/components/session/ContextMemoryScannerView";
+import { ContextPointerScanView } from "@/components/session/ContextPointerScanView";
 import { ContextModuleInfoView } from "@/components/session/ContextModuleInfoView";
 import { useDebugSession } from "@/hooks/useDebugSession";
 import { useBreakpoints } from "@/hooks/useBreakpoints";
@@ -34,7 +35,7 @@ import type { PaletteCommand } from "@/contexts/CommandPaletteContext";
 import {
   Play, Square, Pause, ArrowDownToLine, CornerDownRight, ArrowUpFromLine, SkipForward,
   Code, Cpu, Box, Layers, ListTree, Search, HardDrive, MapPin, FileCode,
-  Plus, RotateCcw, Navigation, ScanSearch, Puzzle,
+  Plus, RotateCcw, Navigation, ScanSearch, Puzzle, Crosshair,
 } from "lucide-react";
 
 export default function SessionDocked() {
@@ -297,6 +298,11 @@ export default function SessionDocked() {
           event.stopPropagation();
           toggleTabWithBackendUpdate("memory_scanner");
           break;
+        case "panel.pointerScan":
+          event.preventDefault();
+          event.stopPropagation();
+          toggleTabWithBackendUpdate("pointer_scan");
+          break;
         case "panel.peViewer":
           event.preventDefault();
           event.stopPropagation();
@@ -530,6 +536,16 @@ export default function SessionDocked() {
         keywords: ["memory", "scanner", "scan", "cheat"],
       },
       {
+        id: "panel.pointerScan",
+        label: "Toggle Pointer Scan",
+        group: "Windows",
+        icon: <Crosshair className="size-4" />,
+        keybindingAction: "panel.pointerScan",
+        onSelect: () => toggleTabWithBackendUpdate("pointer_scan"),
+        keepOpen: true,
+        keywords: ["pointer", "scan", "path", "cheat", "static"],
+      },
+      {
         id: "panel.peViewer",
         label: "Toggle PE Viewer",
         group: "Windows",
@@ -627,6 +643,7 @@ export default function SessionDocked() {
     patches: <ContextPatchesView />,
     memory_search: <ContextMemorySearchView />,
     memory_scanner: <ContextMemoryScannerView />,
+    pointer_scan: <ContextPointerScanView />,
     peviewer: <ContextModuleInfoView />,
   }), [handleNavigateToMemory, handleNavigateToDisassembly, handleNavigateToMemoryPointer, handleOpenModuleInfo]);
 
@@ -712,6 +729,12 @@ export default function SessionDocked() {
         id: "memory_scanner",
         title: "Memory Scanner",
         content: dynamicTabContent.memory_scanner,
+        closable: true,
+      },
+      pointer_scan: {
+        id: "pointer_scan",
+        title: "Pointer Scan",
+        content: dynamicTabContent.pointer_scan,
         closable: true,
       },
       peviewer: {
