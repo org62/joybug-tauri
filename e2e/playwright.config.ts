@@ -18,6 +18,7 @@ export default defineConfig({
     "routing.spec.ts",
     "keyboard-shortcuts.spec.ts",
     "patches.spec.ts",
+    "bookmarks.spec.ts",
     "disassembly.spec.ts",
     "registers.spec.ts",
     "session-lifecycle.spec.ts",

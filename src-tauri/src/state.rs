@@ -42,6 +42,135 @@ pub struct PatchInfo {
     pub group: Option<String>,         // group name
 }
 
+/// A persisted bookmark: a typed/named memory cell (Cheat-Engine style), a
+/// pointer chain, or a code annotation. Keyed per target by launch_command, like
+/// breakpoints and patches.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BookmarkInfo {
+    pub id: String,                          // UUID (regenerated on load)
+    pub kind: String,                        // "value" | "pointer" | "code"
+    // Base address: module-relative preferred, raw fallback (like pins/breakpoints).
+    pub module_name: Option<String>,         // lowercased short name incl. extension
+    pub module_offset: Option<u64>,          // RVA within module
+    pub raw_address: Option<String>,         // "0x..." when not in a module
+    // Metadata
+    pub name: Option<String>,                // user label
+    pub comment: Option<String>,             // user comment (esp. "code" kind)
+    pub group: Option<String>,               // group name
+    pub value_type: Option<String>,          // "U8".."F64" for value/pointer kinds
+    // Pointer-chain kind
+    #[serde(default)]
+    pub pointer_offsets: Option<Vec<u64>>,   // chain offsets (base -> target)
+    #[serde(default)]
+    pub base_symbol: Option<String>,         // "module!sym+0x10" (display only)
+    // Code kind
+    #[serde(default)]
+    pub asm_text: Option<String>,            // snapshot of the instruction line
+    // Lock / freeze (server-side)
+    #[serde(default)]
+    pub locked: bool,
+    #[serde(default)]
+    pub locked_value: Option<String>,        // value kept frozen while locked
+    // Runtime only: server-side freeze handle while locked (not persisted).
+    #[serde(skip, default)]
+    pub freeze_id: Option<u64>,
+}
+
+/// Frontend-facing bookmark with live resolution data. Sent in the session
+/// snapshot and in `bookmarks-updated` events.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResolvedBookmark {
+    pub id: String,
+    pub kind: String,
+    pub module_name: Option<String>,
+    pub module_offset: Option<u64>,
+    pub raw_address: Option<String>,
+    pub name: Option<String>,
+    pub comment: Option<String>,
+    pub group: Option<String>,
+    pub value_type: Option<String>,
+    pub pointer_offsets: Option<Vec<u64>>,
+    pub base_symbol: Option<String>,
+    pub asm_text: Option<String>,
+    pub locked: bool,
+    pub resolved_address: String,            // "0x.." | "mod+0x.." | ""
+    pub is_resolved: bool,
+    pub current_value: Option<String>,       // live read + formatted (None until refreshed)
+}
+
+/// Resolve a bookmark's static base address from the loaded modules (no pointer
+/// chain following — that needs a live client). Shared by the initial snapshot
+/// (`to_resolved_static`) and the live emit path in `session::bookmarks`.
+pub(crate) fn bookmark_static_address(
+    bm: &BookmarkInfo,
+    modules: &[joybug2::protocol_io::ModuleInfo],
+) -> Option<u64> {
+    if let (Some(name), Some(offset)) = (&bm.module_name, bm.module_offset) {
+        // Bookmarks store the module stem (no extension); match on that.
+        let want = name.to_lowercase();
+        modules
+            .iter()
+            .find(|m| crate::session::helpers::extract_module_name(&m.name).to_lowercase() == want)
+            .map(|m| m.base + offset)
+    } else if let Some(raw) = &bm.raw_address {
+        u64::from_str_radix(raw.trim_start_matches("0x").trim_start_matches("0X"), 16).ok()
+    } else {
+        None
+    }
+}
+
+impl ResolvedBookmark {
+    /// Build a `ResolvedBookmark` from its source bookmark, the resolved absolute
+    /// address (if any), and an optional live value. Single source of truth for
+    /// the field mapping and the `resolved_address` fallback formatting.
+    pub(crate) fn build(
+        bm: &BookmarkInfo,
+        addr: Option<u64>,
+        current_value: Option<String>,
+    ) -> Self {
+        let resolved_address = match addr {
+            Some(a) => format!("0x{:X}", a),
+            None => match (&bm.module_name, bm.module_offset) {
+                (Some(n), Some(off)) => format!("{}+0x{:X}", n, off),
+                _ => bm.raw_address.clone().unwrap_or_default(),
+            },
+        };
+        ResolvedBookmark {
+            id: bm.id.clone(),
+            kind: bm.kind.clone(),
+            module_name: bm.module_name.clone(),
+            module_offset: bm.module_offset,
+            raw_address: bm.raw_address.clone(),
+            name: bm.name.clone(),
+            comment: bm.comment.clone(),
+            group: bm.group.clone(),
+            value_type: bm.value_type.clone(),
+            pointer_offsets: bm.pointer_offsets.clone(),
+            base_symbol: bm.base_symbol.clone(),
+            asm_text: bm.asm_text.clone(),
+            locked: bm.locked,
+            resolved_address,
+            is_resolved: addr.is_some(),
+            current_value,
+        }
+    }
+}
+
+impl BookmarkInfo {
+    /// Build a snapshot ResolvedBookmark using only the module list (no memory
+    /// reads). Value-kind addresses resolve here; pointer chains resolve later on
+    /// a live refresh.
+    pub fn to_resolved_static(&self, modules: &[joybug2::protocol_io::ModuleInfo]) -> ResolvedBookmark {
+        // Pointer bookmarks need a live chain walk, so they aren't "resolved" here.
+        let resolved = if self.kind == "pointer" {
+            None
+        } else {
+            bookmark_static_address(self, modules)
+        };
+        ResolvedBookmark::build(self, resolved, None)
+    }
+}
+
 // Serializable snapshot of session state for frontend communication
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DebugSessionUI {
@@ -59,6 +188,7 @@ pub struct DebugSessionUI {
     pub callstack_window_open: bool,
     pub breakpoints: Vec<BreakpointInfo>,
     pub patches: Vec<PatchInfo>,
+    pub bookmarks: Vec<ResolvedBookmark>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -153,6 +283,9 @@ pub struct SessionStateUI {
     // Patches
     pub patches: Vec<PatchInfo>,
 
+    // Bookmarks
+    pub bookmarks: Vec<BookmarkInfo>,
+
     // Exception handling
     pub pass_exception_on_continue: bool,
 }
@@ -190,6 +323,7 @@ impl SessionStateUI {
             is_callstack_window_open: false,
             breakpoints: Vec::new(),
             patches: Vec::new(),
+            bookmarks: Vec::new(),
             pass_exception_on_continue: false,
         }
     }
@@ -221,6 +355,12 @@ impl SessionStateUI {
         for patch in &mut self.patches {
             patch.is_applied = false;
             patch.address = 0;
+        }
+
+        // Keep bookmarks but drop stale server-side freeze handles (the freeze
+        // threads die with the previous run's server connection).
+        for bm in &mut self.bookmarks {
+            bm.freeze_id = None;
         }
 
         let (step_sender, step_receiver) = mpsc::channel();
@@ -266,6 +406,11 @@ impl SessionStateUI {
             callstack_window_open: self.is_callstack_window_open,
             breakpoints: self.breakpoints.clone(),
             patches: self.patches.clone(),
+            bookmarks: self
+                .bookmarks
+                .iter()
+                .map(|bm| bm.to_resolved_static(&self.modules))
+                .collect(),
         }
     }
 }

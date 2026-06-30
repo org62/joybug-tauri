@@ -1,10 +1,10 @@
+mod bookmark_store;
 mod breakpoint_store;
 mod commands;
 mod data_dir;
 mod error;
 mod events;
 mod patch_store;
-mod pinned_address_store;
 mod ui_logger;
 mod session;
 mod state;
@@ -57,6 +57,7 @@ pub fn run() {
         .manage(EmbeddedServersMap::default())
         .manage(LogsState::default())
         .manage(SettingsState::new(load_settings_from_disk()))
+        .manage(commands::OobPool::default())
         .invoke_handler(tauri::generate_handler![
             commands::greet,
             commands::create_debug_session,
@@ -110,10 +111,15 @@ pub fn run() {
             commands::request_pointer_scan_start,
             commands::request_pointer_scan_get_results,
             commands::request_pointer_scan_reset,
-            commands::add_pinned_address,
-            commands::confirm_pin_raw_address,
-            commands::get_pinned_addresses,
-            commands::remove_pinned_address,
+            commands::request_pointer_scan_rescan,
+            commands::request_pointer_scan_apply_filter,
+            commands::add_bookmark,
+            commands::remove_bookmark,
+            commands::remove_bookmarks,
+            commands::update_bookmark,
+            commands::set_bookmark_value,
+            commands::toggle_bookmark_lock,
+            commands::refresh_bookmarks,
             commands::assemble_patch,
             commands::undo_patch,
             commands::undo_patches,

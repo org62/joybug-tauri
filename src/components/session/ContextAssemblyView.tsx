@@ -26,6 +26,7 @@ export const ContextAssemblyView = () => {
 
   const { breakpoints, toggleBreakpoint, setHardwareBreakpoint } = sessionData.breakpointState;
   const { assemblePatch } = sessionData.patchState;
+  const { addBookmark } = sessionData.bookmarkState;
 
   // Build a set of breakpoint addresses (uppercase hex) for quick lookup.
   // Exclude unresolved breakpoints (address "0x0") since they have no real location yet.
@@ -50,6 +51,7 @@ export const ContextAssemblyView = () => {
       onToggleBreakpoint={toggleBreakpoint}
       onSetHardwareBreakpoint={setHardwareBreakpoint}
       onAssemblePatch={assemblePatch}
+      onAddBookmark={(addr, asmText) => addBookmark({ kind: 'code', address: addr, asmText })}
     />
   );
 };

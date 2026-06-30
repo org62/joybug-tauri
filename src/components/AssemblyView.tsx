@@ -5,11 +5,12 @@ import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Switch } from "./ui/switch";
 import { Label } from "./ui/label";
-import { Cpu, ArrowLeft, ArrowRight, RefreshCw, ChevronRight, Circle, CircleDot, Wrench, Copy } from "lucide-react";
+import { Cpu, ArrowLeft, ArrowRight, RefreshCw, ChevronRight, Circle, CircleDot, Wrench, Copy, Bookmark } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAssemblyView, Instruction } from "@/hooks/useAssemblyView";
 import { RegisterContext, SymbolResolver, sanitizeAddressInput } from "@/lib/hexUtils";
 import { useContextMenu } from "@/hooks/useContextMenu";
+import { useColumnWidths } from "@/hooks/useColumnWidths";
 import { EmulationQuickView } from "./EmulationQuickView";
 import { Virtualizer } from "@tanstack/react-virtual";
 import { useKeybindingContext } from "@/contexts/KeybindingContext";
@@ -17,31 +18,11 @@ import { keyboardEventToChord } from "@/lib/keybindings";
 
 const COLUMN_WIDTHS_KEY = "assembly-column-widths";
 const NOP_PAD_KEY = "assembly-nop-pad";
-const MIN_COL_WIDTH = 40;
 
-interface ColumnWidths {
-  symbol: number;
-  bytes: number;
-  mnemonic: number;
-}
+type ColumnWidths = { symbol: number; bytes: number; mnemonic: number };
 
 const DEFAULT_COLUMN_WIDTHS: ColumnWidths = { symbol: 320, bytes: 144, mnemonic: 64 };
 const ASSEMBLY_ROW_HEIGHT = 24;
-
-function getInitialColumnWidths(): ColumnWidths {
-  try {
-    const stored = localStorage.getItem(COLUMN_WIDTHS_KEY);
-    if (stored) {
-      const parsed = JSON.parse(stored);
-      return {
-        symbol: Math.max(MIN_COL_WIDTH, parsed.symbol ?? DEFAULT_COLUMN_WIDTHS.symbol),
-        bytes: Math.max(MIN_COL_WIDTH, parsed.bytes ?? DEFAULT_COLUMN_WIDTHS.bytes),
-        mnemonic: Math.max(MIN_COL_WIDTH, parsed.mnemonic ?? DEFAULT_COLUMN_WIDTHS.mnemonic),
-      };
-    }
-  } catch {}
-  return { ...DEFAULT_COLUMN_WIDTHS };
-}
 
 interface AssemblyViewProps {
   sessionId?: string;
@@ -53,9 +34,10 @@ interface AssemblyViewProps {
   onToggleBreakpoint?: (address: string) => void;
   onSetHardwareBreakpoint?: (address: string, hwType: string, hwSize: number) => void;
   onAssemblePatch?: (address: string, assemblyText: string, nopPad?: boolean) => Promise<string | null>;
+  onAddBookmark?: (address: string, asmText: string) => void;
 }
 
-export function AssemblyView({ sessionId, isPaused, address, registers, resolveSymbol, breakpointAddresses, onToggleBreakpoint, onSetHardwareBreakpoint, onAssemblePatch }: AssemblyViewProps) {
+export function AssemblyView({ sessionId, isPaused, address, registers, resolveSymbol, breakpointAddresses, onToggleBreakpoint, onSetHardwareBreakpoint, onAssemblePatch, onAddBookmark }: AssemblyViewProps) {
   const [addressInput, setAddressInput] = useState("");
   // Inline assembly input state
   const [assembleTarget, setAssembleTarget] = useState<{ address: string; defaultText: string } | null>(null);
@@ -73,7 +55,7 @@ export function AssemblyView({ sessionId, isPaused, address, registers, resolveS
   // Track which jump target is being hovered (for live highlight)
   const [hoveredJumpTarget, setHoveredJumpTarget] = useState<bigint | null>(null);
   // Resizable column widths
-  const [columnWidths, setColumnWidths] = useState<ColumnWidths>(getInitialColumnWidths);
+  const { columnWidths, handleColumnResizeStart } = useColumnWidths<keyof ColumnWidths>(COLUMN_WIDTHS_KEY, DEFAULT_COLUMN_WIDTHS);
   // Context menu for right-click
   const { contextMenu, contextMenuRef, openContextMenu, closeContextMenu } = useContextMenu<{ address: string; mnemonic: string; op_str: string }>();
 
@@ -100,33 +82,6 @@ export function AssemblyView({ sessionId, isPaused, address, registers, resolveS
     registers,
     resolveSymbol,
   });
-
-  // Handle column resize drag
-  const handleColumnResizeStart = useCallback((column: keyof ColumnWidths, e: React.MouseEvent) => {
-    e.preventDefault();
-    const startX = e.clientX;
-    const startWidth = columnWidths[column];
-
-    const onMouseMove = (ev: MouseEvent) => {
-      const delta = ev.clientX - startX;
-      setColumnWidths(prev => ({
-        ...prev,
-        [column]: Math.max(MIN_COL_WIDTH, startWidth + delta),
-      }));
-    };
-
-    const onMouseUp = () => {
-      document.removeEventListener("mousemove", onMouseMove);
-      document.removeEventListener("mouseup", onMouseUp);
-      setColumnWidths(prev => {
-        try { localStorage.setItem(COLUMN_WIDTHS_KEY, JSON.stringify(prev)); } catch {}
-        return prev;
-      });
-    };
-
-    document.addEventListener("mousemove", onMouseMove);
-    document.addEventListener("mouseup", onMouseUp);
-  }, [columnWidths]);
 
   // Handle go-to action
   const handleGoTo = useCallback(async () => {
@@ -524,6 +479,19 @@ export function AssemblyView({ sessionId, isPaused, address, registers, resolveS
             >
               <Wrench className="h-4 w-4 text-purple-500" />
               Assemble...
+            </button>
+          )}
+          {onAddBookmark && (
+            <button
+              className="w-full px-3 py-1.5 text-sm text-left hover:bg-accent hover:text-accent-foreground flex items-center gap-2"
+              onClick={() => {
+                const asm = `${contextMenu.data.mnemonic} ${contextMenu.data.op_str}`.trim();
+                onAddBookmark(contextMenu.data.address, asm);
+                closeContextMenu();
+              }}
+            >
+              <Bookmark className="h-4 w-4 text-blue-400" />
+              Add to Bookmarks
             </button>
           )}
           <button

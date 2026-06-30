@@ -38,7 +38,7 @@ export const DebuggerDockingConfig: DockingConfig = {
           ],
         },
         {
-          tabs: [{ id: "disassembly" }, { id: "memory" }, { id: "memory_regions" }, { id: "breakpoints" }, { id: "patches" }, { id: "memory_search" }, { id: "memory_scanner" }, { id: "pointer_scan" }, { id: "peviewer" }],
+          tabs: [{ id: "disassembly" }, { id: "memory" }, { id: "memory_regions" }, { id: "breakpoints" }, { id: "patches" }, { id: "bookmarks" }, { id: "memory_search" }, { id: "memory_scanner" }, { id: "pointer_scan" }, { id: "peviewer" }],
           activeId: "disassembly",
         },
         {
@@ -69,6 +69,7 @@ export const DebuggerDockingConfig: DockingConfig = {
     memory_regions: { id: "memory_regions", title: "Memory Regions", content: <div>Memory Regions placeholder</div> },
     breakpoints: { id: "breakpoints", title: "Breakpoints", content: <div>Breakpoints placeholder</div> },
     patches: { id: "patches", title: "Patches", content: <div>Patches placeholder</div> },
+    bookmarks: { id: "bookmarks", title: "Bookmarks", content: <div>Bookmarks placeholder</div> },
     memory_search: { id: "memory_search", title: "Memory Search", content: <div>Memory Search placeholder</div> },
     memory_scanner: { id: "memory_scanner", title: "Memory Scanner", content: <div>Memory Scanner placeholder</div> },
     pointer_scan: { id: "pointer_scan", title: "Pointer Scan", content: <div>Pointer Scan placeholder</div> },

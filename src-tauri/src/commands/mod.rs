@@ -1,3 +1,4 @@
+mod bookmarks;
 mod breakpoints;
 mod disassembly;
 mod emulation;
@@ -11,6 +12,7 @@ mod symbols;
 mod types;
 mod window_state;
 
+pub use bookmarks::*;
 pub use breakpoints::*;
 pub use disassembly::*;
 pub use emulation::*;
@@ -120,6 +122,71 @@ pub(crate) fn create_oob_client(
     let client = joybug2::protocol_io::DebugSession::new(session_state.clone(), Some(&server_url))
         .map_err(|e| Error::ConnectionFailed(e.to_string()))?;
     Ok((client, pid))
+}
+
+/// One reused OOB connection for a session, pinned to the pid it was opened for.
+pub(crate) struct OobConn {
+    client: crate::session::types::DebugSession,
+    pid: u32,
+}
+
+/// Pool of long-lived OOB clients, one per session, used for high-frequency live
+/// polling (e.g. bookmark values while running) so we don't open a fresh TCP
+/// connection every tick. Per-session inner locks keep sessions from serialising.
+#[derive(Default)]
+pub struct OobPool(pub Mutex<std::collections::HashMap<String, Arc<Mutex<Option<OobConn>>>>>);
+
+impl OobPool {
+    /// Drop a session's pooled connection (call on stop/delete so the socket and
+    /// its server-side connection are released).
+    pub(crate) fn remove(&self, session_id: &str) {
+        self.0.lock().unwrap().remove(session_id);
+    }
+}
+
+/// Run `f` with a reused OOB client for `session_id`, (re)connecting when the slot
+/// is empty, the pid changed (target restart), or the socket is dead. The result
+/// of `f` is returned. Used for live polling without per-tick connection churn.
+pub(crate) fn with_oob_client<R>(
+    session_arc: &Arc<Mutex<SessionStateUI>>,
+    session_id: &str,
+    pool: &OobPool,
+    f: impl FnOnce(&mut crate::session::types::DebugSession, u32) -> R,
+) -> Result<R> {
+    let pid = {
+        let state = session_arc.lock().unwrap();
+        state.current_event.as_ref().map(|ev| ev.pid()).unwrap_or(0)
+    };
+    if pid == 0 {
+        return Err(Error::InvalidSessionState("No active process".to_string()));
+    }
+
+    // Get (or create) this session's slot without holding the map lock during I/O.
+    let slot_arc = {
+        let mut map = pool.0.lock().unwrap();
+        map.entry(session_id.to_string())
+            .or_insert_with(|| Arc::new(Mutex::new(None)))
+            .clone()
+    };
+    let mut slot = slot_arc.lock().unwrap();
+
+    // (Re)connect if absent or the pid changed since the connection was opened.
+    if !matches!(slot.as_ref(), Some(c) if c.pid == pid) {
+        let (client, _) = create_oob_client(session_arc)?;
+        *slot = Some(OobConn { client, pid });
+    }
+
+    // Liveness probe: if the socket died (server/process gone), reconnect once.
+    {
+        let conn = slot.as_mut().unwrap();
+        if conn.client.list_modules(pid).is_err() {
+            let (client, _) = create_oob_client(session_arc)?;
+            conn.client = client;
+        }
+    }
+
+    let conn = slot.as_mut().unwrap();
+    Ok(f(&mut conn.client, pid))
 }
 
 /// Get target architecture from session state (context or host default).

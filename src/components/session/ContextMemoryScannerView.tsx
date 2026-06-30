@@ -1,15 +1,12 @@
-import { useState } from 'react';
 import { useSessionContext } from '@/contexts/SessionContext';
 import { useMemoryScanner, FIRST_SCAN_COMPARE_TYPES, NEXT_SCAN_COMPARE_TYPES, needsValue, needsSecondValue, ScanValueType, ScanCompareType } from '@/hooks/useMemoryScanner';
-import { usePinnedAddresses } from '@/hooks/usePinnedAddresses';
 import { useContextMenu } from '@/hooks/useContextMenu';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { VirtualizedList } from '@/components/ui/virtualized-list';
-import { ScanSearch, Loader2, AlertTriangle, ChevronLeft, ChevronRight, X, Pin } from 'lucide-react';
+import { ScanSearch, Loader2, AlertTriangle, ChevronLeft, ChevronRight } from 'lucide-react';
 
 const VALUE_TYPES: ScanValueType[] = ['U8', 'U16', 'U32', 'U64', 'F32', 'F64'];
 
@@ -34,13 +31,10 @@ export const ContextMemoryScannerView = () => {
   const sessionId = sessionData?.session?.id;
   const onNavigateToDisassembly = sessionData.onNavigateToDisassembly;
   const onNavigateToMemory = sessionData.onNavigateToMemory;
+  const { addBookmark } = sessionData.bookmarkState;
 
   const scanner = useMemoryScanner(sessionId, isPaused);
-  const { pinnedAddresses, addPin, confirmPinRaw, removePin } = usePinnedAddresses(sessionId);
   const { contextMenu, contextMenuRef, openContextMenu, closeContextMenu } = useContextMenu<{ address: string }>();
-
-  // State for raw address confirmation dialog
-  const [rawPinDialog, setRawPinDialog] = useState<{ address: string; valueType: string } | null>(null);
 
   const compareTypes = scanner.isFirstScan ? FIRST_SCAN_COMPARE_TYPES : NEXT_SCAN_COMPARE_TYPES;
   const showValue = needsValue(scanner.compareType);
@@ -57,19 +51,9 @@ export const ContextMemoryScannerView = () => {
     }
   };
 
-  const handlePinAddress = async (address: string) => {
-    const result = await addPin(address, scanner.valueType);
-    if (!result.in_module) {
-      setRawPinDialog({ address, valueType: scanner.valueType });
-    }
+  const handleAddBookmark = (address: string) => {
+    addBookmark({ kind: 'value', address, valueType: scanner.valueType });
     closeContextMenu();
-  };
-
-  const handleConfirmRawPin = async () => {
-    if (rawPinDialog) {
-      await confirmPinRaw(rawPinDialog.address, rawPinDialog.valueType);
-      setRawPinDialog(null);
-    }
   };
 
   const renderContent = () => {
@@ -259,41 +243,6 @@ export const ContextMemoryScannerView = () => {
         )}
       </div>
 
-      {/* Pinned Addresses */}
-      {pinnedAddresses.length > 0 && (
-        <div className="border-b">
-          <div className="px-2 py-1 text-xs text-muted-foreground flex items-center gap-1">
-            <Pin className="h-3 w-3" />
-            Pinned Addresses
-          </div>
-          {pinnedAddresses.map((pin, i) => (
-            <div
-              key={`${pin.address_hex}-${i}`}
-              className={`flex items-center gap-2 px-2 py-0.5 text-sm hover:bg-accent ${!pin.is_resolved ? 'opacity-50' : ''}`}
-            >
-              <span
-                className="font-mono text-xs cursor-pointer hover:underline shrink-0"
-                onClick={() => pin.is_resolved && onNavigateToMemory?.(pin.address_hex)}
-              >
-                {pin.address_hex}
-              </span>
-              <span className="text-xs text-muted-foreground shrink-0">
-                {pin.module_name ?? 'raw'}
-              </span>
-              <span className="text-xs text-muted-foreground shrink-0">{pin.value_type}</span>
-              {pin.label && <span className="text-xs truncate">{pin.label}</span>}
-              {!pin.is_resolved && <span className="text-xs text-muted-foreground">(unresolved)</span>}
-              <button
-                className="ml-auto p-0.5 rounded hover:bg-accent text-muted-foreground hover:text-foreground shrink-0"
-                onClick={() => removePin(pin.address_hex, pin.module_name)}
-              >
-                <X className="h-3 w-3" />
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
-
       {/* Results */}
       <div className="flex-1 min-h-0">
         {renderContent()}
@@ -351,29 +300,12 @@ export const ContextMemoryScannerView = () => {
           )}
           <button
             className="w-full px-3 py-1.5 text-sm text-left hover:bg-accent hover:text-accent-foreground"
-            onClick={() => handlePinAddress(contextMenu.data.address)}
+            onClick={() => handleAddBookmark(contextMenu.data.address)}
           >
-            Pin Address
+            Add to Bookmarks
           </button>
         </div>
       )}
-
-      {/* Raw Address Confirmation Dialog */}
-      <Dialog open={rawPinDialog !== null} onOpenChange={(open) => { if (!open) setRawPinDialog(null); }}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Pin Non-Module Address</DialogTitle>
-            <DialogDescription>
-              The address <span className="font-mono">{rawPinDialog?.address}</span> is not within any loaded module.
-              It will be saved as a raw address and won't survive ASLR across restarts.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setRawPinDialog(null)}>Cancel</Button>
-            <Button onClick={handleConfirmRawPin}>Pin Anyway</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 };

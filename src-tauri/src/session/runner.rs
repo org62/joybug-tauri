@@ -5,6 +5,7 @@ use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, Manager};
 use tracing::{debug, error, info};
 
+use super::bookmarks::reapply_bookmarks_for_module;
 use super::breakpoints::{deactivate_breakpoints_for_module, emit_breakpoints_event, reapply_breakpoints_for_module};
 use super::patches::{deactivate_patches_for_module, emit_patches_event, reapply_patches_for_module};
 use super::dispatch::handle_ui_commands;
@@ -26,12 +27,14 @@ fn handle_event_breakpoints(
             // binary bytes (not 0xCC) and breakpoints store patched bytes as originals.
             reapply_patches_for_module(session, event.pid(), &short, *base_of_dll);
             reapply_breakpoints_for_module(session, event.pid(), &short, *base_of_dll);
+            reapply_bookmarks_for_module(session, event.pid(), &short);
         }
         joybug2::protocol_io::DebugEvent::ProcessCreated { image_file_name, base_of_image, .. } => {
             let name = image_file_name.as_deref().unwrap_or("main.exe");
             let short = module_short_name(name);
             reapply_patches_for_module(session, event.pid(), &short, *base_of_image);
             reapply_breakpoints_for_module(session, event.pid(), &short, *base_of_image);
+            reapply_bookmarks_for_module(session, event.pid(), &short);
         }
         joybug2::protocol_io::DebugEvent::DllUnloaded { .. } => {
             if let Some(ref name) = unloaded_module_name {
@@ -449,12 +452,14 @@ pub fn run_debug_session(
                         let short = module_short_name(name);
                         reapply_patches_for_module(session, event.pid(), &short, *base_of_dll);
                         reapply_breakpoints_for_module(session, event.pid(), &short, *base_of_dll);
+                        reapply_bookmarks_for_module(session, event.pid(), &short);
                     }
                     joybug2::protocol_io::DebugEvent::ProcessCreated { image_file_name, base_of_image, .. } => {
                         let name = image_file_name.as_deref().unwrap_or("main.exe");
                         let short = module_short_name(name);
                         reapply_patches_for_module(session, event.pid(), &short, *base_of_image);
                         reapply_breakpoints_for_module(session, event.pid(), &short, *base_of_image);
+                        reapply_bookmarks_for_module(session, event.pid(), &short);
                     }
                     _ => {}
                 }
@@ -468,6 +473,7 @@ pub fn run_debug_session(
             emit_session_event(&session.state, handle);
             emit_breakpoints_event(session, &app_handle_clone);
             emit_patches_event(session, &app_handle_clone);
+            super::bookmarks::emit_bookmarks_event(session, event.pid(), &app_handle_clone);
 
             info!("Debug event received, waiting for user command");
 

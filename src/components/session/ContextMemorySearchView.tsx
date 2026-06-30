@@ -52,6 +52,7 @@ export const ContextMemorySearchView = () => {
 
   const onNavigateToDisassembly = sessionData.onNavigateToDisassembly;
   const onNavigateToMemory = sessionData.onNavigateToMemory;
+  const { addBookmark } = sessionData.bookmarkState;
 
   const { contextMenu, contextMenuRef, openContextMenu, closeContextMenu } = useContextMenu<{ address: string }>();
 
@@ -317,6 +318,15 @@ export const ContextMemorySearchView = () => {
               Go to Memory View
             </button>
           )}
+          <button
+            className="w-full px-3 py-1.5 text-sm text-left hover:bg-accent hover:text-accent-foreground"
+            onClick={() => {
+              addBookmark({ kind: 'value', address: contextMenu.data.address, valueType: 'U32' });
+              closeContextMenu();
+            }}
+          >
+            Add to Bookmarks
+          </button>
         </div>
       )}
     </div>

@@ -16,6 +16,7 @@ export type ActionId =
   | "panel.memoryRegions"
   | "panel.breakpoints"
   | "panel.patches"
+  | "panel.bookmarks"
   | "panel.memorySearch"
   | "panel.memoryScanner"
   | "panel.pointerScan"
@@ -62,6 +63,7 @@ export const ACTION_REGISTRY: Record<ActionId, ActionMeta> = {
   "panel.memoryRegions": { label: "Toggle Memory Regions", category: "Panels", description: "Show or hide the Memory Regions panel", scope: "session" },
   "panel.breakpoints":   { label: "Toggle Breakpoints",    category: "Panels", description: "Show or hide the Breakpoints panel",    scope: "session" },
   "panel.patches":       { label: "Toggle Patches",        category: "Panels", description: "Show or hide the Patches panel",        scope: "session" },
+  "panel.bookmarks":     { label: "Toggle Bookmarks",      category: "Panels", description: "Show or hide the Bookmarks panel",      scope: "session" },
   "panel.memorySearch":  { label: "Toggle Memory Search",  category: "Panels", description: "Show or hide the Memory Search panel",  scope: "session" },
   "panel.memoryScanner": { label: "Toggle Memory Scanner", category: "Panels", description: "Show or hide the Memory Scanner panel", scope: "session" },
   "panel.pointerScan":   { label: "Toggle Pointer Scan",   category: "Panels", description: "Show or hide the Pointer Scan panel",   scope: "session" },

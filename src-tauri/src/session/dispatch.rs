@@ -1,6 +1,7 @@
 use tauri::AppHandle;
 use tracing::{debug, info, warn};
 
+use super::bookmarks::*;
 use super::breakpoints::*;
 use super::callstack::*;
 use super::disassembly::*;
@@ -372,16 +373,24 @@ fn process_command(
             process_scan_memory_reset(session, app_handle_clone, scan_id);
             CommandResult::Continue
         }
-        UICommand::PointerScanStart { target_address, max_offset, max_depth, max_results, ref modules } => {
-            process_pointer_scan_start(session, app_handle_clone, event, target_address, max_offset, max_depth, max_results, modules.clone());
+        UICommand::PointerScanStart { target_address, max_offset, max_depth, max_results, ref modules, writable_only } => {
+            process_pointer_scan_start(session, app_handle_clone, event, target_address, max_offset, max_depth, max_results, modules.clone(), writable_only);
             CommandResult::Continue
         }
-        UICommand::PointerScanGetResults { scan_id, offset, count } => {
-            process_pointer_scan_get_results(session, app_handle_clone, event, scan_id, offset, count);
+        UICommand::PointerScanGetResults { ref results_path, offset, count, ref offset_filter } => {
+            process_pointer_scan_get_results(session, app_handle_clone, event, results_path.clone(), offset, count, offset_filter.clone());
             CommandResult::Continue
         }
-        UICommand::PointerScanReset { scan_id } => {
-            process_pointer_scan_reset(session, app_handle_clone, scan_id);
+        UICommand::PointerScanReset { ref results_path } => {
+            process_pointer_scan_reset(session, app_handle_clone, results_path.clone());
+            CommandResult::Continue
+        }
+        UICommand::PointerScanApplyFilter { ref results_path, ref offset_filter } => {
+            process_pointer_scan_apply_filter(session, app_handle_clone, results_path.clone(), offset_filter.clone());
+            CommandResult::Continue
+        }
+        UICommand::PointerScanRescan { ref results_path, target_address } => {
+            process_pointer_scan_rescan(session, app_handle_clone, event, results_path.clone(), target_address);
             CommandResult::Continue
         }
         UICommand::AssemblePatch { address, ref assembly_text, arch, nop_pad } => {
@@ -406,6 +415,34 @@ fn process_command(
         }
         UICommand::EnablePatchGroup { ref group, enabled } => {
             process_enable_patch_group(session, app_handle_clone, event, group, enabled);
+            CommandResult::Continue
+        }
+        UICommand::AddBookmark { ref kind, address, ref value_type, ref name, ref comment, ref pointer_offsets, ref base_symbol, ref asm_text } => {
+            process_add_bookmark(session, app_handle_clone, event.pid(), kind.clone(), address, value_type.clone(), name.clone(), comment.clone(), pointer_offsets.clone(), base_symbol.clone(), asm_text.clone());
+            CommandResult::Continue
+        }
+        UICommand::RemoveBookmark { ref id } => {
+            process_remove_bookmark(session, app_handle_clone, event.pid(), id);
+            CommandResult::Continue
+        }
+        UICommand::RemoveBookmarks { ref ids } => {
+            process_remove_bookmarks(session, app_handle_clone, event.pid(), ids);
+            CommandResult::Continue
+        }
+        UICommand::UpdateBookmark { ref id, ref name, ref comment, ref group, ref value_type } => {
+            process_update_bookmark(session, app_handle_clone, event.pid(), id, name.clone(), comment.clone(), group.clone(), value_type.clone());
+            CommandResult::Continue
+        }
+        UICommand::SetBookmarkValue { ref id, ref value } => {
+            process_set_bookmark_value(session, app_handle_clone, event.pid(), id, value);
+            CommandResult::Continue
+        }
+        UICommand::ToggleBookmarkLock { ref id, locked } => {
+            process_toggle_bookmark_lock(session, app_handle_clone, event.pid(), id, locked);
+            CommandResult::Continue
+        }
+        UICommand::RefreshBookmarks => {
+            process_refresh_bookmarks(session, app_handle_clone, event.pid());
             CommandResult::Continue
         }
         UICommand::Stop => {

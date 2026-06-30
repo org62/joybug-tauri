@@ -1,9 +1,7 @@
-use crate::error::{Error, Result};
-use crate::pinned_address_store::{self, PinnedAddress};
-use crate::session::helpers::{extract_module_name, find_module_for_address, format_bytes};
+use crate::error::Result;
+use crate::session::helpers::format_bytes;
 use crate::session::UICommand;
 use crate::state::SessionStatesMap;
-use serde::Serialize;
 use tauri::{Emitter, State};
 use tracing::{error, info};
 
@@ -409,10 +407,11 @@ pub fn request_pointer_scan_start(
     max_depth: u32,
     max_results: Option<u64>,
     modules: Option<Vec<u64>>,
+    writable_only: bool,
     session_states: State<'_, SessionStatesMap>,
 ) -> Result<()> {
     super::send_paused_command(&session_id, &session_states, UICommand::PointerScanStart {
-        target_address, max_offset, max_depth, max_results, modules,
+        target_address, max_offset, max_depth, max_results, modules, writable_only,
     })?;
     info!("Pointer scan start request sent for session {}", session_id);
     Ok(())
@@ -421,13 +420,14 @@ pub fn request_pointer_scan_start(
 #[tauri::command]
 pub fn request_pointer_scan_get_results(
     session_id: String,
-    scan_id: u64,
+    results_path: String,
     offset: u64,
     count: u64,
+    offset_filter: Vec<u64>,
     session_states: State<'_, SessionStatesMap>,
 ) -> Result<()> {
     super::send_paused_command(&session_id, &session_states, UICommand::PointerScanGetResults {
-        scan_id, offset, count,
+        results_path, offset, count, offset_filter,
     })?;
     info!("Pointer scan get results request sent for session {}", session_id);
     Ok(())
@@ -436,217 +436,34 @@ pub fn request_pointer_scan_get_results(
 #[tauri::command]
 pub fn request_pointer_scan_reset(
     session_id: String,
-    scan_id: u64,
+    results_path: String,
     session_states: State<'_, SessionStatesMap>,
 ) -> Result<()> {
-    super::send_paused_command(&session_id, &session_states, UICommand::PointerScanReset { scan_id })?;
+    super::send_paused_command(&session_id, &session_states, UICommand::PointerScanReset { results_path })?;
     info!("Pointer scan reset request sent for session {}", session_id);
     Ok(())
 }
 
-// --- Pinned Addresses ---
-
-#[derive(Debug, Clone, Serialize)]
-pub struct AddPinResult {
-    pub pinned: bool,
-    pub in_module: bool,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct ResolvedPinnedAddress {
-    pub address_hex: String,
-    pub module_name: Option<String>,
-    pub value_type: String,
-    pub label: Option<String>,
-    pub is_resolved: bool,
-}
-
-/// Extracts launch_command and modules from a session.
-fn get_session_info(
-    session_id: &str,
-    session_states: &SessionStatesMap,
-) -> Result<(String, Vec<joybug2::protocol_io::ModuleInfo>)> {
-    let states = session_states.lock().unwrap();
-    let session = states
-        .get(session_id)
-        .ok_or_else(|| Error::SessionNotFound(session_id.to_string()))?;
-    let state = session.lock().unwrap();
-    Ok((state.launch_command.clone(), state.modules.clone()))
-}
-
-fn resolve_pinned_addresses(
-    pins: &[PinnedAddress],
-    modules: &[joybug2::protocol_io::ModuleInfo],
-) -> Vec<ResolvedPinnedAddress> {
-    pins.iter()
-        .map(|pin| {
-            if let (Some(mod_name), Some(offset)) = (&pin.module_name, pin.module_offset) {
-                // Module-relative pin: find module by name and resolve
-                let mod_name_lower = mod_name.to_lowercase();
-                let resolved = modules.iter().find(|m| {
-                    extract_module_name(&m.name).to_lowercase() == mod_name_lower
-                });
-                match resolved {
-                    Some(m) => ResolvedPinnedAddress {
-                        address_hex: format!("0x{:X}", m.base + offset),
-                        module_name: Some(mod_name.clone()),
-                        value_type: pin.value_type.clone(),
-                        label: pin.label.clone(),
-                        is_resolved: true,
-                    },
-                    None => ResolvedPinnedAddress {
-                        address_hex: format!("{}+0x{:X}", mod_name, offset),
-                        module_name: Some(mod_name.clone()),
-                        value_type: pin.value_type.clone(),
-                        label: pin.label.clone(),
-                        is_resolved: false,
-                    },
-                }
-            } else {
-                // Raw address pin
-                ResolvedPinnedAddress {
-                    address_hex: pin.raw_address.clone().unwrap_or_default(),
-                    module_name: None,
-                    value_type: pin.value_type.clone(),
-                    label: pin.label.clone(),
-                    is_resolved: true,
-                }
-            }
-        })
-        .collect()
-}
-
-/// Parses a module offset from either a resolved hex address (by subtracting module base)
-/// or an unresolved "module+0xOFFSET" string.
-fn parse_module_offset(
-    address_hex: &str,
-    mod_name: &str,
-    modules: &[joybug2::protocol_io::ModuleInfo],
-) -> Option<u64> {
-    let mod_name_lower = mod_name.to_lowercase();
-
-    // Try resolved case: parse as hex address and subtract module base
-    if let Ok(address) = u64::from_str_radix(address_hex.trim_start_matches("0x").trim_start_matches("0X"), 16) {
-        if let Some(base) = modules.iter()
-            .find(|m| extract_module_name(&m.name).to_lowercase() == mod_name_lower)
-            .map(|m| m.base)
-        {
-            if address >= base {
-                return Some(address - base);
-            }
-        }
-    }
-
-    // Try unresolved case: parse "module+0xOFFSET" format
-    if let Some(offset_str) = address_hex.split("+0x").nth(1).or_else(|| address_hex.split("+0X").nth(1)) {
-        return u64::from_str_radix(offset_str, 16).ok();
-    }
-
-    None
-}
-
 #[tauri::command]
-pub fn add_pinned_address(
+pub fn request_pointer_scan_apply_filter(
     session_id: String,
-    address_hex: String,
-    value_type: String,
-    label: Option<String>,
-    session_states: State<'_, SessionStatesMap>,
-) -> Result<AddPinResult> {
-    let (launch_command, modules) = get_session_info(&session_id, &session_states)?;
-
-    let address = super::parse_hex_u64(&address_hex, "address")?;
-
-    if let Some((mod_name, offset)) = find_module_for_address(&modules, address) {
-        let mut pins = pinned_address_store::load_pinned_addresses(&launch_command);
-        // Prevent duplicates
-        let already_pinned = pins.iter().any(|p| {
-            p.module_name.as_deref() == Some(&mod_name) && p.module_offset == Some(offset)
-        });
-        if !already_pinned {
-            pins.push(PinnedAddress {
-                module_name: Some(mod_name),
-                module_offset: Some(offset),
-                raw_address: None,
-                value_type,
-                label,
-            });
-            pinned_address_store::save_pinned_addresses(&launch_command, &pins);
-        }
-        info!("Pinned address 0x{:X} (module-relative) for session {}", address, session_id);
-        Ok(AddPinResult { pinned: true, in_module: true })
-    } else {
-        Ok(AddPinResult { pinned: false, in_module: false })
-    }
-}
-
-#[tauri::command]
-pub fn confirm_pin_raw_address(
-    session_id: String,
-    address_hex: String,
-    value_type: String,
-    label: Option<String>,
+    results_path: String,
+    offset_filter: Vec<u64>,
     session_states: State<'_, SessionStatesMap>,
 ) -> Result<()> {
-    let (launch_command, _) = get_session_info(&session_id, &session_states)?;
-
-    let mut pins = pinned_address_store::load_pinned_addresses(&launch_command);
-    // Prevent duplicates
-    let already_pinned = pins.iter().any(|p| {
-        p.module_name.is_none() && p.raw_address.as_deref() == Some(&address_hex)
-    });
-    if !already_pinned {
-        pins.push(PinnedAddress {
-            module_name: None,
-            module_offset: None,
-            raw_address: Some(address_hex.clone()),
-            value_type,
-            label,
-        });
-        pinned_address_store::save_pinned_addresses(&launch_command, &pins);
-    }
-    info!("Pinned raw address {} for session {}", address_hex, session_id);
+    super::send_paused_command(&session_id, &session_states, UICommand::PointerScanApplyFilter { results_path, offset_filter })?;
+    info!("Pointer scan apply-filter request sent for session {}", session_id);
     Ok(())
 }
 
 #[tauri::command]
-pub fn get_pinned_addresses(
+pub fn request_pointer_scan_rescan(
     session_id: String,
+    results_path: String,
+    target_address: u64,
     session_states: State<'_, SessionStatesMap>,
-) -> Result<Vec<ResolvedPinnedAddress>> {
-    let (launch_command, modules) = get_session_info(&session_id, &session_states)?;
-    let pins = pinned_address_store::load_pinned_addresses(&launch_command);
-    Ok(resolve_pinned_addresses(&pins, &modules))
-}
-
-#[tauri::command]
-pub fn remove_pinned_address(
-    session_id: String,
-    address_hex: String,
-    module_name: Option<String>,
-    session_states: State<'_, SessionStatesMap>,
-) -> Result<Vec<ResolvedPinnedAddress>> {
-    let (launch_command, modules) = get_session_info(&session_id, &session_states)?;
-    let mut pins = pinned_address_store::load_pinned_addresses(&launch_command);
-
-    if let Some(ref mod_name) = module_name {
-        let mod_name_lower = mod_name.to_lowercase();
-        let offset = parse_module_offset(&address_hex, mod_name, &modules);
-
-        pins.retain(|p| {
-            !(p.module_name.as_ref().map(|n| n.to_lowercase()) == Some(mod_name_lower.clone())
-                && offset.is_some()
-                && p.module_offset == offset)
-        });
-    } else {
-        // Remove raw address pin
-        pins.retain(|p| {
-            !(p.module_name.is_none()
-                && p.raw_address.as_deref() == Some(address_hex.as_str()))
-        });
-    }
-
-    pinned_address_store::save_pinned_addresses(&launch_command, &pins);
-    info!("Removed pinned address {} for session {}", address_hex, session_id);
-    Ok(resolve_pinned_addresses(&pins, &modules))
+) -> Result<()> {
+    super::send_paused_command(&session_id, &session_states, UICommand::PointerScanRescan { results_path, target_address })?;
+    info!("Pointer scan rescan request sent for session {} (target 0x{:X})", session_id, target_address);
+    Ok(())
 }

@@ -9,7 +9,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "./ui/select";
-import { Binary, RefreshCw, Save, X, ArrowRight, Copy, ClipboardPaste, ChevronLeft, ChevronRight, Crosshair } from "lucide-react";
+import { Binary, RefreshCw, Save, X, ArrowRight, Copy, ClipboardPaste, ChevronLeft, ChevronRight, Crosshair, Bookmark } from "lucide-react";
 import { useHexEditor } from "@/hooks/useHexEditor";
 import { useNavigationChannel } from "@/hooks/useNavigationChannel";
 import { memoryNavigation } from "@/lib/navigationStore";
@@ -34,9 +34,14 @@ interface HexViewProps {
   initialAddress?: bigint;
   initialViewMode?: ViewMode;
   onSetHardwareBreakpoint?: (address: string, hwType: string, hwSize: number) => void;
+  onAddBookmark?: (address: string, valueType: string) => void;
 }
 
-export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}, resolveSymbol, initialAddress, initialViewMode, onSetHardwareBreakpoint }: HexViewProps) {
+const VIEWMODE_VALUE_TYPE: Record<ViewMode, string> = {
+  byte: 'U8', word: 'U16', dword: 'U32', qword: 'U64', float: 'F32', pointer: 'U64',
+};
+
+export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}, resolveSymbol, initialAddress, initialViewMode, onSetHardwareBreakpoint, onAddBookmark }: HexViewProps) {
   const {
     baseAddress,
     memoryData,
@@ -726,6 +731,22 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
             <ClipboardPaste className="h-4 w-4" />
             Paste Text
           </button>
+          {onAddBookmark && selectionStart !== null && (
+            <>
+              <div className="border-t border-border my-1" />
+              <button
+                className="w-full px-3 py-1.5 text-sm text-left hover:bg-accent hover:text-accent-foreground flex items-center gap-2"
+                onClick={() => {
+                  const address = baseAddress + BigInt(selectionStart);
+                  onAddBookmark(`0x${address.toString(16)}`, VIEWMODE_VALUE_TYPE[viewMode]);
+                  setContextMenu(null);
+                }}
+              >
+                <Bookmark className="h-4 w-4" />
+                Add to Bookmarks
+              </button>
+            </>
+          )}
           {onSetHardwareBreakpoint && selectionStart !== null && (() => {
             const address = baseAddress + BigInt(selectionStart);
             const selSize = selectionEnd !== null ? Math.abs(selectionEnd - selectionStart) + 1 : 1;

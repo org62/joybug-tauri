@@ -1,8 +1,10 @@
 import { useEffect } from 'react';
 import { useSessionContext } from '@/contexts/SessionContext';
 import { usePointerScan, PointerPathEntry } from '@/hooks/usePointerScan';
+import { useContextMenu } from '@/hooks/useContextMenu';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
+import { Switch } from '@/components/ui/switch';
 import { VirtualizedList } from '@/components/ui/virtualized-list';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import {
@@ -43,10 +45,25 @@ export const ContextPointerScanView = () => {
   const isPaused = sessionData?.displayStatus === 'Paused';
   const sessionId = sessionData?.session?.id;
   const onNavigateToMemory = sessionData.onNavigateToMemory;
+  const { addBookmark } = sessionData.bookmarkState;
   const modules = sessionData?.modules ?? [];
   const loadModules = sessionData?.loadModules;
 
   const scan = usePointerScan(sessionId, isPaused);
+  const { contextMenu, contextMenuRef, openContextMenu, closeContextMenu } = useContextMenu<{ entry: PointerPathEntry }>();
+
+  const handleAddBookmark = (p: PointerPathEntry) => {
+    // Static base = module base + base offset; the chain offsets follow it.
+    const baseAddr = '0x' + (parseInt(p.module_base, 16) + parseInt(p.base_offset, 16)).toString(16);
+    addBookmark({
+      kind: 'pointer',
+      address: baseAddr,
+      valueType: 'U32',
+      pointerOffsets: p.offsets,
+      baseSymbol: p.base_symbol ?? undefined,
+    });
+    closeContextMenu();
+  };
 
   // Load the module list so the user can pick which modules to root paths in.
   useEffect(() => {
@@ -93,14 +110,17 @@ export const ContextPointerScanView = () => {
         title="Pointer scan failed" subtitle={scan.error} danger />;
     }
 
-    if (scan.scanId === null) {
+    if (scan.resultsPath === null) {
       return <EmptyState icon={crosshairIcon} title="Pointer scanner"
         subtitle="Enter a target address and click Scan to find static pointer paths" />;
     }
 
     if (scan.results.length === 0) {
-      return <EmptyState icon={crosshairIcon} title="No pointer paths found"
-        subtitle="Try a larger max offset or depth" />;
+      return scan.offsetFilter.trim()
+        ? <EmptyState icon={crosshairIcon} title="No paths match the filter"
+            subtitle="No pointer path contains all of those offsets" />
+        : <EmptyState icon={crosshairIcon} title="No pointer paths found"
+            subtitle="Try a larger max offset or depth" />;
     }
 
     return (
@@ -112,6 +132,7 @@ export const ContextPointerScanView = () => {
           <div
             className="w-full h-full px-2 py-0.5 hover:bg-accent cursor-pointer font-mono text-xs flex items-center gap-2"
             onClick={() => onNavigateToMemory?.(p.resolved)}
+            onContextMenu={(e) => openContextMenu(e, { entry: p })}
             title={`${formatPath(p)} ⇒ ${p.resolved}`}
           >
             <span className="flex-1 truncate">{formatPath(p)}</span>
@@ -123,9 +144,9 @@ export const ContextPointerScanView = () => {
   };
 
   return (
-    <div className="flex flex-col h-full">
-      {/* Toolbar */}
-      <div className="p-2 border-b space-y-1">
+    <div className="absolute inset-0 flex flex-col overflow-hidden">
+      {/* Toolbar (fixed; only the results below scroll) */}
+      <div className="p-2 border-b space-y-1 shrink-0">
         <div className="flex gap-1">
           <Input
             type="text"
@@ -212,18 +233,62 @@ export const ContextPointerScanView = () => {
           <Button
             size="sm"
             variant="outline"
+            onClick={scan.handleRescan}
+            disabled={!isPaused || scan.isScanning || scan.resultsPath === null || !scan.targetAddress.trim()}
+            title="Keep only paths that still resolve to the target address above (narrow after the target moves or the game restarts)"
+          >
+            Rescan
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
             onClick={scan.handleNewScan}
-            disabled={scan.scanId === null}
+            disabled={scan.resultsPath === null}
           >
             New Scan
           </Button>
-          {scan.scanId !== null && (
+          <div className="flex items-center gap-1.5">
+            <Switch checked={scan.writableOnly} onCheckedChange={scan.setWritableOnly} disabled={!isPaused} />
+            <span className="text-xs text-muted-foreground" title="Scan only writable regions (faster; may miss static roots in read-only data)">Writable only</span>
+          </div>
+          {scan.resultsPath !== null && (
             <div className="text-xs text-muted-foreground ml-auto">
-              {scan.matchCount.toLocaleString()} path{scan.matchCount !== 1 ? 's' : ''} found
-              {scan.scanTimeUs > 0 && ` (${(scan.scanTimeUs / 1000).toFixed(1)}ms)`}
+              {scan.offsetFilter.trim()
+                ? `${scan.totalCount.toLocaleString()} of ${scan.matchCount.toLocaleString()} match filter`
+                : `${scan.matchCount.toLocaleString()} path${scan.matchCount !== 1 ? 's' : ''} found`}
+              {!scan.offsetFilter.trim() && scan.scanTimeUs > 0 && ` (${(scan.scanTimeUs / 1000).toFixed(1)}ms)`}
             </div>
           )}
         </div>
+        {scan.resultsPath !== null && (
+          <div className="flex gap-1 items-center">
+            <Input
+              type="text"
+              placeholder="Filter offsets (e.g. 0x88 0x10)"
+              value={scan.offsetFilter}
+              onChange={(e) => scan.setOffsetFilter(e.target.value)}
+              className="flex-1 font-mono h-7 text-xs"
+              title="Keep only paths whose chain offsets contain every value listed (order-independent)"
+            />
+            {scan.offsetFilter.trim() && (
+              <>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 px-2 text-xs"
+                  onClick={scan.handleApplyFilter}
+                  disabled={!isPaused || scan.isScanning || scan.totalCount === 0}
+                  title="Discard all non-matching paths and keep only the filtered results as the new set"
+                >
+                  Keep {scan.totalCount.toLocaleString()} match{scan.totalCount !== 1 ? 'es' : ''}
+                </Button>
+                <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => scan.setOffsetFilter('')}>
+                  Clear
+                </Button>
+              </>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Results */}
@@ -231,9 +296,9 @@ export const ContextPointerScanView = () => {
         {renderContent()}
       </div>
 
-      {/* Pagination */}
+      {/* Pagination (fixed footer) */}
       {scan.totalPages > 1 && (
-        <div className="p-1 border-t flex items-center justify-between text-xs text-muted-foreground">
+        <div className="p-1 border-t shrink-0 flex items-center justify-between text-xs text-muted-foreground">
           <Button
             size="sm"
             variant="ghost"
@@ -255,6 +320,30 @@ export const ContextPointerScanView = () => {
           >
             <ChevronRight className="h-3 w-3" />
           </Button>
+        </div>
+      )}
+
+      {/* Context Menu */}
+      {contextMenu && (
+        <div
+          ref={contextMenuRef}
+          className="fixed z-50 bg-popover text-popover-foreground rounded-md border shadow-md py-1 min-w-[180px]"
+          style={{ left: contextMenu.x, top: contextMenu.y }}
+        >
+          {onNavigateToMemory && (
+            <button
+              className="w-full px-3 py-1.5 text-sm text-left hover:bg-accent hover:text-accent-foreground"
+              onClick={() => { onNavigateToMemory(contextMenu.data.entry.resolved); closeContextMenu(); }}
+            >
+              Go to Memory View
+            </button>
+          )}
+          <button
+            className="w-full px-3 py-1.5 text-sm text-left hover:bg-accent hover:text-accent-foreground"
+            onClick={() => handleAddBookmark(contextMenu.data.entry)}
+          >
+            Add to Bookmarks (pointer)
+          </button>
         </div>
       )}
     </div>

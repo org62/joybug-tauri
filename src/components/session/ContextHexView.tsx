@@ -74,6 +74,7 @@ export const ContextHexView = ({ memoryViewId, initialAddress, initialViewMode }
   const statusString = typeof sessionStatus === 'string' ? sessionStatus : undefined;
 
   const { setHardwareBreakpoint } = sessionData.breakpointState;
+  const { addBookmark } = sessionData.bookmarkState;
 
   return (
     <HexView
@@ -85,6 +86,7 @@ export const ContextHexView = ({ memoryViewId, initialAddress, initialViewMode }
       initialAddress={initialAddress}
       initialViewMode={initialViewMode}
       onSetHardwareBreakpoint={setHardwareBreakpoint}
+      onAddBookmark={(address, valueType) => addBookmark({ kind: 'value', address, valueType })}
     />
   );
 };

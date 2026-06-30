@@ -58,6 +58,7 @@ pub fn create_debug_session(
         let mut state = session_state_arc.lock().unwrap();
         state.breakpoints = crate::breakpoint_store::load_breakpoints(&state.launch_command);
         state.patches = crate::patch_store::load_patches(&state.launch_command);
+        state.bookmarks = crate::bookmark_store::load_bookmarks(&state.launch_command);
     }
 
     states.insert(session_id.clone(), session_state_arc.clone());
@@ -258,12 +259,17 @@ pub fn stop_debug_session(
     session_id: String,
     session_states: State<'_, SessionStatesMap>,
     embedded_servers: State<'_, EmbeddedServersMap>,
+    oob_pool: State<'_, super::OobPool>,
     app_handle: tauri::AppHandle,
 ) -> Result<()> {
     let session_state = {
         let states = session_states.lock().unwrap();
         states.get(&session_id).cloned()
     };
+
+    // Drop any pooled live-poll connection so its socket and server-side
+    // connection are released along with the session.
+    oob_pool.remove(&session_id);
 
     if let Some(session_state) = session_state {
         {
@@ -378,9 +384,10 @@ pub fn delete_debug_session(
     session_id: String,
     session_states: State<'_, SessionStatesMap>,
     embedded_servers: State<'_, EmbeddedServersMap>,
+    oob_pool: State<'_, super::OobPool>,
     app_handle: tauri::AppHandle,
 ) -> Result<()> {
-    let _ = stop_debug_session(session_id.clone(), session_states.clone(), embedded_servers.clone(), app_handle.clone());
+    let _ = stop_debug_session(session_id.clone(), session_states.clone(), embedded_servers.clone(), oob_pool.clone(), app_handle.clone());
 
     if session_states.lock().unwrap().remove(&session_id).is_some() {
         info!("Successfully deleted session: {}", session_id);

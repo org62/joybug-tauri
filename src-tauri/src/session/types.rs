@@ -70,14 +70,24 @@ pub enum UICommand {
         max_depth: u32,
         max_results: Option<u64>,
         modules: Option<Vec<u64>>,
+        writable_only: bool,
     },
     PointerScanGetResults {
-        scan_id: u64,
+        results_path: String,
         offset: u64,
         count: u64,
+        offset_filter: Vec<u64>,
     },
     PointerScanReset {
-        scan_id: u64,
+        results_path: String,
+    },
+    PointerScanApplyFilter {
+        results_path: String,
+        offset_filter: Vec<u64>,
+    },
+    PointerScanRescan {
+        results_path: String,
+        target_address: u64,
     },
     AssemblePatch { address: u64, assembly_text: String, arch: joybug2::interfaces::Architecture, nop_pad: bool },
     UndoPatch { patch_id: String },
@@ -85,6 +95,28 @@ pub enum UICommand {
     EnablePatch { patch_id: String, enabled: bool },
     UpdatePatch { patch_id: String, group: Option<String> },
     EnablePatchGroup { group: String, enabled: bool },
+    AddBookmark {
+        kind: String,
+        address: u64,
+        value_type: Option<String>,
+        name: Option<String>,
+        comment: Option<String>,
+        pointer_offsets: Option<Vec<u64>>,
+        base_symbol: Option<String>,
+        asm_text: Option<String>,
+    },
+    RemoveBookmark { id: String },
+    RemoveBookmarks { ids: Vec<String> },
+    UpdateBookmark {
+        id: String,
+        name: Option<String>,
+        comment: Option<String>,
+        group: Option<String>,
+        value_type: Option<String>,
+    },
+    SetBookmarkValue { id: String, value: String },
+    ToggleBookmarkLock { id: String, locked: bool },
+    RefreshBookmarks,
 }
 
 /// Event payload for successful memory read (may be partial)
@@ -301,7 +333,7 @@ pub struct ScanError {
 #[derive(serde::Serialize)]
 pub struct PointerScanStartResult {
     pub session_id: String,
-    pub scan_id: u64,
+    pub results_path: String,
     pub match_count: u64,
     pub scan_time_us: u64,
 }
@@ -323,7 +355,7 @@ pub struct PointerPathEntry {
 #[derive(serde::Serialize)]
 pub struct PointerScanResultsPayload {
     pub session_id: String,
-    pub scan_id: u64,
+    pub results_path: String,
     pub paths: Vec<PointerPathEntry>,
     pub total_count: u64,
 }

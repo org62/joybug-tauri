@@ -20,6 +20,7 @@ import { ContextHexView } from "@/components/session/ContextHexView";
 import { ContextMemoryRegionsView } from "@/components/session/ContextMemoryRegionsView";
 import { ContextBreakpointsView } from "@/components/session/ContextBreakpointsView";
 import { ContextPatchesView } from "@/components/session/ContextPatchesView";
+import { ContextBookmarksView } from "@/components/session/ContextBookmarksView";
 import { ContextMemorySearchView } from "@/components/session/ContextMemorySearchView";
 import { ContextMemoryScannerView } from "@/components/session/ContextMemoryScannerView";
 import { ContextPointerScanView } from "@/components/session/ContextPointerScanView";
@@ -27,6 +28,7 @@ import { ContextModuleInfoView } from "@/components/session/ContextModuleInfoVie
 import { useDebugSession } from "@/hooks/useDebugSession";
 import { useBreakpoints } from "@/hooks/useBreakpoints";
 import { usePatches } from "@/hooks/usePatches";
+import { useBookmarks } from "@/hooks/useBookmarks";
 import { SessionHeader } from "@/components/session/SessionHeader";
 import { useKeybindingContext } from "@/contexts/KeybindingContext";
 import { keyboardEventToChord } from "@/lib/keybindings";
@@ -35,7 +37,7 @@ import type { PaletteCommand } from "@/contexts/CommandPaletteContext";
 import {
   Play, Square, Pause, ArrowDownToLine, CornerDownRight, ArrowUpFromLine, SkipForward,
   Code, Cpu, Box, Layers, ListTree, Search, HardDrive, MapPin, FileCode,
-  Plus, RotateCcw, Navigation, ScanSearch, Puzzle, Crosshair,
+  Plus, RotateCcw, Navigation, ScanSearch, Puzzle, Crosshair, Bookmark as BookmarkIcon,
 } from "lucide-react";
 
 export default function SessionDocked() {
@@ -288,6 +290,11 @@ export default function SessionDocked() {
           event.stopPropagation();
           toggleTabWithBackendUpdate("patches");
           break;
+        case "panel.bookmarks":
+          event.preventDefault();
+          event.stopPropagation();
+          toggleTabWithBackendUpdate("bookmarks");
+          break;
         case "panel.memorySearch":
           event.preventDefault();
           event.stopPropagation();
@@ -516,6 +523,16 @@ export default function SessionDocked() {
         keywords: ["patches", "assemble", "patch"],
       },
       {
+        id: "panel.bookmarks",
+        label: "Toggle Bookmarks",
+        group: "Windows",
+        icon: <BookmarkIcon className="size-4" />,
+        keybindingAction: "panel.bookmarks",
+        onSelect: () => toggleTabWithBackendUpdate("bookmarks"),
+        keepOpen: true,
+        keywords: ["bookmarks", "bookmark", "freeze", "lock", "cheat", "address"],
+      },
+      {
         id: "panel.memorySearch",
         label: "Toggle Memory Search",
         group: "Windows",
@@ -615,6 +632,7 @@ export default function SessionDocked() {
 
   const breakpointState = useBreakpoints(session?.id, isPaused, session?.breakpoints);
   const patchState = usePatches(session?.id, isPaused, session?.patches);
+  const bookmarkState = useBookmarks(session?.id, isPaused, session?.bookmarks, displayStatus === 'Running');
 
   const contextValue = useMemo(() => ({
     session,
@@ -626,9 +644,10 @@ export default function SessionDocked() {
     searchSymbols: async (pattern: string, limit?: number) => { return await searchSymbols(pattern, limit); },
     breakpointState,
     patchState,
+    bookmarkState,
     onNavigateToDisassembly: handleNavigateToDisassembly,
     onNavigateToMemory: handleNavigateToMemory,
-  }), [session, displayStatus, modules, threads, loadModules, loadThreads, searchSymbols, breakpointState, patchState, handleNavigateToDisassembly, handleNavigateToMemory]);
+  }), [session, displayStatus, modules, threads, loadModules, loadThreads, searchSymbols, breakpointState, patchState, bookmarkState, handleNavigateToDisassembly, handleNavigateToMemory]);
   
   // Static tab content - components will update via context
   const dynamicTabContent = useMemo(() => ({
@@ -641,6 +660,7 @@ export default function SessionDocked() {
     memory_regions: <ContextMemoryRegionsView onNavigateToAddress={handleNavigateToMemory} />,
     breakpoints: <ContextBreakpointsView />,
     patches: <ContextPatchesView />,
+    bookmarks: <ContextBookmarksView />,
     memory_search: <ContextMemorySearchView />,
     memory_scanner: <ContextMemoryScannerView />,
     pointer_scan: <ContextPointerScanView />,
@@ -717,6 +737,12 @@ export default function SessionDocked() {
         id: "patches",
         title: "Patches",
         content: dynamicTabContent.patches,
+        closable: true,
+      },
+      bookmarks: {
+        id: "bookmarks",
+        title: "Bookmarks",
+        content: dynamicTabContent.bookmarks,
         closable: true,
       },
       memory_search: {

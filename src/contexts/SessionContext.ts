@@ -2,6 +2,7 @@ import { createContext, useContext } from "react";
 import { SerializableThreadContext } from "@/components/RegisterView";
 import type { BreakpointState } from "@/hooks/useBreakpoints";
 import type { PatchState } from "@/hooks/usePatches";
+import type { BookmarkState } from "@/hooks/useBookmarks";
 
 // Re-export for convenience in other components
 export { type SerializableThreadContext } from "@/components/RegisterView";
@@ -35,6 +36,26 @@ export interface RawPatch {
   group: string | null;
 }
 
+/** A bookmark resolved for display (sent in the session snapshot and bookmarks-updated events). */
+export interface ResolvedBookmark {
+  id: string;
+  kind: string;                    // "value" | "pointer" | "code"
+  module_name: string | null;
+  module_offset: number | null;
+  raw_address: string | null;
+  name: string | null;
+  comment: string | null;
+  group: string | null;
+  value_type: string | null;
+  pointer_offsets: number[] | null;
+  base_symbol: string | null;
+  asm_text: string | null;
+  locked: boolean;
+  resolved_address: string;        // "0x.." | "mod+0x.." | ""
+  is_resolved: boolean;
+  current_value: string | null;
+}
+
 export interface DebugSession {
   id: string;
   name: string;
@@ -50,6 +71,7 @@ export interface DebugSession {
   callstack_window_open: boolean;
   breakpoints: RawBreakpoint[];
   patches: RawPatch[];
+  bookmarks: ResolvedBookmark[];
 }
 
 export interface DebugEventInfo {
@@ -103,6 +125,7 @@ export interface SessionContextData {
   searchSymbols: (pattern: string, limit?: number) => Promise<Symbol[]>;
   breakpointState: BreakpointState;
   patchState: PatchState;
+  bookmarkState: BookmarkState;
   onNavigateToDisassembly?: (address: string) => void;
   onNavigateToMemory?: (address: string) => void;
 }
