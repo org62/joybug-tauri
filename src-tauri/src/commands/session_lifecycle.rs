@@ -21,12 +21,13 @@ pub fn create_debug_session(
     launch_command: String,
     working_directory: Option<String>,
     is_local_run: bool,
+    attach_pid: Option<u32>,
     session_states: State<'_, SessionStatesMap>,
     app_handle: tauri::AppHandle,
 ) -> std::result::Result<String, String> {
     let mut states = session_states.lock().unwrap();
 
-    if !is_local_run {
+    if !is_local_run && attach_pid.is_none() {
         for session_state in states.values() {
             let state = session_state.lock().unwrap();
             if !state.is_local_run && state.server_url == server_url && state.launch_command == launch_command {
@@ -52,6 +53,7 @@ pub fn create_debug_session(
         launch_command,
         working_directory,
         is_local_run,
+        attach_pid,
     )));
 
     {
@@ -85,12 +87,13 @@ pub fn update_debug_session(
     launch_command: String,
     working_directory: Option<String>,
     is_local_run: bool,
+    attach_pid: Option<u32>,
     session_states: State<'_, SessionStatesMap>,
     app_handle: tauri::AppHandle,
 ) -> std::result::Result<(), String> {
     let states = session_states.lock().unwrap();
 
-    if !is_local_run {
+    if !is_local_run && attach_pid.is_none() {
         for (id, session_state) in states.iter() {
             if id != &session_id {
                 let state = session_state.lock().unwrap();
@@ -113,6 +116,7 @@ pub fn update_debug_session(
         state.server_url = if is_local_run { String::new() } else { server_url };
         state.launch_command = launch_command;
         state.working_directory = working_directory.filter(|w| !w.trim().is_empty());
+        state.attach_pid = attach_pid;
 
         let session_state_arc = session_state.clone();
 
@@ -352,17 +356,78 @@ pub fn pause_debug_session(
     }
 }
 
-fn send_out_of_band_request(server_url: &str, req: DebuggerRequest) -> Result<()> {
-    let tmp_state = std::sync::Arc::new(std::sync::Mutex::new(crate::state::SessionStateUI::new(
-        format!("tmp_oob_{}", chrono::Utc::now().timestamp_millis()),
+/// Detach the debugger from the target, leaving it running. Requires the session
+/// to be paused: the detach request is sent over the session's own connection from
+/// inside the paused debug loop, then the loop exits cleanly.
+#[tauri::command]
+pub fn detach_debug_session(
+    session_id: String,
+    session_states: State<'_, SessionStatesMap>,
+    oob_pool: State<'_, super::OobPool>,
+    app_handle: tauri::AppHandle,
+) -> Result<()> {
+    // Release any pooled live-poll connection before the session ends.
+    oob_pool.remove(&session_id);
+
+    super::send_paused_command(&session_id, &session_states, UICommand::Detach)?;
+
+    crate::ui_logger::log_info(&app_handle, "Detach requested", Some(session_id));
+    Ok(())
+}
+
+/// Enumerate running processes so the UI can offer an attach target. Connects to
+/// `server_url` when given (remote server); otherwise spins up a short-lived
+/// embedded server just to list processes locally.
+#[tauri::command]
+pub fn list_processes(
+    server_url: Option<String>,
+) -> std::result::Result<Vec<joybug2::protocol::ProcessInfo>, String> {
+    let url = server_url.filter(|s| !s.trim().is_empty());
+
+    let mut temp_server: Option<LocalServer> = None;
+    let effective_url = match url {
+        Some(u) => u,
+        None => {
+            let server = LocalServer::start()
+                .map_err(|e| format!("Failed to start embedded server: {}", e))?;
+            let u = format!("127.0.0.1:{}", server.port());
+            temp_server = Some(server);
+            u
+        }
+    };
+
+    let result = (|| {
+        let mut client = connect_temp_client(&effective_url).map_err(|e| e.to_string())?;
+        let mut processes = client.list_processes().map_err(|e| e.to_string())?;
+        processes.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+        Ok::<_, String>(processes)
+    })();
+
+    if let Some(mut server) = temp_server {
+        server.stop();
+    }
+
+    result
+}
+
+/// Connect a throwaway joybug2 client to `server_url` for a single one-shot
+/// request. The temp session state is untracked and carries no launch command.
+fn connect_temp_client(server_url: &str) -> Result<crate::session::types::DebugSession> {
+    let tmp_state = Arc::new(Mutex::new(SessionStateUI::new(
+        format!("tmp_{}", chrono::Utc::now().timestamp_millis()),
         "tmp".to_string(),
         server_url.to_string(),
         "".to_string(),
         None,
         false,
+        None,
     )));
-    let mut client = joybug2::protocol_io::DebugSession::new(tmp_state, Some(server_url))
-        .map_err(|e| Error::ConnectionFailed(e.to_string()))?;
+    joybug2::protocol_io::DebugSession::new(tmp_state, Some(server_url))
+        .map_err(|e| Error::ConnectionFailed(e.to_string()))
+}
+
+fn send_out_of_band_request(server_url: &str, req: DebuggerRequest) -> Result<()> {
+    let mut client = connect_temp_client(server_url)?;
     match req {
         DebuggerRequest::BreakInto { pid } => {
             client

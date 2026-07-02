@@ -23,5 +23,6 @@ export default defineConfig({
     "registers.spec.ts",
     "session-lifecycle.spec.ts",
     "stepping.spec.ts",
+    "attach-detach.spec.ts",
   ],
 });

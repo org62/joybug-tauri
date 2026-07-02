@@ -194,13 +194,45 @@ fn apply_debugger_hiding(
     }
 }
 
+/// Resolve which PID an attach session should target.
+///
+/// Prefers the stored PID when it's still alive. Otherwise (the target was
+/// restarted and got a new PID) it falls back to matching by image name:
+/// exactly one match re-attaches automatically; zero or several matches are an
+/// error the caller surfaces (for several, the UI offers a picker).
+fn resolve_attach_pid(session: &mut DebugSession, stored_pid: u32, target_name: &str) -> Result<u32> {
+    let processes = session
+        .list_processes()
+        .map_err(|e| Error::DebugLoop(format!("Failed to list processes: {}", e)))?;
+
+    if processes.iter().any(|p| p.pid == stored_pid) {
+        return Ok(stored_pid);
+    }
+
+    let want = target_name.to_lowercase();
+    let matches: Vec<u32> = processes
+        .iter()
+        .filter(|p| p.name.to_lowercase() == want)
+        .map(|p| p.pid)
+        .collect();
+
+    match matches.len() {
+        1 => Ok(matches[0]),
+        0 => Err(Error::DebugLoop(format!("Process '{}' is not running", target_name))),
+        n => Err(Error::DebugLoop(format!(
+            "{} processes named '{}' are running; pick one to attach",
+            n, target_name
+        ))),
+    }
+}
+
 pub fn run_debug_session(
     session_state: Arc<Mutex<SessionStateUI>>,
     app_handle: Option<AppHandle>,
 ) -> Result<()> {
-    let (session_id, server_url, launch_command, working_directory) = {
+    let (session_id, server_url, launch_command, working_directory, attach_pid) = {
         let state = session_state.lock().unwrap();
-        (state.id.clone(), state.server_url.clone(), state.launch_command.clone(), state.working_directory.clone())
+        (state.id.clone(), state.server_url.clone(), state.launch_command.clone(), state.working_directory.clone(), state.attach_pid)
     };
 
     info!("Starting debug session: {}", session_id);
@@ -226,7 +258,7 @@ pub fn run_debug_session(
     let app_handle_clone = app_handle.clone();
     let app_handle_for_exception = app_handle.clone();
 
-    let _final_state = joybug2::protocol_io::DebugSession::new(session_state.clone(), Some(&server_url))
+    let mut session_builder = joybug2::protocol_io::DebugSession::new(session_state.clone(), Some(&server_url))
         .map_err(|e| Error::ConnectionFailed(e.to_string()))?
         .on_exception(move |session, _pid, _tid, code, _address, first_chance, _parameters| {
             // Read and clear pass_exception_on_continue flag from state
@@ -489,9 +521,29 @@ pub fn run_debug_session(
                     return Ok(false);
                 }
             }
-        })
-        .launch_in_dir(launch_command, working_directory)
-        .map_err(|e| Error::DebugLoop(e.to_string()))?;
+        });
+
+    // Attach to an existing process, or launch the configured command.
+    let _final_state = match attach_pid {
+        Some(stored_pid) => {
+            // The stored PID may be stale (target restarted → new PID). Resolve
+            // it: keep it if still alive, else fall back to a unique match by the
+            // target's image name so a restarted single instance re-attaches
+            // automatically.
+            let pid = resolve_attach_pid(&mut session_builder, stored_pid, &launch_command)?;
+            if pid != stored_pid {
+                info!("Stored attach pid {} not found; re-attaching to pid {} ({})", stored_pid, pid, launch_command);
+                session_state.lock().unwrap().attach_pid = Some(pid);
+            }
+            info!("Attaching debug session {} to pid {}", session_id, pid);
+            session_builder
+                .attach(pid)
+                .map_err(|e| Error::DebugLoop(e.to_string()))?
+        }
+        None => session_builder
+            .launch_in_dir(launch_command, working_directory)
+            .map_err(|e| Error::DebugLoop(e.to_string()))?,
+    };
 
     // Mark session as finished
     {

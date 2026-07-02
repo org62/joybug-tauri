@@ -7,7 +7,7 @@ import { navigateTo } from "./test-fixtures";
  *
  * Steps:
  * 1. Navigate to /debugger
- * 2. Click "New Session"
+ * 2. Click "Create Process"
  * 3. Fill session name
  * 4. Click "Create & Start"
  * 5. Wait for navigation to /session/:id
@@ -20,8 +20,9 @@ export async function createAndStartSession(
 ): Promise<string> {
   await navigateTo(page, "/debugger");
 
-  // Click "New Session" button
-  await page.getByRole("button", { name: /New Session/i }).click();
+  // Click "Create Process" button (header trigger; .first() avoids the
+  // empty-state button that shares the label when no sessions exist)
+  await page.getByRole("button", { name: /Create Process/i }).first().click();
 
   // Fill session name
   await page.getByLabel("Session Name").fill(name);
@@ -54,8 +55,8 @@ export async function createSession(
   page: Page,
   name = "E2E Test Session",
 ): Promise<string> {
-  // Click "New Session" button
-  await page.getByRole("button", { name: /New Session/i }).click();
+  // Click "Create Process" button (header trigger)
+  await page.getByRole("button", { name: /Create Process/i }).first().click();
 
   // Fill session name
   await page.getByLabel("Session Name").fill(name);

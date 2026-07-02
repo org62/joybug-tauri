@@ -8,7 +8,7 @@ export function useDebugSession(sessionId: string | undefined) {
   const [session, setSession] = useState<DebugSession | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [busyAction, setBusyAction] = useState<
-    "go" | "stepIn" | "stepOut" | "stepOver" | "stop" | "pause" | null
+    "go" | "stepIn" | "stepOut" | "stepOver" | "stop" | "pause" | "detach" | null
   >(null);
   const [modules, setModules] = useState<Module[]>([]);
   const [threads, setThreads] = useState<Thread[]>([]);
@@ -80,6 +80,13 @@ export function useDebugSession(sessionId: string | undefined) {
   const canPause = useMemo(() => {
     if (!session || typeof session.status !== "string") return false;
     return ["Running"].includes(session.status);
+  }, [session]);
+
+  // Detach is sent over the session's own connection from the paused debug loop,
+  // so it's only available while paused.
+  const canDetach = useMemo(() => {
+    if (!session || typeof session.status !== "string") return false;
+    return ["Paused"].includes(session.status);
   }, [session]);
 
   const loadModules = useCallback(async () => {
@@ -397,6 +404,21 @@ export function useDebugSession(sessionId: string | undefined) {
     }
   }, [sessionId, canPause]);
 
+  const handleDetach = useCallback(async () => {
+    if (!sessionId || !canDetach) return;
+    setBusyAction("detach");
+    try {
+      await invoke("detach_debug_session", { sessionId });
+      toast.success("Detached — target left running");
+    } catch (error) {
+      const errorMessage = `Failed to detach: ${error}`;
+      toast.error(errorMessage);
+      console.error(errorMessage);
+    } finally {
+      setBusyAction(null);
+    }
+  }, [sessionId, canDetach]);
+
   return {
     session,
     displayStatus,
@@ -415,9 +437,11 @@ export function useDebugSession(sessionId: string | undefined) {
     handleStop,
     handleStart,
     handlePause,
+    handleDetach,
     canStep,
     canStop,
     canStart,
     canPause,
+    canDetach,
   };
 } 

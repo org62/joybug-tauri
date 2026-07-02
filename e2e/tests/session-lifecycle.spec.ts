@@ -17,7 +17,7 @@ test.describe("Session Lifecycle", () => {
     tauriPage: page,
   }) => {
     await navigateTo(page, "/debugger");
-    await expect(page.getByText("No debug sessions yet")).toBeVisible({
+    await expect(page.getByText("No processes yet")).toBeVisible({
       timeout: 5_000,
     });
   });
@@ -83,7 +83,7 @@ test.describe("Session Lifecycle", () => {
   }) => {
     await navigateTo(page, "/debugger");
 
-    await page.getByRole("button", { name: /New Session/i }).click();
+    await page.getByRole("button", { name: /Create Process/i }).first().click();
     await page.getByLabel("Session Name").fill("WorkingDir Test");
     await page.getByLabel(/Working Directory/i).fill("C:\\Windows");
     await page

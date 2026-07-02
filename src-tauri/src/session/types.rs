@@ -11,6 +11,7 @@ pub enum UICommand {
     StepOver,
     StepOut,
     Stop,
+    Detach,
     Disassembly{ arch: joybug2::interfaces::Architecture, address: u64, count: u32 },
     DisassembleFunction{ arch: joybug2::interfaces::Architecture, address: u64, max_instructions: u32 },
     GetCallStack,

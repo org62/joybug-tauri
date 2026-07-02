@@ -73,6 +73,8 @@ pub fn run() {
             commands::stop_debug_session,
             commands::pause_debug_session,
             commands::terminate_debug_session,
+            commands::detach_debug_session,
+            commands::list_processes,
             commands::delete_debug_session,
             commands::request_disassembly,
             commands::request_function_disassembly,

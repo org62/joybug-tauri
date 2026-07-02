@@ -1,7 +1,7 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
-import { ArrowLeft, Square, Play, MoveRight, CornerDownRight, CornerUpLeft, Pause, Plus, ChevronDown } from 'lucide-react';
+import { ArrowLeft, Square, Play, MoveRight, CornerDownRight, CornerUpLeft, Pause, Plus, ChevronDown, Unplug } from 'lucide-react';
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -15,7 +15,7 @@ import { useKeybindingContext } from '@/contexts/KeybindingContext';
 
 export interface SessionHeaderProps {
   session: DebugSession;
-  busyAction: "go" | "stepIn" | "stepOut" | "stepOver" | "stop" | "pause" | null;
+  busyAction: "go" | "stepIn" | "stepOut" | "stepOver" | "stop" | "pause" | "detach" | null;
   handleGo: () => void;
   handleGoPassException: () => void;
   handleStepIn: () => void;
@@ -24,10 +24,12 @@ export interface SessionHeaderProps {
   handleStop: () => void;
   handleStart: () => void;
   handlePause: () => void;
+  handleDetach: () => void;
   canStep: boolean;
   canStop: boolean;
   canStart: boolean;
   canPause: boolean;
+  canDetach: boolean;
   dockingRef: React.RefObject<{ getActiveTabs: () => string[] }>; // rc-dock doesn't export DockingLayoutRef type properly
   getStatusBadge: (status: SessionStatus) => React.ReactNode;
   toggleTab: (tabId: string) => void;
@@ -46,10 +48,12 @@ export const SessionHeader: React.FC<SessionHeaderProps> = ({
   handleStop,
   handleStart,
   handlePause,
+  handleDetach,
   canStep,
   canStop,
   canStart,
   canPause,
+  canDetach,
   getStatusBadge,
   toggleTab,
   resetLayout,
@@ -168,6 +172,20 @@ export const SessionHeader: React.FC<SessionHeaderProps> = ({
               <CornerUpLeft className="h-4 w-4" />
             </Button>
           </div>
+        )}
+
+        {!canStart && (
+          <Button
+            onClick={handleDetach}
+            disabled={!canDetach || busyAction !== null}
+            size="sm"
+            variant="outline"
+            title="Detach from the target and leave it running (available while paused)"
+            className="ml-4"
+          >
+            <Unplug className="h-4 w-4 mr-2" />
+            {busyAction === "detach" ? "Detaching..." : "Detach"}
+          </Button>
         )}
 
         {!canStart && (

@@ -180,6 +180,9 @@ pub struct DebugSessionUI {
     pub launch_command: String,
     pub working_directory: Option<String>,
     pub is_local_run: bool,
+    /// When set, this session attaches to an already-running process (by PID)
+    /// instead of launching `launch_command`.
+    pub attach_pid: Option<u32>,
     pub status: SessionStatusUI,
     pub current_event: Option<DebugEventInfo>,
     pub created_at: String,
@@ -258,6 +261,9 @@ pub struct SessionStateUI {
     pub launch_command: String,
     pub working_directory: Option<String>,
     pub is_local_run: bool,
+    /// When set, the session attaches to this already-running PID instead of
+    /// launching `launch_command`.
+    pub attach_pid: Option<u32>,
     pub embedded_server_port: Option<u16>,
     pub created_at: String,
 
@@ -298,6 +304,7 @@ impl SessionStateUI {
         launch_command: String,
         working_directory: Option<String>,
         is_local_run: bool,
+        attach_pid: Option<u32>,
     ) -> Self {
         let (step_sender, step_receiver) = mpsc::channel();
         Self {
@@ -307,6 +314,7 @@ impl SessionStateUI {
             launch_command,
             working_directory,
             is_local_run,
+            attach_pid,
             embedded_server_port: None,
             created_at: chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string(),
             status: SessionStatusUI::Stopped,
@@ -377,6 +385,7 @@ impl SessionStateUI {
             launch_command: self.launch_command.clone(),
             working_directory: self.working_directory.clone(),
             is_local_run: self.is_local_run,
+            attach_pid: self.attach_pid,
             status: self.status.clone(),
             current_event: self.current_event.as_ref().map(|event| {
                 let mut info = crate::events::debug_event_to_info(event);

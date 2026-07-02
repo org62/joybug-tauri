@@ -445,6 +445,29 @@ fn process_command(
             process_refresh_bookmarks(session, app_handle_clone, event.pid());
             CommandResult::Continue
         }
+        UICommand::Detach => {
+            let pid = event.pid();
+            info!("Detach command received for pid {}", pid);
+            let session_id = session.state.lock().unwrap().id.clone();
+            match session.send_and_receive(&joybug2::protocol::DebuggerRequest::Detach { pid }) {
+                Ok(_) => {
+                    if let Some(handle) = app_handle_clone.as_ref() {
+                        crate::ui_logger::log_info(handle, &format!("Detached from process {}", pid), Some(session_id.clone()));
+                        crate::ui_logger::toast_info(handle, &format!("Detached from process {} (still running)", pid));
+                    }
+                }
+                Err(e) => {
+                    let msg = format!("Detach failed: {}", e);
+                    warn!("{}", msg);
+                    if let Some(handle) = app_handle_clone.as_ref() {
+                        crate::ui_logger::log_error(handle, &msg, Some(session_id.clone()));
+                        crate::ui_logger::toast_error(handle, &msg);
+                    }
+                }
+            }
+            session.state.lock().unwrap().status = SessionStatusUI::Stopped;
+            CommandResult::StopSession
+        }
         UICommand::Stop => {
             info!("Stop command received, terminating session");
             let mut state = session.state.lock().unwrap();
