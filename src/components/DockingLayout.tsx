@@ -22,6 +22,8 @@ export interface DockingLayoutRef {
   showTab: (tabId: string) => void;
   getActiveTabs: () => string[];
   closeActiveTab: () => void;
+  goBackTab: () => boolean;
+  goForwardTab: () => boolean;
 }
 
 const DockingLayoutComponent = React.forwardRef<DockingLayoutRef, DockingLayoutProps>(
@@ -42,6 +44,8 @@ const DockingLayoutComponent = React.forwardRef<DockingLayoutRef, DockingLayoutP
       toggleTab: docking.toggleTab,
       showTab: docking.showTab,
       closeActiveTab: docking.closeActiveTab,
+      goBackTab: docking.goBackTab,
+      goForwardTab: docking.goForwardTab,
       getActiveTabs: () => {
         const activeTabIds: string[] = [];
         const findTabIds = (box: any) => {

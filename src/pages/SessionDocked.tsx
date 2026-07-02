@@ -4,6 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { disassemblyNavigation, memoryNavigation } from "@/lib/navigationStore";
+import { setMouseNavHandler } from "@/lib/mouseNav";
 import { parseAddress, type ViewMode } from "@/lib/hexUtils";
 import { ArrowLeft, AlertCircle } from "lucide-react";
 import DockingLayout, { DockingLayoutRef } from "@/components/DockingLayout";
@@ -204,6 +205,18 @@ export default function SessionDocked() {
       syncWindowStates(activeTabIds);
     }
   }, [sessionId, isDockingReady]); // Check after each layout update
+
+  // Mouse back/forward buttons navigate dock tab history. Returns true when a tab switch
+  // happened so main.tsx blocks the native page navigation; false (empty history) lets the
+  // press fall through to router navigation. Unregisters on unmount, so leaving the session
+  // for a real page (e.g. /logs) restores normal back/forward page navigation.
+  useEffect(() => {
+    return setMouseNavHandler((dir) =>
+      dir === 'back'
+        ? !!dockingRef.current?.goBackTab()
+        : !!dockingRef.current?.goForwardTab()
+    );
+  }, []);
 
   // Hotkey handlers — chord-based lookup via keybinding context
   const { reverseLookup } = useKeybindingContext();

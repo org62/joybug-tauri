@@ -18,6 +18,8 @@ export interface DockingOperations {
   showTab: (tabId: string) => void;
   closeActiveTab: () => void;
   setFocusedPanelByElement: (element: HTMLElement) => void;
+  goBackTab: () => boolean;
+  goForwardTab: () => boolean;
   onLayoutChange: (
     newLayout: LayoutBase
   ) => void;
@@ -66,19 +68,25 @@ const getSerializableLayout = (l: LayoutBase): LayoutData => {
 
 // --- Layout tree helpers ---
 
-/** Find whether a tab exists in the layout and whether it's the active tab in its panel */
-function findTabState(dockbox: any, tabId: string): { exists: boolean; isActive: boolean } {
-  let exists = false, isActive = false;
+/** Find the panel node (box holding `tabs`) that contains the given tab, or null. */
+function findPanelContaining(dockbox: any, tabId: string): any | null {
+  let result: any = null;
   const walk = (box: any) => {
-    if (exists || !box) return;
+    if (result || !box) return;
     if (box.tabs?.some((t: any) => t.id === tabId)) {
-      exists = true;
-      isActive = box.activeId === tabId;
+      result = box;
+      return;
     }
     if (box.children) box.children.forEach(walk);
   };
   walk(dockbox);
-  return { exists, isActive };
+  return result;
+}
+
+/** Find whether a tab exists in the layout and whether it's the active tab in its panel */
+function findTabState(dockbox: any, tabId: string): { exists: boolean; isActive: boolean } {
+  const panel = findPanelContaining(dockbox, tabId);
+  return { exists: !!panel, isActive: panel?.activeId === tabId };
 }
 
 /** Set a tab as the active tab in its panel */
@@ -110,6 +118,25 @@ function addTabToFirstPanel(dockbox: any, tabId: string) {
     if (!dockbox.children) dockbox.children = [];
     dockbox.children.push({ tabs: [{ id: tabId }], activeId: tabId });
   }
+}
+
+/** Collect the set of active tab ids across all panels (one per panel). Id-independent, so it
+ *  works even before rc-dock assigns panel ids. A tab switch within a panel shows up as the old
+ *  active leaving this set and the new active entering it. */
+function collectActiveTabIds(box: any, set: Set<string> = new Set()): Set<string> {
+  if (!box) return set;
+  if (box.tabs && box.tabs.length > 0) {
+    const active = box.activeId ?? box.tabs[0].id;
+    if (active) set.add(active);
+  }
+  if (box.children) box.children.forEach((c: any) => collectActiveTabIds(c, set));
+  return set;
+}
+
+/** Return the active tab id of the panel that contains the given tab (null if not found). */
+function activeTabOfPanelWith(box: any, tabId: string): string | null {
+  const panel = findPanelContaining(box, tabId);
+  return panel ? (panel.activeId ?? panel.tabs[0].id) : null;
 }
 
 /** Collect all tab IDs present in a layout box tree */
@@ -163,6 +190,16 @@ export function useDocking(config: DockingConfig): DockingState & DockingOperati
       return savedCounter ? parseInt(savedCounter, 10) : Object.keys(initialTabContents).length;
     })()
   );
+
+  // Tab-activation history for mouse back/forward navigation. Derived from the set of active
+  // tabs (one per panel) diffed on every layout change: a switch within a panel shows up as one
+  // tab leaving the active set and one entering it — the departing tab goes on the back stack.
+  // Each entry is a tab id that goBack/goForward re-activate via showTab(). navTargetRef marks a
+  // switch caused by our own back/forward navigation so the diff doesn't re-record it.
+  const backStackRef = React.useRef<string[]>([]);
+  const forwardStackRef = React.useRef<string[]>([]);
+  const activeTabSetRef = React.useRef<Set<string>>(collectActiveTabIds(layout.dockbox));
+  const navTargetRef = React.useRef<string | null>(null);
 
   React.useEffect(() => {
     const serializableTabs: { [key: string]: Partial<TabData> } = {};
@@ -532,6 +569,61 @@ export function useDocking(config: DockingConfig): DockingState & DockingOperati
     });
   }, [LAYOUT_STORAGE_KEY, onTabsChanged]);
 
+  // Record tab-activation history by diffing the active-tab set on every layout change. A switch
+  // within a panel appears as exactly one tab leaving the set and one entering; the departing tab
+  // goes on the back stack — unless the switch was driven by our own back/forward navigation
+  // (navTargetRef) or the departing tab was closed (not switched away from).
+  React.useEffect(() => {
+    const newSet = collectActiveTabIds(layout.dockbox);
+    const prevSet = activeTabSetRef.current;
+    const lost = [...prevSet].filter(id => !newSet.has(id));
+    const gained = [...newSet].filter(id => !prevSet.has(id));
+    activeTabSetRef.current = newSet;
+
+    // Only a clean 1↔1 swap is an unambiguous single-panel tab switch.
+    if (lost.length !== 1 || gained.length !== 1) return;
+    const switchedFrom = lost[0];
+    const switchedTo = gained[0];
+
+    // A switch we initiated via goBack/goForward — consume the marker, don't record.
+    if (navTargetRef.current === switchedTo) {
+      navTargetRef.current = null;
+      return;
+    }
+
+    // If the departing tab no longer exists anywhere, it was closed (not switched away from) —
+    // don't record it, otherwise "back" would reopen a just-closed tab.
+    if (!findPanelContaining(layout.dockbox, switchedFrom)) return;
+
+    backStackRef.current.push(switchedFrom);
+    forwardStackRef.current = [];
+  }, [layout]);
+
+  // Replay the tab-activation history for the mouse back/forward buttons. Returns true when a
+  // navigation happened (so the caller can block the native page navigation), false when the
+  // stack is empty (letting the press fall through to router navigation). The tab we leave is
+  // pushed onto the opposite stack, and navTargetRef tells the history effect to skip the
+  // resulting layout change.
+  const navigateHistory = React.useCallback((from: string[], to: string[]): boolean => {
+    if (from.length === 0) return false;
+    const target = from.pop()!;
+    const current = activeTabOfPanelWith(layout.dockbox, target);
+    if (current && current !== target) to.push(current);
+    navTargetRef.current = target;
+    showTab(target);
+    return true;
+  }, [layout, showTab]);
+
+  const goBackTab = React.useCallback(
+    (): boolean => navigateHistory(backStackRef.current, forwardStackRef.current),
+    [navigateHistory]
+  );
+
+  const goForwardTab = React.useCallback(
+    (): boolean => navigateHistory(forwardStackRef.current, backStackRef.current),
+    [navigateHistory]
+  );
+
   return {
     layout,
     tabContents,
@@ -544,5 +636,7 @@ export function useDocking(config: DockingConfig): DockingState & DockingOperati
     onLayoutChange,
     setFocusedPanelByElement,
     closeActiveTab,
+    goBackTab,
+    goForwardTab,
   };
 }
