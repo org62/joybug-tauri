@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { toastError, toastSuccess, toastInfo } from '@/lib/logger';
-import { formatTauriError } from '@/lib/sessionHelpers';
+import { formatTauriError, isProcessAvailable, isTargetLive } from '@/lib/sessionHelpers';
 import {
   ViewMode,
   VIEW_MODE_CONFIGS,
@@ -81,7 +81,6 @@ export interface HexEditorState {
 
 export interface HexEditorActions {
   goToAddress: (address: string | bigint) => Promise<void>;
-  refresh: () => void;
   setViewMode: (mode: ViewMode) => void;
   // Pagination
   loadPreviousPage: () => void;
@@ -181,19 +180,26 @@ export function useHexEditor(options: UseHexEditorOptions): HexEditorState & Hex
   }, [selectionStart, selectionEnd]);
   const initialLoadDone = useRef(false);
   const pendingReadAddress = useRef<bigint | null>(null);
+  const pendingReadIsBackground = useRef(false);
   const [listenersReady, setListenersReady] = useState(false);
   // Ref for auto-reload: tracks current address for the session-updated listener
   const baseAddressRef = useRef<bigint>(baseAddress);
   baseAddressRef.current = baseAddress;
 
 
-  // Load memory from specified address
-  const loadMemory = useCallback(async (address: bigint) => {
+  // Load memory from specified address. Background loads (polling, auto-reload
+  // after a step) skip the loading spinner and stay silent on failure so the
+  // last good data remains visible.
+  const loadMemory = useCallback(async (address: bigint, background = false) => {
     if (!sessionId) return;
 
-    setIsLoading(true);
-    setError(null);
+    if (!background) {
+      setIsLoading(true);
+      setError(null);
+    }
+    initialLoadDone.current = true;
     pendingReadAddress.current = address;
+    pendingReadIsBackground.current = background;
 
     try {
       await invoke('request_memory_read', {
@@ -203,11 +209,12 @@ export function useHexEditor(options: UseHexEditorOptions): HexEditorState & Hex
       });
       // Results will come via event
     } catch (err) {
+      pendingReadAddress.current = null;
+      if (background) return;
       const errorMsg = formatTauriError(err);
       setError(errorMsg);
       toastError(`Failed to read memory: ${errorMsg}`, sessionId);
       setIsLoading(false);
-      pendingReadAddress.current = null;
     }
   }, [sessionId]);
 
@@ -254,13 +261,6 @@ export function useHexEditor(options: UseHexEditorOptions): HexEditorState & Hex
     setEditingOffset(null);
     loadMemory(targetAddress);
   }, [loadMemory, registers, resolveSymbol]);
-
-  // Refresh current view
-  const refresh = useCallback(() => {
-    if (baseAddress !== undefined) {
-      loadMemory(baseAddress);
-    }
-  }, [baseAddress, loadMemory]);
 
   // Set view mode
   const setViewMode = useCallback((mode: ViewMode) => {
@@ -703,10 +703,11 @@ export function useHexEditor(options: UseHexEditorOptions): HexEditorState & Hex
         // Accept errors for this session if we have a pending read
         // Don't be too strict about address matching - precision issues can occur with large addresses
         if (event.payload.session_id === sessionId && pendingReadAddress.current !== null) {
+          pendingReadAddress.current = null;
+          if (pendingReadIsBackground.current) return;
           setError(event.payload.error);
           toastError(`Failed to read memory: ${event.payload.error}`, sessionId);
           setIsLoading(false);
-          pendingReadAddress.current = null;
         }
       });
 
@@ -774,7 +775,7 @@ export function useHexEditor(options: UseHexEditorOptions): HexEditorState & Hex
         // Reload when session transitions TO Paused from Running (step/breakpoint)
         // and user has already loaded memory at an address
         if (newStatus === 'Paused' && wasNonPaused && initialLoadDone.current) {
-          loadMemory(baseAddressRef.current);
+          loadMemory(baseAddressRef.current, true);
         }
       });
       return unlisten;
@@ -786,7 +787,7 @@ export function useHexEditor(options: UseHexEditorOptions): HexEditorState & Hex
 
   // Load memory on mount: persisted address > initialAddress
   useEffect(() => {
-    if (!sessionId || initialLoadDone.current || !listenersReady || (sessionStatus !== 'Paused' && sessionStatus !== 'Running')) return;
+    if (!sessionId || initialLoadDone.current || !listenersReady || !isProcessAvailable(sessionStatus)) return;
 
     // Determine address to load: persisted > initialAddress
     const addressToLoad = persisted?.baseAddress ?? initialAddress;
@@ -806,20 +807,22 @@ export function useHexEditor(options: UseHexEditorOptions): HexEditorState & Hex
     }
   }, [sessionId]);
 
-  // Poll memory while session is running
+  // Poll memory while session is running (or non-invasive Open), like bookmark
+  // values. Checked inside the tick so polling picks up as soon as an address
+  // is loaded, without re-arming the interval.
   useEffect(() => {
-    if (!sessionId || sessionStatus !== 'Running' || !initialLoadDone.current) return;
+    if (!sessionId || !isTargetLive(sessionStatus)) return;
 
     const interval = setInterval(() => {
-      loadMemory(baseAddressRef.current);
-    }, 1000);
+      if (initialLoadDone.current) loadMemory(baseAddressRef.current, true);
+    }, 500);
 
     return () => clearInterval(interval);
   }, [sessionId, sessionStatus, loadMemory]);
 
   // Fetch dereference data when in pointer mode and memory data is available
   useEffect(() => {
-    if (viewMode !== 'pointer' || memoryData.length === 0 || !sessionId || (sessionStatus !== 'Paused' && sessionStatus !== 'Running')) {
+    if (viewMode !== 'pointer' || memoryData.length === 0 || !sessionId || !isProcessAvailable(sessionStatus)) {
       // Clear dereference data when not in pointer mode
       if (viewMode !== 'pointer' && dereferenceData.size > 0) {
         setDereferenceData(new Map());
@@ -913,7 +916,6 @@ export function useHexEditor(options: UseHexEditorOptions): HexEditorState & Hex
     dereferenceData,
     // Actions
     goToAddress,
-    refresh,
     setViewMode,
     // Pagination
     loadPreviousPage,

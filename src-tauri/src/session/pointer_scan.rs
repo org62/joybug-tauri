@@ -15,7 +15,7 @@ fn emit_pointer_scan_error(handle: &AppHandle, session_id: String, error: impl s
 pub(crate) fn process_pointer_scan_start(
     session: &mut DebugSession,
     app_handle_clone: &Option<AppHandle>,
-    event: &joybug2::protocol_io::DebugEvent,
+    pid: u32,
     target_address: u64,
     max_offset: u64,
     max_depth: u32,
@@ -23,7 +23,6 @@ pub(crate) fn process_pointer_scan_start(
     modules: Option<Vec<u64>>,
     writable_only: bool,
 ) {
-    let pid = event.pid();
     debug!("📤 Processing pointer scan start: pid={}, target=0x{:X}, max_offset=0x{:X}, max_depth={}, modules={:?}, writable_only={}",
         pid, target_address, max_offset, max_depth, modules.as_ref().map(|m| m.len()), writable_only);
 
@@ -52,11 +51,10 @@ pub(crate) fn process_pointer_scan_start(
 pub(crate) fn process_pointer_scan_rescan(
     session: &mut DebugSession,
     app_handle_clone: &Option<AppHandle>,
-    event: &joybug2::protocol_io::DebugEvent,
+    pid: u32,
     results_path: String,
     target_address: u64,
 ) {
-    let pid = event.pid();
     debug!("📤 Processing pointer scan rescan: results_path={}, target=0x{:X}", results_path, target_address);
 
     let Some(ref handle) = app_handle_clone else { return };
@@ -82,7 +80,7 @@ pub(crate) fn process_pointer_scan_rescan(
 pub(crate) fn process_pointer_scan_get_results(
     session: &mut DebugSession,
     app_handle_clone: &Option<AppHandle>,
-    event: &joybug2::protocol_io::DebugEvent,
+    pid: u32,
     results_path: String,
     offset: u64,
     count: u64,
@@ -91,7 +89,6 @@ pub(crate) fn process_pointer_scan_get_results(
     debug!("📤 Processing pointer scan get results: results_path={}, offset={}, count={}, filter={:?}", results_path, offset, count, offset_filter);
 
     let Some(ref handle) = app_handle_clone else { return };
-    let pid = event.pid();
     let session_id = session.state.lock().unwrap().id.clone();
 
     match session.pointer_scan_get_results(pid, results_path.clone(), offset, count, offset_filter) {

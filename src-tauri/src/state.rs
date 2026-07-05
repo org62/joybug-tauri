@@ -183,6 +183,8 @@ pub struct DebugSessionUI {
     /// When set, this session attaches to an already-running process (by PID)
     /// instead of launching `launch_command`.
     pub attach_pid: Option<u32>,
+    /// When true, this session opens the target non-invasively (no debugger attach).
+    pub non_invasive: bool,
     pub status: SessionStatusUI,
     pub current_event: Option<DebugEventInfo>,
     pub created_at: String,
@@ -199,6 +201,10 @@ pub enum SessionStatusUI {
     Stopped,
     Running,
     Paused,
+    /// Non-invasive session: the target process is opened (by PID) for
+    /// memory/enumeration operations but never attached with a debugger, so
+    /// there is no debug loop and no run/step/continue.
+    Open,
     Error(String),
 }
 
@@ -264,6 +270,12 @@ pub struct SessionStateUI {
     /// When set, the session attaches to this already-running PID instead of
     /// launching `launch_command`.
     pub attach_pid: Option<u32>,
+    /// When true, the session opens the target process non-invasively
+    /// (`OpenProcess` only, no `DebugActiveProcess`/debug loop).
+    pub non_invasive: bool,
+    /// The live PID a non-invasive session is operating on, resolved at start.
+    /// Used as the OOB pid source when there is no `current_event`.
+    pub open_pid: Option<u32>,
     pub embedded_server_port: Option<u16>,
     pub created_at: String,
 
@@ -305,6 +317,7 @@ impl SessionStateUI {
         working_directory: Option<String>,
         is_local_run: bool,
         attach_pid: Option<u32>,
+        non_invasive: bool,
     ) -> Self {
         let (step_sender, step_receiver) = mpsc::channel();
         Self {
@@ -315,6 +328,8 @@ impl SessionStateUI {
             working_directory,
             is_local_run,
             attach_pid,
+            non_invasive,
+            open_pid: None,
             embedded_server_port: None,
             created_at: chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string(),
             status: SessionStatusUI::Stopped,
@@ -344,6 +359,7 @@ impl SessionStateUI {
         self.current_event = None;
         self.current_context = None;
         self.debug_result = None;
+        self.open_pid = None;
         self.embedded_server_port = None;
 
         // Reset window states
@@ -386,6 +402,7 @@ impl SessionStateUI {
             working_directory: self.working_directory.clone(),
             is_local_run: self.is_local_run,
             attach_pid: self.attach_pid,
+            non_invasive: self.non_invasive,
             status: self.status.clone(),
             current_event: self.current_event.as_ref().map(|event| {
                 let mut info = crate::events::debug_event_to_info(event);

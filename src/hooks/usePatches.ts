@@ -52,11 +52,12 @@ export function usePatches(sessionId?: string, isPaused?: boolean, sessionPatche
   const sessionPatchRef = useRef(sessionPatches);
   sessionPatchRef.current = sessionPatches;
 
-  // Session cleanup / seed
+  // Session cleanup / seed: not gated on isPaused — a non-invasive Open
+  // session never pauses but still has persisted patches to show.
   useEffect(() => {
     if (!sessionId) {
       setPatches([]);
-    } else if (isPaused && sessionPatchRef.current && sessionPatchRef.current.length > 0) {
+    } else if (sessionPatchRef.current && sessionPatchRef.current.length > 0) {
       setPatches(convertPatches(sessionPatchRef.current));
     }
   }, [sessionId, isPaused]);

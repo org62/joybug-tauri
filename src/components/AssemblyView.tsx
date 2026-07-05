@@ -9,6 +9,7 @@ import { Cpu, ArrowLeft, ArrowRight, RefreshCw, ChevronRight, Circle, CircleDot,
 import { cn } from "@/lib/utils";
 import { useAssemblyView, Instruction } from "@/hooks/useAssemblyView";
 import { RegisterContext, SymbolResolver, sanitizeAddressInput } from "@/lib/hexUtils";
+import { isBenignSessionError } from "@/lib/sessionHelpers";
 import { useContextMenu } from "@/hooks/useContextMenu";
 import { useColumnWidths } from "@/hooks/useColumnWidths";
 import { EmulationQuickView } from "./EmulationQuickView";
@@ -213,9 +214,13 @@ export function AssemblyView({ sessionId, isPaused, address, registers, resolveS
     return () => container.removeEventListener("mousedown", handleMouseDown);
   }, [goBack, goForward]);
 
-  // Determine content to show
-  const showEmptyState = !sessionId || (address == null && instructions.length === 0 && !error && !isLoading);
-  const showErrorState = error !== null;
+  // Determine content to show. A "no active process" / "must be paused" condition
+  // isn't a real error — treat it as the neutral empty state ("No disassembly
+  // available") rather than a red error box (e.g. in non-invasive Open sessions
+  // before an address is chosen).
+  const benignUnavailable = error !== null && isBenignSessionError(error);
+  const showEmptyState = !sessionId || benignUnavailable || (address == null && instructions.length === 0 && !error && !isLoading);
+  const showErrorState = error !== null && !benignUnavailable;
   const showLoadingState = isLoading && instructions.length === 0 && !error;
   const showInstructions = instructions.length > 0;
 
@@ -411,7 +416,7 @@ export function AssemblyView({ sessionId, isPaused, address, registers, resolveS
               <div className="text-center">
                 <Cpu className="h-12 w-12 mx-auto mb-4 opacity-50" />
                 <p className="text-base font-medium">No disassembly available</p>
-                <p className="text-sm mt-1">Address information will appear here when debugging</p>
+                <p className="text-sm mt-1">Enter an address or symbol above to disassemble</p>
               </div>
             </div>
           )}

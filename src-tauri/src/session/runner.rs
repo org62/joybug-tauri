@@ -204,26 +204,7 @@ fn resolve_attach_pid(session: &mut DebugSession, stored_pid: u32, target_name: 
     let processes = session
         .list_processes()
         .map_err(|e| Error::DebugLoop(format!("Failed to list processes: {}", e)))?;
-
-    if processes.iter().any(|p| p.pid == stored_pid) {
-        return Ok(stored_pid);
-    }
-
-    let want = target_name.to_lowercase();
-    let matches: Vec<u32> = processes
-        .iter()
-        .filter(|p| p.name.to_lowercase() == want)
-        .map(|p| p.pid)
-        .collect();
-
-    match matches.len() {
-        1 => Ok(matches[0]),
-        0 => Err(Error::DebugLoop(format!("Process '{}' is not running", target_name))),
-        n => Err(Error::DebugLoop(format!(
-            "{} processes named '{}' are running; pick one to attach",
-            n, target_name
-        ))),
-    }
+    super::helpers::match_target_pid(&processes, stored_pid, target_name).map_err(Error::DebugLoop)
 }
 
 pub fn run_debug_session(

@@ -51,12 +51,14 @@ export function useBreakpoints(sessionId?: string, isPaused?: boolean, sessionBr
   const sessionBpRef = useRef(sessionBreakpoints);
   sessionBpRef.current = sessionBreakpoints;
 
-  // Session cleanup / seed: clear when session ends,
-  // seed from session context when isPaused becomes true.
+  // Session cleanup / seed: clear when session ends, seed from session context
+  // when the session appears and re-seed on pause transitions. Not gated on
+  // isPaused — a non-invasive Open session never pauses but still has
+  // persisted breakpoints to show.
   useEffect(() => {
     if (!sessionId) {
       setBreakpoints([]);
-    } else if (isPaused && sessionBpRef.current && sessionBpRef.current.length > 0) {
+    } else if (sessionBpRef.current && sessionBpRef.current.length > 0) {
       setBreakpoints(convertBreakpoints(sessionBpRef.current));
     }
   }, [sessionId, isPaused]);

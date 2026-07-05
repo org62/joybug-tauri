@@ -29,6 +29,9 @@ export const ContextThreadsView = ({ onNavigateToDisassembly, onNavigateToMemory
   const sessionData = useSessionContext();
   const sessionId = sessionData?.session?.id;
   const displayStatus = sessionData?.displayStatus;
+  // Call stacks are available whenever a process is (paused, running, or the
+  // non-invasive Open session), since they run over the OOB connection.
+  const canUse = sessionData.canUseMemoryOps;
 
   // Context-level navigation (reuses existing memory tab, like symbols view)
   const onNavigateToDisassemblyCtx = sessionData.onNavigateToDisassembly;
@@ -145,9 +148,10 @@ export const ContextThreadsView = ({ onNavigateToDisassembly, onNavigateToMemory
     };
   }, [sessionId, setLoadingThread, setThreadCallStacksCb]);
 
-  // Session cleanup: clear all hover/cache state when session ends or resumes
+  // Session cleanup: clear all hover/cache state when the session ends or the
+  // process becomes unavailable (Stopped/Error). Kept while paused/running/open.
   useEffect(() => {
-    if (!sessionId || displayStatus !== 'Paused') {
+    if (!sessionId || !canUse) {
       setHoveredThread(null);
       setPopoverPos(null);
       setThreadCallStacks(new Map());
@@ -159,7 +163,7 @@ export const ContextThreadsView = ({ onNavigateToDisassembly, onNavigateToMemory
       if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
       if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
     }
-  }, [sessionId, displayStatus, setLoadingThread, setHoveredThread]);
+  }, [sessionId, canUse, setLoadingThread, setHoveredThread]);
 
   const clearHoverTimers = useCallback(() => {
     if (hoverTimerRef.current) {
@@ -183,6 +187,23 @@ export const ContextThreadsView = ({ onNavigateToDisassembly, onNavigateToMemory
     }, 150);
   }, [setHoveredThread]);
 
+  // Show the call-stack popover at (x, y) and fetch the thread's stack.
+  // Always refetch: stacks change while the target runs (or across steps).
+  // The cached frames stay visible until the fresh ones arrive.
+  const showThreadCallstack = useCallback((tid: number, x: number, y: number) => {
+    setHoveredThread(tid);
+    setPopoverPos({ x: x + 16, y: y - 8 });
+    setCallstackError(null);
+    if (sessionId && canUse) {
+      setLoadingThread(tid);
+      invoke('request_thread_callstack', { sessionId, tid }).catch((err) => {
+        console.error('Failed to request thread callstack:', err);
+        setLoadingThread(null);
+        setCallstackError({ tid, message: formatTauriError(err) });
+      });
+    }
+  }, [sessionId, canUse, setLoadingThread, setHoveredThread]);
+
   const handleThreadMouseEnter = useCallback((tid: number, e: React.MouseEvent) => {
     // Clear any pending hide
     if (hideTimerRef.current) {
@@ -204,21 +225,16 @@ export const ContextThreadsView = ({ onNavigateToDisassembly, onNavigateToMemory
     const mouseY = e.clientY;
 
     hoverTimerRef.current = setTimeout(() => {
-      setHoveredThread(tid);
-      setPopoverPos({ x: mouseX + 16, y: mouseY - 8 });
-      setCallstackError(null);
-
-      // Fetch callstack if not cached
-      if (!threadCallStacksRef.current.has(tid) && sessionId && displayStatus === 'Paused') {
-        setLoadingThread(tid);
-        invoke('request_thread_callstack', { sessionId, tid }).catch((err) => {
-          console.error('Failed to request thread callstack:', err);
-          setLoadingThread(null);
-          setCallstackError({ tid, message: formatTauriError(err) });
-        });
-      }
+      showThreadCallstack(tid, mouseX, mouseY);
     }, 400);
-  }, [sessionId, displayStatus, setLoadingThread, setHoveredThread]);
+  }, [showThreadCallstack]);
+
+  // Clicking a thread opens its call stack immediately (no hover delay).
+  const handleThreadClick = useCallback((tid: number, e: React.MouseEvent) => {
+    if (hoverTimerRef.current) { clearTimeout(hoverTimerRef.current); hoverTimerRef.current = null; }
+    if (hideTimerRef.current) { clearTimeout(hideTimerRef.current); hideTimerRef.current = null; }
+    showThreadCallstack(tid, e.clientX, e.clientY);
+  }, [showThreadCallstack]);
 
   const handleThreadMouseLeave = useCallback(() => {
     if (hoverTimerRef.current) {
@@ -273,7 +289,9 @@ export const ContextThreadsView = ({ onNavigateToDisassembly, onNavigateToMemory
   };
 
   const cachedFrames = hoveredThreadId !== null ? threadCallStacks.get(hoveredThreadId) : undefined;
-  const isLoadingPopover = hoveredThreadId !== null && loadingThreadId === hoveredThreadId;
+  // Spinner only when there's nothing to show yet; a refetch of an already
+  // cached stack keeps the previous frames visible until fresh ones arrive.
+  const isLoadingPopover = hoveredThreadId !== null && loadingThreadId === hoveredThreadId && !cachedFrames;
   const popoverError = hoveredThreadId !== null && callstackError?.tid === hoveredThreadId ? callstackError.message : null;
 
   const threads = sessionData?.threads ?? [];
@@ -297,9 +315,10 @@ export const ContextThreadsView = ({ onNavigateToDisassembly, onNavigateToMemory
 
             return (
               <div
-                className="flex items-center justify-between px-2 py-1 border-b hover:bg-gray-50 dark:hover:bg-gray-900 h-full"
+                className="flex items-center justify-between px-2 py-1 border-b hover:bg-gray-50 dark:hover:bg-gray-900 h-full cursor-pointer"
                 onMouseEnter={(e) => handleThreadMouseEnter(thread.id, e)}
                 onMouseLeave={handleThreadMouseLeave}
+                onClick={(e) => handleThreadClick(thread.id, e)}
               >
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 mb-1">
@@ -330,7 +349,7 @@ export const ContextThreadsView = ({ onNavigateToDisassembly, onNavigateToMemory
           <div className="text-center">
             <Cpu className="h-12 w-12 mx-auto mb-4 opacity-50" />
             <p className="text-base font-medium">No threads found</p>
-            <p className="text-sm mt-1">Threads will appear here during debugging</p>
+            <p className="text-sm mt-1">Open, attach to, or run a process to list threads</p>
           </div>
         </div>
       )}

@@ -1,6 +1,24 @@
 import { invoke } from '@tauri-apps/api/core';
 import { RegisterContext, SymbolResolver } from '@/lib/hexUtils';
 import { SerializableThreadContext } from '@/components/RegisterView';
+import type { SessionStatus } from '@/contexts/SessionContext';
+
+/**
+ * True when a process is available for memory/enumeration ops: paused, running
+ * (invasive), or a non-invasive Open session. These ops run over the OOB
+ * connection and never need a pause.
+ */
+export function isProcessAvailable(status: SessionStatus | string | undefined | null): boolean {
+  return status === 'Paused' || status === 'Running' || status === 'Open';
+}
+
+/**
+ * True while the target executes live and values drift between reads: running
+ * (invasive), or a non-invasive Open session. Used to gate polling loops.
+ */
+export function isTargetLive(status: SessionStatus | string | undefined | null): boolean {
+  return status === 'Running' || status === 'Open';
+}
 
 /**
  * Extract a human-readable error message from a Tauri invoke error.
@@ -22,6 +40,17 @@ export function formatTauriError(err: unknown): string {
     return JSON.stringify(err);
   }
   return String(err);
+}
+
+/**
+ * True for backend errors that mean "nothing to show yet" rather than a real
+ * failure — e.g. no active process, or an op that needs a pause (non-invasive
+ * Open sessions before an address is chosen). Views should render their neutral
+ * empty state instead of an error box. Single place matching the backend's
+ * `InvalidSessionState` message wording (see src-tauri `Error` variants).
+ */
+export function isBenignSessionError(message: string): boolean {
+  return /no active process|must be paused|session not/i.test(message);
 }
 
 /** Convert a thread context snapshot to a flat register name -> value map for address expression parsing. */

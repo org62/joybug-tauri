@@ -14,8 +14,7 @@ export const ContextSymbolsView = () => {
   const [isSearching, setIsSearching] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const displayStatus = sessionData?.displayStatus;
-  const isActive = displayStatus === 'Paused' || displayStatus === 'Running';
+  const isActive = sessionData.canUseMemoryOps;
   const sessionId = sessionData?.session?.id;
 
   const onNavigateToDisassembly = sessionData.onNavigateToDisassembly;
@@ -149,7 +148,7 @@ export const ContextSymbolsView = () => {
       <div className="p-2 border-b shrink-0">
         <Input
           type="text"
-          placeholder={isActive ? "Search symbols..." : "Session must be paused to search symbols"}
+          placeholder={isActive ? "Search symbols..." : "Open, attach to, or run a process to search symbols"}
           value={searchTerm}
           onChange={handleSearchChange}
           className="w-full"

@@ -63,6 +63,8 @@ export interface DebugSession {
   launch_command: string;
   working_directory: string | null;
   is_local_run: boolean;
+  attach_pid: number | null;
+  non_invasive: boolean;
   status: SessionStatus;
   current_event: DebugEventInfo | null;
   created_at: string;
@@ -108,16 +110,20 @@ export interface Symbol {
   is_function: boolean;
 }
 
-export type SessionStatus = 
+export type SessionStatus =
   | "Stopped"
   | "Running"
   | "Paused"
+  | "Open"
   | { Error: string };
 
 // Context for session data
 export interface SessionContextData {
   session: DebugSession | null;
   displayStatus: SessionStatus;  // Debounced status for content views (prevents flicker on stepping)
+  /** True when memory/enumeration ops are usable: paused, running (invasive), or a
+   * non-invasive Open session. These ops run over OOB and don't need a pause. */
+  canUseMemoryOps: boolean;
   modules: Module[];
   threads: Thread[];
   loadModules: () => Promise<void>;

@@ -84,16 +84,17 @@ export function ContextMemoryRegionsView({ onNavigateToAddress }: ContextMemoryR
     });
   }, [regions, stateFilter, typeFilter]);
 
-  // Fetch memory regions on pause (including first mount) and clear on resume/stop
+  // Fetch memory regions whenever a process is available (paused, running, or
+  // non-invasive Open) and clear when none is.
   useEffect(() => {
-    if (sessionData?.session?.status === 'Paused' && sessionData?.session?.id) {
+    if (sessionData.canUseMemoryOps && sessionData?.session?.id) {
       fetchMemoryRegions();
-    } else if (sessionData?.session?.status !== 'Paused') {
+    } else if (!sessionData.canUseMemoryOps) {
       setRegions([]);
       setError(null);
       setIsLoading(false);
     }
-  }, [sessionData?.session?.id, sessionData?.session?.status, sessionData?.session?.current_event]);
+  }, [sessionData?.session?.id, sessionData.canUseMemoryOps, sessionData?.session?.current_event]);
 
   // Listen for memory regions updates
   useEffect(() => {
@@ -209,14 +210,14 @@ export function ContextMemoryRegionsView({ onNavigateToAddress }: ContextMemoryR
               <div className="text-center">
                 <AlertCircle className="h-12 w-12 mx-auto mb-4 opacity-50" />
                 <p className="text-base font-medium">{error}</p>
-                <p className="text-sm mt-1">Memory regions will retry automatically on next pause</p>
+                <p className="text-sm mt-1">Memory regions will retry automatically</p>
               </div>
             </div>
-          ) : sessionData.session.status !== 'Paused' ? (
+          ) : !sessionData.canUseMemoryOps ? (
             <div className="flex flex-col items-center justify-center h-full text-muted-foreground p-4">
               <div className="text-center">
                 <AlertCircle className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                <p className="text-base font-medium">Session must be paused to view memory regions</p>
+                <p className="text-base font-medium">Open or run a process to view memory regions</p>
               </div>
             </div>
           ) : isLoading ? (
@@ -231,7 +232,7 @@ export function ContextMemoryRegionsView({ onNavigateToAddress }: ContextMemoryR
               <div className="text-center">
                 <MemoryStick className="h-12 w-12 mx-auto mb-4 opacity-50" />
                 <p className="text-base font-medium">No memory regions found</p>
-                {sessionData.session.status === 'Paused' && (
+                {sessionData.canUseMemoryOps && (
                   <p className="text-sm mt-1">Try adjusting the filters</p>
                 )}
               </div>

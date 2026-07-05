@@ -66,7 +66,7 @@ function savePersistedScan(sessionId: string, scan: PersistedScan | null): void 
   } catch { /* storage full / unavailable — non-fatal */ }
 }
 
-export function usePointerScan(sessionId: string | undefined, isPaused: boolean) {
+export function usePointerScan(sessionId: string | undefined, available: boolean) {
   const [resultsPath, setResultsPath] = useState<string | null>(null);
   const [targetAddress, setTargetAddress] = useState('');
   const [maxOffset, setMaxOffset] = useState(DEFAULT_MAX_OFFSET);
@@ -153,7 +153,7 @@ export function usePointerScan(sessionId: string | undefined, isPaused: boolean)
   // the paths against the current module layout.
   const restoredForSession = useRef<string | null>(null);
   useEffect(() => {
-    if (!sessionId || !isPaused) return;
+    if (!sessionId || !available) return;
     if (resultsPath !== null) return;
     if (restoredForSession.current === sessionId) return;
     const persisted = loadPersistedScan(sessionId);
@@ -165,7 +165,7 @@ export function usePointerScan(sessionId: string | undefined, isPaused: boolean)
     setTotalCount(persisted.totalCount);
     if (persisted.targetAddress) setTargetAddress(persisted.targetAddress);
     loadPage(0);
-  }, [sessionId, isPaused, resultsPath, loadPage]);
+  }, [sessionId, available, resultsPath, loadPage]);
 
   // Listen for backend events.
   useEffect(() => {
@@ -221,7 +221,7 @@ export function usePointerScan(sessionId: string | undefined, isPaused: boolean)
   }, [sessionId, loadPage]);
 
   const handleScan = useCallback(async () => {
-    if (!sessionId || !isPaused) return;
+    if (!sessionId || !available) return;
     const target = parseAddr(targetAddress);
     if (target === null) {
       setError('Invalid target address');
@@ -257,7 +257,7 @@ export function usePointerScan(sessionId: string | undefined, isPaused: boolean)
       setError(formatTauriError(e));
       setIsScanning(false);
     }
-  }, [sessionId, isPaused, targetAddress, maxOffset, maxDepth, selectedModuleBases, writableOnly]);
+  }, [sessionId, available, targetAddress, maxOffset, maxDepth, selectedModuleBases, writableOnly]);
 
   const handleNewScan = useCallback(async () => {
     if (resultsPath !== null && sessionId) {
@@ -273,7 +273,7 @@ export function usePointerScan(sessionId: string | undefined, isPaused: boolean)
   // Rescan: narrow the current result list to paths that still resolve to the
   // (possibly changed) target address. Reuses the start-result event flow.
   const handleRescan = useCallback(async () => {
-    if (!sessionId || !isPaused || resultsPath === null) return;
+    if (!sessionId || !available || resultsPath === null) return;
     const target = parseAddr(targetAddress);
     if (target === null) {
       setError('Invalid target address');
@@ -287,7 +287,7 @@ export function usePointerScan(sessionId: string | undefined, isPaused: boolean)
       setError(formatTauriError(e));
       setIsScanning(false);
     }
-  }, [sessionId, isPaused, resultsPath, targetAddress]);
+  }, [sessionId, available, resultsPath, targetAddress]);
 
   // Commit the active filter: reduce the results file to only the matches and make
   // it the active set (the backend writes a new file and deletes the old one).

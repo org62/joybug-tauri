@@ -9,8 +9,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from "./ui/select";
-import { Binary, RefreshCw, Save, X, ArrowRight, Copy, ClipboardPaste, ChevronLeft, ChevronRight, Crosshair, Bookmark } from "lucide-react";
+import { Binary, Save, X, ArrowRight, Copy, ClipboardPaste, ChevronLeft, ChevronRight, Crosshair, Bookmark } from "lucide-react";
 import { useHexEditor } from "@/hooks/useHexEditor";
+import { isProcessAvailable } from "@/lib/sessionHelpers";
 import { useNavigationChannel } from "@/hooks/useNavigationChannel";
 import { memoryNavigation } from "@/lib/navigationStore";
 import {
@@ -66,7 +67,6 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
     dereferenceData,
     // Actions
     goToAddress,
-    refresh,
     setViewMode,
     // Pagination
     loadPreviousPage,
@@ -383,8 +383,9 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
     );
   }
 
-  // Check if session is active (can interact with memory)
-  const isSessionActive = sessionStatus === 'Running' || sessionStatus === 'Paused';
+  // Check if session is active (can interact with memory). Includes the
+  // non-invasive Open session, which reads memory over OOB without a debug loop.
+  const isSessionActive = isProcessAvailable(sessionStatus);
 
   if (memoryData.length === 0 && !isLoading && !error) {
     // If session is active, show toolbar so user can enter address
@@ -399,7 +400,6 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
               handleGoto={handleGoto}
               viewMode={viewMode}
               setViewMode={setViewMode}
-              refresh={refresh}
               isLoading={isLoading}
               pendingChanges={pendingChanges}
               applyPendingChanges={applyPendingChanges}
@@ -444,7 +444,6 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
             handleGoto={handleGoto}
             viewMode={viewMode}
             setViewMode={setViewMode}
-            refresh={refresh}
             isLoading={isLoading}
             pendingChanges={pendingChanges}
             applyPendingChanges={applyPendingChanges}
@@ -482,7 +481,6 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
           handleGoto={handleGoto}
           viewMode={viewMode}
           setViewMode={setViewMode}
-          refresh={refresh}
           isLoading={isLoading}
           pendingChanges={pendingChanges}
           applyPendingChanges={applyPendingChanges}
@@ -792,7 +790,6 @@ interface HexToolbarProps {
   handleGoto: () => void;
   viewMode: ViewMode;
   setViewMode: (mode: ViewMode) => void;
-  refresh: () => void;
   isLoading: boolean;
   pendingChanges: Map<number, number>;
   applyPendingChanges: () => void;
@@ -809,7 +806,6 @@ function HexToolbar({
   handleGoto,
   viewMode,
   setViewMode,
-  refresh,
   isLoading,
   pendingChanges,
   applyPendingChanges,
@@ -874,16 +870,6 @@ function HexToolbar({
           <SelectItem value="pointer">Pointer</SelectItem>
         </SelectContent>
       </Select>
-
-      {/* Refresh */}
-      <Button
-        variant="outline"
-        onClick={refresh}
-        disabled={isLoading}
-        title="Refresh memory"
-      >
-        <RefreshCw className={`h-3 w-3 ${isLoading ? "animate-spin" : ""}`} />
-      </Button>
 
       {/* Spacer */}
       <div className="flex-1" />

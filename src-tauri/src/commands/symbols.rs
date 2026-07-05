@@ -10,6 +10,7 @@ pub fn search_session_symbols(
     pattern: String,
     limit: Option<usize>,
     session_states: State<'_, SessionStatesMap>,
+    oob_pool: State<'_, super::OobPool>,
     app_handle: tauri::AppHandle,
 ) -> Result<Vec<SymbolData>> {
     debug!("Searching for symbols in session {} with pattern '{}'", session_id, pattern);
@@ -24,8 +25,8 @@ pub fn search_session_symbols(
             info!("Symbol search request sent for session {} with pattern '{}'", session_id, pattern);
         }
         Err(_) => {
-            let (mut oob, _pid) = super::create_oob_client(&session_arc)?;
-            match oob.find_symbols(&pattern, limit_val as usize) {
+            let found = super::with_oob_client(&session_arc, &session_id, &oob_pool, |oob, _pid| oob.find_symbols(&pattern, limit_val as usize));
+            match super::flatten_oob(found) {
                 Ok(resolved_symbols) => {
                     let symbols: Vec<SymbolData> = resolved_symbols.iter().map(|rs| {
                         let symbol_name = if let Some(pos) = rs.name.find('!') {
@@ -86,9 +87,14 @@ pub fn request_thread_callstack(
     session_id: String,
     tid: u32,
     session_states: State<'_, SessionStatesMap>,
+    oob_pool: State<'_, super::OobPool>,
+    app_handle: tauri::AppHandle,
 ) -> Result<()> {
-    super::send_paused_command(&session_id, &session_states, UICommand::GetThreadCallStack { tid })?;
-    info!("Thread callstack request sent for session {}, tid {}", session_id, tid);
+    let handle = Some(app_handle);
+    super::paused_or_oob(&session_id, &session_states, &oob_pool, UICommand::GetThreadCallStack { tid }, |client, pid| {
+        crate::session::callstack::process_thread_callstack_request(client, &handle, pid, tid);
+    })?;
+    info!("Thread callstack processed for session {}, tid {}", session_id, tid);
     Ok(())
 }
 

@@ -22,9 +22,11 @@ pub fn create_debug_session(
     working_directory: Option<String>,
     is_local_run: bool,
     attach_pid: Option<u32>,
+    non_invasive: Option<bool>,
     session_states: State<'_, SessionStatesMap>,
     app_handle: tauri::AppHandle,
 ) -> std::result::Result<String, String> {
+    let non_invasive = non_invasive.unwrap_or(false);
     let mut states = session_states.lock().unwrap();
 
     if !is_local_run && attach_pid.is_none() {
@@ -54,6 +56,7 @@ pub fn create_debug_session(
         working_directory,
         is_local_run,
         attach_pid,
+        non_invasive,
     )));
 
     {
@@ -88,9 +91,11 @@ pub fn update_debug_session(
     working_directory: Option<String>,
     is_local_run: bool,
     attach_pid: Option<u32>,
+    non_invasive: Option<bool>,
     session_states: State<'_, SessionStatesMap>,
     app_handle: tauri::AppHandle,
 ) -> std::result::Result<(), String> {
+    let non_invasive = non_invasive.unwrap_or(false);
     let states = session_states.lock().unwrap();
 
     if !is_local_run && attach_pid.is_none() {
@@ -117,6 +122,7 @@ pub fn update_debug_session(
         state.launch_command = launch_command;
         state.working_directory = working_directory.filter(|w| !w.trim().is_empty());
         state.attach_pid = attach_pid;
+        state.non_invasive = non_invasive;
 
         let session_state_arc = session_state.clone();
 
@@ -214,6 +220,46 @@ pub fn start_debug_session(
         }
     }
 
+    // Non-invasive session: open the target for memory/enumeration only. Resolve
+    // the live PID, mark the session Open, and return without a debug loop.
+    {
+        let (non_invasive, server_url, attach_pid, launch_command) = {
+            let state = session_state.lock().unwrap();
+            (state.non_invasive, state.server_url.clone(), state.attach_pid, state.launch_command.clone())
+        };
+        if non_invasive {
+            let stored_pid = attach_pid.ok_or_else(|| {
+                Error::InvalidSessionState("Non-invasive session requires a target PID".to_string())
+            })?;
+            // Resolve the live PID and register the process with the server
+            // non-invasively — one temp connection for both — so modules, threads,
+            // symbols, disassembly, PE info and call stacks are available without
+            // attaching a debugger.
+            let pid = {
+                let mut client = connect_temp_client(&server_url)?;
+                let pid = resolve_open_pid(&mut client, stored_pid, &launch_command)?;
+                client
+                    .open_process(pid)
+                    .map_err(|e| Error::ConnectionFailed(format!("Failed to open process {}: {}", pid, e)))?;
+                pid
+            };
+            {
+                let mut state = session_state.lock().unwrap();
+                state.attach_pid = Some(pid);
+                state.open_pid = Some(pid);
+                state.status = SessionStatusUI::Open;
+            }
+            emit_session_event(&session_state, &app_handle);
+            crate::ui_logger::log_info(
+                &app_handle,
+                &format!("Opened process {} non-invasively for session {}", pid, session_id),
+                Some(session_id.clone()),
+            );
+            info!("Non-invasive session {} opened pid {}", session_id, pid);
+            return Ok(());
+        }
+    }
+
     emit_session_event(&session_state, &app_handle);
 
     crate::ui_logger::log_info(
@@ -222,39 +268,87 @@ pub fn start_debug_session(
         Some(session_id.clone()),
     );
 
-    let session_state_for_thread = session_state.clone();
-    let app_handle_for_thread = app_handle.clone();
-    let session_id_for_thread = session_id.clone();
+    spawn_debug_loop(session_state, app_handle, session_id);
 
+    Ok(())
+}
+
+/// Spawn the blocking debug-session loop on its own thread and record the final
+/// status when it exits. Shared by `start_debug_session` and `attach_open_session`.
+fn spawn_debug_loop(
+    session_state: Arc<Mutex<SessionStateUI>>,
+    app_handle: tauri::AppHandle,
+    session_id: String,
+) {
     thread::spawn(move || {
-        let result = run_debug_session(session_state_for_thread.clone(), Some(app_handle_for_thread.clone()));
+        let result = run_debug_session(session_state.clone(), Some(app_handle.clone()));
 
         {
-            let mut state = session_state_for_thread.lock().unwrap();
+            let mut state = session_state.lock().unwrap();
             match &result {
                 Ok(_) => {
                     if !matches!(state.status, SessionStatusUI::Stopped) {
                         state.status = SessionStatusUI::Stopped;
                     }
-                    info!("Debug session {} completed successfully", session_id_for_thread);
+                    info!("Debug session {} completed successfully", session_id);
                 }
                 Err(e) => {
                     state.status = SessionStatusUI::Error(e.to_string());
-                    let error_message = format!("Debug session {} failed: {}", session_id_for_thread, e);
+                    let error_message = format!("Debug session {} failed: {}", session_id, e);
                     error!("{}", &error_message);
-                    crate::ui_logger::log_error(
-                        &app_handle_for_thread,
-                        &error_message,
-                        Some(session_id_for_thread.clone()),
-                    );
+                    crate::ui_logger::log_error(&app_handle, &error_message, Some(session_id.clone()));
                 }
             }
             state.debug_result = Some(result.map_err(|e| e.to_string()));
         }
 
-        emit_session_event(&session_state_for_thread, &app_handle_for_thread);
+        emit_session_event(&session_state, &app_handle);
     });
+}
 
+/// Promote a non-invasive `Open` session to a full attached debug session on the
+/// same PID: release the non-invasive registration, then run the debug loop
+/// (which attaches via `attach_pid`). Enables breakpoints, stepping and Detach.
+#[tauri::command]
+pub fn attach_open_session(
+    session_id: String,
+    session_states: State<'_, SessionStatesMap>,
+    oob_pool: State<'_, super::OobPool>,
+    app_handle: tauri::AppHandle,
+) -> Result<()> {
+    let session_state = {
+        let states = session_states.lock().unwrap();
+        states.get(&session_id).cloned().ok_or_else(|| Error::SessionNotFound(session_id.clone()))?
+    };
+
+    let (server_url, pid) = {
+        let state = session_state.lock().unwrap();
+        if !state.non_invasive || !matches!(state.status, SessionStatusUI::Open) {
+            return Err(Error::InvalidSessionState("Session is not a non-invasive Open session".to_string()));
+        }
+        let pid = state.open_pid.or(state.attach_pid)
+            .ok_or_else(|| Error::InvalidSessionState("No target PID to attach to".to_string()))?;
+        (state.server_url.clone(), pid)
+    };
+
+    // Drop the pooled OOB connections and release the non-invasive process entry so
+    // the debug loop's DebugActiveProcess can take over cleanly.
+    oob_pool.remove(&session_id);
+    if let Ok(mut client) = connect_temp_client(&server_url) {
+        let _ = client.close_process(pid);
+    }
+
+    {
+        let mut state = session_state.lock().unwrap();
+        state.non_invasive = false;
+        state.open_pid = None;
+        state.attach_pid = Some(pid);
+        state.status = SessionStatusUI::Running;
+    }
+    emit_session_event(&session_state, &app_handle);
+    crate::ui_logger::log_info(&app_handle, &format!("Attaching to process {}", pid), Some(session_id.clone()));
+
+    spawn_debug_loop(session_state, app_handle, session_id);
     Ok(())
 }
 
@@ -281,6 +375,12 @@ pub fn stop_debug_session(
             if let Some(sender) = state.ui_sender.take() {
                 info!("Stopping session by dropping the step_sender.");
                 let _ = sender.send(UICommand::Stop);
+            }
+            // Non-invasive sessions have no debug-loop thread to flip the status
+            // on exit, so transition them to Stopped here.
+            if state.non_invasive {
+                state.status = SessionStatusUI::Stopped;
+                state.open_pid = None;
             }
         }
 
@@ -421,9 +521,25 @@ fn connect_temp_client(server_url: &str) -> Result<crate::session::types::DebugS
         None,
         false,
         None,
+        false,
     )));
     joybug2::protocol_io::DebugSession::new(tmp_state, Some(server_url))
         .map_err(|e| Error::ConnectionFailed(e.to_string()))
+}
+
+/// Resolve which live PID a non-invasive session should open. Same policy as
+/// `runner::resolve_attach_pid`: prefer the stored PID if still alive, else match
+/// uniquely by image name (zero/several matches are surfaced as an error).
+fn resolve_open_pid(
+    client: &mut crate::session::types::DebugSession,
+    stored_pid: u32,
+    target_name: &str,
+) -> Result<u32> {
+    let processes = client
+        .list_processes()
+        .map_err(|e| Error::ConnectionFailed(format!("Failed to list processes: {}", e)))?;
+    crate::session::helpers::match_target_pid(&processes, stored_pid, target_name)
+        .map_err(Error::InvalidSessionState)
 }
 
 fn send_out_of_band_request(server_url: &str, req: DebuggerRequest) -> Result<()> {

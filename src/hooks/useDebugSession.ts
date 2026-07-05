@@ -3,12 +3,24 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { toast } from 'sonner';
 import { DebugSession, Module, Thread, Symbol, SessionStatus } from '@/contexts/SessionContext';
+import { isProcessAvailable, isTargetLive } from '@/lib/sessionHelpers';
+
+// The 1s live poll returns fresh arrays every tick even when nothing changed;
+// keeping the previous reference when contents match stops every context
+// consumer from re-rendering each second.
+function sameModules(a: Module[], b: Module[]): boolean {
+  return a.length === b.length && a.every((m, i) => m.base_address === b[i].base_address && m.name === b[i].name && m.size === b[i].size);
+}
+
+function sameThreads(a: Thread[], b: Thread[]): boolean {
+  return a.length === b.length && a.every((t, i) => t.id === b[i].id && t.start_address === b[i].start_address);
+}
 
 export function useDebugSession(sessionId: string | undefined) {
   const [session, setSession] = useState<DebugSession | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [busyAction, setBusyAction] = useState<
-    "go" | "stepIn" | "stepOut" | "stepOver" | "stop" | "pause" | "detach" | null
+    "go" | "stepIn" | "stepOut" | "stepOver" | "stop" | "pause" | "detach" | "attach" | null
   >(null);
   const [modules, setModules] = useState<Module[]>([]);
   const [threads, setThreads] = useState<Thread[]>([]);
@@ -70,7 +82,7 @@ export function useDebugSession(sessionId: string | undefined) {
   const canStep = useMemo(() => displayStatus === "Paused", [displayStatus]);
   const canStop = useMemo(() => {
     if (!session || typeof session.status !== "string") return false;
-    return ["Running", "Paused"].includes(session.status);
+    return isProcessAvailable(session.status);
   }, [session]);
   const canStart = useMemo(() => {
     if (!session || typeof session.status !== "string") return false;
@@ -92,7 +104,9 @@ export function useDebugSession(sessionId: string | undefined) {
   const loadModules = useCallback(async () => {
     if (!sessionId) return [];
     try {
-      return await invoke<Module[]>("get_session_modules", { sessionId });
+      const mods = await invoke<Module[]>("get_session_modules", { sessionId });
+      setModules(prev => sameModules(prev, mods) ? prev : mods);
+      return mods;
     } catch (error) {
       const errorMessage = `Failed to load modules: ${error}`;
       toast.error(errorMessage);
@@ -104,7 +118,9 @@ export function useDebugSession(sessionId: string | undefined) {
   const loadThreads = useCallback(async () => {
     if (!sessionId) return [];
     try {
-      return await invoke<Thread[]>("get_session_threads", { sessionId });
+      const thrs = await invoke<Thread[]>("get_session_threads", { sessionId });
+      setThreads(prev => sameThreads(prev, thrs) ? prev : thrs);
+      return thrs;
     } catch (error) {
       const errorMessage = `Failed to load threads: ${error}`;
       toast.error(errorMessage);
@@ -234,25 +250,25 @@ export function useDebugSession(sessionId: string | undefined) {
   }, [sessionId, handleSessionUpdate]);
 
   useEffect(() => {
-    let isCancelled = false;
-
-    if (session?.status === "Paused" || session?.status === "Running") {
-      const fetchData = async () => {
-        const [mods, thrs] = await Promise.all([loadModules(), loadThreads()]);
-        if (!isCancelled) {
-          setModules(mods);
-          setThreads(thrs);
-        }
-      };
-      fetchData();
+    if (isProcessAvailable(session?.status)) {
+      loadModules();
+      loadThreads();
     } else if (session?.status === "Stopped" || typeof session?.status === 'object') {
       setModules([]);
       setThreads([]);
     }
+  }, [session?.status, loadModules, loadThreads]);
 
-    return () => {
-      isCancelled = true;
-    };
+  // Poll modules/threads while the target runs live (Running or non-invasive
+  // Open): thread/module churn produces no status transition to re-trigger the
+  // effect above, and in Open mode no dll events arrive at all.
+  useEffect(() => {
+    if (!isTargetLive(session?.status)) return;
+    const interval = setInterval(() => {
+      loadModules();
+      loadThreads();
+    }, 1000);
+    return () => clearInterval(interval);
   }, [session?.status, loadModules, loadThreads]);
 
   // Listen for dll load/unload targeted events to refresh modules quickly
@@ -265,16 +281,14 @@ export function useDebugSession(sessionId: string | undefined) {
         "dll-unloaded",
         async (event) => {
           if (event.payload.session_id !== sessionId) return;
-          const mods = await loadModules();
-          setModules(mods);
+          await loadModules();
         }
       );
       unlistenLoad = await listen<{ session_id: string; pid: number; tid: number; dll_name: string; base_of_dll: number; size_of_dll?: number }>(
         "dll-loaded",
         async (event) => {
           if (event.payload.session_id !== sessionId) return;
-          const mods = await loadModules();
-          setModules(mods);
+          await loadModules();
         }
       );
     };
@@ -419,6 +433,22 @@ export function useDebugSession(sessionId: string | undefined) {
     }
   }, [sessionId, canDetach]);
 
+  // Promote a non-invasive Open session to a full attached debug session.
+  const handleAttach = useCallback(async () => {
+    if (!sessionId || session?.status !== "Open") return;
+    setBusyAction("attach");
+    try {
+      await invoke("attach_open_session", { sessionId });
+      toast.success("Attaching to process…");
+    } catch (error) {
+      const errorMessage = `Failed to attach: ${error}`;
+      toast.error(errorMessage);
+      console.error(errorMessage);
+    } finally {
+      setBusyAction(null);
+    }
+  }, [sessionId, session?.status]);
+
   return {
     session,
     displayStatus,
@@ -438,6 +468,7 @@ export function useDebugSession(sessionId: string | undefined) {
     handleStart,
     handlePause,
     handleDetach,
+    handleAttach,
     canStep,
     canStop,
     canStart,

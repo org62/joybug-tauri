@@ -42,14 +42,14 @@ function EmptyState({ icon, title, subtitle, danger }: {
 
 export const ContextPointerScanView = () => {
   const sessionData = useSessionContext();
-  const isPaused = sessionData?.displayStatus === 'Paused';
+  const canUse = sessionData.canUseMemoryOps;
   const sessionId = sessionData?.session?.id;
   const onNavigateToMemory = sessionData.onNavigateToMemory;
   const { addBookmark } = sessionData.bookmarkState;
   const modules = sessionData?.modules ?? [];
   const loadModules = sessionData?.loadModules;
 
-  const scan = usePointerScan(sessionId, isPaused);
+  const scan = usePointerScan(sessionId, canUse);
   const { contextMenu, contextMenuRef, openContextMenu, closeContextMenu } = useContextMenu<{ entry: PointerPathEntry }>();
 
   const handleAddBookmark = (p: PointerPathEntry) => {
@@ -67,8 +67,8 @@ export const ContextPointerScanView = () => {
 
   // Load the module list so the user can pick which modules to root paths in.
   useEffect(() => {
-    if (sessionId && isPaused) loadModules?.();
-  }, [sessionId, isPaused, loadModules]);
+    if (sessionId && canUse) loadModules?.();
+  }, [sessionId, canUse, loadModules]);
 
   const selected = new Set(scan.selectedModuleBases);
   const toggleModule = (base: string) => {
@@ -90,9 +90,9 @@ export const ContextPointerScanView = () => {
   const crosshairIcon = <Crosshair className="h-12 w-12 mx-auto mb-4 opacity-50" />;
 
   const renderContent = () => {
-    if (sessionData.session && !isPaused) {
+    if (sessionData.session && !canUse) {
       return <EmptyState icon={crosshairIcon} title="Pointer scan unavailable"
-        subtitle="Session must be paused to scan for pointers" />;
+        subtitle="Open or run a process to scan for pointers" />;
     }
 
     if (scan.isScanning) {
@@ -155,7 +155,7 @@ export const ContextPointerScanView = () => {
             onChange={(e) => scan.setTargetAddress(e.target.value)}
             onKeyDown={handleKeyDown}
             className="flex-1 font-mono"
-            disabled={!isPaused}
+            disabled={!canUse}
           />
         </div>
         <div className="flex gap-1 items-center">
@@ -167,7 +167,7 @@ export const ContextPointerScanView = () => {
               onChange={(e) => scan.setMaxOffset(e.target.value)}
               onKeyDown={handleKeyDown}
               className="w-24 font-mono"
-              disabled={!isPaused}
+              disabled={!canUse}
             />
           </div>
           <div className="flex items-center gap-1">
@@ -178,13 +178,13 @@ export const ContextPointerScanView = () => {
               onChange={(e) => scan.setMaxDepth(e.target.value)}
               onKeyDown={handleKeyDown}
               className="w-14 font-mono"
-              disabled={!isPaused}
+              disabled={!canUse}
             />
           </div>
           {/* Base module selector */}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button size="sm" variant="outline" className="ml-auto gap-1" disabled={!isPaused}>
+              <Button size="sm" variant="outline" className="ml-auto gap-1" disabled={!canUse}>
                 {moduleLabel}
                 <ChevronDown className="h-3 w-3" />
               </Button>
@@ -226,7 +226,7 @@ export const ContextPointerScanView = () => {
           <Button
             size="sm"
             onClick={scan.handleScan}
-            disabled={!isPaused || scan.isScanning || !scan.targetAddress.trim()}
+            disabled={!canUse || scan.isScanning || !scan.targetAddress.trim()}
           >
             Scan
           </Button>
@@ -234,7 +234,7 @@ export const ContextPointerScanView = () => {
             size="sm"
             variant="outline"
             onClick={scan.handleRescan}
-            disabled={!isPaused || scan.isScanning || scan.resultsPath === null || !scan.targetAddress.trim()}
+            disabled={!canUse || scan.isScanning || scan.resultsPath === null || !scan.targetAddress.trim()}
             title="Keep only paths that still resolve to the target address above (narrow after the target moves or the game restarts)"
           >
             Rescan
@@ -248,7 +248,7 @@ export const ContextPointerScanView = () => {
             New Scan
           </Button>
           <div className="flex items-center gap-1.5">
-            <Switch checked={scan.writableOnly} onCheckedChange={scan.setWritableOnly} disabled={!isPaused} />
+            <Switch checked={scan.writableOnly} onCheckedChange={scan.setWritableOnly} disabled={!canUse} />
             <span className="text-xs text-muted-foreground" title="Scan only writable regions (faster; may miss static roots in read-only data)">Writable only</span>
           </div>
           {scan.resultsPath !== null && (
@@ -277,7 +277,7 @@ export const ContextPointerScanView = () => {
                   variant="outline"
                   className="h-7 px-2 text-xs"
                   onClick={scan.handleApplyFilter}
-                  disabled={!isPaused || scan.isScanning || scan.totalCount === 0}
+                  disabled={!canUse || scan.isScanning || scan.totalCount === 0}
                   title="Discard all non-matching paths and keep only the filtered results as the new set"
                 >
                   Keep {scan.totalCount.toLocaleString()} match{scan.totalCount !== 1 ? 'es' : ''}

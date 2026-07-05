@@ -31,39 +31,15 @@ import {
   syncSessionsToStorage 
 } from "@/lib/sessionStorage";
 
-const DEFAULT_SESSION_NAME = "Unnamed Session";
+import { DebugSession, SessionStatus } from "@/contexts/SessionContext";
+import { isProcessAvailable } from "@/lib/sessionHelpers";
 
-interface DebugSession {
-  id: string;
-  name: string;
-  server_url: string;
-  launch_command: string;
-  working_directory: string | null;
-  is_local_run: boolean;
-  attach_pid: number | null;
-  status: SessionStatus;
-  current_event: DebugEventInfo | null;
-  created_at: string;
-}
+const DEFAULT_SESSION_NAME = "Unnamed Session";
 
 interface ProcessInfo {
   pid: number;
   name: string;
 }
-
-interface DebugEventInfo {
-  event_type: string;
-  process_id: number;
-  thread_id: number;
-  details: string;
-  can_continue: boolean;
-}
-
-type SessionStatus = 
-  | "Stopped"
-  | "Running"
-  | "Paused"
-  | { Error: string };
 
 export default function Debugger() {
   const navigate = useNavigate();
@@ -85,6 +61,9 @@ export default function Debugger() {
   const [processFilter, setProcessFilter] = useState("");
   const [isLoadingProcesses, setIsLoadingProcesses] = useState(false);
   const [attachingPid, setAttachingPid] = useState<number | null>(null);
+  // When true, the chosen process is opened non-invasively (OpenProcess only, no
+  // debugger attach) — memory/enumeration/scan features only, no breakpoints/stepping.
+  const [attachNonInvasive, setAttachNonInvasive] = useState(false);
   // When set, the attach dialog re-attaches this existing (stopped) session to
   // the chosen PID instead of creating a new session.
   const [attachTargetSessionId, setAttachTargetSessionId] = useState<string | null>(null);
@@ -360,6 +339,7 @@ export default function Debugger() {
       workingDirectory: session.working_directory ?? null,
       isLocalRun: session.is_local_run,
       attachPid: pid,
+      nonInvasive: session.non_invasive,
     });
   };
 
@@ -461,6 +441,7 @@ export default function Debugger() {
     setAttachTargetSessionId(null);
     setProcessFilter("");
     setProcesses([]);
+    setAttachNonInvasive(false);
     setIsAttachDialogOpen(true);
     await loadProcesses();
   };
@@ -482,17 +463,19 @@ export default function Debugger() {
         }
       }
 
+      const label = attachNonInvasive ? "Open" : "Attach";
       const sessionId = await invoke<string>("create_debug_session", {
-        name: `Attach: ${proc.name} (${proc.pid})`,
+        name: `${label}: ${proc.name} (${proc.pid})`,
         serverUrl: remoteUrl,
         launchCommand: proc.name,
         workingDirectory: null,
         isLocalRun: remoteUrl === "",
         attachPid: proc.pid,
+        nonInvasive: attachNonInvasive,
       });
 
       await invoke("start_debug_session", { sessionId });
-      toast.success(`Attaching to ${proc.name} (${proc.pid})`);
+      toast.success(`${attachNonInvasive ? "Opening" : "Attaching to"} ${proc.name} (${proc.pid})`);
       setIsAttachDialogOpen(false);
       navigate(`/session/${sessionId}`);
     } catch (error) {
@@ -520,6 +503,8 @@ export default function Debugger() {
           return <Badge variant="default" className="bg-green-600 animate-pulse">Running</Badge>;
         case "Paused":
           return <Badge variant="default" className="bg-yellow-600">Paused</Badge>;
+        case "Open":
+          return <Badge variant="default" className="bg-blue-600">Open</Badge>;
         default:
           return <Badge variant="secondary">{status}</Badge>;
       }
@@ -538,6 +523,8 @@ export default function Debugger() {
           return "Debug session is running";
         case "Paused":
           return "Debug session is paused on an event";
+        case "Open":
+          return "Process opened non-invasively (no debugger attached)";
         default:
           return status;
       }
@@ -556,19 +543,9 @@ export default function Debugger() {
     return ["Stopped"].includes(status);
   };
 
-  const canView = (status: SessionStatus) => {
-    if (typeof status === "string") {
-      return ["Running", "Paused"].includes(status);
-    }
-    return false;
-  };
+  const canView = (status: SessionStatus) => isProcessAvailable(status);
 
-  const canStop = (status: SessionStatus) => {
-    if (typeof status === "string") {
-      return ["Running", "Paused"].includes(status);
-    }
-    return false;
-  };
+  const canStop = (status: SessionStatus) => isProcessAvailable(status);
 
   const canDelete = (status: SessionStatus) => {
     if (typeof status !== "string") return true; // Allow to delete on error
@@ -696,12 +673,21 @@ export default function Debugger() {
           <Dialog open={isAttachDialogOpen} onOpenChange={setIsAttachDialogOpen}>
             <DialogContent className="sm:max-w-[560px]">
               <DialogHeader>
-                <DialogTitle>Attach to Running Process</DialogTitle>
+                <DialogTitle>{attachNonInvasive ? "Open Running Process" : "Attach to Running Process"}</DialogTitle>
                 <DialogDescription>
-                  Pick a process to attach the debugger to. It will pause once attached.
+                  {attachNonInvasive
+                    ? "Pick a process to open non-invasively. Memory, threads, modules, search and scan are available; the process is never attached, paused, or debugged."
+                    : "Pick a process to attach the debugger to. It will pause once attached."}
                 </DialogDescription>
               </DialogHeader>
               <div className="space-y-3 py-2">
+                <div className="flex items-center justify-between rounded-md border p-2">
+                  <div className="space-y-0.5">
+                    <Label htmlFor="attachNonInvasive">Non-invasive (don't attach debugger)</Label>
+                    <p className="text-xs text-muted-foreground">Open the process for memory/enumeration only — no breakpoints or stepping.</p>
+                  </div>
+                  <Switch id="attachNonInvasive" checked={attachNonInvasive} onCheckedChange={setAttachNonInvasive} />
+                </div>
                 <div className="space-y-2">
                   <Label htmlFor="attachServerUrl">Debug Server URL (optional)</Label>
                   <div className="flex gap-2">

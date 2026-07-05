@@ -21,6 +21,37 @@ pub(crate) fn format_bytes(bytes: u64) -> String {
     }
 }
 
+/// Resolve which live PID a stored attach/open target maps to. Prefers the
+/// stored PID when it's still alive. Otherwise (the target was restarted and
+/// got a new PID) falls back to matching by image name: exactly one match
+/// resolves automatically; zero or several matches are an error the caller
+/// surfaces (for several, the UI offers a picker).
+pub(crate) fn match_target_pid(
+    processes: &[joybug2::protocol::ProcessInfo],
+    stored_pid: u32,
+    target_name: &str,
+) -> std::result::Result<u32, String> {
+    if processes.iter().any(|p| p.pid == stored_pid) {
+        return Ok(stored_pid);
+    }
+
+    let want = target_name.to_lowercase();
+    let matches: Vec<u32> = processes
+        .iter()
+        .filter(|p| p.name.to_lowercase() == want)
+        .map(|p| p.pid)
+        .collect();
+
+    match matches.len() {
+        1 => Ok(matches[0]),
+        0 => Err(format!("Process '{}' is not running", target_name)),
+        n => Err(format!(
+            "{} processes named '{}' are running; pick one",
+            n, target_name
+        )),
+    }
+}
+
 /// Extracts the filename (without extension) from a module path
 pub(crate) fn extract_module_name(module_path: &str) -> String {
     std::path::Path::new(module_path)

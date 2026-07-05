@@ -9,9 +9,9 @@ const STORAGE_KEY = 'peviewer-selected-module';
 export const ContextModuleInfoView: React.FC<{
   initialModuleBase?: string;
 }> = ({ initialModuleBase }) => {
-  const { session, displayStatus, modules, onNavigateToDisassembly, onNavigateToMemory } = useSessionContext();
+  const { session, canUseMemoryOps, modules, onNavigateToDisassembly, onNavigateToMemory } = useSessionContext();
   const sessionId = session?.id;
-  const isActive = displayStatus === 'Paused' || displayStatus === 'Running';
+  const isActive = canUseMemoryOps;
 
   const [selectedModuleBase, setSelectedModuleBase] = useState<string | null>(() => {
     // Restore from sessionStorage on mount (survives rc-dock tab moves)

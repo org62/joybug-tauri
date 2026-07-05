@@ -21,7 +21,7 @@ interface BookmarksUpdatedPayload {
   bookmarks: ResolvedBookmark[];
 }
 
-export function useBookmarks(sessionId?: string, isPaused?: boolean, sessionBookmarks?: ResolvedBookmark[], isRunning?: boolean) {
+export function useBookmarks(sessionId?: string, isPaused?: boolean, sessionBookmarks?: ResolvedBookmark[], isLive?: boolean) {
   const [bookmarks, setBookmarks] = useState<ResolvedBookmark[]>([]);
 
   const sessionBookmarksRef = useRef(sessionBookmarks);
@@ -41,27 +41,29 @@ export function useBookmarks(sessionId?: string, isPaused?: boolean, sessionBook
     }
   }, [sessionId]);
 
-  // Session cleanup / seed + refresh live values on pause.
+  // Session cleanup / seed + refresh live values when the session appears and
+  // on pause transitions. Not gated on isPaused — a non-invasive Open session
+  // never pauses but still has persisted bookmarks to show (and the live poll
+  // below skips its refresh while the list is empty, so seeding matters).
   useEffect(() => {
     if (!sessionId) {
       setBookmarks([]);
       return;
     }
-    if (isPaused) {
-      if (sessionBookmarksRef.current) {
-        setBookmarks(sessionBookmarksRef.current);
-      }
-      refresh();
+    if (sessionBookmarksRef.current) {
+      setBookmarks(sessionBookmarksRef.current);
     }
+    refresh();
   }, [sessionId, isPaused, refresh]);
 
-  // Poll live values while the process is running, like the memory view. The
-  // backend reads out-of-band when not paused, so values update without a pause.
+  // Poll live values while the target runs (Running or non-invasive Open), like
+  // the memory view. The backend reads out-of-band when not paused, so values
+  // update without a pause.
   useEffect(() => {
-    if (!sessionId || !isRunning) return;
+    if (!sessionId || !isLive) return;
     const interval = setInterval(() => { if (bookmarkCountRef.current > 0) refresh(); }, 500);
     return () => clearInterval(interval);
-  }, [sessionId, isRunning, refresh]);
+  }, [sessionId, isLive, refresh]);
 
   // Listen for bookmarks-updated events.
   useEffect(() => {

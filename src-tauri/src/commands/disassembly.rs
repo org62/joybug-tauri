@@ -1,4 +1,4 @@
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::session::disassembly::{applied_patch_ranges, serialize_instructions};
 use crate::session::types::SerializableInstruction;
 use crate::session::UICommand;
@@ -13,6 +13,7 @@ pub fn request_disassembly(
     address: u64,
     count: usize,
     session_states: State<'_, SessionStatesMap>,
+    oob_pool: State<'_, super::OobPool>,
     app_handle: tauri::AppHandle,
 ) -> Result<()> {
     debug!("Disassembly request for session {} at 0x{:X}", session_id, address);
@@ -28,8 +29,8 @@ pub fn request_disassembly(
                 let state = session_arc.lock().unwrap();
                 (state.modules.clone(), applied_patch_ranges(&state))
             };
-            let (mut oob, pid) = super::create_oob_client(&session_arc)?;
-            match oob.disassemble_memory(pid, address, count, arch) {
+            let disasm = super::with_oob_client(&session_arc, &session_id, &oob_pool, |oob, pid| oob.disassemble_memory(pid, address, count, arch));
+            match super::flatten_oob(disasm) {
                 Ok(instructions) => {
                     let serializable = serialize_instructions(&instructions, &modules, &patched_ranges);
                     #[derive(serde::Serialize)]
@@ -62,6 +63,7 @@ pub fn request_function_disassembly(
     address: u64,
     max_instructions: usize,
     session_states: State<'_, SessionStatesMap>,
+    oob_pool: State<'_, super::OobPool>,
     app_handle: tauri::AppHandle,
 ) -> Result<()> {
     debug!("Function disassembly request for session {} at 0x{:X}", session_id, address);
@@ -77,8 +79,8 @@ pub fn request_function_disassembly(
                 let state = session_arc.lock().unwrap();
                 (state.modules.clone(), applied_patch_ranges(&state))
             };
-            let (mut oob, pid) = super::create_oob_client(&session_arc)?;
-            match oob.disassemble_function(pid, address, max_instructions, arch) {
+            let disasm = super::with_oob_client(&session_arc, &session_id, &oob_pool, |oob, pid| oob.disassemble_function(pid, address, max_instructions, arch));
+            match super::flatten_oob(disasm) {
                 Ok((instructions, function_start, function_end, function_name)) => {
                     let serializable = serialize_instructions(&instructions, &modules, &patched_ranges);
                     #[derive(serde::Serialize)]
@@ -117,49 +119,46 @@ pub fn request_function_disassembly(
 pub fn get_session_modules(
     session_id: String,
     session_states: State<'_, SessionStatesMap>,
+    oob_pool: State<'_, super::OobPool>,
 ) -> Result<Vec<ModuleData>> {
-    let sessions = session_states.lock().unwrap();
-
-    if let Some(session_arc) = sessions.get(&session_id) {
-        let session = session_arc.lock().unwrap();
-
-        let modules: Vec<ModuleData> = session.modules.iter().map(|module| {
-            ModuleData {
-                name: module.name.clone(),
-                base_address: format!("0x{:X}", module.base),
-                size: module.size.unwrap_or(0),
-                path: module.name.clone(),
-            }
-        }).collect();
-
-        Ok(modules)
-    } else {
-        Err(Error::SessionNotFound(session_id))
+    let session_arc = super::get_session_arc(&session_id, &session_states)?;
+    // Polled every second while live — map the cached list under the lock instead
+    // of cloning the whole Vec, and only fall back to OOB when the cache is empty.
+    let to_data = |module: &joybug2::protocol_io::ModuleInfo| ModuleData {
+        name: module.name.clone(),
+        base_address: format!("0x{:X}", module.base),
+        size: module.size.unwrap_or(0),
+        path: module.name.clone(),
+    };
+    let cached: Vec<ModuleData> = { session_arc.lock().unwrap().modules.iter().map(to_data).collect() };
+    if !cached.is_empty() {
+        return Ok(cached);
     }
+    let modules = super::with_oob_client(&session_arc, &session_id, &oob_pool, |oob, pid| oob.list_modules(pid).unwrap_or_default())
+        .unwrap_or_default();
+    Ok(modules.iter().map(to_data).collect())
 }
 
 #[tauri::command]
 pub fn get_session_threads(
     session_id: String,
     session_states: State<'_, SessionStatesMap>,
+    oob_pool: State<'_, super::OobPool>,
 ) -> Result<Vec<ThreadData>> {
-    let sessions = session_states.lock().unwrap();
-
-    if let Some(session_arc) = sessions.get(&session_id) {
-        let session = session_arc.lock().unwrap();
-
-        let threads: Vec<ThreadData> = session.threads.iter().map(|thread| {
-            ThreadData {
-                id: thread.tid,
-                status: "Running".to_string(),
-                start_address: format!("0x{:X}", thread.start_address),
-            }
-        }).collect();
-
-        Ok(threads)
-    } else {
-        Err(Error::SessionNotFound(session_id))
+    let session_arc = super::get_session_arc(&session_id, &session_states)?;
+    // Same polled pattern as get_session_modules: map under the lock, no Vec clone.
+    let to_data = |thread: &joybug2::protocol_io::ThreadInfo| ThreadData {
+        id: thread.tid,
+        status: "Running".to_string(),
+        start_address: format!("0x{:X}", thread.start_address),
+    };
+    let cached: Vec<ThreadData> = { session_arc.lock().unwrap().threads.iter().map(to_data).collect() };
+    if !cached.is_empty() {
+        return Ok(cached);
     }
+    let threads = super::with_oob_client(&session_arc, &session_id, &oob_pool, |oob, pid| oob.list_threads(pid).unwrap_or_default())
+        .unwrap_or_default();
+    Ok(threads.iter().map(to_data).collect())
 }
 
 #[tauri::command]
@@ -167,6 +166,7 @@ pub fn request_module_extra_info(
     session_id: String,
     module_base: String,
     session_states: State<'_, SessionStatesMap>,
+    oob_pool: State<'_, super::OobPool>,
     app_handle: tauri::AppHandle,
 ) -> Result<()> {
     let module_base_val = super::parse_hex_u64(&module_base, "module base")?;
@@ -177,9 +177,9 @@ pub fn request_module_extra_info(
             info!("Module extra info request sent for session {} at base 0x{:X}", session_id, module_base_val);
         }
         Err(_) => {
-            let (mut oob, pid) = super::create_oob_client(&session_arc)?;
             let base_str = format!("0x{:X}", module_base_val);
-            match oob.get_module_extra_info(pid, module_base_val) {
+            let extra = super::with_oob_client(&session_arc, &session_id, &oob_pool, |oob, pid| oob.get_module_extra_info(pid, module_base_val));
+            match super::flatten_oob(extra) {
                 Ok(info_data) => {
                     #[derive(serde::Serialize)]
                     struct ModuleExtraInfoResult {

@@ -23,8 +23,10 @@ const NO_VALUE_COMPARE_TYPES: ScanCompareType[] = [
   'UnknownInitialValue', 'Changed', 'Unchanged', 'IncreasedValue', 'DecreasedValue',
 ];
 
+// IncreasedValueBy/DecreasedValueBy take their amount in the FIRST value slot
+// (joybug2 compares against `value`; `value2` is ignored for them).
 const TWO_VALUE_COMPARE_TYPES: ScanCompareType[] = [
-  'ValueBetween', 'IncreasedValueBy', 'DecreasedValueBy',
+  'ValueBetween',
 ];
 
 export function needsValue(ct: ScanCompareType): boolean {
@@ -62,7 +64,7 @@ interface ScanErrorPayload {
   error: string;
 }
 
-export function useMemoryScanner(sessionId: string | undefined, isPaused: boolean) {
+export function useMemoryScanner(sessionId: string | undefined, available: boolean, isLive: boolean) {
   const [scanId, setScanId] = useState<number | null>(null);
   const [valueType, setValueType] = useState<ScanValueType>('U32');
   const [compareType, setCompareType] = useState<ScanCompareType>('ExactValue');
@@ -84,6 +86,9 @@ export function useMemoryScanner(sessionId: string | undefined, isPaused: boolea
 
   const scanIdRef = useRef<number | null>(null);
   scanIdRef.current = scanId;
+
+  const compareTypeRef = useRef(compareType);
+  compareTypeRef.current = compareType;
 
   const currentPageRef = useRef(0);
   currentPageRef.current = currentPage;
@@ -133,6 +138,11 @@ export function useMemoryScanner(sessionId: string | undefined, isPaused: boolea
       setIsScanning(false);
       setIsFirstScan(false);
       setError(null);
+      // The compare type set changes between first and next scans; a stale
+      // UnknownInitialValue would be rejected by the next scan.
+      if (!NEXT_SCAN_COMPARE_TYPES.includes(compareTypeRef.current)) {
+        setCompareType('Changed');
+      }
       // Auto-fetch first page
       invoke('request_scan_memory_get_results', {
         sessionId,
@@ -205,14 +215,35 @@ export function useMemoryScanner(sessionId: string | undefined, isPaused: boolea
     return () => { unlisten.then(f => f()); };
   }, [sessionId]);
 
+  // Poll current-page values while the target runs live (Running / non-invasive
+  // Open), the same way the memory window and bookmarks refresh — the process
+  // keeps mutating, so re-read the visible result addresses on an interval.
+  useEffect(() => {
+    if (!sessionId || !isLive) return;
+
+    const interval = setInterval(() => {
+      if (scanIdRef.current !== null) {
+        invoke('request_scan_memory_get_results', {
+          sessionId,
+          scanId: scanIdRef.current,
+          offset: currentPageRef.current * PAGE_SIZE,
+          count: PAGE_SIZE,
+        }).catch(() => {});
+      }
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [sessionId, isLive]);
+
   const handleFirstScan = useCallback(async () => {
-    if (!sessionId || !isPaused) return;
+    if (!sessionId || !available) return;
     setIsScanning(true);
     setError(null);
     setResults([]);
     try {
       const alignVal = alignment ? parseInt(alignment, 10) : undefined;
-      const ftVal = floatTolerance ? parseFloat(floatTolerance) : undefined;
+      // 0 is a valid tolerance (strict comparison), so only blank/NaN become null
+      const ftVal = floatTolerance ? parseFloat(floatTolerance) : NaN;
       await invoke('request_scan_memory_start', {
         sessionId,
         valueType,
@@ -220,20 +251,21 @@ export function useMemoryScanner(sessionId: string | undefined, isPaused: boolea
         value: needsValue(compareType) ? (value || undefined) : undefined,
         value2: needsSecondValue(compareType) ? (value2 || undefined) : undefined,
         alignment: alignVal && !isNaN(alignVal) ? alignVal : null,
-        floatTolerance: ftVal && !isNaN(ftVal) ? ftVal : null,
+        floatTolerance: isNaN(ftVal) ? null : ftVal,
         writableOnly,
       });
     } catch (e) {
       setError(formatTauriError(e));
       setIsScanning(false);
     }
-  }, [sessionId, isPaused, valueType, compareType, value, value2, alignment, floatTolerance, writableOnly]);
+  }, [sessionId, available, valueType, compareType, value, value2, alignment, floatTolerance, writableOnly]);
 
   const handleNextScan = useCallback(async () => {
-    if (!sessionId || !isPaused || scanId === null) return;
+    if (!sessionId || !available || scanId === null) return;
     setIsScanning(true);
     setError(null);
     try {
+      const ftVal = floatTolerance ? parseFloat(floatTolerance) : NaN;
       await invoke('request_scan_memory_next', {
         sessionId,
         scanId,
@@ -241,12 +273,13 @@ export function useMemoryScanner(sessionId: string | undefined, isPaused: boolea
         compareType,
         value: needsValue(compareType) ? (value || undefined) : undefined,
         value2: needsSecondValue(compareType) ? (value2 || undefined) : undefined,
+        floatTolerance: isNaN(ftVal) ? null : ftVal,
       });
     } catch (e) {
       setError(formatTauriError(e));
       setIsScanning(false);
     }
-  }, [sessionId, isPaused, scanId, valueType, compareType, value, value2]);
+  }, [sessionId, available, scanId, valueType, compareType, value, value2, floatTolerance]);
 
   const handleNewScan = useCallback(async () => {
     if (scanId !== null && sessionId) {
@@ -262,6 +295,11 @@ export function useMemoryScanner(sessionId: string | undefined, isPaused: boolea
     setResults([]);
     setTotalCount(0);
     setCurrentPage(0);
+    // Next-scan-only compare types (Changed, Increased, ...) are rejected by
+    // a first scan; fall back to ExactValue.
+    if (!FIRST_SCAN_COMPARE_TYPES.includes(compareTypeRef.current)) {
+      setCompareType('ExactValue');
+    }
   }, [sessionId, scanId]);
 
   const totalPages = Math.ceil(totalCount / PAGE_SIZE);

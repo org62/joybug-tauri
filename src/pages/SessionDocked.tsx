@@ -11,6 +11,7 @@ import DockingLayout, { DockingLayoutRef } from "@/components/DockingLayout";
 import { DebuggerDockingConfig } from "@/lib/dockingConfigs";
 import { TabData } from "rc-dock";
 import { SessionContext, SessionStatus } from "@/contexts/SessionContext";
+import { isProcessAvailable, isTargetLive } from "@/lib/sessionHelpers";
 import { ContextAssemblyView } from "@/components/session/ContextAssemblyView";
 import { ContextRegisterView } from "@/components/session/ContextRegisterView";
 import { ContextModulesView } from "@/components/session/ContextModulesView";
@@ -66,6 +67,7 @@ export default function SessionDocked() {
     handleStart,
     handlePause,
     handleDetach,
+    handleAttach,
     canStep,
     canStop,
     canStart,
@@ -364,6 +366,9 @@ export default function SessionDocked() {
   }, [handleGo, handleStepIn, handleStepOver, handleStepOut, toggleTabWithBackendUpdate, handleCloseActiveTab, reverseLookup, setOpen, enterSubInput, handleNavigateToDisassembly, handleNavigateToMemory]);
 
   const isPaused = displayStatus === 'Paused';
+  // Memory/enumeration ops work over OOB whenever a process is available: paused,
+  // running (invasive), or a non-invasive Open session. They never need a pause.
+  const canUseMemoryOps = isProcessAvailable(displayStatus);
 
   // ── Command palette registration ──────────────────────────────────────────
   useEffect(() => {
@@ -616,7 +621,7 @@ export default function SessionDocked() {
           placeholder: "Enter address or symbol (e.g. 0x00007FF...)",
           onSubmit: handleNavigateToDisassembly,
         },
-        enabled: isPaused,
+        enabled: canUseMemoryOps,
         keywords: ["goto", "address", "disassembly", "navigate"],
       },
       {
@@ -630,14 +635,14 @@ export default function SessionDocked() {
           placeholder: "Enter address or symbol (e.g. 0x00007FF...)",
           onSubmit: handleNavigateToMemory,
         },
-        enabled: isPaused,
+        enabled: canUseMemoryOps,
         keywords: ["goto", "address", "memory", "navigate", "hex"],
       },
     ];
 
     return registerCommands(commands);
   }, [
-    canStart, canStop, canPause, canStep, isPaused, session?.current_event?.event_type,
+    canStart, canStop, canPause, canStep, isPaused, canUseMemoryOps, session?.current_event?.event_type,
     handleStart, handleStop, handlePause,
     handleGo, handleGoPassException, handleStepIn, handleStepOver, handleStepOut,
     handleNavigateToDisassembly, handleNavigateToMemory,
@@ -647,11 +652,12 @@ export default function SessionDocked() {
 
   const breakpointState = useBreakpoints(session?.id, isPaused, session?.breakpoints);
   const patchState = usePatches(session?.id, isPaused, session?.patches);
-  const bookmarkState = useBookmarks(session?.id, isPaused, session?.bookmarks, displayStatus === 'Running');
+  const bookmarkState = useBookmarks(session?.id, isPaused, session?.bookmarks, isTargetLive(displayStatus));
 
   const contextValue = useMemo(() => ({
     session,
     displayStatus,
+    canUseMemoryOps,
     modules,
     threads,
     loadModules: async () => { await loadModules(); },
@@ -662,7 +668,7 @@ export default function SessionDocked() {
     bookmarkState,
     onNavigateToDisassembly: handleNavigateToDisassembly,
     onNavigateToMemory: handleNavigateToMemory,
-  }), [session, displayStatus, modules, threads, loadModules, loadThreads, searchSymbols, breakpointState, patchState, bookmarkState, handleNavigateToDisassembly, handleNavigateToMemory]);
+  }), [session, displayStatus, canUseMemoryOps, modules, threads, loadModules, loadThreads, searchSymbols, breakpointState, patchState, bookmarkState, handleNavigateToDisassembly, handleNavigateToMemory]);
   
   // Static tab content - components will update via context
   const dynamicTabContent = useMemo(() => ({
@@ -804,6 +810,8 @@ export default function SessionDocked() {
           return <Badge variant="default" className="bg-green-600 animate-pulse">Running</Badge>;
         case "Paused":
           return <Badge variant="default" className="bg-yellow-600">Paused</Badge>;
+        case "Open":
+          return <Badge variant="default" className="bg-blue-600">Open (non-invasive)</Badge>;
         default:
           return <Badge variant="secondary">{status}</Badge>;
       }
@@ -861,6 +869,7 @@ export default function SessionDocked() {
           handleStepOver={handleStepOver}
           handleStepOut={handleStepOut}
           handleStop={handleStop}
+          handleAttach={handleAttach}
           handleStart={handleStart}
           handlePause={handlePause}
           handleDetach={handleDetach}

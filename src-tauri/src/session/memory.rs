@@ -255,6 +255,55 @@ pub(crate) fn process_memory_search(
     }
 }
 
+/// Convert protocol dereference entries to their serializable form. Shared by the
+/// paused-loop path and the OOB command handlers in `commands/memory.rs`.
+pub(crate) fn serialize_dereference_entries(
+    entries: &[joybug2::protocol::DereferenceEntry],
+) -> Vec<SerializableDereferenceEntry> {
+    entries
+        .iter()
+        .map(|entry| {
+            let chain: Vec<SerializableDereferenceValue> = entry.chain.iter().map(|v| {
+                match v {
+                    joybug2::protocol::DereferenceValue::Pointer(addr, sym) => {
+                        SerializableDereferenceValue::Pointer {
+                            address: format!("0x{:016X}", addr),
+                            symbol: sym.clone(),
+                        }
+                    }
+                    joybug2::protocol::DereferenceValue::Value(val) => {
+                        SerializableDereferenceValue::Value {
+                            value: format!("0x{:X}", val),
+                        }
+                    }
+                    joybug2::protocol::DereferenceValue::String(s) => {
+                        SerializableDereferenceValue::String {
+                            value: s.clone(),
+                        }
+                    }
+                    joybug2::protocol::DereferenceValue::Instruction(instr, sym) => {
+                        SerializableDereferenceValue::Instruction {
+                            value: instr.clone(),
+                            symbol: sym.clone(),
+                        }
+                    }
+                    joybug2::protocol::DereferenceValue::LoopDetected(addr) => {
+                        SerializableDereferenceValue::LoopDetected {
+                            address: format!("0x{:016X}", addr),
+                        }
+                    }
+                }
+            }).collect();
+
+            SerializableDereferenceEntry {
+                address: format!("0x{:016X}", entry.address),
+                offset: entry.offset,
+                chain,
+            }
+        })
+        .collect()
+}
+
 /// Processes a dereference request and emits results to the frontend
 pub(crate) fn process_dereference_request(
     session: &mut DebugSession,
@@ -270,48 +319,7 @@ pub(crate) fn process_dereference_request(
         Ok(entries) => {
             debug!("📥 Received {} dereference entries", entries.len());
 
-            let serializable_entries: Vec<SerializableDereferenceEntry> = entries
-                .iter()
-                .map(|entry| {
-                    let chain: Vec<SerializableDereferenceValue> = entry.chain.iter().map(|v| {
-                        match v {
-                            joybug2::protocol::DereferenceValue::Pointer(addr, sym) => {
-                                SerializableDereferenceValue::Pointer {
-                                    address: format!("0x{:016X}", addr),
-                                    symbol: sym.clone(),
-                                }
-                            }
-                            joybug2::protocol::DereferenceValue::Value(val) => {
-                                SerializableDereferenceValue::Value {
-                                    value: format!("0x{:X}", val),
-                                }
-                            }
-                            joybug2::protocol::DereferenceValue::String(s) => {
-                                SerializableDereferenceValue::String {
-                                    value: s.clone(),
-                                }
-                            }
-                            joybug2::protocol::DereferenceValue::Instruction(instr, sym) => {
-                                SerializableDereferenceValue::Instruction {
-                                    value: instr.clone(),
-                                    symbol: sym.clone(),
-                                }
-                            }
-                            joybug2::protocol::DereferenceValue::LoopDetected(addr) => {
-                                SerializableDereferenceValue::LoopDetected {
-                                    address: format!("0x{:016X}", addr),
-                                }
-                            }
-                        }
-                    }).collect();
-
-                    SerializableDereferenceEntry {
-                        address: format!("0x{:016X}", entry.address),
-                        offset: entry.offset,
-                        chain,
-                    }
-                })
-                .collect();
+            let serializable_entries = serialize_dereference_entries(&entries);
 
             if let Some(ref handle) = app_handle_clone {
                 let session_id = {
@@ -419,6 +427,41 @@ fn parse_scan_value(value_type: joybug2::protocol::ScanValueType, s: &str) -> Op
     }
 }
 
+/// Number of fractional digits in a typed number string ("18" → 0, "18.10" → 2).
+/// Ignores a scientific exponent; returns 0 when there's no decimal point.
+fn fractional_digits(s: &str) -> usize {
+    let mantissa = s.trim().split(['e', 'E']).next().unwrap_or("");
+    match mantissa.split_once('.') {
+        Some((_, frac)) => frac.chars().take_while(|c| c.is_ascii_digit()).count(),
+        None => 0,
+    }
+}
+
+/// Resolve the float epsilon for a scan. For a float `ExactValue` scan we derive
+/// an ABSOLUTE epsilon from the typed precision ("18" → ±0.5, "18.1" → ±0.05) so
+/// the search matches values that display as the typed number — unless the user
+/// supplied an explicit tolerance, which is used as an absolute ± override. For
+/// all other comparisons the (relative) tolerance is passed through unchanged.
+fn resolve_scan_tolerance(
+    vt: joybug2::protocol::ScanValueType,
+    ct: joybug2::protocol::ScanCompareType,
+    value_str: Option<&str>,
+    override_tol: Option<f64>,
+) -> Option<f64> {
+    use joybug2::protocol::{ScanCompareType, ScanValueType};
+    let is_float = matches!(vt, ScanValueType::F32 | ScanValueType::F64);
+    if is_float && matches!(ct, ScanCompareType::ExactValue) {
+        if override_tol.is_some() {
+            return override_tol;
+        }
+        if let Some(s) = value_str {
+            let d = fractional_digits(s);
+            return Some(0.5 * 10f64.powi(-(d as i32)));
+        }
+    }
+    override_tol
+}
+
 fn format_scan_value(val: &joybug2::protocol::ScanValue) -> ScanValueEntry {
     use joybug2::protocol::ScanValue;
     match val {
@@ -436,11 +479,30 @@ fn emit_scan_error(handle: &AppHandle, session_id: String, error: impl std::fmt:
     let _ = handle.emit("scan-memory-error", &err);
 }
 
+/// A typed value string that fails to parse must error out rather than
+/// silently become None (the scanner would report a misleading "requires a
+/// value"). Returns false (after emitting the error) when the value didn't parse.
+fn scan_value_parsed(
+    handle: &AppHandle,
+    session_id: &str,
+    vt: joybug2::protocol::ScanValueType,
+    raw: Option<&str>,
+    parsed: &Option<joybug2::protocol::ScanValue>,
+) -> bool {
+    if let Some(s) = raw {
+        if !s.trim().is_empty() && parsed.is_none() {
+            emit_scan_error(handle, session_id.to_string(), format!("Invalid value '{}' for {:?}", s.trim(), vt));
+            return false;
+        }
+    }
+    true
+}
+
 /// Processes a scan memory start request
 pub(crate) fn process_scan_memory_start(
     session: &mut DebugSession,
     app_handle_clone: &Option<AppHandle>,
-    event: &joybug2::protocol_io::DebugEvent,
+    pid: u32,
     value_type_str: &str,
     compare_type_str: &str,
     value: Option<String>,
@@ -450,16 +512,22 @@ pub(crate) fn process_scan_memory_start(
     writable_only: bool,
     thread_count: Option<usize>,
 ) {
-    let pid = event.pid();
     let vt = parse_scan_value_type(value_type_str);
     let ct = parse_scan_compare_type(compare_type_str);
     let val = value.as_deref().and_then(|s| parse_scan_value(vt, s));
     let val2 = value2.as_deref().and_then(|s| parse_scan_value(vt, s));
+    let float_tolerance = resolve_scan_tolerance(vt, ct, value.as_deref(), float_tolerance);
 
     debug!("📤 Processing scan memory start: pid={}, type={:?}, compare={:?}, threads={:?}", pid, vt, ct, thread_count);
 
     let Some(ref handle) = app_handle_clone else { return };
     let session_id = session.state.lock().unwrap().id.clone();
+
+    if !scan_value_parsed(handle, &session_id, vt, value.as_deref(), &val)
+        || !scan_value_parsed(handle, &session_id, vt, value2.as_deref(), &val2)
+    {
+        return;
+    }
 
     match session.scan_memory_start(pid, vt, ct, val, val2, alignment, float_tolerance, writable_only, thread_count) {
         Ok((scan_id, match_count, scan_time_us)) => {
@@ -485,18 +553,26 @@ pub(crate) fn process_scan_memory_next(
     compare_type_str: &str,
     value: Option<String>,
     value2: Option<String>,
+    float_tolerance: Option<f64>,
 ) {
     let vt = parse_scan_value_type(value_type_str);
     let ct = parse_scan_compare_type(compare_type_str);
     let val = value.as_deref().and_then(|s| parse_scan_value(vt, s));
     let val2 = value2.as_deref().and_then(|s| parse_scan_value(vt, s));
+    let float_tolerance = resolve_scan_tolerance(vt, ct, value.as_deref(), float_tolerance);
 
     debug!("📤 Processing scan memory next: scan_id={}, compare={:?}", scan_id, ct);
 
     let Some(ref handle) = app_handle_clone else { return };
     let session_id = session.state.lock().unwrap().id.clone();
 
-    match session.scan_memory_next(scan_id, ct, val, val2) {
+    if !scan_value_parsed(handle, &session_id, vt, value.as_deref(), &val)
+        || !scan_value_parsed(handle, &session_id, vt, value2.as_deref(), &val2)
+    {
+        return;
+    }
+
+    match session.scan_memory_next(scan_id, ct, val, val2, float_tolerance) {
         Ok((match_count, scan_time_us)) => {
             info!("📥 Scan next: scan_id={}, matches={}, time={}μs", scan_id, match_count, scan_time_us);
             let result = ScanMatchResult { session_id, scan_id, match_count, scan_time_us };

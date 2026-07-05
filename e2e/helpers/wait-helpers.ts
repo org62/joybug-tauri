@@ -1,6 +1,29 @@
 import { Page, expect } from "@playwright/test";
 
 /**
+ * Wait until the backend reports the session in the given status, polling
+ * with short-lived evaluate calls (survives context resets). Backend-only —
+ * makes no assertion about the UI having caught up.
+ */
+export async function waitForStatus(
+  page: Page,
+  sessionId: string,
+  status: string,
+  timeout = 30_000,
+): Promise<void> {
+  await expect(async () => {
+    const current = await page.evaluate(async (id: string) => {
+      const s = await (window as any).__TAURI_INTERNALS__.invoke(
+        "get_debug_session",
+        { sessionId: id },
+      );
+      return s?.status;
+    }, sessionId);
+    expect(current).toBe(status);
+  }).toPass({ timeout, intervals: [100, 250, 500] });
+}
+
+/**
  * Wait until the session reaches "Paused" status by polling the backend.
  * Uses short-lived evaluate calls with retry to survive context resets.
  * Falls back to CSS badge check if no sessionId provided.
@@ -12,16 +35,7 @@ export async function waitForPaused(
 ): Promise<void> {
   if (sessionId) {
     // 1. Wait for backend to report Paused
-    await expect(async () => {
-      const status = await page.evaluate(async (id: string) => {
-        const s = await (window as any).__TAURI_INTERNALS__.invoke(
-          "get_debug_session",
-          { sessionId: id },
-        );
-        return s?.status;
-      }, sessionId);
-      expect(status).toBe("Paused");
-    }).toPass({ timeout, intervals: [100, 250, 500] });
+    await waitForStatus(page, sessionId, "Paused", timeout);
 
     // 2. Wait for UI to reflect the Paused state (React processes session-updated event)
     try {
@@ -59,16 +73,7 @@ export async function waitForStopped(
 ): Promise<void> {
   if (sessionId) {
     // 1. Wait for backend to report Stopped
-    await expect(async () => {
-      const status = await page.evaluate(async (id: string) => {
-        const s = await (window as any).__TAURI_INTERNALS__.invoke(
-          "get_debug_session",
-          { sessionId: id },
-        );
-        return s?.status;
-      }, sessionId);
-      expect(status).toBe("Stopped");
-    }).toPass({ timeout, intervals: [100, 250, 500] });
+    await waitForStatus(page, sessionId, "Stopped", timeout);
 
     // 2. Wait for UI to reflect the Stopped state
     try {

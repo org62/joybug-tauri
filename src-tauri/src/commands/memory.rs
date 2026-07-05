@@ -11,6 +11,7 @@ pub fn request_memory_read(
     address: u64,
     size: usize,
     session_states: State<'_, SessionStatesMap>,
+    oob_pool: State<'_, super::OobPool>,
     app_handle: tauri::AppHandle,
 ) -> Result<()> {
     let session_arc = super::get_session_arc(&session_id, &session_states)?;
@@ -19,19 +20,18 @@ pub fn request_memory_read(
             info!("Memory read request sent for session {} at 0x{:X}, size {}", session_id, address, size);
         }
         Err(_) => {
-            let (mut oob, pid) = super::create_oob_client(&session_arc)?;
-            match oob.read_memory(pid, address, size) {
+            let read = super::with_oob_client(&session_arc, &session_id, &oob_pool, |oob, pid| oob.read_memory(pid, address, size));
+            match super::flatten_oob(read) {
                 Ok(data) => {
                     let result = crate::session::types::MemoryReadResult {
                         session_id: session_id.clone(), address, requested_size: size, data,
                     };
                     let _ = app_handle.emit("memory-read-updated", &result);
-                    info!("OOB memory read for session {} at 0x{:X}", session_id, address);
                 }
                 Err(e) => {
                     error!("OOB memory read failed: {}", e);
                     let _ = app_handle.emit("memory-read-error", &crate::session::types::MemoryReadError {
-                        session_id: session_id.clone(), address, error: e.to_string(),
+                        session_id: session_id.clone(), address, error: e,
                     });
                 }
             }
@@ -46,6 +46,7 @@ pub fn request_memory_write(
     address: u64,
     data: Vec<u8>,
     session_states: State<'_, SessionStatesMap>,
+    oob_pool: State<'_, super::OobPool>,
     app_handle: tauri::AppHandle,
 ) -> Result<()> {
     let session_arc = super::get_session_arc(&session_id, &session_states)?;
@@ -54,8 +55,8 @@ pub fn request_memory_write(
             info!("Memory write request sent for session {} at 0x{:X}", session_id, address);
         }
         Err(_) => {
-            let (mut oob, pid) = super::create_oob_client(&session_arc)?;
-            match oob.write_memory(pid, address, data.clone()) {
+            let written = super::with_oob_client(&session_arc, &session_id, &oob_pool, |oob, pid| oob.write_memory(pid, address, data.clone()));
+            match super::flatten_oob(written) {
                 Ok(_) => {
                     let result = crate::session::types::MemoryWriteResult {
                         session_id: session_id.clone(), address, success: true, bytes_written: data.len(),
@@ -73,6 +74,33 @@ pub fn request_memory_write(
         }
     }
     Ok(())
+}
+
+/// Read a small chunk at each address in one call over the pooled live OOB
+/// connection (works Paused, Running, and non-invasive Open). Returns bytes
+/// per address, None where unreadable. Used by result lists (memory search)
+/// for live byte previews, bypassing the event-based single-read path.
+#[tauri::command]
+pub fn read_memory_batch(
+    session_id: String,
+    addresses: Vec<String>,
+    size: usize,
+    session_states: State<'_, SessionStatesMap>,
+    oob_pool: State<'_, super::OobPool>,
+) -> Result<Vec<Option<Vec<u8>>>> {
+    let size = size.clamp(1, 64);
+    let session_arc = super::get_session_arc(&session_id, &session_states)?;
+    super::with_oob_client(&session_arc, &session_id, &oob_pool, |client, pid| {
+        addresses
+            .iter()
+            .take(256)
+            .map(|s| {
+                super::parse_hex_u64(s, "address")
+                    .ok()
+                    .and_then(|addr| client.read_memory(pid, addr, size).ok())
+            })
+            .collect()
+    })
 }
 
 #[tauri::command]
@@ -93,6 +121,7 @@ pub fn request_set_register(
 pub fn request_memory_regions(
     session_id: String,
     session_states: State<'_, SessionStatesMap>,
+    oob_pool: State<'_, super::OobPool>,
     app_handle: tauri::AppHandle,
 ) -> Result<()> {
     let session_arc = super::get_session_arc(&session_id, &session_states)?;
@@ -101,8 +130,8 @@ pub fn request_memory_regions(
             info!("Memory regions request sent for session {}", session_id);
         }
         Err(_) => {
-            let (mut oob, pid) = super::create_oob_client(&session_arc)?;
-            match oob.enumerate_memory_regions(pid) {
+            let enumerated = super::with_oob_client(&session_arc, &session_id, &oob_pool, |oob, pid| oob.enumerate_memory_regions(pid));
+            match super::flatten_oob(enumerated) {
                 Ok(regions) => {
                     let serializable_regions: Vec<crate::session::types::SerializableMemoryRegion> = regions.iter().map(|r| {
                         crate::session::types::SerializableMemoryRegion {
@@ -142,6 +171,7 @@ pub fn request_memory_search(
     pattern: Vec<u8>,
     max_results: usize,
     session_states: State<'_, SessionStatesMap>,
+    oob_pool: State<'_, super::OobPool>,
     app_handle: tauri::AppHandle,
 ) -> Result<()> {
     let session_arc = super::get_session_arc(&session_id, &session_states)?;
@@ -150,8 +180,8 @@ pub fn request_memory_search(
             info!("Memory search request sent for session {}", session_id);
         }
         Err(_) => {
-            let (mut oob, pid) = super::create_oob_client(&session_arc)?;
-            match oob.search_memory(pid, pattern, max_results) {
+            let searched = super::with_oob_client(&session_arc, &session_id, &oob_pool, |oob, pid| oob.search_memory(pid, pattern, max_results));
+            match super::flatten_oob(searched) {
                 Ok((addresses, capped)) => {
                     let result = crate::session::types::MemorySearchResult {
                         session_id: session_id.clone(),
@@ -179,6 +209,7 @@ pub fn request_dereference(
     address: String,
     count: usize,
     session_states: State<'_, SessionStatesMap>,
+    oob_pool: State<'_, super::OobPool>,
     app_handle: tauri::AppHandle,
 ) -> Result<()> {
     let address = super::parse_hex_u64(&address, "address")?;
@@ -189,47 +220,13 @@ pub fn request_dereference(
             info!("Dereference request sent for session {} at 0x{:X}, count {}", session_id, address, count);
         }
         Err(_) => {
-            let (mut oob, pid) = super::create_oob_client(&session_arc)?;
-            match oob.dereference(pid, address, count, None) {
+            let derefed = super::with_oob_client(&session_arc, &session_id, &oob_pool, |oob, pid| oob.dereference(pid, address, count, None));
+            match super::flatten_oob(derefed) {
                 Ok(entries) => {
-                    let serializable_entries: Vec<crate::session::types::SerializableDereferenceEntry> = entries.iter().map(|entry| {
-                        let chain: Vec<crate::session::types::SerializableDereferenceValue> = entry.chain.iter().map(|v| {
-                            match v {
-                                joybug2::protocol::DereferenceValue::Pointer(addr, sym) => {
-                                    crate::session::types::SerializableDereferenceValue::Pointer {
-                                        address: format!("0x{:016X}", addr), symbol: sym.clone(),
-                                    }
-                                }
-                                joybug2::protocol::DereferenceValue::Value(val) => {
-                                    crate::session::types::SerializableDereferenceValue::Value {
-                                        value: format!("0x{:X}", val),
-                                    }
-                                }
-                                joybug2::protocol::DereferenceValue::String(s) => {
-                                    crate::session::types::SerializableDereferenceValue::String {
-                                        value: s.clone(),
-                                    }
-                                }
-                                joybug2::protocol::DereferenceValue::Instruction(instr, sym) => {
-                                    crate::session::types::SerializableDereferenceValue::Instruction {
-                                        value: instr.clone(), symbol: sym.clone(),
-                                    }
-                                }
-                                joybug2::protocol::DereferenceValue::LoopDetected(addr) => {
-                                    crate::session::types::SerializableDereferenceValue::LoopDetected {
-                                        address: format!("0x{:016X}", addr),
-                                    }
-                                }
-                            }
-                        }).collect();
-                        crate::session::types::SerializableDereferenceEntry {
-                            address: format!("0x{:016X}", entry.address), offset: entry.offset, chain,
-                        }
-                    }).collect();
                     let result = crate::session::types::DereferenceResult {
                         session_id: session_id.clone(),
                         base_address: format!("0x{:016X}", address),
-                        entries: serializable_entries,
+                        entries: crate::session::memory::serialize_dereference_entries(&entries),
                     };
                     let _ = app_handle.emit("dereference-updated", &result);
                     info!("OOB dereference for session {} at 0x{:X}", session_id, address);
@@ -253,6 +250,7 @@ pub fn request_dereference_batch(
     session_id: String,
     addresses: Vec<String>,
     session_states: State<'_, SessionStatesMap>,
+    oob_pool: State<'_, super::OobPool>,
     app_handle: tauri::AppHandle,
 ) -> Result<()> {
     let parsed: std::result::Result<Vec<u64>, _> = addresses
@@ -268,66 +266,51 @@ pub fn request_dereference_batch(
             info!("Batch dereference request sent for session {} with {} addresses", session_id, count);
         }
         Err(_) => {
-            let (mut oob, pid) = super::create_oob_client(&session_arc)?;
-            for &addr in &addresses {
-                match oob.dereference(pid, addr, 1, None) {
-                    Ok(entries) => {
-                        let serializable_entries: Vec<crate::session::types::SerializableDereferenceEntry> = entries.iter().map(|entry| {
-                            let chain: Vec<crate::session::types::SerializableDereferenceValue> = entry.chain.iter().map(|v| {
-                                match v {
-                                    joybug2::protocol::DereferenceValue::Pointer(a, sym) => {
-                                        crate::session::types::SerializableDereferenceValue::Pointer {
-                                            address: format!("0x{:016X}", a), symbol: sym.clone(),
-                                        }
-                                    }
-                                    joybug2::protocol::DereferenceValue::Value(val) => {
-                                        crate::session::types::SerializableDereferenceValue::Value {
-                                            value: format!("0x{:X}", val),
-                                        }
-                                    }
-                                    joybug2::protocol::DereferenceValue::String(s) => {
-                                        crate::session::types::SerializableDereferenceValue::String {
-                                            value: s.clone(),
-                                        }
-                                    }
-                                    joybug2::protocol::DereferenceValue::Instruction(instr, sym) => {
-                                        crate::session::types::SerializableDereferenceValue::Instruction {
-                                            value: instr.clone(), symbol: sym.clone(),
-                                        }
-                                    }
-                                    joybug2::protocol::DereferenceValue::LoopDetected(a) => {
-                                        crate::session::types::SerializableDereferenceValue::LoopDetected {
-                                            address: format!("0x{:016X}", a),
-                                        }
-                                    }
-                                }
-                            }).collect();
-                            crate::session::types::SerializableDereferenceEntry {
-                                address: format!("0x{:016X}", entry.address), offset: entry.offset, chain,
-                            }
-                        }).collect();
-                        let result = crate::session::types::DereferenceResult {
-                            session_id: session_id.clone(),
-                            base_address: format!("0x{:016X}", addr),
-                            entries: serializable_entries,
-                        };
-                        let _ = app_handle.emit("dereference-updated", &result);
-                    }
-                    Err(e) => {
-                        error!("OOB batch dereference failed for 0x{:X}: {}", addr, e);
-                        let _ = app_handle.emit("dereference-error", &crate::session::types::DereferenceError {
-                            session_id: session_id.clone(),
-                            address: format!("0x{:016X}", addr),
-                            error: e.to_string(),
-                        });
+            super::with_oob_client(&session_arc, &session_id, &oob_pool, |oob, pid| {
+                for &addr in &addresses {
+                    match oob.dereference(pid, addr, 1, None) {
+                        Ok(entries) => {
+                            let result = crate::session::types::DereferenceResult {
+                                session_id: session_id.clone(),
+                                base_address: format!("0x{:016X}", addr),
+                                entries: crate::session::memory::serialize_dereference_entries(&entries),
+                            };
+                            let _ = app_handle.emit("dereference-updated", &result);
+                        }
+                        Err(e) => {
+                            error!("OOB batch dereference failed for 0x{:X}: {}", addr, e);
+                            let _ = app_handle.emit("dereference-error", &crate::session::types::DereferenceError {
+                                session_id: session_id.clone(),
+                                address: format!("0x{:016X}", addr),
+                                error: e.to_string(),
+                            });
+                        }
                     }
                 }
-            }
+            })?;
             info!("OOB batch dereference for session {} with {} addresses", session_id, count);
         }
     }
     Ok(())
 }
+
+// --- Memory scan & pointer scan ---
+//
+// These are stateful, multi-step flows whose server-side scanner state lives on a
+// single TCP connection. They always run over the session's dedicated scan-pool
+// connection (`with_oob_scan_client`) — never the paused loop channel — so the
+// whole start→next→get_results flow stays on one connection that survives
+// pause↔resume and works identically in non-invasive (Open) sessions. The shared
+// `process_*` helpers emit the same events the debug loop would.
+
+use crate::session::memory::{
+    process_scan_memory_get_results, process_scan_memory_next, process_scan_memory_reset,
+    process_scan_memory_start,
+};
+use crate::session::pointer_scan::{
+    process_pointer_scan_apply_filter, process_pointer_scan_get_results,
+    process_pointer_scan_rescan, process_pointer_scan_reset, process_pointer_scan_start,
+};
 
 #[tauri::command]
 pub fn request_scan_memory_start(
@@ -341,16 +324,20 @@ pub fn request_scan_memory_start(
     writable_only: bool,
     session_states: State<'_, SessionStatesMap>,
     settings: State<'_, crate::settings::SettingsState>,
+    oob_pool: State<'_, super::OobPool>,
+    app_handle: tauri::AppHandle,
 ) -> Result<()> {
     // `0` (the default) means "all cores"; map it to `None` for the scanner.
     let thread_count = match settings.lock().map(|s| s.scan_thread_count).unwrap_or(0) {
         0 => None,
         n => Some(n),
     };
-    super::send_paused_command(&session_id, &session_states, UICommand::ScanMemoryStart {
-        value_type, compare_type, value, value2, alignment, float_tolerance, writable_only, thread_count,
+    let session_arc = super::get_session_arc(&session_id, &session_states)?;
+    let handle = Some(app_handle);
+    super::with_oob_scan_client(&session_arc, &session_id, &oob_pool, |client, pid| {
+        process_scan_memory_start(client, &handle, pid, &value_type, &compare_type, value, value2, alignment, float_tolerance, writable_only, thread_count);
     })?;
-    info!("Scan memory start request sent for session {}", session_id);
+    info!("Scan memory start processed for session {}", session_id);
     Ok(())
 }
 
@@ -362,12 +349,17 @@ pub fn request_scan_memory_next(
     compare_type: String,
     value: Option<String>,
     value2: Option<String>,
+    float_tolerance: Option<f64>,
     session_states: State<'_, SessionStatesMap>,
+    oob_pool: State<'_, super::OobPool>,
+    app_handle: tauri::AppHandle,
 ) -> Result<()> {
-    super::send_paused_command(&session_id, &session_states, UICommand::ScanMemoryNext {
-        scan_id, value_type, compare_type, value, value2,
+    let session_arc = super::get_session_arc(&session_id, &session_states)?;
+    let handle = Some(app_handle);
+    super::with_oob_scan_client(&session_arc, &session_id, &oob_pool, |client, _pid| {
+        process_scan_memory_next(client, &handle, scan_id, &value_type, &compare_type, value, value2, float_tolerance);
     })?;
-    info!("Scan memory next request sent for session {}", session_id);
+    info!("Scan memory next processed for session {}", session_id);
     Ok(())
 }
 
@@ -378,11 +370,15 @@ pub fn request_scan_memory_get_results(
     offset: u64,
     count: u64,
     session_states: State<'_, SessionStatesMap>,
+    oob_pool: State<'_, super::OobPool>,
+    app_handle: tauri::AppHandle,
 ) -> Result<()> {
-    super::send_paused_command(&session_id, &session_states, UICommand::ScanMemoryGetResults {
-        scan_id, offset, count,
+    let session_arc = super::get_session_arc(&session_id, &session_states)?;
+    let handle = Some(app_handle);
+    super::with_oob_scan_client(&session_arc, &session_id, &oob_pool, |client, _pid| {
+        process_scan_memory_get_results(client, &handle, scan_id, offset, count);
     })?;
-    info!("Scan memory get results request sent for session {}", session_id);
+    info!("Scan memory get results processed for session {}", session_id);
     Ok(())
 }
 
@@ -391,15 +387,22 @@ pub fn request_scan_memory_reset(
     session_id: String,
     scan_id: u64,
     session_states: State<'_, SessionStatesMap>,
+    oob_pool: State<'_, super::OobPool>,
+    app_handle: tauri::AppHandle,
 ) -> Result<()> {
-    super::send_paused_command(&session_id, &session_states, UICommand::ScanMemoryReset { scan_id })?;
-    info!("Scan memory reset request sent for session {}", session_id);
+    let session_arc = super::get_session_arc(&session_id, &session_states)?;
+    let handle = Some(app_handle);
+    super::with_oob_scan_client(&session_arc, &session_id, &oob_pool, |client, _pid| {
+        process_scan_memory_reset(client, &handle, scan_id);
+    })?;
+    info!("Scan memory reset processed for session {}", session_id);
     Ok(())
 }
 
 // --- Pointer Scan ---
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub fn request_pointer_scan_start(
     session_id: String,
     target_address: u64,
@@ -409,11 +412,15 @@ pub fn request_pointer_scan_start(
     modules: Option<Vec<u64>>,
     writable_only: bool,
     session_states: State<'_, SessionStatesMap>,
+    oob_pool: State<'_, super::OobPool>,
+    app_handle: tauri::AppHandle,
 ) -> Result<()> {
-    super::send_paused_command(&session_id, &session_states, UICommand::PointerScanStart {
-        target_address, max_offset, max_depth, max_results, modules, writable_only,
+    let session_arc = super::get_session_arc(&session_id, &session_states)?;
+    let handle = Some(app_handle);
+    super::with_oob_scan_client(&session_arc, &session_id, &oob_pool, |client, pid| {
+        process_pointer_scan_start(client, &handle, pid, target_address, max_offset, max_depth, max_results, modules, writable_only);
     })?;
-    info!("Pointer scan start request sent for session {}", session_id);
+    info!("Pointer scan start processed for session {}", session_id);
     Ok(())
 }
 
@@ -425,11 +432,15 @@ pub fn request_pointer_scan_get_results(
     count: u64,
     offset_filter: Vec<u64>,
     session_states: State<'_, SessionStatesMap>,
+    oob_pool: State<'_, super::OobPool>,
+    app_handle: tauri::AppHandle,
 ) -> Result<()> {
-    super::send_paused_command(&session_id, &session_states, UICommand::PointerScanGetResults {
-        results_path, offset, count, offset_filter,
+    let session_arc = super::get_session_arc(&session_id, &session_states)?;
+    let handle = Some(app_handle);
+    super::with_oob_scan_client(&session_arc, &session_id, &oob_pool, |client, pid| {
+        process_pointer_scan_get_results(client, &handle, pid, results_path, offset, count, offset_filter);
     })?;
-    info!("Pointer scan get results request sent for session {}", session_id);
+    info!("Pointer scan get results processed for session {}", session_id);
     Ok(())
 }
 
@@ -438,9 +449,15 @@ pub fn request_pointer_scan_reset(
     session_id: String,
     results_path: String,
     session_states: State<'_, SessionStatesMap>,
+    oob_pool: State<'_, super::OobPool>,
+    app_handle: tauri::AppHandle,
 ) -> Result<()> {
-    super::send_paused_command(&session_id, &session_states, UICommand::PointerScanReset { results_path })?;
-    info!("Pointer scan reset request sent for session {}", session_id);
+    let session_arc = super::get_session_arc(&session_id, &session_states)?;
+    let handle = Some(app_handle);
+    super::with_oob_scan_client(&session_arc, &session_id, &oob_pool, |client, _pid| {
+        process_pointer_scan_reset(client, &handle, results_path);
+    })?;
+    info!("Pointer scan reset processed for session {}", session_id);
     Ok(())
 }
 
@@ -450,9 +467,15 @@ pub fn request_pointer_scan_apply_filter(
     results_path: String,
     offset_filter: Vec<u64>,
     session_states: State<'_, SessionStatesMap>,
+    oob_pool: State<'_, super::OobPool>,
+    app_handle: tauri::AppHandle,
 ) -> Result<()> {
-    super::send_paused_command(&session_id, &session_states, UICommand::PointerScanApplyFilter { results_path, offset_filter })?;
-    info!("Pointer scan apply-filter request sent for session {}", session_id);
+    let session_arc = super::get_session_arc(&session_id, &session_states)?;
+    let handle = Some(app_handle);
+    super::with_oob_scan_client(&session_arc, &session_id, &oob_pool, |client, _pid| {
+        process_pointer_scan_apply_filter(client, &handle, results_path, offset_filter);
+    })?;
+    info!("Pointer scan apply-filter processed for session {}", session_id);
     Ok(())
 }
 
@@ -462,8 +485,14 @@ pub fn request_pointer_scan_rescan(
     results_path: String,
     target_address: u64,
     session_states: State<'_, SessionStatesMap>,
+    oob_pool: State<'_, super::OobPool>,
+    app_handle: tauri::AppHandle,
 ) -> Result<()> {
-    super::send_paused_command(&session_id, &session_states, UICommand::PointerScanRescan { results_path, target_address })?;
-    info!("Pointer scan rescan request sent for session {} (target 0x{:X})", session_id, target_address);
+    let session_arc = super::get_session_arc(&session_id, &session_states)?;
+    let handle = Some(app_handle);
+    super::with_oob_scan_client(&session_arc, &session_id, &oob_pool, |client, pid| {
+        process_pointer_scan_rescan(client, &handle, pid, results_path, target_address);
+    })?;
+    info!("Pointer scan rescan processed for session {} (target 0x{:X})", session_id, target_address);
     Ok(())
 }

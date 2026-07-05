@@ -15,7 +15,7 @@ import { useKeybindingContext } from '@/contexts/KeybindingContext';
 
 export interface SessionHeaderProps {
   session: DebugSession;
-  busyAction: "go" | "stepIn" | "stepOut" | "stepOver" | "stop" | "pause" | "detach" | null;
+  busyAction: "go" | "stepIn" | "stepOut" | "stepOver" | "stop" | "pause" | "detach" | "attach" | null;
   handleGo: () => void;
   handleGoPassException: () => void;
   handleStepIn: () => void;
@@ -25,6 +25,7 @@ export interface SessionHeaderProps {
   handleStart: () => void;
   handlePause: () => void;
   handleDetach: () => void;
+  handleAttach: () => void;
   canStep: boolean;
   canStop: boolean;
   canStart: boolean;
@@ -49,6 +50,7 @@ export const SessionHeader: React.FC<SessionHeaderProps> = ({
   handleStart,
   handlePause,
   handleDetach,
+  handleAttach,
   canStep,
   canStop,
   canStart,
@@ -62,6 +64,10 @@ export const SessionHeader: React.FC<SessionHeaderProps> = ({
 }) => {
   const navigate = useNavigate();
   const { getKeybinding } = useKeybindingContext();
+
+  // Non-invasive Open session: no debug loop, so no stepping/pause. The single
+  // Attach/Detach button becomes "Attach" here and "Detach" once attached.
+  const isOpen = session.status === 'Open';
 
   return (
     <div className="mb-3 flex items-center justify-between">
@@ -88,7 +94,7 @@ export const SessionHeader: React.FC<SessionHeaderProps> = ({
             Start
           </Button>
         )}
-        {!canStart && (
+        {!canStart && !isOpen && (
           <Button
             onClick={handlePause}
             disabled={!canPause || busyAction !== null}
@@ -102,7 +108,7 @@ export const SessionHeader: React.FC<SessionHeaderProps> = ({
           </Button>
         )}
         {/* Step buttons group with tighter spacing */}
-        {!canStart && (
+        {!canStart && !isOpen && (
           <div className="inline-flex items-center gap-1 ml-4">
             <div className="inline-flex">
               <Button
@@ -176,15 +182,19 @@ export const SessionHeader: React.FC<SessionHeaderProps> = ({
 
         {!canStart && (
           <Button
-            onClick={handleDetach}
-            disabled={!canDetach || busyAction !== null}
+            onClick={isOpen ? handleAttach : handleDetach}
+            disabled={(!isOpen && !canDetach) || busyAction !== null}
             size="sm"
             variant="outline"
-            title="Detach from the target and leave it running (available while paused)"
+            title={isOpen
+              ? "Attach the debugger to this process to enable breakpoints and stepping"
+              : "Detach from the target and leave it running (available while paused)"}
             className="ml-4"
           >
             <Unplug className="h-4 w-4 mr-2" />
-            {busyAction === "detach" ? "Detaching..." : "Detach"}
+            {isOpen
+              ? (busyAction === "attach" ? "Attaching..." : "Attach")
+              : (busyAction === "detach" ? "Detaching..." : "Detach")}
           </Button>
         )}
 

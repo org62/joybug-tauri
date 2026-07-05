@@ -9,7 +9,6 @@ use super::emulation::*;
 use super::helpers::report_step_error;
 use super::memory::*;
 use super::patches::*;
-use super::pointer_scan::*;
 use super::registers::*;
 use super::runner::emit_session_event;
 use super::symbols::*;
@@ -342,7 +341,7 @@ fn process_command(
             CommandResult::Continue
         }
         UICommand::GetThreadCallStack { tid } => {
-            process_thread_callstack_request(session, app_handle_clone, event, tid);
+            process_thread_callstack_request(session, app_handle_clone, event.pid(), tid);
             CommandResult::Continue
         }
         UICommand::ResolveThreadSymbols => {
@@ -355,42 +354,6 @@ fn process_command(
         }
         UICommand::SearchMemory { pattern, max_results } => {
             process_memory_search(session, app_handle_clone, event, pattern, max_results);
-            CommandResult::Continue
-        }
-        UICommand::ScanMemoryStart { ref value_type, ref compare_type, ref value, ref value2, alignment, float_tolerance, writable_only, thread_count } => {
-            process_scan_memory_start(session, app_handle_clone, event, value_type, compare_type, value.clone(), value2.clone(), alignment, float_tolerance, writable_only, thread_count);
-            CommandResult::Continue
-        }
-        UICommand::ScanMemoryNext { scan_id, ref value_type, ref compare_type, ref value, ref value2 } => {
-            process_scan_memory_next(session, app_handle_clone, scan_id, value_type, compare_type, value.clone(), value2.clone());
-            CommandResult::Continue
-        }
-        UICommand::ScanMemoryGetResults { scan_id, offset, count } => {
-            process_scan_memory_get_results(session, app_handle_clone, scan_id, offset, count);
-            CommandResult::Continue
-        }
-        UICommand::ScanMemoryReset { scan_id } => {
-            process_scan_memory_reset(session, app_handle_clone, scan_id);
-            CommandResult::Continue
-        }
-        UICommand::PointerScanStart { target_address, max_offset, max_depth, max_results, ref modules, writable_only } => {
-            process_pointer_scan_start(session, app_handle_clone, event, target_address, max_offset, max_depth, max_results, modules.clone(), writable_only);
-            CommandResult::Continue
-        }
-        UICommand::PointerScanGetResults { ref results_path, offset, count, ref offset_filter } => {
-            process_pointer_scan_get_results(session, app_handle_clone, event, results_path.clone(), offset, count, offset_filter.clone());
-            CommandResult::Continue
-        }
-        UICommand::PointerScanReset { ref results_path } => {
-            process_pointer_scan_reset(session, app_handle_clone, results_path.clone());
-            CommandResult::Continue
-        }
-        UICommand::PointerScanApplyFilter { ref results_path, ref offset_filter } => {
-            process_pointer_scan_apply_filter(session, app_handle_clone, results_path.clone(), offset_filter.clone());
-            CommandResult::Continue
-        }
-        UICommand::PointerScanRescan { ref results_path, target_address } => {
-            process_pointer_scan_rescan(session, app_handle_clone, event, results_path.clone(), target_address);
             CommandResult::Continue
         }
         UICommand::AssemblePatch { address, ref assembly_text, arch, nop_pad } => {

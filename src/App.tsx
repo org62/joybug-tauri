@@ -4,6 +4,7 @@ import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { useTheme } from "next-themes";
 import { dispatchToast } from "@/lib/toastDispatcher";
+import { isProcessAvailable } from "@/lib/sessionHelpers";
 import Header from "@/components/Header";
 import { KeybindingContext, useKeybindingContext } from "@/contexts/KeybindingContext";
 import { useKeybindings } from "@/hooks/useKeybindings";
@@ -221,7 +222,7 @@ function AppContent() {
         group: "Sessions",
         icon: <Eye className="size-4" />,
         onSelect: () => {
-          if (s.status === "Running" || s.status === "Paused") {
+          if (isProcessAvailable(s.status)) {
             navigate(`/session/${s.id}`);
           } else {
             navigate("/debugger");
