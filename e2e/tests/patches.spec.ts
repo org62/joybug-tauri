@@ -496,7 +496,7 @@ test.describe("Assembly Patching", () => {
       await firstRow.click({ button: "right" });
 
       // Context menu should appear with "Assemble..." option
-      const assembleBtn = page.getByRole("button", { name: "Assemble..." });
+      const assembleBtn = page.getByRole("menuitem", { name: "Assemble..." });
       await expect(assembleBtn).toBeVisible({ timeout: 3_000 });
 
       // Click "Assemble..."
@@ -615,7 +615,7 @@ test.describe("Assembly Patching", () => {
       // Right-click → Assemble...
       const firstRow = page.locator('[data-capture-mouse-nav] .flex.items-center.hover\\:bg-muted\\/30').first();
       await firstRow.click({ button: "right" });
-      await page.getByRole("button", { name: "Assemble..." }).click();
+      await page.getByRole("menuitem", { name: "Assemble..." }).click();
 
       // Inline input should appear
       const input = page.getByPlaceholder("e.g. nop, mov eax, 1");

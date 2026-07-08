@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { useSessionContext } from '@/contexts/SessionContext';
 import { Badge } from '@/components/ui/badge';
+import { DockPanel } from '@/components/ui/panel';
 import { VirtualizedList } from '@/components/ui/virtualized-list';
 import { Layers } from 'lucide-react';
 
@@ -43,7 +44,7 @@ export const ContextModulesView: React.FC<ContextModulesViewProps> = ({ onOpenMo
   };
 
   return (
-    <div className="absolute inset-0 flex flex-col overflow-hidden">
+    <DockPanel>
       {modules.length > 0 ? (
         <VirtualizedList
           items={modules}
@@ -82,6 +83,6 @@ export const ContextModulesView: React.FC<ContextModulesViewProps> = ({ onOpenMo
           </div>
         </div>
       )}
-    </div>
+    </DockPanel>
   );
 };

@@ -7,6 +7,8 @@ import { Breakpoint } from "@/hooks/useBreakpoints";
 import { useContextMenu } from "@/hooks/useContextMenu";
 import { RegisterContext, SymbolResolver, sanitizeAddressInput, parseAddressExpression } from "@/lib/hexUtils";
 import { GroupedItemList } from "./GroupedItemList";
+import { DockPanel, PanelToolbar } from "./ui/panel";
+import { ContextMenu, ContextMenuItem, ContextMenuSeparator } from "./ui/context-menu";
 
 interface BreakpointsViewProps {
   breakpoints: Breakpoint[];
@@ -26,8 +28,10 @@ function BreakpointDot({ enabled, isActive, isHardware, onClick }: { enabled: bo
   const pendingColor = isHardware ? "border-amber-500" : "border-red-500";
 
   return (
-    <button
-      className="w-4 h-4 shrink-0 flex items-center justify-center"
+    <Button
+      variant="ghost"
+      size="icon-xs"
+      className="w-4 h-4 p-0 shrink-0 hover:bg-transparent"
       onClick={(e) => { e.stopPropagation(); onClick(); }}
       title={
         (isHardware ? "HW: " : "") +
@@ -42,7 +46,7 @@ function BreakpointDot({ enabled, isActive, isHardware, onClick }: { enabled: bo
           !enabled && "bg-muted-foreground/30",
         )}
       />
-    </button>
+    </Button>
   );
 }
 
@@ -60,7 +64,7 @@ export function BreakpointsView({
   const [addressInput, setAddressInput] = useState("");
 
   // Breakpoint-level context menu
-  const { contextMenu, contextMenuRef, openContextMenu, closeContextMenu } = useContextMenu<{
+  const { contextMenu, openContextMenu, closeContextMenu } = useContextMenu<{
     breakpointId: string;
   }>();
 
@@ -185,7 +189,8 @@ export function BreakpointsView({
                 if (e.key === "Escape") setEditingField(null);
               }}
               onBlur={commitEdit}
-              className="h-5 text-xs px-1 py-0 rounded-sm shadow-none focus-visible:ring-0 focus-visible:ring-offset-0"
+              inputSize="xs"
+              className="px-1 py-0 rounded-sm shadow-none focus-visible:ring-0 focus-visible:ring-offset-0"
               placeholder={isEditingGroup ? "group name" : "breakpoint name"}
               autoFocus
             />
@@ -201,20 +206,22 @@ export function BreakpointsView({
 
         {/* Delete button (visible on hover) */}
         {!isDragOverlay && (
-          <button
-            className="h-4 w-4 shrink-0 opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive transition-opacity"
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            className="shrink-0 opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive transition-opacity"
             onClick={() => onRemoveBreakpoint(bp.id)}
             title="Remove breakpoint"
           >
-            <Trash2 className="h-3 w-3" />
-          </button>
+            <Trash2 />
+          </Button>
         )}
       </div>
     );
   };
 
   return (
-    <div className="absolute inset-0 flex flex-col overflow-hidden">
+    <DockPanel>
       <GroupedItemList
         items={breakpoints}
         onUpdateItemGroup={(id, group) => {
@@ -226,18 +233,19 @@ export function BreakpointsView({
         renderItem={renderBreakpointRow}
         groupDotColor="red"
         renderToolbar={() => (
-          <div className="flex items-center gap-1 p-2 border-b border-border bg-muted/30 shrink-0">
+          <PanelToolbar>
             <Input
               placeholder="Address, symbol, rax+0x10..."
               value={addressInput}
               onChange={(e) => setAddressInput(sanitizeAddressInput(e.target.value))}
               onKeyDown={(e) => e.key === "Enter" && handleAddBreakpoint()}
-              className="flex-1 h-7 text-xs font-mono"
+              inputSize="xs"
+              className="flex-1 font-mono"
             />
-            <Button variant="outline" size="sm" onClick={handleAddBreakpoint} className="h-7 px-2" title="Add breakpoint">
-              <Plus className="h-3 w-3" />
+            <Button variant="outline" size="xs" onClick={handleAddBreakpoint} title="Add breakpoint">
+              <Plus />
             </Button>
-          </div>
+          </PanelToolbar>
         )}
         renderEmptyState={() => (
           <div className="flex flex-col items-center justify-center h-full text-muted-foreground p-4">
@@ -251,51 +259,36 @@ export function BreakpointsView({
       />
 
       {/* Breakpoint-level context menu */}
-      {contextMenu && (
-        <div
-          ref={contextMenuRef}
-          className="fixed z-50 bg-popover text-popover-foreground rounded-md border shadow-md py-1 min-w-[160px]"
-          style={{ left: contextMenu.x, top: contextMenu.y }}
-        >
-          {(() => {
-            const bp = breakpoints.find((b) => b.id === contextMenu.data.breakpointId);
-            return (
-              <>
-                <button
-                  className="w-full px-3 py-1.5 text-sm text-left hover:bg-accent hover:text-accent-foreground"
-                  onClick={() => {
-                    if (bp) onEnableBreakpoint(bp.id, !bp.enabled);
-                    closeContextMenu();
-                  }}
-                >
-                  {bp?.enabled ? "Disable" : "Enable"}
-                </button>
-                <button
-                  className="w-full px-3 py-1.5 text-sm text-left hover:bg-accent hover:text-accent-foreground"
-                  onClick={() => {
-                    if (!bp) return;
-                    const name = generateNewGroupName();
-                    onUpdateBreakpoint(bp.id, bp.name ?? undefined, name);
-                    closeContextMenu();
-                  }}
-                >
-                  Set Group
-                </button>
-                <div className="border-t border-border my-1" />
-                <button
-                  className="w-full px-3 py-1.5 text-sm text-left hover:bg-accent hover:text-accent-foreground text-destructive"
-                  onClick={() => {
-                    onRemoveBreakpoint(contextMenu.data.breakpointId);
-                    closeContextMenu();
-                  }}
-                >
-                  Remove
-                </button>
-              </>
-            );
-          })()}
-        </div>
-      )}
-    </div>
+      {contextMenu && (() => {
+        const bp = breakpoints.find((b) => b.id === contextMenu.data.breakpointId);
+        return (
+          <ContextMenu x={contextMenu.x} y={contextMenu.y} onClose={closeContextMenu}>
+            <ContextMenuItem
+              onClick={() => {
+                if (bp) onEnableBreakpoint(bp.id, !bp.enabled);
+              }}
+            >
+              {bp?.enabled ? "Disable" : "Enable"}
+            </ContextMenuItem>
+            <ContextMenuItem
+              onClick={() => {
+                if (!bp) return;
+                const name = generateNewGroupName();
+                onUpdateBreakpoint(bp.id, bp.name ?? undefined, name);
+              }}
+            >
+              Set Group
+            </ContextMenuItem>
+            <ContextMenuSeparator />
+            <ContextMenuItem
+              destructive
+              onClick={() => onRemoveBreakpoint(contextMenu.data.breakpointId)}
+            >
+              Remove
+            </ContextMenuItem>
+          </ContextMenu>
+        );
+      })()}
+    </DockPanel>
   );
 }

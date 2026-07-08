@@ -5,7 +5,9 @@ import { listen } from '@tauri-apps/api/event';
 import { useSessionContext } from '@/contexts/SessionContext';
 import { formatTauriError } from '@/lib/sessionHelpers';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { VirtualizedList } from '@/components/ui/virtualized-list';
+import { DockPanel } from '@/components/ui/panel';
 import { Cpu, Loader2 } from 'lucide-react';
 import { CallStackFrameList, CallStackFrame } from '@/components/CallStackFrameList';
 
@@ -297,7 +299,7 @@ export const ContextThreadsView = ({ onNavigateToDisassembly, onNavigateToMemory
   const threads = sessionData?.threads ?? [];
 
   return (
-    <div className="absolute inset-0 flex flex-col overflow-hidden">
+    <DockPanel>
       {threads.length > 0 ? (
         <VirtualizedList
           items={threads}
@@ -332,12 +334,13 @@ export const ContextThreadsView = ({ onNavigateToDisassembly, onNavigateToMemory
                   </div>
                   <p className="text-xs text-muted-foreground truncate">
                     Start:{' '}
-                    <button
-                      className={`font-mono ${clickColor} hover:underline cursor-pointer`}
+                    <Button
+                      variant="link"
+                      className={`h-auto p-0 font-mono text-xs align-baseline ${clickColor}`}
                       onClick={(e) => { e.stopPropagation(); handleStartAddressClick(thread.start_address, isFunction); }}
                     >
                       {displayText}
-                    </button>
+                    </Button>
                   </p>
                 </div>
               </div>
@@ -384,6 +387,6 @@ export const ContextThreadsView = ({ onNavigateToDisassembly, onNavigateToMemory
         </div>,
         document.body
       )}
-    </div>
+    </DockPanel>
   );
 };

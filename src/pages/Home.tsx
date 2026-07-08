@@ -1,9 +1,11 @@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Page } from "@/components/ui/page";
 import { Link } from "react-router-dom";
 
 export default function Home() {
   return (
+    <Page container={false}>
     <div className="container mx-auto p-6">
       <div className="max-w-4xl mx-auto">
         <div className="text-center mb-8">
@@ -80,5 +82,6 @@ export default function Home() {
         </div>
       </div>
     </div>
+    </Page>
   );
-} 
+}

@@ -68,8 +68,13 @@ The joybug2 external crate has integration tests (`external/joybug2/tests/`) tha
 
 - **Context wrappers**: Thin `Context*View.tsx` components pull session data from `SessionContext` and pass it to feature components. Add new ones following this pattern.
 - **Docking**: rc-dock library. Tab definitions live in `src/lib/dockingConfigs.tsx` (initial layout + tab factory). Dynamic content and keyboard shortcuts in `SessionDocked.tsx`. Menu entries in `SessionHeader.tsx`.
-- **Scrollable areas**: Always use `<ScrollArea>` from `@/components/ui/scroll-area`. Never use plain `overflow-y-auto` divs.
-- **Dock tab root layout**: Components rendered inside rc-dock tabs MUST use `absolute inset-0 flex flex-col overflow-hidden` on their outermost div (not `h-full`). Fixed headers/toolbars inside the tab need `shrink-0`. The scrollable content area uses `flex-1 min-h-0`. Without `absolute inset-0`, the dock panel won't give the component a definite height and the entire content will scroll as one block instead of keeping headers fixed. See `AssemblyView.tsx` and `ModuleInfoView.tsx` for reference.
+- **UI layout primitives (use these — do not hand-roll)**: Shared primitives encode the layout/scroll/selection contracts so views can't drift. ESLint (`npm run lint`) enforces the key rules.
+  - **Dock tab views** (`@/components/ui/panel`): every rc-dock tab component is `<DockPanel><PanelToolbar/><PanelBody/></DockPanel>`. `DockPanel` is the root (`absolute inset-0 flex flex-col overflow-hidden` — NOT `h-full`; a plain `h-full` root collapses and makes the whole panel scroll). `PanelToolbar`/`PanelFooter` are fixed `shrink-0` chrome bars (carry `select-none`). `PanelBody` is the scroll region (`ScrollArea` with `flex-1 min-h-0`; forwards `viewportRef`/`onScroll`/`orientation`). Exception: if the scroll region's child is a `<VirtualizedList>` (it owns its own ScrollArea), use a plain `<div className="flex-1 min-h-0">` instead of `PanelBody` to avoid nested scrollbars. Reference: `AssemblyView.tsx`, `ModuleInfoView.tsx`.
+  - **Routed pages** (`@/components/ui/page`): wrap page content in `<Page>` (it supplies the scroll container that App's clipping `<main>` requires). Use `<Page scroll={false}>` for pages that self-manage height, `container={false}` to skip the default `container mx-auto px-4 py-8` inner.
+  - **Scrollable areas**: use `<PanelBody>`/`<ScrollArea>`/`<Page>`. NEVER a raw `overflow-y-auto`/`overflow-auto`/`overflow-scroll` div (lint error). `overflow-hidden` is fine.
+- **Controls**: dense panel toolbars use `size="xs"` on `Button` (28px, 14px icons), `size="icon-xs"` for icon-only, `inputSize="xs"` on `Input`, `size="xs"` on `SelectTrigger`. The top debug control bar (`SessionHeader`) uses `size="sm"` (32px). NEVER a raw `<button>` in a view — use `<Button>` or `<ContextMenuItem>` (lint error). `src/components/ui/**` is exempt from these lint rules.
+- **Context menus** (`@/components/ui/context-menu`): right-click menus use `<ContextMenu x y onClose>` + `<ContextMenuItem>`/`<ContextMenuSeparator>`. `useContextMenu()` supplies `{ contextMenu, openContextMenu, closeContextMenu }` (position/state); the primitive handles outside-click/Escape and auto-closes on item click.
+- **Text selection**: data (addresses, hex, registers, symbols) is selectable by default. `select-none` only on chrome (`PanelToolbar`/`PanelFooter` already have it, drag handles, tab headers). Components that manage their own selection (HexView byte-selection, AssemblyView instruction rows) keep it — don't force selection there.
 - **Session cleanup**: Every hook/component MUST reset state when the session ends or resumes. Pattern:
   ```ts
   useEffect(() => {
@@ -95,10 +100,12 @@ The joybug2 external crate has integration tests (`external/joybug2/tests/`) tha
 - Never stage files (`git add`) unless explicitly asked to do so.
 
 ### Adding a New Dock Tab
-1. Add tab definition and initial placement in `src/lib/dockingConfigs.tsx`
-2. Add dynamic content rendering in `SessionDocked.tsx`
-3. Add menu entry in `SessionHeader.tsx` (Windows menu)
-4. Add keyboard shortcut in `SessionDocked.tsx` if needed
+1. Build the view as `<DockPanel><PanelToolbar/><PanelBody/></DockPanel>` (from `@/components/ui/panel`); use `size="xs"` controls and `<ContextMenu>` for right-click menus (see UI layout primitives above)
+2. Add tab definition and initial placement in `src/lib/dockingConfigs.tsx`
+3. Add dynamic content rendering in `SessionDocked.tsx`
+4. Add menu entry in `SessionHeader.tsx` (Windows menu)
+5. Add keyboard shortcut in `SessionDocked.tsx` if needed
+6. Run `npm run lint` — the guardrails reject raw `overflow-*` scroll classes and raw `<button>` in views
 
 ### Adding a New UICommand
 1. Add variant to `UICommand` enum in `session/types.rs`

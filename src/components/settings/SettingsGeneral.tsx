@@ -57,7 +57,7 @@ export function SettingsGeneral({ searchQuery }: SettingsGeneralProps) {
             <div className="text-sm font-medium">{item.label}</div>
             {item.key === "theme" && (
               <Select value={theme} onValueChange={setTheme}>
-                <SelectTrigger className="w-[130px] h-7 text-sm">
+                <SelectTrigger size="xs" className="w-[130px]">
                   <SelectValue placeholder="Select theme" />
                 </SelectTrigger>
                 <SelectContent>
@@ -72,7 +72,8 @@ export function SettingsGeneral({ searchQuery }: SettingsGeneralProps) {
                 type="number"
                 min={0}
                 step={1}
-                className="w-[130px] h-7 text-sm"
+                inputSize="xs"
+                className="w-[130px]"
                 value={scanThreadsDraft ?? String(settings.scan_thread_count)}
                 onChange={(e) => setScanThreadsDraft(e.target.value)}
                 onBlur={() => {

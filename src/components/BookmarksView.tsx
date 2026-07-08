@@ -8,6 +8,8 @@ import type { ResolvedBookmark } from "@/hooks/useBookmarks";
 import { useContextMenu } from "@/hooks/useContextMenu";
 import { useColumnWidths } from "@/hooks/useColumnWidths";
 import { GroupedItemList } from "./GroupedItemList";
+import { DockPanel, PanelToolbar } from "./ui/panel";
+import { ContextMenu, ContextMenuItem, ContextMenuSeparator } from "./ui/context-menu";
 
 const VALUE_TYPES = ["U8", "U16", "U32", "U64", "F32", "F64"];
 
@@ -55,7 +57,7 @@ export function BookmarksView({
   const [editing, setEditing] = useState<{ id: string; field: "name" | "value"; draft: string } | null>(null);
   const { columnWidths, handleColumnResizeStart } = useColumnWidths<ColKey>(COLUMN_WIDTHS_KEY, DEFAULT_WIDTHS);
 
-  const { contextMenu, contextMenuRef, openContextMenu, closeContextMenu } = useContextMenu<{ id: string }>();
+  const { contextMenu, openContextMenu, closeContextMenu } = useContextMenu<{ id: string }>();
 
   const rows: BookmarkRow[] = bookmarks.map((b) => ({ ...b, enabled: b.locked }));
 
@@ -147,7 +149,7 @@ export function BookmarksView({
             onChange={(e) => setEditing({ ...editing, draft: e.target.value })}
             onBlur={commitEdit}
             onKeyDown={(e) => { if (e.key === "Enter") commitEdit(); if (e.key === "Escape") setEditing(null); }}
-            className="h-5 px-1 text-xs"
+            inputSize="xs"
           />
         ) : (
           <span
@@ -176,7 +178,7 @@ export function BookmarksView({
           <span className="text-muted-foreground">code</span>
         ) : (
           <Select value={b.value_type ?? "U32"} onValueChange={(v) => update(b.id, { valueType: v })}>
-            <SelectTrigger size="sm" className="h-5 px-1 text-xs w-[60px]">
+            <SelectTrigger size="xs" className="w-[60px]">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -197,7 +199,7 @@ export function BookmarksView({
             onChange={(e) => setEditing({ ...editing, draft: e.target.value })}
             onBlur={commitEdit}
             onKeyDown={(e) => { if (e.key === "Enter") commitEdit(); if (e.key === "Escape") setEditing(null); }}
-            className="h-5 px-1 text-xs"
+            inputSize="xs"
           />
         ) : (
           <span
@@ -215,12 +217,12 @@ export function BookmarksView({
         {b.kind !== "code" && (
           <Button
             variant="ghost"
-            size="icon"
-            className={cn("h-5 w-5", b.locked ? "text-amber-500" : "text-muted-foreground")}
+            size="icon-xs"
+            className={cn(b.locked ? "text-amber-500" : "text-muted-foreground")}
             onClick={() => onToggleLock?.(b.id, !b.locked)}
             title={b.locked ? "Unlock value" : "Lock (freeze) value"}
           >
-            {b.locked ? <Lock className="h-3 w-3" /> : <Unlock className="h-3 w-3" />}
+            {b.locked ? <Lock /> : <Unlock />}
           </Button>
         )}
       </span>
@@ -241,12 +243,12 @@ export function BookmarksView({
         <span className="w-8 shrink-0 flex items-center justify-center">
           <Button
             variant="ghost"
-            size="icon"
-            className="h-5 w-5 opacity-0 group-hover:opacity-100 transition-opacity"
+            size="icon-xs"
+            className="opacity-0 group-hover:opacity-100 transition-opacity"
             onClick={() => onRemoveBookmark?.(b.id)}
             title="Remove bookmark"
           >
-            <X className="h-3 w-3" />
+            <X />
           </Button>
         </span>
       )}
@@ -254,7 +256,7 @@ export function BookmarksView({
   );
 
   return (
-    <div className="absolute inset-0 flex flex-col overflow-hidden">
+    <DockPanel>
       <GroupedItemList
         items={rows}
         onUpdateItemGroup={(id, group) => update(id, { group: group ?? null })}
@@ -266,11 +268,10 @@ export function BookmarksView({
         groupDotColor="blue"
         renderToolbar={() => (
           <>
-            <div className="flex items-center gap-2 p-2 border-b border-border bg-muted/30 shrink-0">
+            <PanelToolbar>
               <Button
                 variant="outline"
-                size="sm"
-                className="h-7 text-xs"
+                size="xs"
                 disabled={selectedIds.size === 0}
                 onClick={handleRemoveSelected}
               >
@@ -278,7 +279,7 @@ export function BookmarksView({
               </Button>
               <div className="flex-1" />
               <span className="text-xs text-muted-foreground">{bookmarks.length} bookmark{bookmarks.length !== 1 ? "s" : ""}</span>
-            </div>
+            </PanelToolbar>
             {bookmarks.length > 0 && (
               <div className="flex items-center px-2 py-1 border-b border-border text-xs text-muted-foreground font-medium shrink-0">
                 <span className="w-6 shrink-0 flex items-center justify-center">
@@ -316,43 +317,26 @@ export function BookmarksView({
         )}
       />
 
-      {contextMenu && (
-        <div
-          ref={contextMenuRef}
-          className="fixed z-50 bg-popover text-popover-foreground rounded-md border shadow-md py-1 min-w-[160px]"
-          style={{ left: contextMenu.x, top: contextMenu.y }}
-        >
-          {(() => {
-            const b = bookmarks.find((x) => x.id === contextMenu.data.id);
-            if (!b) return null;
-            return (
-              <>
-                {b.kind !== "code" && (
-                  <button
-                    className="w-full px-3 py-1.5 text-sm text-left hover:bg-accent hover:text-accent-foreground"
-                    onClick={() => { onToggleLock?.(b.id, !b.locked); closeContextMenu(); }}
-                  >
-                    {b.locked ? "Unlock value" : "Lock (freeze) value"}
-                  </button>
-                )}
-                <button
-                  className="w-full px-3 py-1.5 text-sm text-left hover:bg-accent hover:text-accent-foreground"
-                  onClick={() => { update(b.id, { group: generateNewGroupName() }); closeContextMenu(); }}
-                >
-                  Set Group
-                </button>
-                <div className="border-t border-border my-1" />
-                <button
-                  className="w-full px-3 py-1.5 text-sm text-left hover:bg-accent hover:text-accent-foreground text-destructive"
-                  onClick={() => { onRemoveBookmark?.(contextMenu.data.id); closeContextMenu(); }}
-                >
-                  Remove Bookmark
-                </button>
-              </>
-            );
-          })()}
-        </div>
-      )}
-    </div>
+      {contextMenu && (() => {
+        const b = bookmarks.find((x) => x.id === contextMenu.data.id);
+        if (!b) return null;
+        return (
+          <ContextMenu x={contextMenu.x} y={contextMenu.y} onClose={closeContextMenu}>
+            {b.kind !== "code" && (
+              <ContextMenuItem onClick={() => onToggleLock?.(b.id, !b.locked)}>
+                {b.locked ? "Unlock value" : "Lock (freeze) value"}
+              </ContextMenuItem>
+            )}
+            <ContextMenuItem onClick={() => update(b.id, { group: generateNewGroupName() })}>
+              Set Group
+            </ContextMenuItem>
+            <ContextMenuSeparator />
+            <ContextMenuItem destructive onClick={() => onRemoveBookmark?.(contextMenu.data.id)}>
+              Remove Bookmark
+            </ContextMenuItem>
+          </ContextMenu>
+        );
+      })()}
+    </DockPanel>
   );
 }

@@ -1,5 +1,5 @@
 import { useCallback } from "react";
-import { ScrollArea } from "@/components/ui/scroll-area";
+import { DockPanel, PanelBody } from "@/components/ui/panel";
 import { DereferenceEntry } from "@/lib/hexUtils";
 import { RegisterDereferenceDisplay } from "@/components/DereferenceDisplay";
 import { cn } from "@/lib/utils";
@@ -123,9 +123,10 @@ function renderRegisterList(
   onRegisterEdit?: (field: string, hexValue: string) => void,
 ) {
   return (
-    <ScrollArea className="h-full w-full">
-      <div className="p-1 flex flex-col gap-0.5">
-        {defs.map(({ name, field, showDereference }) => {
+    <DockPanel>
+      <PanelBody>
+        <div className="p-1 flex flex-col gap-0.5">
+          {defs.map(({ name, field, showDereference }) => {
           const value = registers[field];
           return (
             <RegisterPair
@@ -139,9 +140,10 @@ function renderRegisterList(
               onRegisterEdit={onRegisterEdit}
             />
           );
-        })}
-      </div>
-    </ScrollArea>
+          })}
+        </div>
+      </PanelBody>
+    </DockPanel>
   );
 }
 
@@ -158,10 +160,10 @@ export function RegisterView({ context, getDereferenceForAddress, changedRegiste
   }
 
   return (
-    <ScrollArea className="h-full w-full">
+    <DockPanel>
       <div className="p-4 text-center text-muted-foreground">
         <p>Unknown or unsupported register context format.</p>
       </div>
-    </ScrollArea>
+    </DockPanel>
   );
 }

@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useMemo, useCallback } from "react";
 import { ChevronDown, ChevronRight, Loader2 } from "lucide-react";
 import { ScrollArea } from "./ui/scroll-area";
 import { VirtualizedList } from "./ui/virtualized-list";
+import { Button } from "./ui/button";
 import { cn } from "@/lib/utils";
 import { useQuickEmulation, QuickEmulationResult } from "@/hooks/useQuickEmulation";
 import { parseTenetTrace } from "@/lib/tenetParser";
@@ -396,12 +397,13 @@ export function EmulationQuickView({ sessionId, isPaused, pcAddress, onNavigateT
           {isLoading && <Loader2 className="h-3 w-3 animate-spin ml-1" />}
         </div>
         {!collapsed && (
-          <button
-            className="text-xs px-2 py-0.5 rounded border border-border bg-background hover:bg-muted"
+          <Button
+            variant="outline"
+            size="xs"
             onClick={(e) => { e.stopPropagation(); toggleTraceMode(); }}
           >
             {traceMode === "InstructionTrace" ? "Instructions" : "Basic blocks"}
-          </button>
+          </Button>
         )}
       </div>
 

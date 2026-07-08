@@ -25,6 +25,9 @@ import {
   sanitizeAddressInput,
 } from "@/lib/hexUtils";
 import { PointerDereferenceDisplay } from "@/components/DereferenceDisplay";
+import { DockPanel, PanelToolbar } from "@/components/ui/panel";
+import { ContextMenu, ContextMenuItem, ContextMenuSeparator } from "@/components/ui/context-menu";
+import { useContextMenu } from "@/hooks/useContextMenu";
 
 interface HexViewProps {
   sessionId?: string;
@@ -96,11 +99,7 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
   useNavigationChannel(memoryNavigation, goToAddress);
 
   // Context menu state
-  const [contextMenu, setContextMenu] = useState<{
-    x: number;
-    y: number;
-  } | null>(null);
-  const contextMenuRef = useRef<HTMLDivElement>(null);
+  const { contextMenu, openContextMenu, closeContextMenu } = useContextMenu();
 
   // Track mouse down offset for drag selection
   const [mouseDownOffset, setMouseDownOffset] = useState<number | null>(null);
@@ -118,26 +117,6 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
       return () => document.removeEventListener('mouseup', handleMouseUp);
     }
   }, [isDragging, setIsDragging]);
-
-  // Close context menu on click outside (left-click only, and only if outside menu)
-  useEffect(() => {
-    if (contextMenu) {
-      const handleClick = (e: globalThis.MouseEvent) => {
-        // Only close on left click outside the context menu
-        if (e.button === 0) {
-          // Check if click is inside the context menu
-          if (contextMenuRef.current && contextMenuRef.current.contains(e.target as Node)) {
-            return; // Don't close if clicking inside the menu
-          }
-          setContextMenu(null);
-        }
-      };
-      document.addEventListener('mousedown', handleClick);
-      return () => {
-        document.removeEventListener('mousedown', handleClick);
-      };
-    }
-  }, [contextMenu]);
 
   // ============================================================================
   // Mouse event handlers for selection
@@ -202,11 +181,6 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
   // ============================================================================
   // Context menu handlers
   // ============================================================================
-
-  const handleContextMenu = useCallback((e: MouseEvent) => {
-    e.preventDefault();
-    setContextMenu({ x: e.clientX, y: e.clientY });
-  }, []);
 
   // ============================================================================
   // Keyboard event handlers
@@ -391,24 +365,22 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
     // If session is active, show toolbar so user can enter address
     if (isSessionActive) {
       return (
-        <div className="absolute inset-0 flex flex-col overflow-hidden">
-          <div className="shrink-0">
-            <HexToolbar
-              addressInput={addressInput}
-              setAddressInput={setAddressInput}
-              handleAddressKeyDown={handleAddressKeyDown}
-              handleGoto={handleGoto}
-              viewMode={viewMode}
-              setViewMode={setViewMode}
-              isLoading={isLoading}
-              pendingChanges={pendingChanges}
-              applyPendingChanges={applyPendingChanges}
-              discardPendingChanges={discardPendingChanges}
-              loadPreviousPage={loadPreviousPage}
-              loadNextPage={loadNextPage}
-              canGoBack={canGoBack}
-            />
-          </div>
+        <DockPanel>
+          <HexToolbar
+            addressInput={addressInput}
+            setAddressInput={setAddressInput}
+            handleAddressKeyDown={handleAddressKeyDown}
+            handleGoto={handleGoto}
+            viewMode={viewMode}
+            setViewMode={setViewMode}
+            isLoading={isLoading}
+            pendingChanges={pendingChanges}
+            applyPendingChanges={applyPendingChanges}
+            discardPendingChanges={discardPendingChanges}
+            loadPreviousPage={loadPreviousPage}
+            loadNextPage={loadNextPage}
+            canGoBack={canGoBack}
+          />
           <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground p-4">
             <div className="text-center">
               <Binary className="h-12 w-12 mx-auto mb-4 opacity-50" />
@@ -416,7 +388,7 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
               <p className="text-sm mt-1">Enter an address above to view memory</p>
             </div>
           </div>
-        </div>
+        </DockPanel>
       );
     }
 
@@ -435,45 +407,7 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
   if (error) {
     // Show toolbar so user can try a different address
     return (
-      <div className="absolute inset-0 flex flex-col overflow-hidden">
-        <div className="shrink-0">
-          <HexToolbar
-            addressInput={addressInput}
-            setAddressInput={setAddressInput}
-            handleAddressKeyDown={handleAddressKeyDown}
-            handleGoto={handleGoto}
-            viewMode={viewMode}
-            setViewMode={setViewMode}
-            isLoading={isLoading}
-            pendingChanges={pendingChanges}
-            applyPendingChanges={applyPendingChanges}
-            discardPendingChanges={discardPendingChanges}
-            loadPreviousPage={loadPreviousPage}
-            loadNextPage={loadNextPage}
-            canGoBack={canGoBack}
-          />
-        </div>
-        <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground p-4">
-          <div className="text-center">
-            <Binary className="h-12 w-12 mx-auto mb-4 opacity-50" />
-            <p className="text-base font-medium">Could not load memory</p>
-            <p className="text-sm mt-1">{error}</p>
-            <p className="text-sm mt-2">Try a different address</p>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div
-      ref={hexViewContainerRef}
-      className="absolute inset-0 flex flex-col overflow-hidden outline-none"
-      tabIndex={0}
-      onKeyDown={handleContainerKeyDown}
-    >
-      {/* Toolbar - Fixed */}
-      <div className="shrink-0">
+      <DockPanel>
         <HexToolbar
           addressInput={addressInput}
           setAddressInput={setAddressInput}
@@ -489,7 +423,41 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
           loadNextPage={loadNextPage}
           canGoBack={canGoBack}
         />
-      </div>
+        <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground p-4">
+          <div className="text-center">
+            <Binary className="h-12 w-12 mx-auto mb-4 opacity-50" />
+            <p className="text-base font-medium">Could not load memory</p>
+            <p className="text-sm mt-1">{error}</p>
+            <p className="text-sm mt-2">Try a different address</p>
+          </div>
+        </div>
+      </DockPanel>
+    );
+  }
+
+  return (
+    <DockPanel
+      ref={hexViewContainerRef}
+      className="outline-none"
+      tabIndex={0}
+      onKeyDown={handleContainerKeyDown}
+    >
+      {/* Toolbar - Fixed */}
+      <HexToolbar
+        addressInput={addressInput}
+        setAddressInput={setAddressInput}
+        handleAddressKeyDown={handleAddressKeyDown}
+        handleGoto={handleGoto}
+        viewMode={viewMode}
+        setViewMode={setViewMode}
+        isLoading={isLoading}
+        pendingChanges={pendingChanges}
+        applyPendingChanges={applyPendingChanges}
+        discardPendingChanges={discardPendingChanges}
+        loadPreviousPage={loadPreviousPage}
+        loadNextPage={loadNextPage}
+        canGoBack={canGoBack}
+      />
 
       {/* Column Header - Fixed */}
       <div className="shrink-0 font-mono text-sm px-2 pt-2 pb-1 border-b border-border text-muted-foreground text-xs">
@@ -503,7 +471,7 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
       </div>
 
       {/* Hex Data - Scrollable + Virtualized */}
-      <div className="flex-1 min-h-0" onContextMenu={handleContextMenu}>
+      <div className="flex-1 min-h-0" onContextMenu={(e) => openContextMenu(e, {})}>
         <VirtualizedList
           items={rowIndices}
           rowHeight={ROW_HEIGHT}
@@ -653,96 +621,73 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
 
       {/* Context Menu */}
       {contextMenu && (
-        <div
-          ref={contextMenuRef}
-          className="fixed z-50 bg-popover text-popover-foreground rounded-md border shadow-md py-1 min-w-[160px]"
-          style={{ left: contextMenu.x, top: contextMenu.y }}
+        <ContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          onClose={closeContextMenu}
+          className="min-w-[160px]"
         >
-          <button
-            className="w-full px-3 py-1.5 text-sm text-left hover:bg-accent hover:text-accent-foreground flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+          <ContextMenuItem
+            icon={<Copy />}
             onClick={async () => {
               if (selectionStart !== null) {
                 const address = baseAddress + BigInt(selectionStart);
                 await navigator.clipboard.writeText(formatAddress(address));
               }
-              setContextMenu(null);
             }}
             disabled={selectionStart === null}
           >
-            <Copy className="h-4 w-4" />
             Copy Address
-          </button>
-          <div className="border-t border-border my-1" />
-          <button
-            className="w-full px-3 py-1.5 text-sm text-left hover:bg-accent hover:text-accent-foreground flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-            onClick={() => {
-              copySelection('text');
-              setContextMenu(null);
-            }}
+          </ContextMenuItem>
+          <ContextMenuSeparator />
+          <ContextMenuItem
+            icon={<Copy />}
+            onClick={() => copySelection('text')}
             disabled={selectionStart === null}
           >
-            <Copy className="h-4 w-4" />
             Copy Text
-          </button>
-          <button
-            className="w-full px-3 py-1.5 text-sm text-left hover:bg-accent hover:text-accent-foreground flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-            onClick={() => {
-              copySelection('hex');
-              setContextMenu(null);
-            }}
+          </ContextMenuItem>
+          <ContextMenuItem
+            icon={<Copy />}
+            onClick={() => copySelection('hex')}
             disabled={selectionStart === null}
           >
-            <Copy className="h-4 w-4" />
             Copy Hex
-          </button>
-          <button
-            className="w-full px-3 py-1.5 text-sm text-left hover:bg-accent hover:text-accent-foreground flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-            onClick={() => {
-              copySelection('dump');
-              setContextMenu(null);
-            }}
+          </ContextMenuItem>
+          <ContextMenuItem
+            icon={<Copy />}
+            onClick={() => copySelection('dump')}
             disabled={selectionStart === null}
           >
-            <Copy className="h-4 w-4" />
             Copy Dump
-          </button>
-          <div className="border-t border-border my-1" />
-          <button
-            className="w-full px-3 py-1.5 text-sm text-left hover:bg-accent hover:text-accent-foreground flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-            onClick={() => {
-              pasteBytes('hex');
-              setContextMenu(null);
-            }}
+          </ContextMenuItem>
+          <ContextMenuSeparator />
+          <ContextMenuItem
+            icon={<ClipboardPaste />}
+            onClick={() => pasteBytes('hex')}
             disabled={selectionStart === null}
           >
-            <ClipboardPaste className="h-4 w-4" />
             Paste Hex
-          </button>
-          <button
-            className="w-full px-3 py-1.5 text-sm text-left hover:bg-accent hover:text-accent-foreground flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-            onClick={() => {
-              pasteBytes('text');
-              setContextMenu(null);
-            }}
+          </ContextMenuItem>
+          <ContextMenuItem
+            icon={<ClipboardPaste />}
+            onClick={() => pasteBytes('text')}
             disabled={selectionStart === null}
           >
-            <ClipboardPaste className="h-4 w-4" />
             Paste Text
-          </button>
+          </ContextMenuItem>
           {onAddBookmark && selectionStart !== null && (
             <>
-              <div className="border-t border-border my-1" />
-              <button
-                className="w-full px-3 py-1.5 text-sm text-left hover:bg-accent hover:text-accent-foreground flex items-center gap-2"
+              <ContextMenuSeparator />
+              <ContextMenuItem
+                icon={<Bookmark />}
                 onClick={() => {
                   const address = baseAddress + BigInt(selectionStart);
                   onAddBookmark(`0x${address.toString(16)}`, VIEWMODE_VALUE_TYPE[viewMode]);
-                  setContextMenu(null);
                 }}
               >
-                <Bookmark className="h-4 w-4" />
                 Add to Bookmarks
-              </button>
+              </ContextMenuItem>
             </>
           )}
           {onSetHardwareBreakpoint && selectionStart !== null && (() => {
@@ -752,33 +697,25 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
             const addrStr = `0x${address.toString(16)}`;
             return (
               <>
-                <div className="border-t border-border my-1" />
-                <button
-                  className="w-full px-3 py-1.5 text-sm text-left hover:bg-accent hover:text-accent-foreground flex items-center gap-2"
-                  onClick={() => {
-                    onSetHardwareBreakpoint(addrStr, "Write", hwSize);
-                    setContextMenu(null);
-                  }}
+                <ContextMenuSeparator />
+                <ContextMenuItem
+                  icon={<Crosshair />}
+                  onClick={() => onSetHardwareBreakpoint(addrStr, "Write", hwSize)}
                 >
-                  <Crosshair className="h-4 w-4" />
                   Break on Write ({hwSize}B)
-                </button>
-                <button
-                  className="w-full px-3 py-1.5 text-sm text-left hover:bg-accent hover:text-accent-foreground flex items-center gap-2"
-                  onClick={() => {
-                    onSetHardwareBreakpoint(addrStr, "ReadWrite", hwSize);
-                    setContextMenu(null);
-                  }}
+                </ContextMenuItem>
+                <ContextMenuItem
+                  icon={<Crosshair />}
+                  onClick={() => onSetHardwareBreakpoint(addrStr, "ReadWrite", hwSize)}
                 >
-                  <Crosshair className="h-4 w-4" />
                   Break on Read/Write ({hwSize}B)
-                </button>
+                </ContextMenuItem>
               </>
             );
           })()}
-        </div>
+        </ContextMenu>
       )}
-    </div>
+    </DockPanel>
   );
 }
 
@@ -815,7 +752,7 @@ function HexToolbar({
   canGoBack,
 }: HexToolbarProps) {
   return (
-    <div className="flex items-center gap-2 p-2 border-b border-border bg-muted/30">
+    <PanelToolbar className="gap-2">
       {/* Address input */}
       <div className="flex items-center gap-2">
         <Input
@@ -826,6 +763,7 @@ function HexToolbar({
         />
         <Button
           variant="outline"
+          size="xs"
           onClick={handleGoto}
           title="Go to address"
         >
@@ -838,21 +776,21 @@ function HexToolbar({
       <div className="flex items-center gap-1">
         <Button
           variant="outline"
-          size="icon"
+          size="icon-xs"
           onClick={loadPreviousPage}
           disabled={isLoading || !canGoBack}
           title="Previous page"
         >
-          <ChevronLeft className="h-4 w-4" />
+          <ChevronLeft />
         </Button>
         <Button
           variant="outline"
-          size="icon"
+          size="icon-xs"
           onClick={loadNextPage}
           disabled={isLoading}
           title="Next page"
         >
-          <ChevronRight className="h-4 w-4" />
+          <ChevronRight />
         </Button>
       </div>
 
@@ -881,26 +819,26 @@ function HexToolbar({
             {pendingChanges.size} pending
           </span>
           <Button
-            size="sm"
+            size="xs"
             variant="outline"
             onClick={applyPendingChanges}
-            className="h-7 px-2 rounded-sm"
+            className="rounded-sm"
             title="Apply changes"
           >
-            <Save className="h-3 w-3" />
+            <Save />
           </Button>
           <Button
-            size="sm"
+            size="xs"
             variant="outline"
             onClick={discardPendingChanges}
-            className="h-7 px-2 rounded-sm"
+            className="rounded-sm"
             title="Discard changes"
           >
-            <X className="h-3 w-3" />
+            <X />
           </Button>
         </div>
       )}
-    </div>
+    </PanelToolbar>
   );
 }
 

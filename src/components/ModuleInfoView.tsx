@@ -1,5 +1,6 @@
 import React, { useMemo, useRef, useLayoutEffect, useState } from 'react';
-import { ScrollArea } from '@/components/ui/scroll-area';
+import { DockPanel, PanelBody } from '@/components/ui/panel';
+import { Button } from '@/components/ui/button';
 import {
   Select,
   SelectContent,
@@ -139,12 +140,13 @@ const AddressLink: React.FC<{
 }> = ({ address, onClick }) => {
   if (!onClick) return <span className="font-mono">{address}</span>;
   return (
-    <button
-      className="font-mono text-blue-500 hover:text-blue-400 hover:underline cursor-pointer"
+    <Button
+      variant="link"
+      className="h-auto p-0 font-mono text-blue-500 hover:text-blue-400"
       onClick={() => onClick(address)}
     >
       {address}
-    </button>
+    </Button>
   );
 };
 
@@ -364,14 +366,14 @@ export const ModuleInfoView: React.FC<ModuleInfoViewProps> = ({
   const viewportRef = useRef<HTMLDivElement>(null);
 
   return (
-    <div className="absolute inset-0 flex flex-col overflow-hidden">
+    <DockPanel>
       {/* Module selector combobox */}
       <div className="p-2 border-b shrink-0">
         <Select
           value={selectedModuleBase ?? ''}
           onValueChange={onModuleSelect}
         >
-          <SelectTrigger className="w-full h-8 text-sm">
+          <SelectTrigger size="xs" className="w-full">
             <SelectValue placeholder="Select a module..." />
           </SelectTrigger>
           <SelectContent>
@@ -387,7 +389,7 @@ export const ModuleInfoView: React.FC<ModuleInfoViewProps> = ({
       </div>
 
       {/* Content area */}
-      <ScrollArea className="flex-1 min-h-0" viewportRef={viewportRef}>
+      <PanelBody viewportRef={viewportRef}>
         <div className="p-2 space-y-4">
           {isLoading && (
             <div className="flex items-center justify-center py-8 text-muted-foreground">
@@ -433,7 +435,7 @@ export const ModuleInfoView: React.FC<ModuleInfoViewProps> = ({
             </>
           )}
         </div>
-      </ScrollArea>
-    </div>
+      </PanelBody>
+    </DockPanel>
   );
 };

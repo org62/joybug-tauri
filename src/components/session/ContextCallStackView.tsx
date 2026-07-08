@@ -5,6 +5,7 @@ import { useSessionContext } from '@/contexts/SessionContext';
 import { isProcessAvailable } from '@/lib/sessionHelpers';
 import { AlertCircle, List } from 'lucide-react';
 import { CallStackFrameList, CallStackFrame } from '@/components/CallStackFrameList';
+import { DockPanel } from '@/components/ui/panel';
 
 interface ContextCallStackViewProps {
   onNavigateToDisassembly?: (address: string) => void;
@@ -115,7 +116,7 @@ export function ContextCallStackView({ onNavigateToDisassembly, onNavigateToMemo
   }
 
   return (
-    <div className="h-full flex flex-col">
+    <DockPanel>
       {callStack.length > 0 ? (
         <>
           {selectedTid !== null && (
@@ -166,6 +167,6 @@ export function ContextCallStackView({ onNavigateToDisassembly, onNavigateToMemo
           </div>
         </div>
       )}
-    </div>
+    </DockPanel>
   );
 }

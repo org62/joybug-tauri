@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { VirtualizedList } from "@/components/ui/virtualized-list";
+import { Page } from "@/components/ui/page";
 import { Trash2, Filter } from "lucide-react";
 import { toast } from "sonner";
 
@@ -104,7 +105,7 @@ export default function Logs() {
   const filteredLogs = reversedFilteredLogs.filtered;
 
   return (
-    <div className="h-[calc(100vh-4.1rem)] flex flex-col p-6">
+    <Page scroll={false} container={false} className="p-6">
       <div className="flex-1 flex flex-col min-h-0">
         <div className="flex-shrink-0 mb-6">
           <div className="flex justify-between items-center">
@@ -179,6 +180,6 @@ export default function Logs() {
           )}
         </div>
       </div>
-    </div>
+    </Page>
   );
-} 
+}

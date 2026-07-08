@@ -1,9 +1,11 @@
 import { useState, useCallback } from "react";
-import { ScrollArea } from "./ui/scroll-area";
 import { Input } from "./ui/input";
+import { Button } from "./ui/button";
 import { ChevronDown, ChevronRight, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useContextMenu } from "@/hooks/useContextMenu";
+import { PanelBody } from "./ui/panel";
+import { ContextMenu, ContextMenuItem, ContextMenuSeparator } from "./ui/context-menu";
 import {
   DndContext,
   DragOverlay,
@@ -81,7 +83,7 @@ export function GroupedItemList<T extends GroupableItem>({
 }: GroupedItemListProps<T>) {
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
 
-  const { contextMenu, contextMenuRef, openContextMenu, closeContextMenu } = useContextMenu<{
+  const { contextMenu, openContextMenu, closeContextMenu } = useContextMenu<{
     groupName: string;
   }>();
 
@@ -261,8 +263,10 @@ export function GroupedItemList<T extends GroupableItem>({
                   {isCollapsed ? <ChevronRight className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
                 </span>
                 {/* Group dot */}
-                <button
-                  className="w-4 h-4 shrink-0 flex items-center justify-center"
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  className="w-4 h-4 p-0 shrink-0 hover:bg-transparent"
                   onClick={(e) => {
                     e.stopPropagation();
                     onEnableGroup(groupName, !allEnabled);
@@ -277,7 +281,7 @@ export function GroupedItemList<T extends GroupableItem>({
                       !allEnabled && !noneEnabled && dotPartial,
                     )}
                   />
-                </button>
+                </Button>
                 {isEditingHeader ? (
                   <Input
                     value={editValue}
@@ -298,7 +302,9 @@ export function GroupedItemList<T extends GroupableItem>({
                     <span>{groupName}</span>
                     <span className="text-muted-foreground ml-1">({groupItems.length})</span>
                     <span className="flex-1" />
-                    <button
+                    <Button
+                      variant="ghost"
+                      size="icon-xs"
                       className="h-4 w-4 shrink-0 opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive transition-opacity"
                       onClick={(e) => {
                         e.stopPropagation();
@@ -307,7 +313,7 @@ export function GroupedItemList<T extends GroupableItem>({
                       title="Remove group"
                     >
                       <Trash2 className="h-3 w-3" />
-                    </button>
+                    </Button>
                   </>
                 )}
               </div>
@@ -352,54 +358,34 @@ export function GroupedItemList<T extends GroupableItem>({
       {items.length === 0 ? (
         renderEmptyState?.()
       ) : (
-        <ScrollArea className="flex-1 min-h-0">
+        <PanelBody>
           {renderGroupedContent()}
-        </ScrollArea>
+        </PanelBody>
       )}
 
       {/* Group context menu */}
       {contextMenu && (
-        <div
-          ref={contextMenuRef}
-          className="fixed z-50 bg-popover text-popover-foreground rounded-md border shadow-md py-1 min-w-[160px]"
-          style={{ left: contextMenu.x, top: contextMenu.y }}
-        >
-          <button
-            className="w-full px-3 py-1.5 text-sm text-left hover:bg-accent hover:text-accent-foreground"
-            onClick={() => {
-              onEnableGroup(contextMenu.data.groupName, true);
-              closeContextMenu();
-            }}
-          >
+        <ContextMenu x={contextMenu.x} y={contextMenu.y} onClose={closeContextMenu}>
+          <ContextMenuItem onClick={() => onEnableGroup(contextMenu.data.groupName, true)}>
             Enable All
-          </button>
-          <button
-            className="w-full px-3 py-1.5 text-sm text-left hover:bg-accent hover:text-accent-foreground"
-            onClick={() => {
-              onEnableGroup(contextMenu.data.groupName, false);
-              closeContextMenu();
-            }}
-          >
+          </ContextMenuItem>
+          <ContextMenuItem onClick={() => onEnableGroup(contextMenu.data.groupName, false)}>
             Disable All
-          </button>
-          <button
-            className="w-full px-3 py-1.5 text-sm text-left hover:bg-accent hover:text-accent-foreground"
-            onClick={() => startGroupRename(contextMenu.data.groupName)}
-          >
+          </ContextMenuItem>
+          <ContextMenuItem onClick={() => startGroupRename(contextMenu.data.groupName)}>
             Rename Group
-          </button>
-          <div className="border-t border-border my-1" />
-          <button
-            className="w-full px-3 py-1.5 text-sm text-left hover:bg-accent hover:text-accent-foreground text-destructive"
+          </ContextMenuItem>
+          <ContextMenuSeparator />
+          <ContextMenuItem
+            destructive
             onClick={() => {
               const groupItems = items.filter((i) => i.group === contextMenu.data.groupName);
               onDeleteGroup(groupItems.map((i) => i.id));
-              closeContextMenu();
             }}
           >
             Remove Group
-          </button>
-        </div>
+          </ContextMenuItem>
+        </ContextMenu>
       )}
     </>
   );

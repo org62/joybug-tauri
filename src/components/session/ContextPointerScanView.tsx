@@ -7,6 +7,8 @@ import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import { VirtualizedList } from '@/components/ui/virtualized-list';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { DockPanel, PanelFooter } from '@/components/ui/panel';
+import { ContextMenu, ContextMenuItem } from '@/components/ui/context-menu';
 import {
   DropdownMenu, DropdownMenuTrigger, DropdownMenuContent,
   DropdownMenuCheckboxItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuItem,
@@ -50,7 +52,7 @@ export const ContextPointerScanView = () => {
   const loadModules = sessionData?.loadModules;
 
   const scan = usePointerScan(sessionId, canUse);
-  const { contextMenu, contextMenuRef, openContextMenu, closeContextMenu } = useContextMenu<{ entry: PointerPathEntry }>();
+  const { contextMenu, openContextMenu, closeContextMenu } = useContextMenu<{ entry: PointerPathEntry }>();
 
   const handleAddBookmark = (p: PointerPathEntry) => {
     // Static base = module base + base offset; the chain offsets follow it.
@@ -62,7 +64,6 @@ export const ContextPointerScanView = () => {
       pointerOffsets: p.offsets,
       baseSymbol: p.base_symbol ?? undefined,
     });
-    closeContextMenu();
   };
 
   // Load the module list so the user can pick which modules to root paths in.
@@ -144,7 +145,7 @@ export const ContextPointerScanView = () => {
   };
 
   return (
-    <div className="absolute inset-0 flex flex-col overflow-hidden">
+    <DockPanel>
       {/* Toolbar (fixed; only the results below scroll) */}
       <div className="p-2 border-b space-y-1 shrink-0">
         <div className="flex gap-1">
@@ -193,12 +194,14 @@ export const ContextPointerScanView = () => {
               <DropdownMenuLabel className="flex items-center justify-between gap-4">
                 <span>Base modules</span>
                 {selected.size > 0 && (
-                  <button
-                    className="text-xs text-muted-foreground hover:text-foreground"
+                  <Button
+                    variant="ghost"
+                    size="xs"
+                    className="text-muted-foreground"
                     onClick={() => scan.setSelectedModuleBases([])}
                   >
                     Clear
-                  </button>
+                  </Button>
                 )}
               </DropdownMenuLabel>
               <DropdownMenuSeparator />
@@ -267,22 +270,22 @@ export const ContextPointerScanView = () => {
               placeholder="Filter offsets (e.g. 0x88 0x10)"
               value={scan.offsetFilter}
               onChange={(e) => scan.setOffsetFilter(e.target.value)}
-              className="flex-1 font-mono h-7 text-xs"
+              inputSize="xs"
+              className="flex-1 font-mono"
               title="Keep only paths whose chain offsets contain every value listed (order-independent)"
             />
             {scan.offsetFilter.trim() && (
               <>
                 <Button
-                  size="sm"
+                  size="xs"
                   variant="outline"
-                  className="h-7 px-2 text-xs"
                   onClick={scan.handleApplyFilter}
                   disabled={!canUse || scan.isScanning || scan.totalCount === 0}
                   title="Discard all non-matching paths and keep only the filtered results as the new set"
                 >
                   Keep {scan.totalCount.toLocaleString()} match{scan.totalCount !== 1 ? 'es' : ''}
                 </Button>
-                <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => scan.setOffsetFilter('')}>
+                <Button size="xs" variant="ghost" onClick={() => scan.setOffsetFilter('')}>
                   Clear
                 </Button>
               </>
@@ -298,54 +301,42 @@ export const ContextPointerScanView = () => {
 
       {/* Pagination (fixed footer) */}
       {scan.totalPages > 1 && (
-        <div className="p-1 border-t shrink-0 flex items-center justify-between text-xs text-muted-foreground">
+        <PanelFooter className="justify-between text-xs text-muted-foreground">
           <Button
-            size="sm"
+            size="icon-xs"
             variant="ghost"
-            className="h-6 px-2"
             disabled={scan.currentPage === 0}
             onClick={() => scan.loadPage(scan.currentPage - 1)}
           >
-            <ChevronLeft className="h-3 w-3" />
+            <ChevronLeft />
           </Button>
           <span>
             Page {scan.currentPage + 1} of {scan.totalPages} ({scan.totalCount.toLocaleString()} total)
           </span>
           <Button
-            size="sm"
+            size="icon-xs"
             variant="ghost"
-            className="h-6 px-2"
             disabled={scan.currentPage >= scan.totalPages - 1}
             onClick={() => scan.loadPage(scan.currentPage + 1)}
           >
-            <ChevronRight className="h-3 w-3" />
+            <ChevronRight />
           </Button>
-        </div>
+        </PanelFooter>
       )}
 
       {/* Context Menu */}
       {contextMenu && (
-        <div
-          ref={contextMenuRef}
-          className="fixed z-50 bg-popover text-popover-foreground rounded-md border shadow-md py-1 min-w-[180px]"
-          style={{ left: contextMenu.x, top: contextMenu.y }}
-        >
+        <ContextMenu x={contextMenu.x} y={contextMenu.y} onClose={closeContextMenu} className="min-w-[180px]">
           {onNavigateToMemory && (
-            <button
-              className="w-full px-3 py-1.5 text-sm text-left hover:bg-accent hover:text-accent-foreground"
-              onClick={() => { onNavigateToMemory(contextMenu.data.entry.resolved); closeContextMenu(); }}
-            >
+            <ContextMenuItem onClick={() => onNavigateToMemory(contextMenu.data.entry.resolved)}>
               Go to Memory View
-            </button>
+            </ContextMenuItem>
           )}
-          <button
-            className="w-full px-3 py-1.5 text-sm text-left hover:bg-accent hover:text-accent-foreground"
-            onClick={() => handleAddBookmark(contextMenu.data.entry)}
-          >
+          <ContextMenuItem onClick={() => handleAddBookmark(contextMenu.data.entry)}>
             Add to Bookmarks (pointer)
-          </button>
-        </div>
+          </ContextMenuItem>
+        </ContextMenu>
       )}
-    </div>
+    </DockPanel>
   );
 };

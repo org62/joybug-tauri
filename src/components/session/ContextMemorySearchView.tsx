@@ -8,7 +8,8 @@ import { formatBytesAsHex } from '@/lib/hexUtils';
 import { useContextMenu } from '@/hooks/useContextMenu';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import { ScrollArea } from '@/components/ui/scroll-area';
+import { DockPanel } from '@/components/ui/panel';
+import { ContextMenu, ContextMenuItem } from '@/components/ui/context-menu';
 import { VirtualizedList } from '@/components/ui/virtualized-list';
 import { Search, HardDrive, Loader2, AlertTriangle } from 'lucide-react';
 
@@ -171,7 +172,7 @@ export const ContextMemorySearchView = () => {
   const onNavigateToMemory = sessionData.onNavigateToMemory;
   const { addBookmark } = sessionData.bookmarkState;
 
-  const { contextMenu, contextMenuRef, openContextMenu, closeContextMenu } = useContextMenu<{ address: string }>();
+  const { contextMenu, openContextMenu, closeContextMenu } = useContextMenu<{ address: string }>();
 
   // Clear results when session changes or no process is available
   useEffect(() => {
@@ -341,11 +342,12 @@ export const ContextMemorySearchView = () => {
   };
 
   return (
-    <div className="flex flex-col h-full">
-      <div className="p-2 border-b space-y-1">
+    <DockPanel>
+      <div className="shrink-0 p-2 border-b space-y-1 select-none">
         <div className="flex gap-1">
           <Input
             type="text"
+            inputSize="xs"
             placeholder={
               !canUse
                 ? 'No process open'
@@ -362,33 +364,25 @@ export const ContextMemorySearchView = () => {
             disabled={!sessionId || !canUse}
           />
           <Button
-            size="sm"
+            size="icon-xs"
             variant="outline"
             onClick={handleSearch}
             disabled={!sessionId || !canUse || isSearching || searchTerm.trim().length === 0}
           >
-            <Search className="h-4 w-4" />
+            <Search />
           </Button>
         </div>
-        <div className="flex items-center gap-2 text-xs">
-          <button
-            className={`px-1.5 py-0.5 rounded ${searchMode === 'hex' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-accent'}`}
-            onClick={() => setSearchMode('hex')}
-          >
-            Hex
-          </button>
-          <button
-            className={`px-1.5 py-0.5 rounded ${searchMode === 'ascii' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-accent'}`}
-            onClick={() => setSearchMode('ascii')}
-          >
-            ASCII
-          </button>
-          <button
-            className={`px-1.5 py-0.5 rounded ${searchMode === 'utf16' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-accent'}`}
-            onClick={() => setSearchMode('utf16')}
-          >
-            UTF-16
-          </button>
+        <div className="flex items-center gap-1 text-xs">
+          {(['hex', 'ascii', 'utf16'] as const).map((mode) => (
+            <Button
+              key={mode}
+              size="xs"
+              variant={searchMode === mode ? 'default' : 'ghost'}
+              onClick={() => setSearchMode(mode)}
+            >
+              {mode === 'hex' ? 'Hex' : mode === 'ascii' ? 'ASCII' : 'UTF-16'}
+            </Button>
+          ))}
           {hasSearched && addresses.length > 0 && (
             <span className="ml-auto text-muted-foreground">
               {addresses.length.toLocaleString()} result{addresses.length !== 1 ? 's' : ''}
@@ -402,53 +396,29 @@ export const ContextMemorySearchView = () => {
         </div>
       </div>
       <div className="flex-1 min-h-0">
-        {addresses.length > 0 ? renderContent() : (
-          <ScrollArea className="h-full">
-            {renderContent()}
-          </ScrollArea>
-        )}
+        {renderContent()}
       </div>
 
       {/* Context Menu */}
       {contextMenu && (
-        <div
-          ref={contextMenuRef}
-          className="fixed z-50 bg-popover text-popover-foreground rounded-md border shadow-md py-1 min-w-[180px]"
-          style={{ left: contextMenu.x, top: contextMenu.y }}
-        >
+        <ContextMenu x={contextMenu.x} y={contextMenu.y} onClose={closeContextMenu} className="min-w-[180px]">
           {onNavigateToDisassembly && (
-            <button
-              className="w-full px-3 py-1.5 text-sm text-left hover:bg-accent hover:text-accent-foreground"
-              onClick={() => {
-                onNavigateToDisassembly(contextMenu.data.address);
-                closeContextMenu();
-              }}
-            >
+            <ContextMenuItem onClick={() => onNavigateToDisassembly(contextMenu.data.address)}>
               Go to Disassembly
-            </button>
+            </ContextMenuItem>
           )}
           {onNavigateToMemory && (
-            <button
-              className="w-full px-3 py-1.5 text-sm text-left hover:bg-accent hover:text-accent-foreground"
-              onClick={() => {
-                onNavigateToMemory(contextMenu.data.address);
-                closeContextMenu();
-              }}
-            >
+            <ContextMenuItem onClick={() => onNavigateToMemory(contextMenu.data.address)}>
               Go to Memory View
-            </button>
+            </ContextMenuItem>
           )}
-          <button
-            className="w-full px-3 py-1.5 text-sm text-left hover:bg-accent hover:text-accent-foreground"
-            onClick={() => {
-              addBookmark({ kind: 'value', address: contextMenu.data.address, valueType: 'U32' });
-              closeContextMenu();
-            }}
+          <ContextMenuItem
+            onClick={() => addBookmark({ kind: 'value', address: contextMenu.data.address, valueType: 'U32' })}
           >
             Add to Bookmarks
-          </button>
-        </div>
+          </ContextMenuItem>
+        </ContextMenu>
       )}
-    </div>
+    </DockPanel>
   );
 };

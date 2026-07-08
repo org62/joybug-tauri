@@ -4,6 +4,7 @@ import { listen } from '@tauri-apps/api/event';
 import { useSessionContext } from '@/contexts/SessionContext';
 import { formatTauriError } from '@/lib/sessionHelpers';
 import { AlertCircle, MemoryStick, Loader2 } from 'lucide-react';
+import { DockPanel } from '@/components/ui/panel';
 import { VirtualizedList } from '@/components/ui/virtualized-list';
 import {
   Select,
@@ -129,23 +130,25 @@ export function ContextMemoryRegionsView({ onNavigateToAddress }: ContextMemoryR
 
   if (!sessionData?.session) {
     return (
-      <div className="flex flex-col items-center justify-center h-full text-muted-foreground p-4">
-        <div className="text-center">
-          <AlertCircle className="h-12 w-12 mx-auto mb-4 opacity-50" />
-          <p className="text-base font-medium">No session available</p>
+      <DockPanel>
+        <div className="flex flex-col items-center justify-center h-full text-muted-foreground p-4">
+          <div className="text-center">
+            <AlertCircle className="h-12 w-12 mx-auto mb-4 opacity-50" />
+            <p className="text-base font-medium">No session available</p>
+          </div>
         </div>
-      </div>
+      </DockPanel>
     );
   }
 
   return (
-    <div className="absolute inset-0 flex flex-col overflow-hidden">
+    <DockPanel>
       {/* Toolbar with filters */}
       <div className="p-2 border-b flex items-center gap-2 flex-wrap shrink-0">
         {isLoading && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
 
         <Select value={stateFilter} onValueChange={(v) => setStateFilter(v as StateFilter)}>
-          <SelectTrigger size="sm" className="w-28">
+          <SelectTrigger size="xs" className="w-28">
             <SelectValue placeholder="State" />
           </SelectTrigger>
           <SelectContent>
@@ -157,7 +160,7 @@ export function ContextMemoryRegionsView({ onNavigateToAddress }: ContextMemoryR
         </Select>
 
         <Select value={typeFilter} onValueChange={(v) => setTypeFilter(v as TypeFilter)}>
-          <SelectTrigger size="sm" className="w-28">
+          <SelectTrigger size="xs" className="w-28">
             <SelectValue placeholder="Type" />
           </SelectTrigger>
           <SelectContent>
@@ -240,6 +243,6 @@ export function ContextMemoryRegionsView({ onNavigateToAddress }: ContextMemoryR
           )}
         </div>
       )}
-    </div>
+    </DockPanel>
   );
 }

@@ -6,6 +6,12 @@ import { cn } from "@/lib/utils"
 interface ScrollAreaProps extends React.ComponentProps<typeof ScrollAreaPrimitive.Root> {
   onScroll?: React.UIEventHandler<HTMLDivElement>;
   viewportRef?: React.Ref<HTMLDivElement>;
+  /**
+   * Which scrollbars to render. Defaults to "vertical". Use "both" for wide
+   * tables that need horizontal scrolling (the primitive supports it but the
+   * default never mounts a horizontal bar).
+   */
+  orientation?: "vertical" | "horizontal" | "both";
 }
 
 function ScrollArea({
@@ -13,6 +19,7 @@ function ScrollArea({
   children,
   onScroll,
   viewportRef,
+  orientation = "vertical",
   ...props
 }: ScrollAreaProps) {
   return (
@@ -29,7 +36,10 @@ function ScrollArea({
       >
         {children}
       </ScrollAreaPrimitive.Viewport>
-      <ScrollBar />
+      {(orientation === "vertical" || orientation === "both") && <ScrollBar />}
+      {(orientation === "horizontal" || orientation === "both") && (
+        <ScrollBar orientation="horizontal" />
+      )}
       <ScrollAreaPrimitive.Corner />
     </ScrollAreaPrimitive.Root>
   )

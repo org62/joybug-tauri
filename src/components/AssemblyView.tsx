@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
-import { ScrollArea } from "./ui/scroll-area";
 import { VirtualizedList } from "./ui/virtualized-list";
+import { DockPanel, PanelToolbar, PanelBody } from "@/components/ui/panel";
+import { ContextMenu, ContextMenuItem } from "@/components/ui/context-menu";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Switch } from "./ui/switch";
@@ -58,7 +59,7 @@ export function AssemblyView({ sessionId, isPaused, address, registers, resolveS
   // Resizable column widths
   const { columnWidths, handleColumnResizeStart } = useColumnWidths<keyof ColumnWidths>(COLUMN_WIDTHS_KEY, DEFAULT_COLUMN_WIDTHS);
   // Context menu for right-click
-  const { contextMenu, contextMenuRef, openContextMenu, closeContextMenu } = useContextMenu<{ address: string; mnemonic: string; op_str: string }>();
+  const { contextMenu, openContextMenu, closeContextMenu } = useContextMenu<{ address: string; mnemonic: string; op_str: string }>();
 
   const {
     instructions,
@@ -225,9 +226,9 @@ export function AssemblyView({ sessionId, isPaused, address, registers, resolveS
   const showInstructions = instructions.length > 0;
 
   return (
-    <div ref={containerRef} data-capture-mouse-nav className="absolute inset-0 flex flex-col overflow-hidden">
+    <DockPanel ref={containerRef} data-capture-mouse-nav>
       {/* Toolbar */}
-      <div className="flex items-center gap-2 p-2 border-b border-border bg-muted/30 shrink-0">
+      <PanelToolbar className="gap-2 p-2">
         {/* Go-to address input */}
         <div className="flex items-center gap-1">
           <Input
@@ -235,9 +236,10 @@ export function AssemblyView({ sessionId, isPaused, address, registers, resolveS
             value={addressInput}
             onChange={(e) => setAddressInput(sanitizeAddressInput(e.target.value))}
             onKeyDown={(e) => e.key === "Enter" && handleGoTo()}
-            className="w-48 h-7 text-xs font-mono"
+            inputSize="xs"
+            className="w-48 font-mono"
           />
-          <Button variant="outline" size="sm" onClick={handleGoTo} className="h-7 px-2">
+          <Button variant="outline" size="xs" onClick={handleGoTo}>
             Go
           </Button>
         </div>
@@ -246,36 +248,33 @@ export function AssemblyView({ sessionId, isPaused, address, registers, resolveS
         <div className="flex items-center gap-1">
           <Button
             variant="outline"
-            size="icon"
-            className="h-7 w-7"
+            size="icon-xs"
             onClick={goBack}
             disabled={!canGoBack}
             title={`Go back (${getKeybinding("assembly.goBack")})`}
           >
-            <ArrowLeft className="h-3 w-3" />
+            <ArrowLeft />
           </Button>
           <Button
             variant="outline"
-            size="icon"
-            className="h-7 w-7"
+            size="icon-xs"
             onClick={goForward}
             disabled={!canGoForward}
             title={`Go forward (${getKeybinding("assembly.goForward")})`}
           >
-            <ArrowRight className="h-3 w-3" />
+            <ArrowRight />
           </Button>
         </div>
 
         {/* Refresh */}
         <Button
           variant="outline"
-          size="icon"
-          className="h-7 w-7"
+          size="icon-xs"
           onClick={refresh}
           disabled={isLoading}
           title="Refresh"
         >
-          <RefreshCw className={cn("h-3 w-3", isLoading && "animate-spin")} />
+          <RefreshCw className={cn(isLoading && "animate-spin")} />
         </Button>
 
         {/* Spacer */}
@@ -291,7 +290,7 @@ export function AssemblyView({ sessionId, isPaused, address, registers, resolveS
             className="h-4 w-7"
           />
         </div>
-      </div>
+      </PanelToolbar>
 
       {/* Inline assembly input */}
       {assembleTarget && (
@@ -304,7 +303,8 @@ export function AssemblyView({ sessionId, isPaused, address, registers, resolveS
               ref={assembleInputRef}
               defaultValue={assembleTarget.defaultText}
               placeholder="e.g. nop, mov eax, 1"
-              className={cn("flex-1 h-7 text-xs font-mono", assembleError && "border-red-500 focus-visible:ring-red-500")}
+              inputSize="xs"
+              className={cn("flex-1 font-mono", assembleError && "border-red-500 focus-visible:ring-red-500")}
               onChange={() => { if (assembleError) setAssembleError(null); }}
               onKeyDown={async (e) => {
                 if (e.key === "Enter") {
@@ -340,8 +340,7 @@ export function AssemblyView({ sessionId, isPaused, address, registers, resolveS
             </div>
             <Button
               variant="ghost"
-              size="sm"
-              className="h-7 px-2 text-xs"
+              size="xs"
               onClick={() => { setAssembleError(null); setAssembleTarget(null); }}
             >
               Cancel
@@ -410,7 +409,7 @@ export function AssemblyView({ sessionId, isPaused, address, registers, resolveS
           }}
         />
       ) : (
-        <ScrollArea className="flex-1 min-h-0">
+        <PanelBody>
           {showEmptyState && (
             <div className="flex flex-col items-center justify-center h-full text-muted-foreground p-4">
               <div className="text-center">
@@ -436,7 +435,7 @@ export function AssemblyView({ sessionId, isPaused, address, registers, resolveS
               </div>
             </div>
           )}
-        </ScrollArea>
+        </PanelBody>
       )}
 
       {/* Quick Emulation footer */}
@@ -444,74 +443,56 @@ export function AssemblyView({ sessionId, isPaused, address, registers, resolveS
 
       {/* Context Menu */}
       {contextMenu && (
-        <div
-          ref={contextMenuRef}
-          className="fixed z-50 bg-popover text-popover-foreground rounded-md border shadow-md py-1 min-w-[180px]"
-          style={{ left: contextMenu.x, top: contextMenu.y }}
-        >
+        <ContextMenu x={contextMenu.x} y={contextMenu.y} onClose={closeContextMenu} className="min-w-[180px]">
           {onToggleBreakpoint && (
-            <button
-              className="w-full px-3 py-1.5 text-sm text-left hover:bg-accent hover:text-accent-foreground flex items-center gap-2"
-              onClick={() => {
-                onToggleBreakpoint(contextMenu.data.address);
-                closeContextMenu();
-              }}
+            <ContextMenuItem
+              icon={<Circle className="text-red-500" />}
+              onClick={() => onToggleBreakpoint(contextMenu.data.address)}
             >
-              <Circle className="h-4 w-4 text-red-500" />
               {breakpointAddresses?.has(contextMenu.data.address.toUpperCase()) ? "Remove Breakpoint" : "Toggle Breakpoint"}
-            </button>
+            </ContextMenuItem>
           )}
           {onSetHardwareBreakpoint && (
-            <button
-              className="w-full px-3 py-1.5 text-sm text-left hover:bg-accent hover:text-accent-foreground flex items-center gap-2"
-              onClick={() => {
-                onSetHardwareBreakpoint(contextMenu.data.address, "Execute", 1);
-                closeContextMenu();
-              }}
+            <ContextMenuItem
+              icon={<CircleDot className="text-orange-500" />}
+              onClick={() => onSetHardwareBreakpoint(contextMenu.data.address, "Execute", 1)}
             >
-              <CircleDot className="h-4 w-4 text-orange-500" />
               Add Hardware Breakpoint
-            </button>
+            </ContextMenuItem>
           )}
           {onAssemblePatch && (
-            <button
-              className="w-full px-3 py-1.5 text-sm text-left hover:bg-accent hover:text-accent-foreground flex items-center gap-2"
+            <ContextMenuItem
+              icon={<Wrench className="text-purple-500" />}
               onClick={() => {
                 const defaultText = `${contextMenu.data.mnemonic} ${contextMenu.data.op_str}`.trim();
                 setAssembleTarget({ address: contextMenu.data.address, defaultText });
-                closeContextMenu();
               }}
             >
-              <Wrench className="h-4 w-4 text-purple-500" />
               Assemble...
-            </button>
+            </ContextMenuItem>
           )}
           {onAddBookmark && (
-            <button
-              className="w-full px-3 py-1.5 text-sm text-left hover:bg-accent hover:text-accent-foreground flex items-center gap-2"
+            <ContextMenuItem
+              icon={<Bookmark className="text-blue-400" />}
               onClick={() => {
                 const asm = `${contextMenu.data.mnemonic} ${contextMenu.data.op_str}`.trim();
                 onAddBookmark(contextMenu.data.address, asm);
-                closeContextMenu();
               }}
             >
-              <Bookmark className="h-4 w-4 text-blue-400" />
               Add to Bookmarks
-            </button>
+            </ContextMenuItem>
           )}
-          <button
-            className="w-full px-3 py-1.5 text-sm text-left hover:bg-accent hover:text-accent-foreground flex items-center gap-2"
+          <ContextMenuItem
+            icon={<Copy className="text-muted-foreground" />}
             onClick={async () => {
               await navigator.clipboard.writeText(contextMenu.data.address);
-              closeContextMenu();
             }}
           >
-            <Copy className="h-4 w-4 text-muted-foreground" />
             Copy Address
-          </button>
-        </div>
+          </ContextMenuItem>
+        </ContextMenu>
       )}
-    </div>
+    </DockPanel>
   );
 }
 

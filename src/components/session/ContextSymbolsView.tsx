@@ -5,6 +5,8 @@ import { invokeToggleBreakpoint } from '@/lib/sessionHelpers';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { VirtualizedList } from '@/components/ui/virtualized-list';
+import { DockPanel } from '@/components/ui/panel';
+import { ContextMenu, ContextMenuItem } from '@/components/ui/context-menu';
 import { Search, Code, Loader2 } from 'lucide-react';
 
 export const ContextSymbolsView = () => {
@@ -20,7 +22,7 @@ export const ContextSymbolsView = () => {
   const onNavigateToDisassembly = sessionData.onNavigateToDisassembly;
   const onNavigateToMemory = sessionData.onNavigateToMemory;
 
-  const { contextMenu, contextMenuRef, openContextMenu, closeContextMenu } = useContextMenu<{ va: string; is_function: boolean }>();
+  const { contextMenu, openContextMenu, closeContextMenu } = useContextMenu<{ va: string; is_function: boolean }>();
 
   const toggleBreakpoint = useCallback(async (address: string) => {
     if (!sessionId) return;
@@ -144,7 +146,7 @@ export const ContextSymbolsView = () => {
   };
 
   return (
-    <div className="absolute inset-0 flex flex-col overflow-hidden">
+    <DockPanel>
       <div className="p-2 border-b shrink-0">
         <Input
           type="text"
@@ -168,44 +170,22 @@ export const ContextSymbolsView = () => {
 
       {/* Context Menu */}
       {contextMenu && (
-        <div
-          ref={contextMenuRef}
-          className="fixed z-50 bg-popover text-popover-foreground rounded-md border shadow-md py-1 min-w-[180px]"
-          style={{ left: contextMenu.x, top: contextMenu.y }}
-        >
+        <ContextMenu x={contextMenu.x} y={contextMenu.y} onClose={closeContextMenu} className="min-w-[180px]">
           {onNavigateToDisassembly && (
-            <button
-              className="w-full px-3 py-1.5 text-sm text-left hover:bg-accent hover:text-accent-foreground"
-              onClick={() => {
-                onNavigateToDisassembly(contextMenu.data.va);
-                closeContextMenu();
-              }}
-            >
+            <ContextMenuItem onClick={() => onNavigateToDisassembly(contextMenu.data.va)}>
               Go to Disassembly
-            </button>
+            </ContextMenuItem>
           )}
           {onNavigateToMemory && (
-            <button
-              className="w-full px-3 py-1.5 text-sm text-left hover:bg-accent hover:text-accent-foreground"
-              onClick={() => {
-                onNavigateToMemory(contextMenu.data.va);
-                closeContextMenu();
-              }}
-            >
+            <ContextMenuItem onClick={() => onNavigateToMemory(contextMenu.data.va)}>
               Go to Memory View
-            </button>
+            </ContextMenuItem>
           )}
-          <button
-            className="w-full px-3 py-1.5 text-sm text-left hover:bg-accent hover:text-accent-foreground"
-            onClick={() => {
-              toggleBreakpoint(contextMenu.data.va);
-              closeContextMenu();
-            }}
-          >
+          <ContextMenuItem onClick={() => toggleBreakpoint(contextMenu.data.va)}>
             Toggle Breakpoint
-          </button>
-        </div>
+          </ContextMenuItem>
+        </ContextMenu>
       )}
-    </div>
+    </DockPanel>
   );
 };

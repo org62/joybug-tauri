@@ -4,6 +4,8 @@ import { useMemoryScanner, FIRST_SCAN_COMPARE_TYPES, NEXT_SCAN_COMPARE_TYPES, ne
 import { useContextMenu } from '@/hooks/useContextMenu';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
+import { DockPanel, PanelFooter } from '@/components/ui/panel';
+import { ContextMenu, ContextMenuItem } from '@/components/ui/context-menu';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
@@ -45,7 +47,7 @@ export const ContextMemoryScannerView = () => {
   const { addBookmark } = sessionData.bookmarkState;
 
   const scanner = useMemoryScanner(sessionId, canUse, isLive);
-  const { contextMenu, contextMenuRef, openContextMenu, closeContextMenu } = useContextMenu<{ address: string }>();
+  const { contextMenu, openContextMenu, closeContextMenu } = useContextMenu<{ address: string }>();
 
   const compareTypes = scanner.isFirstScan ? FIRST_SCAN_COMPARE_TYPES : NEXT_SCAN_COMPARE_TYPES;
   const showValue = needsValue(scanner.compareType);
@@ -70,7 +72,6 @@ export const ContextMemoryScannerView = () => {
 
   const handleAddBookmark = (address: string) => {
     addBookmark({ kind: 'value', address, valueType: scanner.valueType });
-    closeContextMenu();
   };
 
   const renderContent = () => {
@@ -164,27 +165,28 @@ export const ContextMemoryScannerView = () => {
   };
 
   return (
-    <div className="flex flex-col h-full">
+    <DockPanel>
       {/* Toolbar */}
-      <div className="p-2 border-b space-y-1">
+      <div className="shrink-0 p-2 border-b space-y-1 select-none">
         {/* Value type selector */}
         <div className="flex items-center gap-1 text-xs">
           {VALUE_TYPES.map((vt) => (
-            <button
+            <Button
               key={vt}
-              className={`px-1.5 py-0.5 rounded ${scanner.valueType === vt ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-accent'}`}
+              size="xs"
+              variant={scanner.valueType === vt ? 'default' : 'ghost'}
               onClick={() => scanner.setValueType(vt)}
               disabled={!scanner.isFirstScan}
             >
               {vt}
-            </button>
+            </Button>
           ))}
         </div>
 
         {/* Compare type + value inputs */}
         <div className="flex gap-1">
           <Select value={scanner.compareType} onValueChange={(v) => scanner.setCompareType(v as ScanCompareType)} disabled={!canUse}>
-            <SelectTrigger size="sm" className="flex-shrink-0">
+            <SelectTrigger size="xs" className="flex-shrink-0">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -196,6 +198,7 @@ export const ContextMemoryScannerView = () => {
           {showValue && (
             <Input
               type="text"
+              inputSize="xs"
               placeholder={showValue2 ? 'Min' : isDeltaCompare ? 'Amount' : 'Value (dec or 0x hex)'}
               value={scanner.value}
               onChange={(e) => scanner.setValue(e.target.value)}
@@ -207,6 +210,7 @@ export const ContextMemoryScannerView = () => {
           {showValue2 && (
             <Input
               type="text"
+              inputSize="xs"
               placeholder="Max"
               value={scanner.value2}
               onChange={(e) => scanner.setValue2(e.target.value)}
@@ -239,6 +243,7 @@ export const ContextMemoryScannerView = () => {
             </TooltipProvider>
             <Input
               type="text"
+              inputSize="xs"
               placeholder={tolerancePlaceholder}
               value={scanner.floatTolerance}
               onChange={(e) => scanner.setFloatTolerance(e.target.value)}
@@ -253,7 +258,7 @@ export const ContextMemoryScannerView = () => {
         <div className="flex gap-1 items-center">
           {scanner.isFirstScan ? (
             <Button
-              size="sm"
+              size="xs"
               onClick={scanner.handleFirstScan}
               disabled={!canUse || scanner.isScanning || (showValue && !scanner.value.trim())}
             >
@@ -261,7 +266,7 @@ export const ContextMemoryScannerView = () => {
             </Button>
           ) : (
             <Button
-              size="sm"
+              size="xs"
               onClick={scanner.handleNextScan}
               disabled={!canUse || scanner.isScanning || (showValue && !scanner.value.trim())}
             >
@@ -269,7 +274,7 @@ export const ContextMemoryScannerView = () => {
             </Button>
           )}
           <Button
-            size="sm"
+            size="xs"
             variant="outline"
             onClick={scanner.handleNewScan}
             disabled={scanner.isFirstScan && scanner.scanId === null}
@@ -299,62 +304,47 @@ export const ContextMemoryScannerView = () => {
 
       {/* Pagination */}
       {scanner.totalPages > 1 && (
-        <div className="p-1 border-t flex items-center justify-between text-xs text-muted-foreground">
+        <PanelFooter className="justify-between text-xs text-muted-foreground">
           <Button
-            size="sm"
+            size="icon-xs"
             variant="ghost"
-            className="h-6 px-2"
             disabled={scanner.currentPage === 0}
             onClick={() => scanner.loadPage(scanner.currentPage - 1)}
           >
-            <ChevronLeft className="h-3 w-3" />
+            <ChevronLeft />
           </Button>
           <span>
             Page {scanner.currentPage + 1} of {scanner.totalPages} ({scanner.totalCount.toLocaleString()} total)
           </span>
           <Button
-            size="sm"
+            size="icon-xs"
             variant="ghost"
-            className="h-6 px-2"
             disabled={scanner.currentPage >= scanner.totalPages - 1}
             onClick={() => scanner.loadPage(scanner.currentPage + 1)}
           >
-            <ChevronRight className="h-3 w-3" />
+            <ChevronRight />
           </Button>
-        </div>
+        </PanelFooter>
       )}
 
       {/* Context Menu */}
       {contextMenu && (
-        <div
-          ref={contextMenuRef}
-          className="fixed z-50 bg-popover text-popover-foreground rounded-md border shadow-md py-1 min-w-[180px]"
-          style={{ left: contextMenu.x, top: contextMenu.y }}
-        >
+        <ContextMenu x={contextMenu.x} y={contextMenu.y} onClose={closeContextMenu} className="min-w-[180px]">
           {onNavigateToDisassembly && (
-            <button
-              className="w-full px-3 py-1.5 text-sm text-left hover:bg-accent hover:text-accent-foreground"
-              onClick={() => { onNavigateToDisassembly(contextMenu.data.address); closeContextMenu(); }}
-            >
+            <ContextMenuItem onClick={() => onNavigateToDisassembly(contextMenu.data.address)}>
               Go to Disassembly
-            </button>
+            </ContextMenuItem>
           )}
           {onNavigateToMemory && (
-            <button
-              className="w-full px-3 py-1.5 text-sm text-left hover:bg-accent hover:text-accent-foreground"
-              onClick={() => { onNavigateToMemory(contextMenu.data.address); closeContextMenu(); }}
-            >
+            <ContextMenuItem onClick={() => onNavigateToMemory(contextMenu.data.address)}>
               Go to Memory View
-            </button>
+            </ContextMenuItem>
           )}
-          <button
-            className="w-full px-3 py-1.5 text-sm text-left hover:bg-accent hover:text-accent-foreground"
-            onClick={() => handleAddBookmark(contextMenu.data.address)}
-          >
+          <ContextMenuItem onClick={() => handleAddBookmark(contextMenu.data.address)}>
             Add to Bookmarks
-          </button>
-        </div>
+          </ContextMenuItem>
+        </ContextMenu>
       )}
-    </div>
+    </DockPanel>
   );
 };

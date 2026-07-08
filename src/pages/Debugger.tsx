@@ -19,6 +19,7 @@ import {
 } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Page } from "@/components/ui/page";
 import { Plus, Play, Eye, Pencil, Trash2, XSquare, FileCode2, FolderOpen, Unplug, RefreshCw, Search } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { toast } from "sonner";
@@ -553,7 +554,7 @@ export default function Debugger() {
   };
 
   return (
-    <div className="container mx-auto px-4 py-8">
+    <Page>
       <div className="max-w-6xl mx-auto space-y-6">
         <div className="flex items-center justify-between">
           <div>
@@ -719,18 +720,19 @@ export default function Debugger() {
                   ) : (
                     <div className="divide-y">
                       {filteredProcesses.map((proc) => (
-                        <button
+                        <Button
                           key={proc.pid}
                           type="button"
+                          variant="ghost"
                           onClick={() => handleAttachToProcess(proc)}
                           disabled={attachingPid !== null}
-                          className="flex w-full items-center justify-between px-3 py-2 text-left text-sm hover:bg-accent disabled:opacity-50"
+                          className="flex w-full items-center justify-between h-auto px-3 py-2 rounded-none text-left text-sm font-normal"
                         >
                           <span className="truncate font-medium">{proc.name}</span>
                           <span className="ml-3 shrink-0 text-xs text-muted-foreground">
                             {attachingPid === proc.pid ? "Attaching…" : `PID ${proc.pid}`}
                           </span>
-                        </button>
+                        </Button>
                       ))}
                     </div>
                   )}
@@ -854,6 +856,6 @@ export default function Debugger() {
           </div>
         )}
       </div>
-    </div>
+    </Page>
   );
-} 
+}

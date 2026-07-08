@@ -82,13 +82,12 @@ export const SessionHeader: React.FC<SessionHeaderProps> = ({
         </div>
       </div>
 
-      <div className="flex items-center">
+      <div className="flex items-center gap-2">
         {canStart && (
           <Button
             onClick={handleStart}
             size="sm"
             variant="outline"
-            className="mr-4"
           >
             <Play className="h-4 w-4 mr-2" />
             Start
@@ -102,14 +101,13 @@ export const SessionHeader: React.FC<SessionHeaderProps> = ({
             variant="default"
             title="Pause (Ctrl+Break)"
             aria-label="Pause"
-            className="ml-4"
           >
             <Pause className="h-4 w-4" />
           </Button>
         )}
         {/* Step buttons group with tighter spacing */}
         {!canStart && !isOpen && (
-          <div className="inline-flex items-center gap-1 ml-4">
+          <div className="inline-flex items-center gap-1">
             <div className="inline-flex">
               <Button
                 onClick={handleGo}
@@ -180,6 +178,9 @@ export const SessionHeader: React.FC<SessionHeaderProps> = ({
           </div>
         )}
 
+        {/* Separator between debug/step controls and session-lifecycle actions */}
+        {!canStart && !isOpen && <div className="w-px h-6 bg-border mx-1" />}
+
         {!canStart && (
           <Button
             onClick={isOpen ? handleAttach : handleDetach}
@@ -189,7 +190,6 @@ export const SessionHeader: React.FC<SessionHeaderProps> = ({
             title={isOpen
               ? "Attach the debugger to this process to enable breakpoints and stepping"
               : "Detach from the target and leave it running (available while paused)"}
-            className="ml-4"
           >
             <Unplug className="h-4 w-4 mr-2" />
             {isOpen
@@ -204,12 +204,14 @@ export const SessionHeader: React.FC<SessionHeaderProps> = ({
             disabled={!canStop || busyAction === "stop"}
             size="sm"
             variant="destructive"
-            className="ml-4 mr-4"
           >
             <Square className="h-4 w-4 mr-2" />
             {busyAction === "stop" ? "Stopping..." : "Stop"}
           </Button>
         )}
+
+        {/* Separator before the Windows menu */}
+        <div className="w-px h-6 bg-border mx-1" />
 
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
