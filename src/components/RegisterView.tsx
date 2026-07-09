@@ -1,5 +1,13 @@
 import { useCallback } from "react";
-import { DockPanel, PanelBody } from "@/components/ui/panel";
+import { DockPanel, PanelToolbar, PanelBody } from "@/components/ui/panel";
+import { Button } from "@/components/ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { DereferenceEntry } from "@/lib/hexUtils";
 import { RegisterDereferenceDisplay } from "@/components/DereferenceDisplay";
 import { cn } from "@/lib/utils";
@@ -12,6 +20,12 @@ interface Serializablex64ThreadContext {
   r8: string; r9: string; r10: string; r11: string;
   r12: string; r13: string; r14: string; r15: string;
   eflags: string;
+  xmm0: string; xmm1: string; xmm2: string; xmm3: string;
+  xmm4: string; xmm5: string; xmm6: string; xmm7: string;
+  xmm8: string; xmm9: string; xmm10: string; xmm11: string;
+  xmm12: string; xmm13: string; xmm14: string; xmm15: string;
+  dr0: string; dr1: string; dr2: string; dr3: string;
+  dr6: string; dr7: string;
 }
 
 interface SerializableArm64ThreadContext {
@@ -31,11 +45,21 @@ export type SerializableThreadContext =
   | Serializablex64ThreadContext
   | SerializableArm64ThreadContext;
 
+/** How to render the 128-bit XMM registers. */
+export type XmmFormat = "hex" | "f32" | "f64";
+
 interface RegisterViewProps {
   context: SerializableThreadContext;
   getDereferenceForAddress?: (address: string) => DereferenceEntry | undefined;
   changedRegisters?: Set<string>;
   onRegisterEdit?: (field: string, hexValue: string) => void;
+  // x64-only view options (persisted by the parent). Ignored on ARM64.
+  showXmm?: boolean;
+  showDr?: boolean;
+  xmmFormat?: XmmFormat;
+  onToggleXmm?: () => void;
+  onToggleDr?: () => void;
+  onXmmFormatChange?: (format: XmmFormat) => void;
 }
 
 interface RegisterPairProps {
@@ -45,17 +69,18 @@ interface RegisterPairProps {
   dereferenceEntry?: DereferenceEntry;
   showDereference?: boolean;
   isChanged?: boolean;
+  nameWidthClass: string;
   onRegisterEdit?: (field: string, hexValue: string) => void;
 }
 
-const RegisterPair = ({ name, field, value, dereferenceEntry, showDereference = true, isChanged, onRegisterEdit }: RegisterPairProps) => {
+const RegisterPair = ({ name, field, value, dereferenceEntry, showDereference = true, isChanged, nameWidthClass, onRegisterEdit }: RegisterPairProps) => {
   const handleDoubleClick = useCallback(() => {
     onRegisterEdit?.(field, value);
   }, [onRegisterEdit, field, value]);
 
   return (
     <div className="flex items-center py-0.5 px-1 hover:bg-muted/50 rounded-sm text-xs min-w-0">
-      <span className="w-8 font-semibold text-muted-foreground shrink-0">{name}</span>
+      <span className={cn("font-semibold text-muted-foreground shrink-0", nameWidthClass)}>{name}</span>
       <span
         className={cn(
           "font-mono ml-1 shrink-0",
@@ -94,6 +119,19 @@ export const X64_REGISTERS: RegisterDef[] = [
   { name: "EFL", field: "eflags", showDereference: false },
 ];
 
+export const X64_XMM_REGISTERS: RegisterDef[] = Array.from({ length: 16 }, (_, i) => ({
+  name: `XMM${i}`,
+  field: `xmm${i}`,
+  showDereference: false,
+}));
+
+export const X64_DEBUG_REGISTERS: RegisterDef[] = [
+  { name: "DR0", field: "dr0" }, { name: "DR1", field: "dr1" },
+  { name: "DR2", field: "dr2" }, { name: "DR3", field: "dr3" },
+  { name: "DR6", field: "dr6", showDereference: false },
+  { name: "DR7", field: "dr7", showDereference: false },
+];
+
 export const ARM64_REGISTERS: RegisterDef[] = [
   { name: "X0", field: "x0" }, { name: "X1", field: "x1" },
   { name: "X2", field: "x2" }, { name: "X3", field: "x3" },
@@ -115,48 +153,159 @@ export const ARM64_REGISTERS: RegisterDef[] = [
   { name: "CPSR", field: "cpsr", showDereference: false },
 ];
 
-function renderRegisterList(
+function formatFloat(v: number): string {
+  if (Number.isNaN(v)) return "NaN";
+  if (!Number.isFinite(v)) return v > 0 ? "+Inf" : "-Inf";
+  if (v === 0) return Object.is(v, -0) ? "-0" : "0";
+  // Trim to 7 significant digits, then drop trailing-zero noise.
+  return parseFloat(v.toPrecision(7)).toString();
+}
+
+/**
+ * Decode a 128-bit XMM hex string ("0x" + 32 digits, high 64 bits then low)
+ * into its f32 (×4) or f64 (×2) lanes.
+ */
+function xmmLanes(hex: string, format: "f32" | "f64"): string[] {
+  const s = hex.replace(/^0x/i, "").padStart(32, "0").slice(-32);
+  const dv = new DataView(new ArrayBuffer(16));
+  dv.setBigUint64(0, BigInt("0x" + s.slice(16)), true); // low 64 bits
+  dv.setBigUint64(8, BigInt("0x" + s.slice(0, 16)), true); // high 64 bits
+  if (format === "f32") {
+    return [0, 1, 2, 3].map((i) => formatFloat(dv.getFloat32(i * 4, true)));
+  }
+  return [0, 1].map((i) => formatFloat(dv.getFloat64(i * 8, true)));
+}
+
+/** Small muted section divider inside the register list, with optional right-aligned control. */
+const SectionLabel = ({ children, right }: { children: React.ReactNode; right?: React.ReactNode }) => (
+  <div className="mt-1.5 mb-0.5 px-1 border-t border-border pt-1 flex items-center justify-between gap-2">
+    <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground select-none">
+      {children}
+    </span>
+    {right}
+  </div>
+);
+
+function renderRegisterRows(
   registers: Record<string, string>,
   defs: RegisterDef[],
   getDeref: (value: string) => DereferenceEntry | undefined,
   isChanged: (field: string) => boolean,
+  nameWidthClass: string,
   onRegisterEdit?: (field: string, hexValue: string) => void,
 ) {
-  return (
-    <DockPanel>
-      <PanelBody>
-        <div className="p-1 flex flex-col gap-0.5">
-          {defs.map(({ name, field, showDereference }) => {
-          const value = registers[field];
-          return (
-            <RegisterPair
-              key={field}
-              name={name}
-              field={field}
-              value={value}
-              dereferenceEntry={showDereference !== false ? getDeref(value) : undefined}
-              showDereference={showDereference}
-              isChanged={isChanged(field)}
-              onRegisterEdit={onRegisterEdit}
-            />
-          );
-          })}
-        </div>
-      </PanelBody>
-    </DockPanel>
-  );
+  return defs.map(({ name, field, showDereference }) => {
+    const value = registers[field];
+    return (
+      <RegisterPair
+        key={field}
+        name={name}
+        field={field}
+        value={value}
+        dereferenceEntry={showDereference !== false ? getDeref(value) : undefined}
+        showDereference={showDereference}
+        isChanged={isChanged(field)}
+        nameWidthClass={nameWidthClass}
+        onRegisterEdit={onRegisterEdit}
+      />
+    );
+  });
 }
 
-export function RegisterView({ context, getDereferenceForAddress, changedRegisters, onRegisterEdit }: RegisterViewProps) {
+export function RegisterView({
+  context,
+  getDereferenceForAddress,
+  changedRegisters,
+  onRegisterEdit,
+  showXmm = false,
+  showDr = false,
+  xmmFormat = "hex",
+  onToggleXmm,
+  onToggleDr,
+  onXmmFormatChange,
+}: RegisterViewProps) {
   const getDeref = (value: string) => getDereferenceForAddress?.(value);
   const isChanged = (field: string) => changedRegisters?.has(field) ?? false;
 
-  if (context.arch === "X64") {
-    return renderRegisterList(context as unknown as Record<string, string>, X64_REGISTERS, getDeref, isChanged, onRegisterEdit);
+  if (context.arch === "Arm64") {
+    const registers = context as unknown as Record<string, string>;
+    return (
+      <DockPanel>
+        <PanelBody>
+          <div className="p-1 flex flex-col gap-0.5">
+            {renderRegisterRows(registers, ARM64_REGISTERS, getDeref, isChanged, "w-8", onRegisterEdit)}
+          </div>
+        </PanelBody>
+      </DockPanel>
+    );
   }
 
-  if (context.arch === "Arm64") {
-    return renderRegisterList(context as unknown as Record<string, string>, ARM64_REGISTERS, getDeref, isChanged, onRegisterEdit);
+  if (context.arch === "X64") {
+    const registers = context as unknown as Record<string, string>;
+    return (
+      <DockPanel>
+        <PanelToolbar>
+          <Button
+            variant={showXmm ? "default" : "outline"}
+            size="xs"
+            onClick={onToggleXmm}
+            title="Show XMM (SSE) registers"
+          >
+            XMM
+          </Button>
+          <Button
+            variant={showDr ? "default" : "outline"}
+            size="xs"
+            onClick={onToggleDr}
+            title="Show debug registers (DR0–DR7)"
+          >
+            DR
+          </Button>
+        </PanelToolbar>
+        <PanelBody>
+          <div className="p-1 flex flex-col gap-0.5">
+            {renderRegisterRows(registers, X64_REGISTERS, getDeref, isChanged, "w-8", onRegisterEdit)}
+            {showXmm && (
+              <>
+                <SectionLabel
+                  right={
+                    <Select value={xmmFormat} onValueChange={(v) => onXmmFormatChange?.(v as XmmFormat)}>
+                      <SelectTrigger size="xs" className="w-20" aria-label="XMM format">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="hex">Hex</SelectItem>
+                        <SelectItem value="f32">f32</SelectItem>
+                        <SelectItem value="f64">f64</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  }
+                >
+                  XMM
+                </SectionLabel>
+                {X64_XMM_REGISTERS.map(({ name, field }) => (
+                  <RegisterPair
+                    key={field}
+                    name={name}
+                    field={field}
+                    value={xmmFormat === "hex" ? registers[field] : xmmLanes(registers[field], xmmFormat).join("  ")}
+                    showDereference={false}
+                    isChanged={isChanged(field)}
+                    nameWidthClass="w-12"
+                  />
+                ))}
+              </>
+            )}
+            {showDr && (
+              <>
+                <SectionLabel>Debug</SectionLabel>
+                {renderRegisterRows(registers, X64_DEBUG_REGISTERS, getDeref, isChanged, "w-12")}
+              </>
+            )}
+          </div>
+        </PanelBody>
+      </DockPanel>
+    );
   }
 
   return (

@@ -1,17 +1,22 @@
 import React from "react";
 import { LayoutData, TabData } from "rc-dock";
 import { DockingConfig } from "@/hooks/useDocking";
-import { RegisterView as StaticRegisterView, SerializableThreadContext } from "@/components/RegisterView";
+import {
+  RegisterView as StaticRegisterView,
+  SerializableThreadContext,
+  X64_REGISTERS,
+  X64_XMM_REGISTERS,
+  X64_DEBUG_REGISTERS,
+} from "@/components/RegisterView";
 
-const mockContext: SerializableThreadContext = {
+// Zero-valued x64 context for the static tab preview, derived from the
+// register defs so it never drifts when registers are added.
+const mockContext = {
   arch: "X64",
-  rax: "0x0", rbx: "0x0", rcx: "0x0", rdx: "0x0",
-  rsi: "0x0", rdi: "0x0", rbp: "0x0", rsp: "0x0",
-  rip: "0x0",
-  r8: "0x0", r9: "0x0", r10: "0x0", r11: "0x0",
-  r12: "0x0", r13: "0x0", r14: "0x0", r15: "0x0",
-  eflags: "0x0",
-};
+  ...Object.fromEntries(
+    [...X64_REGISTERS, ...X64_XMM_REGISTERS, ...X64_DEBUG_REGISTERS].map((d) => [d.field, "0x0"]),
+  ),
+} as SerializableThreadContext;
 
 export const DebuggerDockingConfig: DockingConfig = {
   storagePrefix: "debugger-dock",

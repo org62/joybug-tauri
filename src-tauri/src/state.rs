@@ -216,6 +216,14 @@ pub struct Serializablex64ThreadContext {
     pub r8: String, pub r9: String, pub r10: String, pub r11: String,
     pub r12: String, pub r13: String, pub r14: String, pub r15: String,
     pub eflags: String,
+    // 128-bit XMM registers, formatted "0x" + 32 hex digits (high 64 bits then low).
+    pub xmm0: String, pub xmm1: String, pub xmm2: String, pub xmm3: String,
+    pub xmm4: String, pub xmm5: String, pub xmm6: String, pub xmm7: String,
+    pub xmm8: String, pub xmm9: String, pub xmm10: String, pub xmm11: String,
+    pub xmm12: String, pub xmm13: String, pub xmm14: String, pub xmm15: String,
+    // Debug registers (64-bit hex): DR0-DR3 address slots, DR6 status, DR7 control.
+    pub dr0: String, pub dr1: String, pub dr2: String, pub dr3: String,
+    pub dr6: String, pub dr7: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import { SerializableThreadContext } from '@/components/RegisterView';
+import { SerializableThreadContext, RegisterDef, X64_REGISTERS, X64_DEBUG_REGISTERS, ARM64_REGISTERS } from '@/components/RegisterView';
 import { DereferenceEntry, DereferenceResultPayload } from '@/lib/hexUtils';
 import { SessionStatus } from '@/contexts/SessionContext';
 
@@ -12,51 +12,35 @@ import { SessionStatus } from '@/contexts/SessionContext';
 export function useRegisterDereference(
   context: SerializableThreadContext | undefined,
   sessionId: string | undefined,
-  sessionStatus: SessionStatus | undefined
+  sessionStatus: SessionStatus | undefined,
+  // DR0-DR3 point at HW-breakpoint targets; only fetch them when the debug
+  // register section is visible to avoid backend round-trips on every pause.
+  includeDebugRegisters = false
 ) {
   const [dereferenceData, setDereferenceData] = useState<Map<string, DereferenceEntry>>(new Map());
   const [isLoading, setIsLoading] = useState(false);
   const pendingAddresses = useRef<Set<string>>(new Set());
   const requestedAddresses = useRef<Set<string>>(new Set());
 
-  // Extract all register values as addresses
-  const getRegisterAddresses = useCallback((ctx: SerializableThreadContext): Map<string, string> => {
-    const addresses = new Map<string, string>();
-
+  // Extract pointer-register values as addresses. The register defs'
+  // showDereference flag encodes which registers hold pointers.
+  const getRegisterAddresses = useCallback((ctx: SerializableThreadContext, includeDr: boolean): Map<string, string> => {
+    let defs: RegisterDef[] = [];
     if (ctx.arch === 'X64') {
-      const regs: [string, string][] = [
-        ['RAX', ctx.rax], ['RBX', ctx.rbx], ['RCX', ctx.rcx], ['RDX', ctx.rdx],
-        ['RSI', ctx.rsi], ['RDI', ctx.rdi], ['RBP', ctx.rbp], ['RSP', ctx.rsp],
-        ['RIP', ctx.rip],
-        ['R8', ctx.r8], ['R9', ctx.r9], ['R10', ctx.r10], ['R11', ctx.r11],
-        ['R12', ctx.r12], ['R13', ctx.r13], ['R14', ctx.r14], ['R15', ctx.r15],
-      ];
-      // Skip eflags - it's not a pointer
-      for (const [name, value] of regs) {
-        if (value && value !== '0x0000000000000000') {
-          addresses.set(name, value);
-        }
-      }
+      defs = includeDr ? [...X64_REGISTERS, ...X64_DEBUG_REGISTERS] : X64_REGISTERS;
     } else if (ctx.arch === 'Arm64') {
-      const regs: [string, string][] = [
-        ['X0', ctx.x0], ['X1', ctx.x1], ['X2', ctx.x2], ['X3', ctx.x3],
-        ['X4', ctx.x4], ['X5', ctx.x5], ['X6', ctx.x6], ['X7', ctx.x7],
-        ['X8', ctx.x8], ['X9', ctx.x9], ['X10', ctx.x10], ['X11', ctx.x11],
-        ['X12', ctx.x12], ['X13', ctx.x13], ['X14', ctx.x14], ['X15', ctx.x15],
-        ['X16', ctx.x16], ['X17', ctx.x17], ['X18', ctx.x18], ['X19', ctx.x19],
-        ['X20', ctx.x20], ['X21', ctx.x21], ['X22', ctx.x22], ['X23', ctx.x23],
-        ['X24', ctx.x24], ['X25', ctx.x25], ['X26', ctx.x26], ['X27', ctx.x27],
-        ['X28', ctx.x28], ['FP', ctx.x29], ['LR', ctx.x30],
-        ['SP', ctx.sp], ['PC', ctx.pc],
-      ];
-      // Skip cpsr - it's not a pointer
-      for (const [name, value] of regs) {
-        if (value && value !== '0x0000000000000000') {
-          addresses.set(name, value);
-        }
-      }
+      defs = ARM64_REGISTERS;
     }
 
+    const registers = ctx as unknown as Record<string, string>;
+    const addresses = new Map<string, string>();
+    for (const { name, field, showDereference } of defs) {
+      if (showDereference === false) continue;
+      const value = registers[field];
+      if (value && value !== '0x0000000000000000') {
+        addresses.set(name, value);
+      }
+    }
     return addresses;
   }, []);
 
@@ -140,7 +124,7 @@ export function useRegisterDereference(
       return;
     }
 
-    const addresses = getRegisterAddresses(context);
+    const addresses = getRegisterAddresses(context, includeDebugRegisters);
 
     // Clear previous state when context changes
     pendingAddresses.current.clear();
@@ -153,7 +137,7 @@ export function useRegisterDereference(
     requestDereferenceBatch(addressList).finally(() => {
       setIsLoading(false);
     });
-  }, [context, sessionId, sessionStatus, getRegisterAddresses, requestDereferenceBatch]);
+  }, [context, sessionId, sessionStatus, includeDebugRegisters, getRegisterAddresses, requestDereferenceBatch]);
 
   // Reset when session stops
   useEffect(() => {

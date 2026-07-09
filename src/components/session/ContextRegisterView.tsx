@@ -1,8 +1,9 @@
 import { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { useSessionContext } from '@/contexts/SessionContext';
-import { RegisterView, SerializableThreadContext, X64_REGISTERS, ARM64_REGISTERS } from '@/components/RegisterView';
+import { RegisterView, SerializableThreadContext, XmmFormat, X64_REGISTERS, ARM64_REGISTERS } from '@/components/RegisterView';
 import { RegisterEditDialog, SymbolResolverWithName } from '@/components/RegisterEditDialog';
 import { useRegisterDereference } from '@/hooks/useRegisterDereference';
+import { useLocalStorageState } from '@/hooks/useLocalStorageState';
 import { RegisterContext } from '@/lib/hexUtils';
 import { resolveSymbol } from '@/lib/symbolUtils';
 import { AlertCircle } from 'lucide-react';
@@ -41,8 +42,13 @@ export const ContextRegisterView = () => {
   const displayStatus = sessionData?.displayStatus;
   const context = displayStatus === "Paused" ? currentEvent?.context : undefined;
 
+  // x64 view options (persisted across sessions)
+  const [showXmm, setShowXmm] = useLocalStorageState('registers.showXmm', false);
+  const [showDr, setShowDr] = useLocalStorageState('registers.showDr', false);
+  const [xmmFormat, setXmmFormat] = useLocalStorageState<XmmFormat>('registers.xmmFormat', 'hex');
+
   // Fetch dereference data for all registers (use displayStatus to prevent flicker)
-  const { getDereferenceForAddress } = useRegisterDereference(context, sessionId, displayStatus);
+  const { getDereferenceForAddress } = useRegisterDereference(context, sessionId, displayStatus, showDr);
 
   // Track previous context to detect changed registers
   const prevContextRef = useRef<SerializableThreadContext | undefined>(undefined);
@@ -125,6 +131,12 @@ export const ContextRegisterView = () => {
           getDereferenceForAddress={getDereferenceForAddress}
           changedRegisters={changedRegisters}
           onRegisterEdit={onRegisterEdit}
+          showXmm={showXmm}
+          showDr={showDr}
+          xmmFormat={xmmFormat}
+          onToggleXmm={() => setShowXmm((v) => !v)}
+          onToggleDr={() => setShowDr((v) => !v)}
+          onXmmFormatChange={setXmmFormat}
         />
         {editingRegister && (
           <RegisterEditDialog

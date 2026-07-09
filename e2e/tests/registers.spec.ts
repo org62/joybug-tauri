@@ -34,6 +34,17 @@ test.describe("Registers View", () => {
         expect(text).toMatch(/0x[0-9a-fA-F]{8,16}/);
       }).toPass({ timeout: 5_000 });
 
+      // XMM registers are hidden by default; toggling the XMM button reveals them.
+      const xmmToggle = page.getByRole("button", { name: "XMM", exact: true });
+      await expect(xmmToggle).toBeVisible();
+      await xmmToggle.click();
+      await expect(async () => {
+        const text = await page.evaluate(() =>
+          document.body.innerText.toLowerCase(),
+        );
+        expect(text).toContain("xmm0");
+      }).toPass({ timeout: 5_000 });
+
       await cleanupSession(page, sessionId);
     } finally {
       await restoreDefaultSettings(page);

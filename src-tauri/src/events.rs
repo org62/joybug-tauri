@@ -14,7 +14,16 @@ pub fn convert_raw_context_to_serializable(
             // Check target architecture at compile time
             #[cfg(target_arch = "x86_64")]
             {
-                // x64 architecture - access x64 registers
+                // x64 architecture - access x64 registers.
+                // XMM registers live in the anonymous CONTEXT union as `M128A`
+                // ({ Low: u64, High: i64 }, packed) — copy each out before reading
+                // its fields, then format high:low as a 128-bit hex value.
+                macro_rules! xmm {
+                    ($name:ident) => {{
+                        let m = unsafe { ctx.Anonymous.Anonymous.$name };
+                        format!("0x{:016x}{:016x}", m.High as u64, m.Low)
+                    }};
+                }
                 SerializableThreadContext::X64(Serializablex64ThreadContext {
                     rax: format!("{:#018x}", ctx.Rax),
                     rbx: format!("{:#018x}", ctx.Rbx),
@@ -34,6 +43,16 @@ pub fn convert_raw_context_to_serializable(
                     r14: format!("{:#018x}", ctx.R14),
                     r15: format!("{:#018x}", ctx.R15),
                     eflags: format!("{:#010x}", ctx.EFlags),
+                    xmm0: xmm!(Xmm0), xmm1: xmm!(Xmm1), xmm2: xmm!(Xmm2), xmm3: xmm!(Xmm3),
+                    xmm4: xmm!(Xmm4), xmm5: xmm!(Xmm5), xmm6: xmm!(Xmm6), xmm7: xmm!(Xmm7),
+                    xmm8: xmm!(Xmm8), xmm9: xmm!(Xmm9), xmm10: xmm!(Xmm10), xmm11: xmm!(Xmm11),
+                    xmm12: xmm!(Xmm12), xmm13: xmm!(Xmm13), xmm14: xmm!(Xmm14), xmm15: xmm!(Xmm15),
+                    dr0: format!("{:#018x}", ctx.Dr0),
+                    dr1: format!("{:#018x}", ctx.Dr1),
+                    dr2: format!("{:#018x}", ctx.Dr2),
+                    dr3: format!("{:#018x}", ctx.Dr3),
+                    dr6: format!("{:#018x}", ctx.Dr6),
+                    dr7: format!("{:#018x}", ctx.Dr7),
                 })
             }
             
