@@ -4,7 +4,7 @@ import { useMemoryScanner, FIRST_SCAN_COMPARE_TYPES, NEXT_SCAN_COMPARE_TYPES, ne
 import { useContextMenu } from '@/hooks/useContextMenu';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import { DockPanel, PanelFooter } from '@/components/ui/panel';
+import { DockPanel, PanelToolbar, PanelFooter } from '@/components/ui/panel';
 import { ContextMenu, ContextMenuItem } from '@/components/ui/context-menu';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
@@ -167,7 +167,7 @@ export const ContextMemoryScannerView = () => {
   return (
     <DockPanel>
       {/* Toolbar */}
-      <div className="shrink-0 p-2 border-b space-y-1 select-none">
+      <PanelToolbar stack>
         {/* Value type selector */}
         <div className="flex items-center gap-1 text-xs">
           {VALUE_TYPES.map((vt) => (
@@ -295,7 +295,7 @@ export const ContextMemoryScannerView = () => {
             {scanner.scanTimeUs > 0 && ` (${(scanner.scanTimeUs / 1000).toFixed(1)}ms)`}
           </div>
         )}
-      </div>
+      </PanelToolbar>
 
       {/* Results */}
       <div className="flex-1 min-h-0">

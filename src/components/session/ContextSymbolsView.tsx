@@ -5,7 +5,7 @@ import { invokeToggleBreakpoint } from '@/lib/sessionHelpers';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { VirtualizedList } from '@/components/ui/virtualized-list';
-import { DockPanel } from '@/components/ui/panel';
+import { DockPanel, PanelToolbar } from '@/components/ui/panel';
 import { ContextMenu, ContextMenuItem } from '@/components/ui/context-menu';
 import { TruncatedSymbol } from '@/components/ui/truncated-symbol';
 import { Search, Code, Loader2 } from 'lucide-react';
@@ -146,7 +146,7 @@ export const ContextSymbolsView = () => {
 
   return (
     <DockPanel>
-      <div className="p-2 border-b shrink-0">
+      <PanelToolbar stack>
         <Input
           type="text"
           inputSize="xs"
@@ -157,9 +157,9 @@ export const ContextSymbolsView = () => {
           disabled={!sessionId || !isActive}
         />
         {hasSearched && !isSearching && symbols.length > 0 && (
-          <p className="text-xs text-muted-foreground mt-1">{symbols.length} symbols found</p>
+          <p className="text-xs text-muted-foreground">{symbols.length} symbols found</p>
         )}
-      </div>
+      </PanelToolbar>
       <div className="flex-1 min-h-0">
         {symbols.length > 0 && hasSearched && !isSearching ? renderContent() : (
           <ScrollArea className="h-full">

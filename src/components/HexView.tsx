@@ -27,7 +27,7 @@ import {
   sanitizeAddressInput,
 } from "@/lib/hexUtils";
 import { PointerDereferenceDisplay } from "@/components/DereferenceDisplay";
-import { DockPanel, PanelToolbar } from "@/components/ui/panel";
+import { DockPanel, PanelToolbar, PanelFooter } from "@/components/ui/panel";
 import { ContextMenu, ContextMenuItem, ContextMenuSeparator } from "@/components/ui/context-menu";
 import { useContextMenu } from "@/hooks/useContextMenu";
 
@@ -857,9 +857,9 @@ function HexToolbar({
   discardPendingChanges,
 }: HexToolbarProps) {
   return (
-    <PanelToolbar className="gap-2">
+    <PanelToolbar>
       {/* Address input */}
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-1">
         <Input
           inputSize="xs"
           placeholder="rsp, rax+0x10, symbol..."
@@ -962,7 +962,7 @@ function HexStatusBar({
     : null;
 
   return (
-    <div className="flex items-center gap-4 px-2 py-1 border-t border-border bg-muted/30 text-xs text-muted-foreground">
+    <PanelFooter className="gap-4 text-xs text-muted-foreground">
       {/* Address range */}
       <span>
         {formatAddress(baseAddress)} - {formatAddress(endAddress)}
@@ -1011,6 +1011,6 @@ function HexStatusBar({
           {pendingChanges.size} unsaved changes
         </span>
       )}
-    </div>
+    </PanelFooter>
   );
 }

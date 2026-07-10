@@ -4,7 +4,7 @@ import { listen } from '@tauri-apps/api/event';
 import { useSessionContext } from '@/contexts/SessionContext';
 import { formatTauriError } from '@/lib/sessionHelpers';
 import { AlertCircle, MemoryStick, Loader2 } from 'lucide-react';
-import { DockPanel } from '@/components/ui/panel';
+import { DockPanel, PanelToolbar } from '@/components/ui/panel';
 import { VirtualizedList } from '@/components/ui/virtualized-list';
 import {
   Select,
@@ -144,7 +144,7 @@ export function ContextMemoryRegionsView({ onNavigateToAddress }: ContextMemoryR
   return (
     <DockPanel>
       {/* Toolbar with filters */}
-      <div className="p-2 border-b flex items-center gap-2 flex-wrap shrink-0">
+      <PanelToolbar className="flex-wrap">
         {isLoading && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
 
         <Select value={stateFilter} onValueChange={(v) => setStateFilter(v as StateFilter)}>
@@ -174,7 +174,7 @@ export function ContextMemoryRegionsView({ onNavigateToAddress }: ContextMemoryR
         <span className="text-xs text-muted-foreground ml-auto">
           {filteredRegions.length} / {regions.length} regions
         </span>
-      </div>
+      </PanelToolbar>
 
       {/* Table header */}
       <div className="flex items-center px-2 py-1 border-b bg-muted/50 text-xs font-medium text-muted-foreground shrink-0">

@@ -1,5 +1,5 @@
 import React, { useMemo, useRef, useLayoutEffect, useState } from 'react';
-import { DockPanel, PanelBody } from '@/components/ui/panel';
+import { DockPanel, PanelToolbar, PanelBody } from '@/components/ui/panel';
 import { TruncatedSymbol } from '@/components/ui/truncated-symbol';
 import { Button } from '@/components/ui/button';
 import {
@@ -369,7 +369,7 @@ export const ModuleInfoView: React.FC<ModuleInfoViewProps> = ({
   return (
     <DockPanel>
       {/* Module selector combobox */}
-      <div className="p-2 border-b shrink-0">
+      <PanelToolbar>
         <Select
           value={selectedModuleBase ?? ''}
           onValueChange={onModuleSelect}
@@ -387,7 +387,7 @@ export const ModuleInfoView: React.FC<ModuleInfoViewProps> = ({
             ))}
           </SelectContent>
         </Select>
-      </div>
+      </PanelToolbar>
 
       {/* Content area */}
       <PanelBody viewportRef={viewportRef}>

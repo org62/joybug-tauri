@@ -229,7 +229,7 @@ export function AssemblyView({ sessionId, isPaused, address, registers, resolveS
   return (
     <DockPanel ref={containerRef} data-capture-mouse-nav>
       {/* Toolbar */}
-      <PanelToolbar className="gap-2 p-2">
+      <PanelToolbar>
         {/* Go-to address input */}
         <div className="flex items-center gap-1">
           <Input

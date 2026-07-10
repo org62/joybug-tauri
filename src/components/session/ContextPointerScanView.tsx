@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import { VirtualizedList } from '@/components/ui/virtualized-list';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { DockPanel, PanelFooter } from '@/components/ui/panel';
+import { DockPanel, PanelToolbar, PanelFooter } from '@/components/ui/panel';
 import { ContextMenu, ContextMenuItem } from '@/components/ui/context-menu';
 import { TruncatedSymbol } from '@/components/ui/truncated-symbol';
 import {
@@ -147,7 +147,7 @@ export const ContextPointerScanView = () => {
   return (
     <DockPanel>
       {/* Toolbar (fixed; only the results below scroll) */}
-      <div className="p-2 border-b space-y-1 shrink-0">
+      <PanelToolbar stack>
         <div className="flex gap-1">
           <Input
             type="text"
@@ -295,7 +295,7 @@ export const ContextPointerScanView = () => {
             )}
           </div>
         )}
-      </div>
+      </PanelToolbar>
 
       {/* Results */}
       <div className="flex-1 min-h-0">

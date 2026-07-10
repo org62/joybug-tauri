@@ -5,7 +5,7 @@ import { useSessionContext } from '@/contexts/SessionContext';
 import { isProcessAvailable } from '@/lib/sessionHelpers';
 import { AlertCircle, List } from 'lucide-react';
 import { CallStackFrameList, CallStackFrame } from '@/components/CallStackFrameList';
-import { DockPanel } from '@/components/ui/panel';
+import { DockPanel, PanelToolbar } from '@/components/ui/panel';
 
 interface ContextCallStackViewProps {
   onNavigateToDisassembly?: (address: string) => void;
@@ -120,9 +120,9 @@ export function ContextCallStackView({ onNavigateToDisassembly, onNavigateToMemo
       {callStack.length > 0 ? (
         <>
           {selectedTid !== null && (
-            <div className="shrink-0 px-2 py-1 text-xs text-muted-foreground border-b">
+            <PanelToolbar className="text-xs text-muted-foreground">
               Thread {selectedTid}
-            </div>
+            </PanelToolbar>
           )}
           <div className="flex-1 min-h-0">
             <CallStackFrameList

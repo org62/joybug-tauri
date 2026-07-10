@@ -37,13 +37,22 @@ const DockPanel = React.forwardRef<HTMLDivElement, React.ComponentProps<"div">>(
 )
 DockPanel.displayName = "DockPanel"
 
-/** Fixed toolbar/header row. Chrome — not text-selectable. */
-function PanelToolbar({ className, ...props }: React.ComponentProps<"div">) {
+/**
+ * Fixed toolbar/header row. Chrome — not text-selectable.
+ * `stack` switches to a multi-row column layout (form-style headers) while
+ * keeping the same padding/background contract as the single-row toolbar.
+ */
+function PanelToolbar({
+  className,
+  stack,
+  ...props
+}: React.ComponentProps<"div"> & { stack?: boolean }) {
   return (
     <div
       data-slot="panel-toolbar"
       className={cn(
-        "shrink-0 flex items-center gap-1 px-2 py-1 border-b border-border bg-muted/30 select-none",
+        "shrink-0 flex gap-1 px-2 py-1 border-b border-border bg-muted/30 select-none",
+        stack ? "flex-col" : "items-center",
         className
       )}
       {...props}

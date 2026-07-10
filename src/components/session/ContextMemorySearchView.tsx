@@ -8,7 +8,7 @@ import { formatBytesAsHex } from '@/lib/hexUtils';
 import { useContextMenu } from '@/hooks/useContextMenu';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import { DockPanel } from '@/components/ui/panel';
+import { DockPanel, PanelToolbar } from '@/components/ui/panel';
 import { ContextMenu, ContextMenuItem } from '@/components/ui/context-menu';
 import { VirtualizedList } from '@/components/ui/virtualized-list';
 import { Search, HardDrive, Loader2, AlertTriangle } from 'lucide-react';
@@ -343,7 +343,7 @@ export const ContextMemorySearchView = () => {
 
   return (
     <DockPanel>
-      <div className="shrink-0 p-2 border-b space-y-1 select-none">
+      <PanelToolbar stack>
         <div className="flex gap-1">
           <Input
             type="text"
@@ -394,7 +394,7 @@ export const ContextMemorySearchView = () => {
             </span>
           )}
         </div>
-      </div>
+      </PanelToolbar>
       <div className="flex-1 min-h-0">
         {renderContent()}
       </div>
