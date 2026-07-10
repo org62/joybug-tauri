@@ -1,6 +1,7 @@
 import { useState, useCallback } from "react";
 import { Button } from "./ui/button";
-import { Input } from "./ui/input";
+import { InlineEditInput } from "./ui/inline-edit-input";
+import { ResizableHeaderCell } from "./ui/resizable-header-cell";
 import { Checkbox } from "./ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { X, Bookmark as BookmarkIcon, Lock, Unlock } from "lucide-react";
@@ -19,6 +20,8 @@ type BookmarkRow = ResolvedBookmark & { enabled: boolean };
 type ColKey = "name" | "address" | "type" | "value";
 const DEFAULT_WIDTHS: Record<ColKey, number> = { name: 120, address: 150, type: 72, value: 170 };
 const COLUMN_WIDTHS_KEY = "bookmarks.columnWidths";
+/** Fixed row chrome: checkbox (24) + lock (32) + delete (32) + row px-2 (16) + min flex-1 details (160). */
+const FIXED_COLS_PX = 24 + 32 + 32 + 16 + 160;
 
 interface BookmarksViewProps {
   bookmarks: ResolvedBookmark[];
@@ -125,10 +128,9 @@ export function BookmarksView({
   const renderRow = (b: BookmarkRow, isDragOverlay?: boolean) => (
     <div
       className={cn(
-        "flex items-center px-2 py-1 text-xs font-mono hover:bg-muted/30 group",
+        "flex items-center px-2 py-1 text-xs font-mono hover:bg-muted/50 group",
         selectedIds.has(b.id) && "bg-accent/30",
         !b.is_resolved && "opacity-50",
-        isDragOverlay && "bg-popover border rounded shadow-md",
       )}
       onContextMenu={(e) => { if (!isDragOverlay) openContextMenu(e, { id: b.id }); }}
     >
@@ -140,15 +142,14 @@ export function BookmarksView({
       </span>
 
       {/* Name (editable) */}
-      <span className="shrink-0 truncate" style={{ width: columnWidths.name }}>
+      <span className="shrink-0 truncate pr-1" style={{ width: columnWidths.name }}>
         {editing?.id === b.id && editing.field === "name" ? (
-          <Input
-            autoFocus
+          <InlineEditInput
             value={editing.draft}
-            onChange={(e) => setEditing({ ...editing, draft: e.target.value })}
-            onBlur={commitEdit}
-            onKeyDown={(e) => { if (e.key === "Enter") commitEdit(); if (e.key === "Escape") setEditing(null); }}
-            inputSize="xs"
+            onChange={(draft) => setEditing({ ...editing, draft })}
+            onCommit={commitEdit}
+            onCancel={() => setEditing(null)}
+            placeholder="bookmark name"
           />
         ) : (
           <span
@@ -163,7 +164,7 @@ export function BookmarksView({
 
       {/* Address (navigate) */}
       <span
-        className="shrink-0 text-blue-400 cursor-pointer hover:underline truncate"
+        className="shrink-0 text-blue-400 cursor-pointer hover:underline truncate pr-1"
         style={{ width: columnWidths.address }}
         title={b.resolved_address}
         onClick={() => navigate(b)}
@@ -192,13 +193,11 @@ export function BookmarksView({
         {b.kind === "code" ? (
           <span className="text-muted-foreground/60">—</span>
         ) : editing?.id === b.id && editing.field === "value" ? (
-          <Input
-            autoFocus
+          <InlineEditInput
             value={editing.draft}
-            onChange={(e) => setEditing({ ...editing, draft: e.target.value })}
-            onBlur={commitEdit}
-            onKeyDown={(e) => { if (e.key === "Enter") commitEdit(); if (e.key === "Escape") setEditing(null); }}
-            inputSize="xs"
+            onChange={(draft) => setEditing({ ...editing, draft })}
+            onCommit={commitEdit}
+            onCancel={() => setEditing(null)}
           />
         ) : (
           <span
@@ -258,6 +257,7 @@ export function BookmarksView({
     <DockPanel>
       <GroupedItemList
         items={rows}
+        minContentWidth={columnWidths.name + columnWidths.address + columnWidths.type + columnWidths.value + FIXED_COLS_PX}
         onUpdateItemGroup={(id, group) => update(id, { group: group ?? null })}
         onEnableGroup={(group, enabled) => {
           bookmarks.filter((b) => b.group === group && b.kind !== "code").forEach((b) => onToggleLock?.(b.id, enabled));
@@ -266,53 +266,47 @@ export function BookmarksView({
         renderItem={renderRow}
         groupDotColor="blue"
         renderToolbar={() => (
+          <PanelToolbar>
+            <Button
+              variant="outline"
+              size="xs"
+              disabled={selectedIds.size === 0}
+              onClick={handleRemoveSelected}
+            >
+              Remove Selected ({selectedIds.size})
+            </Button>
+            <div className="flex-1" />
+            <span className="text-xs text-muted-foreground">{bookmarks.length} bookmark{bookmarks.length !== 1 ? "s" : ""}</span>
+          </PanelToolbar>
+        )}
+        renderHeader={() => (
           <>
-            <PanelToolbar>
-              <Button
-                variant="outline"
-                size="xs"
-                disabled={selectedIds.size === 0}
-                onClick={handleRemoveSelected}
-              >
-                Remove Selected ({selectedIds.size})
-              </Button>
-              <div className="flex-1" />
-              <span className="text-xs text-muted-foreground">{bookmarks.length} bookmark{bookmarks.length !== 1 ? "s" : ""}</span>
-            </PanelToolbar>
-            {bookmarks.length > 0 && (
-              <div className="flex items-center px-2 py-1 border-b border-border text-xs text-muted-foreground font-medium shrink-0">
-                <span className="w-6 shrink-0 flex items-center justify-center">
-                  <Checkbox checked={allSelected} onChange={toggleSelectAll} />
-                </span>
-                <span className="shrink-0 truncate relative pr-1" style={{ width: columnWidths.name }}>
-                  Name
-                  <div className="absolute right-0 top-0 h-full w-1 cursor-col-resize hover:bg-blue-500/40 active:bg-blue-500/60" onMouseDown={(e) => handleColumnResizeStart("name", e)} />
-                </span>
-                <span className="shrink-0 truncate relative pr-1" style={{ width: columnWidths.address }}>
-                  Address
-                  <div className="absolute right-0 top-0 h-full w-1 cursor-col-resize hover:bg-blue-500/40 active:bg-blue-500/60" onMouseDown={(e) => handleColumnResizeStart("address", e)} />
-                </span>
-                <span className="shrink-0 truncate relative pr-1" style={{ width: columnWidths.type }}>
-                  Type
-                  <div className="absolute right-0 top-0 h-full w-1 cursor-col-resize hover:bg-blue-500/40 active:bg-blue-500/60" onMouseDown={(e) => handleColumnResizeStart("type", e)} />
-                </span>
-                <span className="shrink-0 truncate relative pr-1" style={{ width: columnWidths.value }}>
-                  Value
-                  <div className="absolute right-0 top-0 h-full w-1 cursor-col-resize hover:bg-blue-500/40 active:bg-blue-500/60" onMouseDown={(e) => handleColumnResizeStart("value", e)} />
-                </span>
-                <span className="w-8 shrink-0 text-center">Lock</span>
-                <span className="flex-1 min-w-0">Details</span>
-                <span className="w-8 shrink-0" />
-              </div>
-            )}
+            <span className="w-6 shrink-0 flex items-center justify-center">
+              <Checkbox checked={allSelected} onChange={toggleSelectAll} />
+            </span>
+            <ResizableHeaderCell width={columnWidths.name} onResizeStart={(e) => handleColumnResizeStart("name", e)}>
+              Name
+            </ResizableHeaderCell>
+            <ResizableHeaderCell width={columnWidths.address} onResizeStart={(e) => handleColumnResizeStart("address", e)}>
+              Address
+            </ResizableHeaderCell>
+            <ResizableHeaderCell width={columnWidths.type} onResizeStart={(e) => handleColumnResizeStart("type", e)}>
+              Type
+            </ResizableHeaderCell>
+            <ResizableHeaderCell width={columnWidths.value} onResizeStart={(e) => handleColumnResizeStart("value", e)}>
+              Value
+            </ResizableHeaderCell>
+            <span className="w-8 shrink-0 text-center">Lock</span>
+            <span className="flex-1 min-w-0">Details</span>
+            <span className="w-8 shrink-0" />
           </>
         )}
         renderEmptyState={() => (
-          <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground p-4">
+          <>
             <BookmarkIcon className="h-12 w-12 mx-auto mb-4 opacity-50" />
             <p className="text-base font-medium">No bookmarks</p>
             <p className="text-sm mt-1">Right-click an address in memory, a scan/search result, a pointer-scan path, or a disassembly line and choose "Add to Bookmarks".</p>
-          </div>
+          </>
         )}
       />
 
@@ -326,6 +320,9 @@ export function BookmarksView({
                 {b.locked ? "Unlock value" : "Lock (freeze) value"}
               </ContextMenuItem>
             )}
+            <ContextMenuItem onClick={() => setEditing({ id: b.id, field: "name", draft: b.name ?? "" })}>
+              Rename
+            </ContextMenuItem>
             <ContextMenuItem onClick={() => update(b.id, { group: generateNewGroupName() })}>
               Set Group
             </ContextMenuItem>

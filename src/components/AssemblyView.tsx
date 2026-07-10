@@ -560,14 +560,16 @@ function InstructionRow({ instruction, isPC, isSelected, isHighlighted, isHoverT
         {hasBreakpoint && <Circle className="h-2.5 w-2.5 fill-red-500 text-red-500" />}
       </span>
 
-      {/* Address/Symbol column */}
-      <span className="shrink-0 text-muted-foreground flex" style={{ width: columnWidths.symbol }}>
+      {/* Address/Symbol column — mr-1.5 mirrors the header's 6px resize
+          handle so columns align and truncated text never touches the next
+          column */}
+      <span className="shrink-0 mr-1.5 text-muted-foreground flex" style={{ width: columnWidths.symbol }}>
         <TruncatedSymbol text={instruction.symbol} className="flex-1" />
       </span>
 
       {/* Bytes column (conditional) */}
       {showBytes && (
-        <span className="shrink-0 text-gray-500 truncate" style={{ width: columnWidths.bytes }} title={instruction.bytes}>
+        <span className="shrink-0 mr-1.5 text-gray-500 truncate" style={{ width: columnWidths.bytes }} title={instruction.bytes}>
           {instruction.bytes}
         </span>
       )}
@@ -575,7 +577,7 @@ function InstructionRow({ instruction, isPC, isSelected, isHighlighted, isHoverT
       {/* Mnemonic - color coded */}
       <span
         className={cn(
-          "shrink-0",
+          "shrink-0 mr-1.5",
           is_call && "text-green-500",
           is_jump && !is_call && "text-blue-500",
           is_ret && "text-red-500",

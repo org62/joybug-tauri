@@ -35,6 +35,7 @@ export function ContextBreakpointsView() {
       onEnableBreakpoint={enableBreakpoint}
       onEnableBreakpointGroup={enableBreakpointGroup}
       onUpdateBreakpoint={updateBreakpoint}
+      onNavigateToDisassembly={sessionData.onNavigateToDisassembly}
       registers={registers}
       resolveSymbol={resolveSymbol}
     />

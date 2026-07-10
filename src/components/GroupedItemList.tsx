@@ -1,7 +1,7 @@
 import { useState, useCallback } from "react";
-import { Input } from "./ui/input";
+import { InlineEditInput } from "./ui/inline-edit-input";
 import { Button } from "./ui/button";
-import { ChevronDown, ChevronRight, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronRight, GripVertical, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useContextMenu } from "@/hooks/useContextMenu";
 import { PanelBody } from "./ui/panel";
@@ -34,14 +34,42 @@ export interface GroupedItemListProps<T extends GroupableItem> {
   onDeleteGroup: (itemIds: string[]) => void;
   renderItem: (item: T, isDragOverlay?: boolean) => React.ReactNode;
   renderToolbar?: () => React.ReactNode;
+  /**
+   * Column header cells. GroupedItemList supplies the row chrome (padding,
+   * typography, drag-gutter spacer), renders it inside the scroll content (so
+   * it scrolls horizontally with the rows), and keeps it sticky during
+   * vertical scroll.
+   */
+  renderHeader?: () => React.ReactNode;
+  /** Empty-state content; GroupedItemList centers it in the panel body. */
   renderEmptyState?: () => React.ReactNode;
   /** Color class for group dot (default "red") */
   groupDotColor?: string;
   /**
-   * Floor for the scroll content width. When set, the list scrolls
-   * horizontally instead of squeezing rows below this width.
+   * Floor for the scroll content width in px, excluding the drag-handle
+   * gutter (added internally). When set, the list scrolls horizontally
+   * instead of squeezing rows below this width.
    */
-  minContentWidth?: string;
+  minContentWidth?: number;
+}
+
+/** Width of the drag-handle gutter (w-4) the list prepends to every row. */
+const GUTTER_PX = 16;
+
+/** Drag-handle gutter shared by rows and the drag overlay so they align. */
+function DragHandleGutter({ interactive, ...props }: { interactive?: boolean } & React.HTMLAttributes<HTMLSpanElement>) {
+  return (
+    <span
+      {...props}
+      className={cn(
+        "w-4 shrink-0 self-stretch flex items-center justify-center text-muted-foreground/40 select-none touch-none",
+        interactive && "cursor-grab active:cursor-grabbing hover:text-muted-foreground",
+        props.className,
+      )}
+    >
+      <GripVertical className="h-3 w-3" />
+    </span>
+  );
 }
 
 function DraggableItemRow<T extends GroupableItem>({ item, children }: { item: T; children: React.ReactNode }) {
@@ -56,9 +84,12 @@ function DraggableItemRow<T extends GroupableItem>({ item, children }: { item: T
     opacity: isDragging ? 0.4 : undefined,
   };
 
+  // Listeners go on the handle only — dragging starts from the grip, never
+  // from the row content (which has its own clicks, selection and editing).
   return (
-    <div ref={setNodeRef} style={style} {...attributes} {...listeners}>
-      {children}
+    <div ref={setNodeRef} style={style} className="flex items-stretch">
+      <DragHandleGutter interactive {...attributes} {...listeners} title="Drag to move into a group" />
+      <div className="flex-1 min-w-0">{children}</div>
     </div>
   );
 }
@@ -83,6 +114,7 @@ export function GroupedItemList<T extends GroupableItem>({
   onDeleteGroup,
   renderItem,
   renderToolbar,
+  renderHeader,
   renderEmptyState,
   groupDotColor = "red",
   minContentWidth,
@@ -235,8 +267,19 @@ export function GroupedItemList<T extends GroupableItem>({
           floor on top. */}
       <div
         className="w-0 min-w-full"
-        style={minContentWidth ? { minWidth: `max(100%, ${minContentWidth})` } : undefined}
+        style={minContentWidth ? { minWidth: `max(100%, ${minContentWidth + GUTTER_PX}px)` } : undefined}
       >
+        {/* Column header — inside the min-width wrapper so it scrolls
+            horizontally with the rows; sticky against vertical scroll */}
+        {renderHeader && (
+          <div className="sticky top-0 z-10 bg-background border-b border-border flex">
+            <span className="w-4 shrink-0" />
+            <div className="flex-1 min-w-0 flex items-center px-2 py-1 text-xs text-muted-foreground font-medium select-none">
+              {renderHeader()}
+            </div>
+          </div>
+        )}
+
         {/* Ungrouped items */}
         <DroppableGroupZone groupName="__ungrouped__">
           <div id="ungrouped">
@@ -296,20 +339,13 @@ export function GroupedItemList<T extends GroupableItem>({
                   />
                 </Button>
                 {isEditingHeader ? (
-                  <Input
+                  <InlineEditInput
                     value={editValue}
-                    onChange={(e) => setEditValue(e.target.value)}
-                    onKeyDown={(e) => {
-                      e.stopPropagation();
-                      if (e.key === "Enter") commitGroupRename();
-                      if (e.key === "Escape") setEditingGroup(null);
-                    }}
-                    onClick={(e) => e.stopPropagation()}
-                    onBlur={commitGroupRename}
-                    inputSize="inline"
+                    onChange={setEditValue}
+                    onCommit={commitGroupRename}
+                    onCancel={() => setEditingGroup(null)}
                     className="flex-1"
                     placeholder="group name"
-                    autoFocus
                   />
                 ) : (
                   <>
@@ -358,7 +394,12 @@ export function GroupedItemList<T extends GroupableItem>({
 
       {/* Drag overlay */}
       <DragOverlay dropAnimation={null}>
-        {activeDragItem && renderItem(activeDragItem, true)}
+        {activeDragItem && (
+          <div className="flex items-stretch bg-popover border rounded shadow-md">
+            <DragHandleGutter />
+            <div className="flex-1 min-w-0">{renderItem(activeDragItem, true)}</div>
+          </div>
+        )}
       </DragOverlay>
     </DndContext>
   );
@@ -370,7 +411,11 @@ export function GroupedItemList<T extends GroupableItem>({
 
       {/* List */}
       {items.length === 0 ? (
-        renderEmptyState?.()
+        renderEmptyState && (
+          <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground p-4">
+            {renderEmptyState()}
+          </div>
+        )
       ) : (
         <PanelBody orientation={minContentWidth ? "both" : undefined}>
           {renderGroupedContent()}

@@ -1,16 +1,25 @@
 import { useState, useCallback } from "react";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
+import { InlineEditInput } from "./ui/inline-edit-input";
+import { ResizableHeaderCell } from "./ui/resizable-header-cell";
 import { Badge } from "./ui/badge";
 import { Trash2, Plus } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Breakpoint } from "@/hooks/useBreakpoints";
 import { useContextMenu } from "@/hooks/useContextMenu";
+import { useColumnWidths } from "@/hooks/useColumnWidths";
 import { RegisterContext, SymbolResolver, sanitizeAddressInput, parseAddressExpression } from "@/lib/hexUtils";
 import { GroupedItemList } from "./GroupedItemList";
 import { DockPanel, PanelToolbar } from "./ui/panel";
 import { ContextMenu, ContextMenuItem, ContextMenuSeparator } from "./ui/context-menu";
 import { TruncatedSymbol } from "./ui/truncated-symbol";
+
+type ColKey = "name" | "address";
+const DEFAULT_WIDTHS: Record<ColKey, number> = { name: 120, address: 150 };
+const COLUMN_WIDTHS_KEY = "breakpoints.columnWidths";
+/** Fixed row chrome: dot (24) + delete (32) + row px-2 (16) + min flex-1 symbol (152). */
+const FIXED_COLS_PX = 24 + 32 + 16 + 152;
 
 interface BreakpointsViewProps {
   breakpoints: Breakpoint[];
@@ -20,6 +29,7 @@ interface BreakpointsViewProps {
   onEnableBreakpoint: (id: string, enabled: boolean) => void;
   onEnableBreakpointGroup: (group: string, enabled: boolean) => void;
   onUpdateBreakpoint: (id: string, name?: string, group?: string) => void;
+  onNavigateToDisassembly?: (address: string) => void;
   registers?: RegisterContext;
   resolveSymbol?: SymbolResolver;
 }
@@ -60,21 +70,20 @@ export function BreakpointsView({
   onEnableBreakpoint,
   onEnableBreakpointGroup,
   onUpdateBreakpoint,
+  onNavigateToDisassembly,
   registers,
   resolveSymbol,
 }: BreakpointsViewProps) {
   const [addressInput, setAddressInput] = useState("");
+  const { columnWidths, handleColumnResizeStart } = useColumnWidths<ColKey>(COLUMN_WIDTHS_KEY, DEFAULT_WIDTHS);
 
   // Breakpoint-level context menu
   const { contextMenu, openContextMenu, closeContextMenu } = useContextMenu<{
     breakpointId: string;
   }>();
 
-  // Inline edit state for name/group
-  const [editingField, setEditingField] = useState<{
-    breakpointId: string;
-    field: "name" | "group";
-  } | null>(null);
+  // Inline edit state for the name column
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
 
   const handleAddBreakpoint = useCallback(async () => {
@@ -92,35 +101,24 @@ export function BreakpointsView({
     }
   }, [addressInput, registers, resolveSymbol, onToggleBreakpoint]);
 
-  const startEdit = useCallback(
-    (breakpointId: string, field: "name" | "group", currentValue: string | null) => {
-      setEditingField({ breakpointId, field });
-      setEditValue(currentValue ?? "");
+  const startRename = useCallback(
+    (breakpointId: string, currentName: string | null) => {
+      setEditingId(breakpointId);
+      setEditValue(currentName ?? "");
       closeContextMenu();
     },
     [closeContextMenu]
   );
 
-  const commitEdit = useCallback(() => {
-    if (!editingField) return;
+  const commitRename = useCallback(() => {
+    if (!editingId) return;
 
-    const bp = breakpoints.find((b) => b.id === editingField.breakpointId);
-    if (!bp) {
-      setEditingField(null);
-      return;
+    const bp = breakpoints.find((b) => b.id === editingId);
+    if (bp) {
+      onUpdateBreakpoint(editingId, editValue.trim() || undefined, bp.group ?? undefined);
     }
-
-    if (editingField.field === "name") {
-      onUpdateBreakpoint(editingField.breakpointId, editValue || undefined, bp.group ?? undefined);
-    } else {
-      onUpdateBreakpoint(editingField.breakpointId, bp.name ?? undefined, editValue || undefined);
-    }
-    setEditingField(null);
-  }, [editingField, editValue, breakpoints, onUpdateBreakpoint]);
-
-  const handleNameDoubleClick = useCallback((bp: Breakpoint) => {
-    startEdit(bp.id, "name", bp.name);
-  }, [startEdit]);
+    setEditingId(null);
+  }, [editingId, editValue, breakpoints, onUpdateBreakpoint]);
 
   // Generate a unique "New Group" name
   const generateNewGroupName = useCallback(() => {
@@ -143,77 +141,90 @@ export function BreakpointsView({
   };
 
   const renderBreakpointRow = (bp: Breakpoint, isDragOverlay?: boolean) => {
-    const isEditingName = editingField?.breakpointId === bp.id && editingField?.field === "name";
-    const isEditingGroup = editingField?.breakpointId === bp.id && editingField?.field === "group";
+    const isEditingName = editingId === bp.id;
     const isHardware = bp.bp_kind === "hardware";
     const hwInfo = hwLabel(bp);
+    const symbolText = bp.symbol || `${bp.module_name}+${bp.module_offset}`;
 
     return (
       <div
         className={cn(
-          "flex items-center gap-1.5 px-2 py-1 hover:bg-muted/50 group text-xs",
+          "flex items-center px-2 py-1 text-xs font-mono hover:bg-muted/50 group",
           !bp.enabled && "opacity-50",
-          isDragOverlay && "bg-popover border rounded shadow-md",
         )}
         onContextMenu={(e) => { if (!isDragOverlay) openContextMenu(e, { breakpointId: bp.id }); }}
       >
         {/* Dot indicator */}
-        <BreakpointDot
-          enabled={bp.enabled}
-          isActive={bp.is_active}
-          isHardware={isHardware}
-          onClick={() => onEnableBreakpoint(bp.id, !bp.enabled)}
-        />
-
-        {/* Address */}
-        <span className="font-mono text-muted-foreground shrink-0 w-[120px] truncate" title={bp.address}>
-          {bp.address}
+        <span className="w-6 shrink-0 flex items-center justify-center">
+          <BreakpointDot
+            enabled={bp.enabled}
+            isActive={bp.is_active}
+            isHardware={isHardware}
+            onClick={() => onEnableBreakpoint(bp.id, !bp.enabled)}
+          />
         </span>
 
-        {/* HW type badge */}
-        {isHardware && hwInfo && (
-          <Badge size="xs" className="bg-amber-500/20 text-amber-600 dark:text-amber-400 text-[10px]">
-            {hwInfo}
-          </Badge>
-        )}
-
-        {/* Name / symbol or inline edit */}
-        <span
-          className="flex-1 min-w-0"
-          onDoubleClick={() => { if (!isDragOverlay) handleNameDoubleClick(bp); }}
-        >
-          {(isEditingName || isEditingGroup) ? (
-            <Input
+        {/* Name (editable) */}
+        <span className="shrink-0 truncate pr-1" style={{ width: columnWidths.name }}>
+          {isEditingName ? (
+            <InlineEditInput
               value={editValue}
-              onChange={(e) => setEditValue(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") commitEdit();
-                if (e.key === "Escape") setEditingField(null);
-              }}
-              onBlur={commitEdit}
-              inputSize="inline"
-              placeholder={isEditingGroup ? "group name" : "breakpoint name"}
-              autoFocus
+              onChange={setEditValue}
+              onCommit={commitRename}
+              onCancel={() => setEditingId(null)}
+              placeholder="breakpoint name"
             />
           ) : (
-            <TruncatedSymbol
-              text={bp.name || bp.symbol || `${bp.module_name}+${bp.module_offset}`}
-              className={cn(!bp.name && !bp.symbol && "text-muted-foreground/50 italic")}
-            />
+            <span
+              className="cursor-text hover:underline"
+              title="Click to rename"
+              onClick={() => { if (!isDragOverlay) startRename(bp.id, bp.name); }}
+            >
+              {bp.name || <span className="text-muted-foreground/60">unnamed</span>}
+            </span>
           )}
+        </span>
+
+        {/* Address (navigate) */}
+        <span className="shrink-0 pr-1" style={{ width: columnWidths.address }}>
+          <span
+            className={cn(
+              "block truncate",
+              onNavigateToDisassembly ? "text-blue-400 cursor-pointer hover:underline" : "text-muted-foreground",
+            )}
+            title={bp.address}
+            onClick={() => onNavigateToDisassembly?.(bp.address)}
+          >
+            {bp.address}
+          </span>
+        </span>
+
+        {/* Symbol + HW type badge */}
+        <span className="flex-1 min-w-0 flex items-center gap-1.5 text-muted-foreground">
+          {isHardware && hwInfo && (
+            <Badge size="xs" className="bg-amber-500/20 text-amber-600 dark:text-amber-400 text-[10px]">
+              {hwInfo}
+            </Badge>
+          )}
+          <TruncatedSymbol
+            text={symbolText}
+            className={cn("flex-1", !bp.symbol && "text-muted-foreground/50 italic")}
+          />
         </span>
 
         {/* Delete button (visible on hover) */}
         {!isDragOverlay && (
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            className="shrink-0 opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive transition-opacity"
-            onClick={() => onRemoveBreakpoint(bp.id)}
-            title="Remove breakpoint"
-          >
-            <Trash2 />
-          </Button>
+          <span className="w-8 shrink-0 flex items-center justify-center">
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive transition-opacity"
+              onClick={() => onRemoveBreakpoint(bp.id)}
+              title="Remove breakpoint"
+            >
+              <Trash2 />
+            </Button>
+          </span>
         )}
       </div>
     );
@@ -223,7 +234,7 @@ export function BreakpointsView({
     <DockPanel>
       <GroupedItemList
         items={breakpoints}
-        minContentWidth="18rem"
+        minContentWidth={columnWidths.name + columnWidths.address + FIXED_COLS_PX}
         onUpdateItemGroup={(id, group) => {
           const bp = breakpoints.find((b) => b.id === id);
           if (bp) onUpdateBreakpoint(id, bp.name ?? undefined, group);
@@ -247,13 +258,24 @@ export function BreakpointsView({
             </Button>
           </PanelToolbar>
         )}
+        renderHeader={() => (
+          <>
+            <span className="w-6 shrink-0" />
+            <ResizableHeaderCell width={columnWidths.name} onResizeStart={(e) => handleColumnResizeStart("name", e)}>
+              Name
+            </ResizableHeaderCell>
+            <ResizableHeaderCell width={columnWidths.address} onResizeStart={(e) => handleColumnResizeStart("address", e)}>
+              Address
+            </ResizableHeaderCell>
+            <span className="flex-1 min-w-0">Symbol</span>
+            <span className="w-8 shrink-0" />
+          </>
+        )}
         renderEmptyState={() => (
-          <div className="flex flex-col items-center justify-center h-full text-muted-foreground p-4">
-            <div className="text-center">
-              <span className="block h-12 w-12 rounded-full border-4 border-muted-foreground/40 mx-auto mb-4 opacity-50" />
-              <p className="text-base font-medium">No breakpoints set</p>
-              <p className="text-sm mt-1">Right-click in disassembly to toggle</p>
-            </div>
+          <div className="text-center">
+            <span className="block h-12 w-12 rounded-full border-4 border-muted-foreground/40 mx-auto mb-4 opacity-50" />
+            <p className="text-base font-medium">No breakpoints set</p>
+            <p className="text-sm mt-1">Right-click in disassembly to toggle</p>
           </div>
         )}
       />
@@ -269,6 +291,13 @@ export function BreakpointsView({
               }}
             >
               {bp?.enabled ? "Disable" : "Enable"}
+            </ContextMenuItem>
+            <ContextMenuItem
+              onClick={() => {
+                if (bp) startRename(bp.id, bp.name);
+              }}
+            >
+              Rename
             </ContextMenuItem>
             <ContextMenuItem
               onClick={() => {

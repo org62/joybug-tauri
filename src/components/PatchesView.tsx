@@ -165,11 +165,11 @@ export function PatchesView({
           </>
         )}
         renderEmptyState={() => (
-          <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground p-4">
+          <>
             <Puzzle className="h-12 w-12 mx-auto mb-4 opacity-50" />
             <p className="text-base font-medium">No patches</p>
             <p className="text-sm mt-1">Right-click an instruction in the disassembly view and select "Assemble..." to create a patch</p>
-          </div>
+          </>
         )}
       />
 
