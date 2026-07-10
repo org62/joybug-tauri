@@ -1,4 +1,5 @@
-import { useState, useRef, useEffect, useCallback, useMemo, KeyboardEvent, MouseEvent, UIEvent } from "react";
+import { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo, KeyboardEvent, MouseEvent, UIEvent, WheelEvent } from "react";
+import { Virtualizer } from "@tanstack/react-virtual";
 import { VirtualizedList } from "./ui/virtualized-list";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
@@ -9,8 +10,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "./ui/select";
-import { Binary, Save, X, ArrowRight, Copy, ClipboardPaste, ChevronLeft, ChevronRight, Crosshair, Bookmark } from "lucide-react";
-import { useHexEditor } from "@/hooks/useHexEditor";
+import { Binary, Save, X, ArrowRight, Copy, ClipboardPaste, Crosshair, Bookmark } from "lucide-react";
+import { useHexEditor, ExtendStatus } from "@/hooks/useHexEditor";
 import { isProcessAvailable } from "@/lib/sessionHelpers";
 import { useNavigationChannel } from "@/hooks/useNavigationChannel";
 import { memoryNavigation } from "@/lib/navigationStore";
@@ -20,6 +21,7 @@ import {
   formatAddress,
   byteToAscii,
   BYTES_PER_ROW,
+  DEFAULT_CHUNK_SIZE,
   RegisterContext,
   SymbolResolver,
   sanitizeAddressInput,
@@ -45,6 +47,14 @@ const VIEWMODE_VALUE_TYPE: Record<ViewMode, string> = {
   byte: 'U8', word: 'U16', dword: 'U32', qword: 'U64', float: 'F32', pointer: 'U64',
 };
 
+const ROW_HEIGHT = 28;
+// Scrolling within this distance of the top/bottom edge extends the memory
+// window in that direction (infinite scroll).
+const EDGE_EXTEND_THRESHOLD = ROW_HEIGHT * 6;
+// Cap on how far a wheel-at-edge extension may auto-scroll into the fetched
+// rows: at most one full chunk's worth of rows.
+const MAX_WHEEL_REVEAL = (DEFAULT_CHUNK_SIZE / BYTES_PER_ROW) * ROW_HEIGHT;
+
 export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}, resolveSymbol, initialAddress, initialViewMode, onSetHardwareBreakpoint, onAddBookmark }: HexViewProps) {
   const {
     baseAddress,
@@ -68,12 +78,18 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
     changedOffsets,
     // Dereference data
     dereferenceData,
+    // Window boundaries
+    topExhausted,
+    bottomExhausted,
+    viewGeneration,
+    viewTargetOffset,
+    extendStatus,
     // Actions
     goToAddress,
     setViewMode,
-    // Pagination
-    loadPreviousPage,
-    loadNextPage,
+    // Window extension
+    extendUp,
+    extendDown,
     applyPendingChanges,
     discardPendingChanges,
     // Selection actions
@@ -338,8 +354,8 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
   const bytesPerRow = viewMode === 'pointer' ? config.bytesPerUnit : BYTES_PER_ROW;
   const unitsPerRow = viewMode === 'pointer' ? 1 : Math.floor(BYTES_PER_ROW / config.bytesPerUnit);
   const totalRows = Math.ceil(memoryData.length / bytesPerRow);
-  const ROW_HEIGHT = 28;
   const rowIndices = useMemo(() => Array.from({ length: totalRows }, (_, i) => i), [totalRows]);
+  const virtualizerRef = useRef<Virtualizer<HTMLDivElement, Element> | null>(null);
 
   // Minimum row width: below this the view scrolls horizontally instead of
   // wrapping/squeezing columns. ch units resolve against the mono font set on
@@ -351,11 +367,14 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
     ? `calc(9rem + 16px + ${config.displayWidth}ch + 12rem)`
     : `calc(9rem + 16px + 136px + ${unitsPerRow * config.displayWidth}ch + ${unitsPerRow * 8}px)`;
 
-  // Keep the fixed column header horizontally aligned with the scrolled rows.
+  // Keep the fixed column header horizontally aligned with the scrolled rows,
+  // and extend the memory window when scrolling near a vertical edge.
   const headerInnerRef = useRef<HTMLDivElement>(null);
   const lastScrollLeft = useRef(0);
   const handleViewportScroll = useCallback((e: UIEvent<HTMLDivElement>) => {
-    const { scrollLeft } = e.currentTarget;
+    const { scrollLeft, scrollTop, scrollHeight, clientHeight } = e.currentTarget;
+    if (scrollTop < EDGE_EXTEND_THRESHOLD) extendUp();
+    if (scrollHeight - scrollTop - clientHeight < EDGE_EXTEND_THRESHOLD) extendDown();
     // Vertical scrolling is the hot path — skip the style write unless the
     // horizontal offset actually changed.
     if (scrollLeft === lastScrollLeft.current) return;
@@ -363,7 +382,7 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
     if (headerInnerRef.current) {
       headerInnerRef.current.style.transform = `translateX(-${scrollLeft}px)`;
     }
-  }, []);
+  }, [extendUp, extendDown]);
   useEffect(() => {
     lastScrollLeft.current = 0;
     if (headerInnerRef.current) {
@@ -371,8 +390,74 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
     }
   }, [rowMinWidth]);
 
-  // Can navigate to previous page if baseAddress > 0
-  const canGoBack = baseAddress > 0n;
+  // Wheeling while pinned at an edge produces no scroll event — catch it here
+  // so the window still extends (e.g. scroll up right after a goto). The wheel
+  // distance is remembered so the view scrolls into the fetched rows once they
+  // arrive; otherwise the scroll anchor keeps the content visually frozen and
+  // the user has to wheel a second time to see anything happen.
+  const pendingRevealRef = useRef(0);
+  const handleWheel = useCallback((e: WheelEvent<HTMLDivElement>) => {
+    const viewport = virtualizerRef.current?.scrollElement;
+    if (!viewport) return;
+    if (e.deltaY < 0 && viewport.scrollTop <= 0) {
+      if (extendUp()) {
+        pendingRevealRef.current = e.deltaY;
+      } else if (pendingRevealRef.current < 0) {
+        // Fetch already in flight — keep accumulating the wheel distance
+        pendingRevealRef.current = Math.max(pendingRevealRef.current + e.deltaY, -MAX_WHEEL_REVEAL);
+      }
+    } else if (e.deltaY > 0 && viewport.scrollTop + viewport.clientHeight >= viewport.scrollHeight - 1) {
+      if (extendDown()) {
+        pendingRevealRef.current = e.deltaY;
+      } else if (pendingRevealRef.current > 0) {
+        pendingRevealRef.current = Math.min(pendingRevealRef.current + e.deltaY, MAX_WHEEL_REVEAL);
+      }
+    }
+  }, [extendUp, extendDown]);
+
+  // Keep the scroll position meaningful across window changes:
+  // - goto (viewGeneration bump): scroll to the target row — again once the
+  //   replace read lands, since the first attempt clamps to the old content
+  // - window base moved (prepend/trim): anchor so content stays put, plus any
+  //   remembered wheel-at-edge distance to reveal the fetched rows
+  // - pure append while pinned at the bottom: apply the remembered wheel distance
+  const prevWindowRef = useRef({ base: baseAddress, generation: viewGeneration, data: memoryData });
+  const gotoTargetRowRef = useRef<number | null>(null);
+  useLayoutEffect(() => {
+    const prev = prevWindowRef.current;
+    prevWindowRef.current = { base: baseAddress, generation: viewGeneration, data: memoryData };
+
+    const isNewGeneration = viewGeneration !== prev.generation;
+    if (isNewGeneration) {
+      pendingRevealRef.current = 0;
+      gotoTargetRowRef.current = Math.floor(viewTargetOffset / bytesPerRow);
+    }
+    const virtualizer = virtualizerRef.current;
+    const viewport = virtualizer?.scrollElement;
+    // No list rendered yet (goto from an empty view) — the goto scroll stays
+    // pending in gotoTargetRowRef until the replace read lands.
+    if (!virtualizer || !viewport) return;
+    const isNewData = memoryData !== prev.data;
+    if (!isNewGeneration && !isNewData) return;
+
+    if (gotoTargetRowRef.current !== null) {
+      // Scroll to the goto target row. On the generation bump the replace
+      // read usually hasn't landed (scroll clamps to the old content), so
+      // repeat when the data arrives and finish there.
+      virtualizer.scrollToOffset(gotoTargetRowRef.current * ROW_HEIGHT);
+      if (!isNewGeneration && isNewData) gotoTargetRowRef.current = null;
+      return;
+    }
+    const deltaBytes = Number(prev.base - baseAddress);
+    if (deltaBytes !== 0) {
+      const anchored = viewport.scrollTop + (deltaBytes / bytesPerRow) * ROW_HEIGHT + pendingRevealRef.current;
+      pendingRevealRef.current = 0;
+      virtualizer.scrollToOffset(Math.max(0, anchored));
+    } else if (pendingRevealRef.current !== 0) {
+      virtualizer.scrollToOffset(viewport.scrollTop + pendingRevealRef.current);
+      pendingRevealRef.current = 0;
+    }
+  }, [baseAddress, viewGeneration, bytesPerRow, memoryData, viewTargetOffset]);
 
   // Empty state
   if (!sessionId) {
@@ -403,13 +488,9 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
             handleGoto={handleGoto}
             viewMode={viewMode}
             setViewMode={setViewMode}
-            isLoading={isLoading}
             pendingChanges={pendingChanges}
             applyPendingChanges={applyPendingChanges}
             discardPendingChanges={discardPendingChanges}
-            loadPreviousPage={loadPreviousPage}
-            loadNextPage={loadNextPage}
-            canGoBack={canGoBack}
           />
           <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground p-4">
             <div className="text-center">
@@ -445,13 +526,9 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
           handleGoto={handleGoto}
           viewMode={viewMode}
           setViewMode={setViewMode}
-          isLoading={isLoading}
           pendingChanges={pendingChanges}
           applyPendingChanges={applyPendingChanges}
           discardPendingChanges={discardPendingChanges}
-          loadPreviousPage={loadPreviousPage}
-          loadNextPage={loadNextPage}
-          canGoBack={canGoBack}
         />
         <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground p-4">
           <div className="text-center">
@@ -480,13 +557,9 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
         handleGoto={handleGoto}
         viewMode={viewMode}
         setViewMode={setViewMode}
-        isLoading={isLoading}
         pendingChanges={pendingChanges}
         applyPendingChanges={applyPendingChanges}
         discardPendingChanges={discardPendingChanges}
-        loadPreviousPage={loadPreviousPage}
-        loadNextPage={loadNextPage}
-        canGoBack={canGoBack}
       />
 
       {/* Column Header - Fixed vertically, follows horizontal scroll */}
@@ -505,13 +578,14 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
       </div>
 
       {/* Hex Data - Scrollable + Virtualized */}
-      <div className="flex-1 min-h-0" onContextMenu={(e) => openContextMenu(e, {})}>
+      <div className="flex-1 min-h-0" onContextMenu={(e) => openContextMenu(e, {})} onWheel={handleWheel}>
         <VirtualizedList
           items={rowIndices}
           rowHeight={ROW_HEIGHT}
           className="h-full font-mono text-sm"
           minContentWidth={rowMinWidth}
           onViewportScroll={handleViewportScroll}
+          virtualizerRef={virtualizerRef}
           renderItem={(rowIndex) => {
             const rowOffset = rowIndex * bytesPerRow;
             const rowAddress = baseAddress + BigInt(rowOffset);
@@ -652,6 +726,9 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
           selectionEnd={selectionEnd}
           pendingChanges={pendingChanges}
           isLoading={isLoading}
+          topExhausted={topExhausted}
+          bottomExhausted={bottomExhausted}
+          extendStatus={extendStatus}
         />
       </div>
 
@@ -763,13 +840,9 @@ interface HexToolbarProps {
   handleGoto: () => void;
   viewMode: ViewMode;
   setViewMode: (mode: ViewMode) => void;
-  isLoading: boolean;
   pendingChanges: Map<number, number>;
   applyPendingChanges: () => void;
   discardPendingChanges: () => void;
-  loadPreviousPage: () => void;
-  loadNextPage: () => void;
-  canGoBack: boolean;
 }
 
 function HexToolbar({
@@ -779,13 +852,9 @@ function HexToolbar({
   handleGoto,
   viewMode,
   setViewMode,
-  isLoading,
   pendingChanges,
   applyPendingChanges,
   discardPendingChanges,
-  loadPreviousPage,
-  loadNextPage,
-  canGoBack,
 }: HexToolbarProps) {
   return (
     <PanelToolbar className="gap-2">
@@ -806,28 +875,6 @@ function HexToolbar({
         >
           <ArrowRight />
           <span>Go</span>
-        </Button>
-      </div>
-
-      {/* Page navigation */}
-      <div className="flex items-center gap-1">
-        <Button
-          variant="outline"
-          size="icon-xs"
-          onClick={loadPreviousPage}
-          disabled={isLoading || !canGoBack}
-          title="Previous page"
-        >
-          <ChevronLeft />
-        </Button>
-        <Button
-          variant="outline"
-          size="icon-xs"
-          onClick={loadNextPage}
-          disabled={isLoading}
-          title="Next page"
-        >
-          <ChevronRight />
         </Button>
       </div>
 
@@ -887,6 +934,9 @@ interface HexStatusBarProps {
   selectionEnd: number | null;
   pendingChanges: Map<number, number>;
   isLoading: boolean;
+  topExhausted: boolean;
+  bottomExhausted: boolean;
+  extendStatus: ExtendStatus | null;
 }
 
 function HexStatusBar({
@@ -896,6 +946,9 @@ function HexStatusBar({
   selectionEnd,
   pendingChanges,
   isLoading,
+  topExhausted,
+  bottomExhausted,
+  extendStatus,
 }: HexStatusBarProps) {
   const endAddress = baseAddress + BigInt(memoryData.length);
 
@@ -932,6 +985,20 @@ function HexStatusBar({
               {formatAddress(baseAddress + BigInt(normalizedStart!))}
             </>
           )}
+        </span>
+      )}
+
+      {/* Window boundary indicators (replaces the old partial-read toast) */}
+      {topExhausted && <span>▲ start of accessible memory</span>}
+      {bottomExhausted && <span>▼ end of accessible memory</span>}
+
+      {/* Edge extension feedback: fetching, then what arrived */}
+      {extendStatus && (
+        <span className="text-primary">
+          {extendStatus.direction === 'up' ? '▲' : '▼'}{' '}
+          {extendStatus.done
+            ? `fetched ${extendStatus.size} bytes at ${formatAddress(extendStatus.address)}`
+            : `fetching ${formatAddress(extendStatus.address)}…`}
         </span>
       )}
 

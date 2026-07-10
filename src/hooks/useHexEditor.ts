@@ -28,6 +28,41 @@ interface HexViewPersistedState {
 }
 const sessionStateStore = new Map<string, HexViewPersistedState>();
 
+// The view keeps a sliding window of memory. Scrolling near an edge extends
+// the window by one chunk; beyond this cap the opposite end is trimmed so
+// live-polling refreshes stay bounded.
+const MAX_WINDOW_SIZE = DEFAULT_CHUNK_SIZE * 8;
+
+// Goto aligns the window base down to a page so scrolling within the same
+// page never needs an extra fetch.
+const PAGE_SIZE = 4096;
+
+// A window read in flight. 'replace' swaps the whole window (goto), 'refresh'
+// re-reads the current window in place, 'prepend'/'append' extend an edge.
+type PendingReadKind = 'replace' | 'refresh' | 'prepend' | 'append';
+interface PendingRead {
+  kind: PendingReadKind;
+  address: bigint;
+  background: boolean;
+  at: number;
+}
+
+// Status-bar feedback for an edge extension: which range is being fetched,
+// then what actually arrived. Cleared shortly after completion.
+export interface ExtendStatus {
+  direction: 'up' | 'down';
+  address: bigint;
+  size: number;
+  done: boolean;
+}
+
+const concatBytes = (a: Uint8Array, b: Uint8Array): Uint8Array => {
+  const out = new Uint8Array(a.length + b.length);
+  out.set(a, 0);
+  out.set(b, a.length);
+  return out;
+};
+
 interface MemoryReadResult {
   session_id: string;
   address: number;
@@ -77,14 +112,26 @@ export interface HexEditorState {
   changedOffsets: Set<number>;
   // Dereference data (pointer mode)
   dereferenceData: Map<string, DereferenceEntry>;
+  // Window boundaries: no accessible memory beyond the corresponding edge
+  topExhausted: boolean;
+  bottomExhausted: boolean;
+  // Increments on every explicit navigation (goto); lets the view distinguish
+  // "new location, scroll to the target row" from "window extended, keep
+  // scroll anchored"
+  viewGeneration: number;
+  // Byte offset of the goto target within the (page-aligned) window — the
+  // row the view scrolls to on a viewGeneration bump
+  viewTargetOffset: number;
+  // In-flight / just-completed edge extension, for status-bar feedback
+  extendStatus: ExtendStatus | null;
 }
 
 export interface HexEditorActions {
   goToAddress: (address: string | bigint) => Promise<void>;
   setViewMode: (mode: ViewMode) => void;
-  // Pagination
-  loadPreviousPage: () => void;
-  loadNextPage: () => void;
+  // Window extension (infinite scroll); returns true if a fetch was started
+  extendUp: () => boolean;
+  extendDown: () => boolean;
   // Pending changes
   applyPendingChanges: () => void;
   discardPendingChanges: () => void;
@@ -161,6 +208,16 @@ export function useHexEditor(options: UseHexEditorOptions): HexEditorState & Hex
   const [selectionEnd, setSelectionEnd] = useState<number | null>(null);
   const [isDragging, setIsDragging] = useState(false);
 
+  const setSelection = useCallback((start: number | null, end: number | null) => {
+    setSelectionStart(start);
+    setSelectionEnd(end);
+  }, []);
+
+  const clearSelection = useCallback(() => {
+    setSelectionStart(null);
+    setSelectionEnd(null);
+  }, []);
+
   // Editing state - no visible input, byte stays visible, typing overwrites
   const [editingOffset, setEditingOffset] = useState<number | null>(null);
   const [editingColumn, setEditingColumn] = useState<'hex' | 'ascii'>('hex');
@@ -179,44 +236,129 @@ export function useHexEditor(options: UseHexEditorOptions): HexEditorState & Hex
     return set;
   }, [selectionStart, selectionEnd]);
   const initialLoadDone = useRef(false);
-  const pendingReadAddress = useRef<bigint | null>(null);
-  const pendingReadIsBackground = useRef(false);
+  const pendingRead = useRef<PendingRead | null>(null);
   const [listenersReady, setListenersReady] = useState(false);
-  // Ref for auto-reload: tracks current address for the session-updated listener
+  // Refs for stable listeners/callbacks: track current window without re-subscribing
   const baseAddressRef = useRef<bigint>(baseAddress);
   baseAddressRef.current = baseAddress;
+  const memoryDataRef = useRef<Uint8Array>(memoryData);
+  memoryDataRef.current = memoryData;
 
+  // Window boundary flags: set when a read past an edge hit unmapped memory,
+  // so edge scrolling doesn't retry (and toast) in a loop.
+  const [topExhausted, setTopExhausted] = useState(false);
+  const [bottomExhausted, setBottomExhausted] = useState(false);
 
-  // Load memory from specified address. Background loads (polling, auto-reload
-  // after a step) skip the loading spinner and stay silent on failure so the
-  // last good data remains visible.
-  const loadMemory = useCallback(async (address: bigint, background = false) => {
+  const [viewGeneration, setViewGeneration] = useState(0);
+  const [viewTargetOffset, setViewTargetOffset] = useState(0);
+  const [extendStatus, setExtendStatus] = useState<ExtendStatus | null>(null);
+
+  // Let the "fetched N bytes" note linger briefly in the status bar, then clear
+  useEffect(() => {
+    if (!extendStatus?.done) return;
+    const timer = setTimeout(() => setExtendStatus(null), 2500);
+    return () => clearTimeout(timer);
+  }, [extendStatus]);
+
+  // Failed edge extensions just mark the boundary — no toast, no retry;
+  // background failures stay silent so the last good data remains visible.
+  const handleReadFailure = useCallback((pending: PendingRead, errorMsg: string) => {
+    if (pending.kind === 'prepend') { setTopExhausted(true); setExtendStatus(null); return; }
+    if (pending.kind === 'append') { setBottomExhausted(true); setExtendStatus(null); return; }
+    if (pending.background) return;
+    setError(errorMsg);
+    toastError(`Failed to read memory: ${errorMsg}`, sessionId);
+    setIsLoading(false);
+  }, [sessionId]);
+
+  // Issue a memory read. Background reads (polling, auto-reload after a step,
+  // window extensions) skip the loading spinner.
+  const requestRead = useCallback(async (kind: PendingReadKind, address: bigint, size: number, background: boolean) => {
     if (!sessionId) return;
 
     if (!background) {
       setIsLoading(true);
       setError(null);
     }
-    initialLoadDone.current = true;
-    pendingReadAddress.current = address;
-    pendingReadIsBackground.current = background;
+    const pending: PendingRead = { kind, address, background, at: performance.now() };
+    pendingRead.current = pending;
+    if (kind === 'prepend' || kind === 'append') {
+      setExtendStatus({ direction: kind === 'prepend' ? 'up' : 'down', address, size, done: false });
+    }
 
     try {
       await invoke('request_memory_read', {
         sessionId,
         address: Number(address),
-        size: DEFAULT_CHUNK_SIZE,
+        size,
       });
       // Results will come via event
     } catch (err) {
-      pendingReadAddress.current = null;
-      if (background) return;
-      const errorMsg = formatTauriError(err);
-      setError(errorMsg);
-      toastError(`Failed to read memory: ${errorMsg}`, sessionId);
-      setIsLoading(false);
+      pendingRead.current = null;
+      handleReadFailure(pending, formatTauriError(err));
     }
-  }, [sessionId]);
+  }, [sessionId, handleReadFailure]);
+
+  // Replace the window with fresh data at the given address (goto/initial load)
+  const loadWindow = useCallback((address: bigint, size = DEFAULT_CHUNK_SIZE) => {
+    initialLoadDone.current = true;
+    requestRead('replace', address, size, false);
+  }, [requestRead]);
+
+  // Re-read the current window in place (polling, post-step reload, post-write).
+  // Skips if another read is in flight (unless it looks stuck) — the next tick
+  // will catch up.
+  const refreshWindow = useCallback((background = true) => {
+    if (!sessionId || !initialLoadDone.current) return;
+    if (pendingRead.current) {
+      if (performance.now() - pendingRead.current.at < 3000) return;
+      pendingRead.current = null; // stale request — response never arrived
+    }
+    const size = memoryDataRef.current.length || DEFAULT_CHUNK_SIZE;
+    requestRead('refresh', baseAddressRef.current, size, background);
+  }, [sessionId, requestRead]);
+
+  // Shift window-relative offsets (selection, edit cursor, pending edits) when
+  // the window base moves, so they keep pointing at the same absolute address.
+  const shiftWindowOffsets = useCallback((delta: number) => {
+    const shiftClamped = (v: number | null) => (v === null ? null : Math.max(0, v + delta));
+    setSelectionStart(shiftClamped);
+    setSelectionEnd(shiftClamped);
+    setEditingOffset((v) => (v === null || v + delta < 0 ? null : v + delta));
+    setPendingChanges((prev) => {
+      if (prev.size === 0) return prev;
+      const next = new Map<number, number>();
+      prev.forEach((value, offset) => {
+        if (offset + delta >= 0) next.set(offset + delta, value);
+      });
+      return next;
+    });
+  }, []);
+
+  // Extend the window one chunk upward (scroll up past the beginning).
+  // Returns true if a fetch was started.
+  const extendUp = useCallback((): boolean => {
+    if (!sessionId || pendingRead.current || topExhausted) return false;
+    if (!initialLoadDone.current || memoryDataRef.current.length === 0) return false;
+    const base = baseAddressRef.current;
+    if (base <= 0n) {
+      setTopExhausted(true);
+      return false;
+    }
+    const size = base >= BigInt(DEFAULT_CHUNK_SIZE) ? DEFAULT_CHUNK_SIZE : Number(base);
+    requestRead('prepend', base - BigInt(size), size, true);
+    return true;
+  }, [sessionId, requestRead, topExhausted]);
+
+  // Extend the window one chunk downward (scroll down past the end).
+  // Returns true if a fetch was started.
+  const extendDown = useCallback((): boolean => {
+    if (!sessionId || pendingRead.current || bottomExhausted) return false;
+    if (!initialLoadDone.current || memoryDataRef.current.length === 0) return false;
+    const start = baseAddressRef.current + BigInt(memoryDataRef.current.length);
+    requestRead('append', start, DEFAULT_CHUNK_SIZE, true);
+    return true;
+  }, [sessionId, requestRead, bottomExhausted]);
 
   // Load dereference data for pointer mode
   const loadDereference = useCallback(async (address: bigint, count: number) => {
@@ -240,7 +382,10 @@ export function useHexEditor(options: UseHexEditorOptions): HexEditorState & Hex
     }
   }, [sessionId]);
 
-  // Go to specific address (supports expressions like rax+0x10, symbol+offset)
+  // Go to specific address (supports expressions like rax+0x10, symbol+offset).
+  // The window base is aligned down to the page so scrolling within the same
+  // page never refetches; the cursor marks the exact requested byte and the
+  // view scrolls to its row (viewTargetOffset).
   const goToAddress = useCallback(async (address: string | bigint) => {
     let targetAddress: bigint;
 
@@ -255,12 +400,24 @@ export function useHexEditor(options: UseHexEditorOptions): HexEditorState & Hex
       targetAddress = address;
     }
 
-    setBaseAddress(targetAddress);
-    setSelectionStart(null);
-    setSelectionEnd(null);
+    const alignedBase = targetAddress - (targetAddress % BigInt(PAGE_SIZE));
+    const cursorOffset = Number(targetAddress - alignedBase);
+
+    setBaseAddress(alignedBase);
+    setTopExhausted(false);
+    setBottomExhausted(false);
+    setViewGeneration((g) => g + 1);
+    setViewTargetOffset(cursorOffset);
+    if (cursorOffset > 0) {
+      setSelection(cursorOffset, cursorOffset);
+    } else {
+      clearSelection();
+    }
     setEditingOffset(null);
-    loadMemory(targetAddress);
-  }, [loadMemory, registers, resolveSymbol]);
+    // An unaligned target sits up to a page into the window — read a second
+    // chunk so it still has a full chunk of context below it.
+    loadWindow(alignedBase, cursorOffset > 0 ? DEFAULT_CHUNK_SIZE * 2 : DEFAULT_CHUNK_SIZE);
+  }, [loadWindow, registers, resolveSymbol, sessionId, setBaseAddress, setSelection, clearSelection]);
 
   // Set view mode
   const setViewMode = useCallback((mode: ViewMode) => {
@@ -270,16 +427,6 @@ export function useHexEditor(options: UseHexEditorOptions): HexEditorState & Hex
   // ============================================================================
   // Selection actions
   // ============================================================================
-
-  const setSelection = useCallback((start: number | null, end: number | null) => {
-    setSelectionStart(start);
-    setSelectionEnd(end);
-  }, []);
-
-  const clearSelection = useCallback(() => {
-    setSelectionStart(null);
-    setSelectionEnd(null);
-  }, []);
 
   const extendSelection = useCallback((offset: number) => {
     const config = VIEW_MODE_CONFIGS[viewMode];
@@ -305,35 +452,6 @@ export function useHexEditor(options: UseHexEditorOptions): HexEditorState & Hex
       }
     }
   }, [selectionStart, viewMode, memoryData.length]);
-
-  // ============================================================================
-  // Pagination actions
-  // ============================================================================
-
-  // Load previous page (scroll up past beginning)
-  const loadPreviousPage = useCallback(() => {
-    if (isLoading) return;
-    // Go back by chunk size, but don't go below 0
-    const newAddress = baseAddress > BigInt(DEFAULT_CHUNK_SIZE)
-      ? baseAddress - BigInt(DEFAULT_CHUNK_SIZE)
-      : 0n;
-    if (newAddress !== baseAddress) {
-      setBaseAddress(newAddress);
-      clearSelection();
-      setEditingOffset(null);
-      loadMemory(newAddress);
-    }
-  }, [baseAddress, isLoading, loadMemory, setBaseAddress, clearSelection]);
-
-  // Load next page (scroll down past end)
-  const loadNextPage = useCallback(() => {
-    if (isLoading) return;
-    const newAddress = baseAddress + BigInt(DEFAULT_CHUNK_SIZE);
-    setBaseAddress(newAddress);
-    clearSelection();
-    setEditingOffset(null);
-    loadMemory(newAddress);
-  }, [baseAddress, isLoading, loadMemory, setBaseAddress, clearSelection]);
 
   // ============================================================================
   // Editing actions - no visible input, byte stays visible, typing overwrites
@@ -661,13 +779,13 @@ export function useHexEditor(options: UseHexEditorOptions): HexEditorState & Hex
 
       setPendingChanges(new Map());
       // Refresh to get updated data
-      loadMemory(baseAddress);
+      refreshWindow(false);
     } catch (err) {
       const errorMsg = formatTauriError(err);
       toastError(`Failed to write memory: ${errorMsg}`, sessionId);
       setIsLoading(false);
     }
-  }, [sessionId, pendingChanges, baseAddress, loadMemory]);
+  }, [sessionId, pendingChanges, baseAddress, refreshWindow]);
 
   // Discard pending changes
   const discardPendingChanges = useCallback(() => {
@@ -681,20 +799,72 @@ export function useHexEditor(options: UseHexEditorOptions): HexEditorState & Hex
     const setupListeners = async () => {
       const unlistenRead = await listen<MemoryReadResult>('memory-read-updated', (event) => {
         // Only accept responses for this view's pending request
-        if (event.payload.session_id === sessionId &&
-            pendingReadAddress.current !== null &&
-            BigInt(event.payload.address) === pendingReadAddress.current) {
-          const { data, requested_size } = event.payload;
-          const bytesRead = data.length;
-          const isPartial = bytesRead < requested_size && bytesRead > 0;
+        const pending = pendingRead.current;
+        if (event.payload.session_id !== sessionId ||
+            pending === null ||
+            BigInt(event.payload.address) !== pending.address) {
+          return;
+        }
+        pendingRead.current = null;
 
-          setMemoryData(new Uint8Array(data));
+        const { data, requested_size } = event.payload;
+        const bytes = new Uint8Array(data);
+        // A short read means the tail of the range is unmapped ("end of
+        // accessible memory") — surfaced via bottomExhausted, never a toast.
+        const isPartial = bytes.length < requested_size;
+
+        if (pending.kind === 'replace' || pending.kind === 'refresh') {
+          // Quiet polling ticks usually return identical bytes — keep the old
+          // array identity so the view and the change-diff skip re-rendering.
+          const old = memoryDataRef.current;
+          const unchanged = pending.kind === 'refresh' &&
+            bytes.length === old.length && old.every((b, i) => b === bytes[i]);
+          if (!unchanged) setMemoryData(bytes);
+          if (pending.kind === 'replace') {
+            setBottomExhausted(isPartial);
+            setTopExhausted(pending.address === 0n);
+          } else if (isPartial) {
+            setBottomExhausted(true);
+          }
           setIsLoading(false);
           setError(null);
-          pendingReadAddress.current = null;
-
+        } else if (pending.kind === 'prepend') {
           if (isPartial) {
-            toastInfo(`Partial read: ${bytesRead} of ${requested_size} bytes (end of accessible memory)`, sessionId);
+            // The gap sits at the tail of the read, i.e. directly above the
+            // window — the data isn't contiguous with it, so drop it.
+            setTopExhausted(true);
+            setExtendStatus(null);
+          } else {
+            let combined = concatBytes(bytes, memoryDataRef.current);
+            if (combined.length > MAX_WINDOW_SIZE) {
+              combined = combined.slice(0, MAX_WINDOW_SIZE);
+              setBottomExhausted(false); // trimmed tail can be re-read on scroll
+            }
+            shiftWindowOffsets(bytes.length);
+            setBaseAddress(pending.address);
+            setMemoryData(combined);
+            if (pending.address === 0n) setTopExhausted(true);
+            setExtendStatus({ direction: 'up', address: pending.address, size: bytes.length, done: true });
+          }
+        } else { // append
+          if (isPartial) setBottomExhausted(true);
+          setExtendStatus(bytes.length > 0
+            ? { direction: 'down', address: pending.address, size: bytes.length, done: true }
+            : null);
+          if (bytes.length > 0) {
+            let combined = concatBytes(memoryDataRef.current, bytes);
+            if (combined.length > MAX_WINDOW_SIZE) {
+              // Trim from the top, keeping rows aligned
+              let drop = combined.length - MAX_WINDOW_SIZE;
+              drop -= drop % BYTES_PER_ROW;
+              if (drop > 0) {
+                combined = combined.slice(drop);
+                shiftWindowOffsets(-drop);
+                setBaseAddress(baseAddressRef.current + BigInt(drop));
+                setTopExhausted(false); // trimmed head can be re-read on scroll
+              }
+            }
+            setMemoryData(combined);
           }
         }
       });
@@ -702,12 +872,10 @@ export function useHexEditor(options: UseHexEditorOptions): HexEditorState & Hex
       const unlistenReadError = await listen<MemoryReadError>('memory-read-error', (event) => {
         // Accept errors for this session if we have a pending read
         // Don't be too strict about address matching - precision issues can occur with large addresses
-        if (event.payload.session_id === sessionId && pendingReadAddress.current !== null) {
-          pendingReadAddress.current = null;
-          if (pendingReadIsBackground.current) return;
-          setError(event.payload.error);
-          toastError(`Failed to read memory: ${event.payload.error}`, sessionId);
-          setIsLoading(false);
+        if (event.payload.session_id === sessionId && pendingRead.current !== null) {
+          const pending = pendingRead.current;
+          pendingRead.current = null;
+          handleReadFailure(pending, event.payload.error);
         }
       });
 
@@ -755,7 +923,7 @@ export function useHexEditor(options: UseHexEditorOptions): HexEditorState & Hex
       setListenersReady(false);
       cleanup.then((fn) => fn?.());
     };
-  }, [sessionId]);
+  }, [sessionId, setBaseAddress, shiftWindowOffsets, handleReadFailure]);
 
   // Auto-reload memory after a debugging step.
   // Listens for session-updated directly (bypasses React batching which can swallow
@@ -773,9 +941,12 @@ export function useHexEditor(options: UseHexEditorOptions): HexEditorState & Hex
         prevStatus = newStatus;
 
         // Reload when session transitions TO Paused from Running (step/breakpoint)
-        // and user has already loaded memory at an address
+        // and user has already loaded memory at an address. The memory map may
+        // have changed, so boundary flags are cleared to allow re-probing.
         if (newStatus === 'Paused' && wasNonPaused && initialLoadDone.current) {
-          loadMemory(baseAddressRef.current, true);
+          setTopExhausted(false);
+          setBottomExhausted(false);
+          refreshWindow();
         }
       });
       return unlisten;
@@ -783,7 +954,7 @@ export function useHexEditor(options: UseHexEditorOptions): HexEditorState & Hex
 
     const cleanup = setupListener();
     return () => { cleanup.then(fn => fn?.()); };
-  }, [sessionId, listenersReady, loadMemory]);
+  }, [sessionId, listenersReady, refreshWindow]);
 
   // Load memory on mount: persisted address > initialAddress
   useEffect(() => {
@@ -792,10 +963,9 @@ export function useHexEditor(options: UseHexEditorOptions): HexEditorState & Hex
     // Determine address to load: persisted > initialAddress
     const addressToLoad = persisted?.baseAddress ?? initialAddress;
     if (addressToLoad !== undefined && addressToLoad !== 0n) {
-      initialLoadDone.current = true;
-      loadMemory(addressToLoad);
+      loadWindow(addressToLoad);
     }
-  }, [sessionId, loadMemory, initialAddress, sessionStatus, listenersReady, persisted?.baseAddress]);
+  }, [sessionId, loadWindow, initialAddress, sessionStatus, listenersReady, persisted?.baseAddress]);
 
   // Reset error and data when session ends (keep data visible while running)
   useEffect(() => {
@@ -803,7 +973,11 @@ export function useHexEditor(options: UseHexEditorOptions): HexEditorState & Hex
       setError(null);
       setMemoryData(new Uint8Array(0));
       setDereferenceData(new Map());
+      setTopExhausted(false);
+      setBottomExhausted(false);
+      setExtendStatus(null);
       initialLoadDone.current = false;
+      pendingRead.current = null;
     }
   }, [sessionId]);
 
@@ -814,11 +988,11 @@ export function useHexEditor(options: UseHexEditorOptions): HexEditorState & Hex
     if (!sessionId || !isTargetLive(sessionStatus)) return;
 
     const interval = setInterval(() => {
-      if (initialLoadDone.current) loadMemory(baseAddressRef.current, true);
+      refreshWindow();
     }, 500);
 
     return () => clearInterval(interval);
-  }, [sessionId, sessionStatus, loadMemory]);
+  }, [sessionId, sessionStatus, refreshWindow]);
 
   // Fetch dereference data when in pointer mode and memory data is available
   useEffect(() => {
@@ -850,14 +1024,20 @@ export function useHexEditor(options: UseHexEditorOptions): HexEditorState & Hex
     return result;
   }, [memoryData, pendingChanges]);
 
-  // Computed: set of byte offsets that changed since last read (for red highlighting)
+  // Computed: set of byte offsets that changed since last read (for red
+  // highlighting). The comparison aligns by absolute address so the baseline
+  // stays valid when the window slides (prepend/append/trim).
   const changedOffsets = useMemo(() => {
     const set = new Set<number>();
     const prev = prevMemoryDataRef.current;
-    if (!prev || prev.baseAddress !== baseAddress || memoryData.length === 0) return set;
-    const len = Math.min(prev.data.length, memoryData.length);
-    for (let i = 0; i < len; i++) {
-      if (prev.data[i] !== memoryData[i]) {
+    if (!prev || memoryData.length === 0) return set;
+    const deltaBig = baseAddress - prev.baseAddress;
+    if (deltaBig >= BigInt(prev.data.length) || -deltaBig >= BigInt(memoryData.length)) return set;
+    const delta = Number(deltaBig);
+    const start = Math.max(0, -delta);
+    const end = Math.min(memoryData.length, prev.data.length - delta);
+    for (let i = start; i < end; i++) {
+      if (prev.data[i + delta] !== memoryData[i]) {
         set.add(i);
       }
     }
@@ -881,13 +1061,10 @@ export function useHexEditor(options: UseHexEditorOptions): HexEditorState & Hex
     lastSeenMemoryDataRef.current = memoryData;
     if (!isNewData) return; // Same stale reference after address change — skip
 
-    if (!prevMemoryDataRef.current || prevMemoryDataRef.current.baseAddress === baseAddress) {
-      // Same address (refresh/step) or first load — store as baseline
-      prevMemoryDataRef.current = { data: new Uint8Array(memoryData), baseAddress };
-    } else {
-      // Different address — clear baseline (no comparison across addresses)
-      prevMemoryDataRef.current = undefined;
-    }
+    // Store as baseline with its base address; the diff aligns by absolute
+    // address, so a slid window still compares overlapping bytes correctly
+    // and a jump to an unrelated address simply has no overlap.
+    prevMemoryDataRef.current = { data: new Uint8Array(memoryData), baseAddress };
   }, [memoryData, baseAddress, sessionId]);
 
   return {
@@ -914,12 +1091,18 @@ export function useHexEditor(options: UseHexEditorOptions): HexEditorState & Hex
     changedOffsets,
     // Dereference data
     dereferenceData,
+    // Window boundaries
+    topExhausted,
+    bottomExhausted,
+    viewGeneration,
+    viewTargetOffset,
+    extendStatus,
     // Actions
     goToAddress,
     setViewMode,
-    // Pagination
-    loadPreviousPage,
-    loadNextPage,
+    // Window extension
+    extendUp,
+    extendDown,
     // Pending changes actions
     applyPendingChanges,
     discardPendingChanges,
