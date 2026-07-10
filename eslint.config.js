@@ -6,7 +6,8 @@
 //  1. No raw `overflow-*: auto|scroll` classes in views — use <PanelBody>/<ScrollArea>,
 //     otherwise the rc-dock scroll contract breaks (whole panel scrolls).
 //  2. No raw <button> in views — use <Button>/<ContextMenuItem>.
-// `src/components/ui/**` is exempt (the primitives legitimately use both).
+//  3. No raw <input>/<select>/<textarea> in views — use <Input>/<Checkbox>/<Select>.
+// `src/components/ui/**` is exempt (the primitives legitimately use these).
 
 import tseslint from "typescript-eslint";
 import reactHooks from "eslint-plugin-react-hooks";
@@ -29,6 +30,12 @@ const noRawButton = {
   selector: "JSXOpeningElement[name.name='button']",
   message:
     "Don't use a raw <button> in a view — use <Button> (from @/components/ui/button) or <ContextMenuItem> (from @/components/ui/context-menu).",
+};
+
+const noRawFormControl = {
+  selector: "JSXOpeningElement[name.name=/^(input|select|textarea)$/]",
+  message:
+    "Don't use a raw <input>/<select>/<textarea> in a view — use <Input>, <Checkbox>, or <Select> from @/components/ui (for a multi-line field, add a Textarea primitive there first).",
 };
 
 export default tseslint.config(
@@ -59,6 +66,7 @@ export default tseslint.config(
         noOverflowLiteral,
         noOverflowTemplate,
         noRawButton,
+        noRawFormControl,
       ],
     },
   },

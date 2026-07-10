@@ -1,6 +1,7 @@
 import { useState, useCallback } from "react";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
+import { Checkbox } from "./ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { X, Bookmark as BookmarkIcon, Lock, Unlock } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -132,11 +133,9 @@ export function BookmarksView({
       onContextMenu={(e) => { if (!isDragOverlay) openContextMenu(e, { id: b.id }); }}
     >
       <span className="w-6 shrink-0 flex items-center justify-center">
-        <input
-          type="checkbox"
+        <Checkbox
           checked={selectedIds.has(b.id)}
           onChange={() => toggleSelect(b.id)}
-          className="h-3.5 w-3.5 accent-primary"
         />
       </span>
 
@@ -283,7 +282,7 @@ export function BookmarksView({
             {bookmarks.length > 0 && (
               <div className="flex items-center px-2 py-1 border-b border-border text-xs text-muted-foreground font-medium shrink-0">
                 <span className="w-6 shrink-0 flex items-center justify-center">
-                  <input type="checkbox" checked={allSelected} onChange={toggleSelectAll} className="h-3.5 w-3.5 accent-primary" />
+                  <Checkbox checked={allSelected} onChange={toggleSelectAll} />
                 </span>
                 <span className="shrink-0 truncate relative pr-1" style={{ width: columnWidths.name }}>
                   Name

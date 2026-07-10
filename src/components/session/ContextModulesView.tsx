@@ -60,7 +60,7 @@ export const ContextModulesView: React.FC<ContextModulesViewProps> = ({ onOpenMo
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 mb-1">
                   <h3 className="font-medium text-sm truncate">{getFileName(module.name)}</h3>
-                  <Badge variant="outline" className="text-xs px-1 py-0 shrink-0">
+                  <Badge variant="outline" size="xs">
                     {formatBytes(module.size)}
                   </Badge>
                 </div>

@@ -327,7 +327,8 @@ export const ContextThreadsView = ({ onNavigateToDisassembly, onNavigateToMemory
                     <h3 className="font-medium text-sm">Thread {thread.id}</h3>
                     <Badge
                       variant="outline"
-                      className={`${getThreadStatusColor(thread.status)} border text-xs px-1 py-0`}
+                      size="xs"
+                      className={getThreadStatusColor(thread.status)}
                     >
                       {thread.status}
                     </Badge>

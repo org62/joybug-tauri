@@ -3,6 +3,7 @@ import { ChevronDown, ChevronRight, Loader2 } from "lucide-react";
 import { ScrollArea } from "./ui/scroll-area";
 import { VirtualizedList } from "./ui/virtualized-list";
 import { Button } from "./ui/button";
+import { Input } from "./ui/input";
 import { cn } from "@/lib/utils";
 import { useQuickEmulation, QuickEmulationResult } from "@/hooks/useQuickEmulation";
 import { parseTenetTrace } from "@/lib/tenetParser";
@@ -496,10 +497,11 @@ export function EmulationQuickView({ sessionId, isPaused, pcAddress, onNavigateT
               )}
               <span className="ml-auto flex items-center gap-1">
                 limit
-                <input
+                <Input
                   key={maxInstructions}
                   type="text"
-                  className="w-14 px-1 py-0 rounded border border-border bg-background text-right font-mono"
+                  inputSize="inline"
+                  className="w-14 text-right font-mono"
                   defaultValue={maxInstructions.toLocaleString()}
                   onClick={(e) => e.stopPropagation()}
                   onFocus={(e) => e.target.select()}

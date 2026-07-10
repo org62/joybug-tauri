@@ -1,6 +1,7 @@
 import { useState, useCallback } from "react";
 import { Button } from "./ui/button";
 import { Switch } from "./ui/switch";
+import { Checkbox } from "./ui/checkbox";
 import { X, Puzzle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { Patch } from "@/hooks/usePatches";
@@ -80,11 +81,9 @@ export function PatchesView({
       onContextMenu={(e) => { if (!isDragOverlay) openContextMenu(e, { patchId: patch.id }); }}
     >
       <span className="w-6 shrink-0 flex items-center justify-center">
-        <input
-          type="checkbox"
+        <Checkbox
           checked={selectedIds.has(patch.id)}
           onChange={() => toggleSelect(patch.id)}
-          className="h-3.5 w-3.5 accent-primary"
         />
       </span>
       <span
@@ -104,9 +103,9 @@ export function PatchesView({
       </span>
       <span className="w-14 shrink-0 flex items-center justify-center">
         <Switch
+          size="xs"
           checked={patch.enabled}
           onCheckedChange={(checked) => onEnablePatch?.(patch.id, checked)}
-          className="h-4 w-7"
         />
       </span>
       {!isDragOverlay && (
@@ -151,11 +150,9 @@ export function PatchesView({
             {patches.length > 0 && (
               <div className="flex items-center px-2 py-1 border-b border-border text-xs text-muted-foreground font-medium shrink-0">
                 <span className="w-6 shrink-0 flex items-center justify-center">
-                  <input
-                    type="checkbox"
+                  <Checkbox
                     checked={allSelected}
                     onChange={toggleSelectAll}
-                    className="h-3.5 w-3.5 accent-primary"
                   />
                 </span>
                 <span className="w-28 shrink-0">Address</span>

@@ -1,6 +1,7 @@
 import { useState, useCallback } from "react";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
+import { Badge } from "./ui/badge";
 import { Trash2, Plus } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Breakpoint } from "@/hooks/useBreakpoints";
@@ -171,9 +172,9 @@ export function BreakpointsView({
 
         {/* HW type badge */}
         {isHardware && hwInfo && (
-          <span className="shrink-0 text-[10px] px-1 py-0 rounded bg-amber-500/20 text-amber-600 dark:text-amber-400 font-medium">
+          <Badge size="xs" className="bg-amber-500/20 text-amber-600 dark:text-amber-400 text-[10px]">
             {hwInfo}
-          </span>
+          </Badge>
         )}
 
         {/* Name / symbol or inline edit */}
@@ -190,8 +191,7 @@ export function BreakpointsView({
                 if (e.key === "Escape") setEditingField(null);
               }}
               onBlur={commitEdit}
-              inputSize="xs"
-              className="px-1 py-0 rounded-sm shadow-none focus-visible:ring-0 focus-visible:ring-offset-0"
+              inputSize="inline"
               placeholder={isEditingGroup ? "group name" : "breakpoint name"}
               autoFocus
             />

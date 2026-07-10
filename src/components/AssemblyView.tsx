@@ -286,9 +286,9 @@ export function AssemblyView({ sessionId, isPaused, address, registers, resolveS
           <Label htmlFor="show-bytes" className="text-xs">Bytes</Label>
           <Switch
             id="show-bytes"
+            size="xs"
             checked={showBytes}
             onCheckedChange={toggleBytesColumn}
-            className="h-4 w-7"
           />
         </div>
       </PanelToolbar>
@@ -331,12 +331,12 @@ export function AssemblyView({ sessionId, isPaused, address, registers, resolveS
               <Label htmlFor="nop-pad" className="text-xs whitespace-nowrap">NOPs</Label>
               <Switch
                 id="nop-pad"
+                size="xs"
                 checked={nopPad}
                 onCheckedChange={(checked) => {
                   setNopPad(checked);
                   try { localStorage.setItem(NOP_PAD_KEY, String(checked)); } catch {}
                 }}
-                className="h-4 w-7"
               />
             </div>
             <Button

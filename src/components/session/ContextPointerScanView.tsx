@@ -151,6 +151,7 @@ export const ContextPointerScanView = () => {
         <div className="flex gap-1">
           <Input
             type="text"
+            inputSize="xs"
             placeholder="Target address (0x...)"
             value={scan.targetAddress}
             onChange={(e) => scan.setTargetAddress(e.target.value)}
@@ -164,6 +165,7 @@ export const ContextPointerScanView = () => {
             <span className="text-xs text-muted-foreground">Max offset</span>
             <Input
               type="text"
+              inputSize="xs"
               value={scan.maxOffset}
               onChange={(e) => scan.setMaxOffset(e.target.value)}
               onKeyDown={handleKeyDown}
@@ -175,6 +177,7 @@ export const ContextPointerScanView = () => {
             <span className="text-xs text-muted-foreground">Max depth</span>
             <Input
               type="text"
+              inputSize="xs"
               value={scan.maxDepth}
               onChange={(e) => scan.setMaxDepth(e.target.value)}
               onKeyDown={handleKeyDown}
@@ -185,7 +188,7 @@ export const ContextPointerScanView = () => {
           {/* Base module selector */}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button size="sm" variant="outline" className="ml-auto gap-1" disabled={!canUse}>
+              <Button size="xs" variant="outline" className="ml-auto gap-1" disabled={!canUse}>
                 {moduleLabel}
                 <ChevronDown className="h-3 w-3" />
               </Button>
@@ -227,14 +230,14 @@ export const ContextPointerScanView = () => {
         </div>
         <div className="flex gap-1 items-center">
           <Button
-            size="sm"
+            size="xs"
             onClick={scan.handleScan}
             disabled={!canUse || scan.isScanning || !scan.targetAddress.trim()}
           >
             Scan
           </Button>
           <Button
-            size="sm"
+            size="xs"
             variant="outline"
             onClick={scan.handleRescan}
             disabled={!canUse || scan.isScanning || scan.resultsPath === null || !scan.targetAddress.trim()}
@@ -243,7 +246,7 @@ export const ContextPointerScanView = () => {
             Rescan
           </Button>
           <Button
-            size="sm"
+            size="xs"
             variant="outline"
             onClick={scan.handleNewScan}
             disabled={scan.resultsPath === null}
@@ -251,7 +254,7 @@ export const ContextPointerScanView = () => {
             New Scan
           </Button>
           <div className="flex items-center gap-1.5">
-            <Switch checked={scan.writableOnly} onCheckedChange={scan.setWritableOnly} disabled={!canUse} />
+            <Switch size="xs" checked={scan.writableOnly} onCheckedChange={scan.setWritableOnly} disabled={!canUse} />
             <span className="text-xs text-muted-foreground" title="Scan only writable regions (faster; may miss static roots in read-only data)">Writable only</span>
           </div>
           {scan.resultsPath !== null && (

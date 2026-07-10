@@ -149,6 +149,7 @@ export const ContextSymbolsView = () => {
       <div className="p-2 border-b shrink-0">
         <Input
           type="text"
+          inputSize="xs"
           placeholder={isActive ? "Search symbols..." : "Open, attach to, or run a process to search symbols"}
           value={searchTerm}
           onChange={handleSearchChange}

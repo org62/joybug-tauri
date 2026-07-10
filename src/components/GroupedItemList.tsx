@@ -306,7 +306,8 @@ export function GroupedItemList<T extends GroupableItem>({
                     }}
                     onClick={(e) => e.stopPropagation()}
                     onBlur={commitGroupRename}
-                    className="h-5 text-xs px-1 py-0 rounded-sm shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 flex-1"
+                    inputSize="inline"
+                    className="flex-1"
                     placeholder="group name"
                     autoFocus
                   />

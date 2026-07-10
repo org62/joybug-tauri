@@ -792,6 +792,7 @@ function HexToolbar({
       {/* Address input */}
       <div className="flex items-center gap-2">
         <Input
+          inputSize="xs"
           placeholder="rsp, rax+0x10, symbol..."
           value={addressInput}
           onChange={(e) => setAddressInput(sanitizeAddressInput(e.target.value))}
@@ -832,7 +833,7 @@ function HexToolbar({
 
       {/* View mode selector */}
       <Select value={viewMode} onValueChange={(v) => setViewMode(v as ViewMode)}>
-        <SelectTrigger>
+        <SelectTrigger size="xs">
           <SelectValue />
         </SelectTrigger>
         <SelectContent>

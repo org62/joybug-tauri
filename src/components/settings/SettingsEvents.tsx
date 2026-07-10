@@ -89,7 +89,7 @@ export function SettingsEvents({ searchQuery }: SettingsEventsProps) {
         <div className="mt-4">
           <div className="flex items-center justify-between mb-2">
             <h4 className="text-sm font-semibold text-muted-foreground">Exception Rules</h4>
-            <Button variant="outline" size="sm" onClick={handleAddRule}>
+            <Button variant="outline" size="xs" onClick={handleAddRule}>
               <Plus className="h-3 w-3 mr-1" />
               Add
             </Button>

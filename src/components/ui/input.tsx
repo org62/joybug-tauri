@@ -11,6 +11,10 @@ const inputVariants = cva(
         default: "h-9 px-3 py-1 text-base md:text-sm",
         // Dense panel control, matches Button size="xs" (28px).
         xs: "h-7 px-2 py-1 text-xs",
+        // In-row inline editing (rename fields inside compact list rows):
+        // fits a text-xs row without changing its height.
+        inline:
+          "h-5 px-1 py-0 text-xs rounded-sm shadow-none focus-visible:ring-0 focus-visible:ring-offset-0",
       },
     },
     defaultVariants: {

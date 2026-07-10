@@ -283,7 +283,7 @@ export const ContextMemoryScannerView = () => {
           </Button>
 
           <div className="flex items-center gap-1.5 ml-auto">
-            <Switch checked={scanner.writableOnly} onCheckedChange={scanner.setWritableOnly} disabled={!scanner.isFirstScan} />
+            <Switch size="xs" checked={scanner.writableOnly} onCheckedChange={scanner.setWritableOnly} disabled={!scanner.isFirstScan} />
             <span className="text-xs text-muted-foreground">Writable</span>
           </div>
         </div>
