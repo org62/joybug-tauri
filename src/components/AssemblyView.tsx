@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { VirtualizedList } from "./ui/virtualized-list";
 import { DockPanel, PanelToolbar, PanelBody } from "@/components/ui/panel";
 import { ContextMenu, ContextMenuItem } from "@/components/ui/context-menu";
+import { TruncatedSymbol } from "@/components/ui/truncated-symbol";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Switch } from "./ui/switch";
@@ -560,8 +561,8 @@ function InstructionRow({ instruction, isPC, isSelected, isHighlighted, isHoverT
       </span>
 
       {/* Address/Symbol column */}
-      <span className="shrink-0 text-muted-foreground truncate" style={{ width: columnWidths.symbol }} title={instruction.symbol}>
-        {instruction.symbol}
+      <span className="shrink-0 text-muted-foreground flex" style={{ width: columnWidths.symbol }}>
+        <TruncatedSymbol text={instruction.symbol} className="flex-1" />
       </span>
 
       {/* Bytes column (conditional) */}

@@ -1,5 +1,6 @@
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Button } from '@/components/ui/button';
+import { TruncatedSymbol } from '@/components/ui/truncated-symbol';
 
 export interface CallStackFrame {
   frame_number: number;
@@ -58,17 +59,15 @@ export function CallStackFrameList({ frames, onClickAddress, onClickMemory, comp
         >
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 mb-0.5">
-              <span className="text-muted-foreground text-xs">#{frame.frame_number}</span>
+              <span className="text-muted-foreground text-xs shrink-0">#{frame.frame_number}</span>
               {onClickAddress ? (
-                <Button
-                  variant="link"
-                  className="h-auto min-w-0 justify-start truncate p-0 font-medium text-left text-foreground hover:text-blue-600 dark:hover:text-blue-400 cursor-pointer"
+                <TruncatedSymbol
+                  text={formatSymbol(frame.symbol_info)}
+                  className="font-medium cursor-pointer hover:underline hover:text-blue-600 dark:hover:text-blue-400"
                   onClick={() => onClickAddress(frame.instruction_pointer)}
-                >
-                  {formatSymbol(frame.symbol_info)}
-                </Button>
+                />
               ) : (
-                <p className="font-medium truncate">{formatSymbol(frame.symbol_info)}</p>
+                <TruncatedSymbol text={formatSymbol(frame.symbol_info)} className="font-medium" />
               )}
             </div>
             <p className={`text-muted-foreground truncate ${compact ? 'text-[10px]' : 'text-xs'}`}>

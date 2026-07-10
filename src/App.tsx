@@ -24,6 +24,7 @@ const Settings = React.lazy(() => import("@/pages/Settings"));
 const About = React.lazy(() => import("@/pages/About"));
 
 import { Toaster } from "@/components/ui/sonner";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import "./App.css";
 import RcDockThemeLoader from "./components/RcDockThemeLoader";
 
@@ -283,7 +284,11 @@ function App() {
     <Router>
       <KeybindingProvider>
         <CommandPaletteProvider>
-          <AppContent />
+          {/* Single tooltip provider so per-symbol tooltips (TruncatedSymbol
+              in virtualized rows) don't each mount their own. */}
+          <TooltipProvider delayDuration={300}>
+            <AppContent />
+          </TooltipProvider>
         </CommandPaletteProvider>
       </KeybindingProvider>
     </Router>

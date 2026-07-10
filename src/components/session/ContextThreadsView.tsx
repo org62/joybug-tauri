@@ -5,7 +5,7 @@ import { listen } from '@tauri-apps/api/event';
 import { useSessionContext } from '@/contexts/SessionContext';
 import { formatTauriError } from '@/lib/sessionHelpers';
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
+import { TruncatedSymbol } from '@/components/ui/truncated-symbol';
 import { VirtualizedList } from '@/components/ui/virtualized-list';
 import { DockPanel } from '@/components/ui/panel';
 import { Cpu, Loader2 } from 'lucide-react';
@@ -332,15 +332,13 @@ export const ContextThreadsView = ({ onNavigateToDisassembly, onNavigateToMemory
                       {thread.status}
                     </Badge>
                   </div>
-                  <p className="text-xs text-muted-foreground truncate">
-                    Start:{' '}
-                    <Button
-                      variant="link"
-                      className={`h-auto p-0 font-mono text-xs align-baseline ${clickColor}`}
+                  <p className="text-xs text-muted-foreground flex items-center gap-1 min-w-0">
+                    <span className="shrink-0">Start:</span>
+                    <TruncatedSymbol
+                      text={displayText}
+                      className={`font-mono cursor-pointer hover:underline ${clickColor}`}
                       onClick={(e) => { e.stopPropagation(); handleStartAddressClick(thread.start_address, isFunction); }}
-                    >
-                      {displayText}
-                    </Button>
+                    />
                   </p>
                 </div>
               </div>

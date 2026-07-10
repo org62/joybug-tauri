@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback, useMemo, KeyboardEvent, MouseEvent } from "react";
+import { useState, useRef, useEffect, useCallback, useMemo, KeyboardEvent, MouseEvent, UIEvent } from "react";
 import { VirtualizedList } from "./ui/virtualized-list";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
@@ -341,6 +341,36 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
   const ROW_HEIGHT = 28;
   const rowIndices = useMemo(() => Array.from({ length: totalRows }, (_, i) => i), [totalRows]);
 
+  // Minimum row width: below this the view scrolls horizontally instead of
+  // wrapping/squeezing columns. ch units resolve against the mono font set on
+  // both the header inner div and the VirtualizedList. The terms mirror the
+  // row markup: 9rem = w-36 address column, 16px = px-2 row padding, 136px =
+  // w-[136px] ascii column, 8px/unit = gap-x-1 + px-0.5 slack — keep in sync.
+  const rowMinWidth = viewMode === 'pointer'
+    // address + row padding + pointer value + floor for the deref chain
+    ? `calc(9rem + 16px + ${config.displayWidth}ch + 12rem)`
+    : `calc(9rem + 16px + 136px + ${unitsPerRow * config.displayWidth}ch + ${unitsPerRow * 8}px)`;
+
+  // Keep the fixed column header horizontally aligned with the scrolled rows.
+  const headerInnerRef = useRef<HTMLDivElement>(null);
+  const lastScrollLeft = useRef(0);
+  const handleViewportScroll = useCallback((e: UIEvent<HTMLDivElement>) => {
+    const { scrollLeft } = e.currentTarget;
+    // Vertical scrolling is the hot path — skip the style write unless the
+    // horizontal offset actually changed.
+    if (scrollLeft === lastScrollLeft.current) return;
+    lastScrollLeft.current = scrollLeft;
+    if (headerInnerRef.current) {
+      headerInnerRef.current.style.transform = `translateX(-${scrollLeft}px)`;
+    }
+  }, []);
+  useEffect(() => {
+    lastScrollLeft.current = 0;
+    if (headerInnerRef.current) {
+      headerInnerRef.current.style.transform = "translateX(0)";
+    }
+  }, [rowMinWidth]);
+
   // Can navigate to previous page if baseAddress > 0
   const canGoBack = baseAddress > 0n;
 
@@ -459,13 +489,17 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
         canGoBack={canGoBack}
       />
 
-      {/* Column Header - Fixed */}
-      <div className="shrink-0 font-mono text-sm px-2 pt-2 pb-1 border-b border-border text-muted-foreground text-xs">
-        <div className="flex items-center">
-          <span className="w-36 shrink-0">Address</span>
-          <span className="flex-1">{viewMode === 'pointer' ? 'Pointer' : 'Hex'}</span>
+      {/* Column Header - Fixed vertically, follows horizontal scroll */}
+      <div className="shrink-0 overflow-hidden border-b border-border">
+        <div
+          ref={headerInnerRef}
+          style={{ minWidth: rowMinWidth }}
+          className="flex items-center font-mono text-sm px-2 pt-2 pb-1 text-muted-foreground"
+        >
+          <span className="w-36 shrink-0 text-xs">Address</span>
+          <span className="flex-1 text-xs">{viewMode === 'pointer' ? 'Pointer' : 'Hex'}</span>
           {viewMode !== 'pointer' && (
-            <span className="w-[136px] shrink-0 text-right pr-2">ASCII</span>
+            <span className="w-[136px] shrink-0 text-right pr-2 text-xs">ASCII</span>
           )}
         </div>
       </div>
@@ -475,21 +509,23 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
         <VirtualizedList
           items={rowIndices}
           rowHeight={ROW_HEIGHT}
-          className="h-full"
+          className="h-full font-mono text-sm"
+          minContentWidth={rowMinWidth}
+          onViewportScroll={handleViewportScroll}
           renderItem={(rowIndex) => {
             const rowOffset = rowIndex * bytesPerRow;
             const rowAddress = baseAddress + BigInt(rowOffset);
             const rowBytes = memoryData.slice(rowOffset, rowOffset + bytesPerRow);
 
             return (
-              <div className="flex items-center hover:bg-muted/30 h-full font-mono text-sm px-2 select-none">
+              <div className="flex items-center hover:bg-muted/30 h-full px-2 select-none">
                 {/* Address column */}
                 <span className="w-36 shrink-0 text-muted-foreground text-xs">
                   {formatAddress(rowAddress)}
                 </span>
 
                 {/* Hex values column */}
-                <div className="flex-1 flex flex-wrap gap-x-1">
+                <div className="flex-1 flex gap-x-1 min-w-0">
                   {Array.from({ length: unitsPerRow }).map((_, unitIndex) => {
                     const unitOffset = rowOffset + unitIndex * config.bytesPerUnit;
                     const unitBytes = memoryData.slice(
@@ -543,7 +579,7 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
                     return (
                       <span
                         key={unitIndex}
-                        className="inline-flex items-center gap-1"
+                        className="inline-flex items-center gap-1 min-w-0"
                       >
                         <span
                           className={`cursor-pointer rounded px-0.5 inline-block text-center ${

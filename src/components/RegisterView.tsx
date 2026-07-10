@@ -79,7 +79,7 @@ const RegisterPair = ({ name, field, value, dereferenceEntry, showDereference = 
   }, [onRegisterEdit, field, value]);
 
   return (
-    <div className="flex items-center py-0.5 px-1 hover:bg-muted/50 rounded-sm text-xs min-w-0">
+    <div className="flex items-center py-0.5 px-1 hover:bg-muted/50 rounded-sm text-xs min-w-0 overflow-hidden">
       <span className={cn("font-semibold text-muted-foreground shrink-0", nameWidthClass)}>{name}</span>
       <span
         className={cn(
@@ -232,7 +232,9 @@ export function RegisterView({
     return (
       <DockPanel>
         <PanelBody>
-          <div className="p-1 flex flex-col gap-0.5">
+          {/* w-0 min-w-full: zero the intrinsic max-content width so long
+              deref chains can't widen the panel (same idiom as GroupedItemList) */}
+          <div className="p-1 flex flex-col gap-0.5 w-0 min-w-full">
             {renderRegisterRows(registers, ARM64_REGISTERS, getDeref, isChanged, "w-8", onRegisterEdit)}
           </div>
         </PanelBody>
@@ -263,7 +265,9 @@ export function RegisterView({
           </Button>
         </PanelToolbar>
         <PanelBody>
-          <div className="p-1 flex flex-col gap-0.5">
+          {/* w-0 min-w-full: zero the intrinsic max-content width so long
+              deref chains can't widen the panel (same idiom as GroupedItemList) */}
+          <div className="p-1 flex flex-col gap-0.5 w-0 min-w-full">
             {renderRegisterRows(registers, X64_REGISTERS, getDeref, isChanged, "w-8", onRegisterEdit)}
             {showXmm && (
               <>

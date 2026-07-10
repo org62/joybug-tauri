@@ -4,9 +4,9 @@
  */
 
 import { DereferenceEntry, DereferenceValue } from "@/lib/hexUtils";
+import { CopyTooltipContent, MiddleTruncate } from "@/components/ui/truncated-symbol";
 import {
   Tooltip,
-  TooltipContent,
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
@@ -101,7 +101,7 @@ export function DereferenceDisplay({ entry, skipFirst = false, maxItems = 4 }: D
       <Tooltip>
         <TooltipTrigger asChild>
           <span className="text-muted-foreground text-xs inline-flex items-center gap-1 min-w-0 cursor-default">
-            {symbol && <span>({symbol})</span>}
+            {symbol && <MiddleTruncate text={`(${symbol})`} />}
             {chainStr && (
               <span className="truncate">
                 {needsLeadingArrow && '\u2192 '}{chainStr}
@@ -109,9 +109,7 @@ export function DereferenceDisplay({ entry, skipFirst = false, maxItems = 4 }: D
             )}
           </span>
         </TooltipTrigger>
-        <TooltipContent side="bottom" align="start" className="max-w-md font-mono text-xs">
-          {fullChain}
-        </TooltipContent>
+        <CopyTooltipContent text={fullChain} label="Chain" />
       </Tooltip>
     </TooltipProvider>
   );

@@ -173,12 +173,12 @@ export function BookmarksView({
       </span>
 
       {/* Type */}
-      <span className="shrink-0" style={{ width: columnWidths.type }}>
+      <span className="shrink-0 pr-1" style={{ width: columnWidths.type }}>
         {b.kind === "code" ? (
           <span className="text-muted-foreground">code</span>
         ) : (
           <Select value={b.value_type ?? "U32"} onValueChange={(v) => update(b.id, { valueType: v })}>
-            <SelectTrigger size="xs" className="w-[60px]">
+            <SelectTrigger size="xs" className="w-full gap-1 px-2">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>

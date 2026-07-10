@@ -1,5 +1,6 @@
 import React, { useMemo, useRef, useLayoutEffect, useState } from 'react';
 import { DockPanel, PanelBody } from '@/components/ui/panel';
+import { TruncatedSymbol } from '@/components/ui/truncated-symbol';
 import { Button } from '@/components/ui/button';
 import {
   Select,
@@ -325,8 +326,8 @@ const ExportsTable: React.FC<{
               }}
             >
               <span className="py-0.5 pr-2 font-mono shrink-0" style={{ width: 50 }}>{entry.ordinal}</span>
-              <span className="py-0.5 pr-2 font-mono truncate shrink-0" style={{ width: 200 }} title={entry.name ?? undefined}>
-                {entry.name ?? '—'}
+              <span className="py-0.5 pr-2 font-mono shrink-0 flex" style={{ width: 200 }}>
+                {entry.name ? <TruncatedSymbol text={entry.name} className="flex-1" /> : '—'}
               </span>
               <span className="py-0.5 pr-2 shrink-0" style={{ width: 160 }}>
                 {va ? (
@@ -335,8 +336,8 @@ const ExportsTable: React.FC<{
                   <span className="text-muted-foreground">—</span>
                 )}
               </span>
-              <span className="py-0.5 font-mono text-muted-foreground truncate flex-1" title={fwd ?? undefined}>
-                {fwd ?? ''}
+              <span className="py-0.5 font-mono text-muted-foreground flex-1 min-w-0 flex">
+                <TruncatedSymbol text={fwd ?? ''} className="flex-1" />
               </span>
             </div>
           );

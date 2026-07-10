@@ -11,6 +11,13 @@ interface VirtualizedListProps<T> {
   style?: React.CSSProperties;
   getItemKey?: (item: T, index: number) => React.Key;
   virtualizerRef?: React.Ref<Virtualizer<HTMLDivElement, Element>>;
+  orientation?: "vertical" | "horizontal" | "both";
+  /**
+   * Floor for the content width; rows scroll horizontally below it.
+   * Implies orientation "both" unless overridden.
+   */
+  minContentWidth?: string;
+  onViewportScroll?: React.UIEventHandler<HTMLDivElement>;
 }
 
 function VirtualizedListInner<T>({
@@ -22,8 +29,12 @@ function VirtualizedListInner<T>({
   style,
   getItemKey,
   virtualizerRef,
+  orientation,
+  minContentWidth,
+  onViewportScroll,
 }: VirtualizedListProps<T>) {
   const viewportRef = useRef<HTMLDivElement>(null);
+  const resolvedOrientation = orientation ?? (minContentWidth ? "both" : undefined);
 
   const virtualizer = useVirtualizer({
     count: items.length,
@@ -35,15 +46,22 @@ function VirtualizedListInner<T>({
   useImperativeHandle(virtualizerRef, () => virtualizer, [virtualizer]);
 
   if (items.length === 0) {
-    return <ScrollArea className={className} style={style} />;
+    return <ScrollArea className={className} style={style} orientation={resolvedOrientation} />;
   }
 
   return (
-    <ScrollArea className={className} style={style} viewportRef={viewportRef}>
+    <ScrollArea
+      className={className}
+      style={style}
+      viewportRef={viewportRef}
+      orientation={resolvedOrientation}
+      onScroll={onViewportScroll}
+    >
       <div
         style={{
           height: virtualizer.getTotalSize(),
           width: "100%",
+          minWidth: minContentWidth,
           position: "relative",
         }}
       >

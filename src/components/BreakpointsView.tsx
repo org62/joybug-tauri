@@ -9,6 +9,7 @@ import { RegisterContext, SymbolResolver, sanitizeAddressInput, parseAddressExpr
 import { GroupedItemList } from "./GroupedItemList";
 import { DockPanel, PanelToolbar } from "./ui/panel";
 import { ContextMenu, ContextMenuItem, ContextMenuSeparator } from "./ui/context-menu";
+import { TruncatedSymbol } from "./ui/truncated-symbol";
 
 interface BreakpointsViewProps {
   breakpoints: Breakpoint[];
@@ -177,7 +178,7 @@ export function BreakpointsView({
 
         {/* Name / symbol or inline edit */}
         <span
-          className="flex-1 min-w-0 truncate"
+          className="flex-1 min-w-0"
           onDoubleClick={() => { if (!isDragOverlay) handleNameDoubleClick(bp); }}
         >
           {(isEditingName || isEditingGroup) ? (
@@ -195,12 +196,10 @@ export function BreakpointsView({
               autoFocus
             />
           ) : (
-            <span
+            <TruncatedSymbol
+              text={bp.name || bp.symbol || `${bp.module_name}+${bp.module_offset}`}
               className={cn(!bp.name && !bp.symbol && "text-muted-foreground/50 italic")}
-              title={bp.symbol || `${bp.module_name}+${bp.module_offset}`}
-            >
-              {bp.name || bp.symbol || `${bp.module_name}+${bp.module_offset}`}
-            </span>
+            />
           )}
         </span>
 
@@ -224,6 +223,7 @@ export function BreakpointsView({
     <DockPanel>
       <GroupedItemList
         items={breakpoints}
+        minContentWidth="18rem"
         onUpdateItemGroup={(id, group) => {
           const bp = breakpoints.find((b) => b.id === id);
           if (bp) onUpdateBreakpoint(id, bp.name ?? undefined, group);

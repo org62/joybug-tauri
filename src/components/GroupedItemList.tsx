@@ -37,6 +37,11 @@ export interface GroupedItemListProps<T extends GroupableItem> {
   renderEmptyState?: () => React.ReactNode;
   /** Color class for group dot (default "red") */
   groupDotColor?: string;
+  /**
+   * Floor for the scroll content width. When set, the list scrolls
+   * horizontally instead of squeezing rows below this width.
+   */
+  minContentWidth?: string;
 }
 
 function DraggableItemRow<T extends GroupableItem>({ item, children }: { item: T; children: React.ReactNode }) {
@@ -80,6 +85,7 @@ export function GroupedItemList<T extends GroupableItem>({
   renderToolbar,
   renderEmptyState,
   groupDotColor = "red",
+  minContentWidth,
 }: GroupedItemListProps<T>) {
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
 
@@ -223,7 +229,14 @@ export function GroupedItemList<T extends GroupableItem>({
       onDragOver={handleDragOver}
       onDragEnd={handleDragEnd}
     >
-      <div>
+      {/* w-0 zeroes the intrinsic max-content contribution so long symbols
+          can't widen the scroll content; min-w-full restores fill (same idiom
+          as RegisterView). The inline minWidth adds the horizontal-scroll
+          floor on top. */}
+      <div
+        className="w-0 min-w-full"
+        style={minContentWidth ? { minWidth: `max(100%, ${minContentWidth})` } : undefined}
+      >
         {/* Ungrouped items */}
         <DroppableGroupZone groupName="__ungrouped__">
           <div id="ungrouped">
@@ -358,7 +371,7 @@ export function GroupedItemList<T extends GroupableItem>({
       {items.length === 0 ? (
         renderEmptyState?.()
       ) : (
-        <PanelBody>
+        <PanelBody orientation={minContentWidth ? "both" : undefined}>
           {renderGroupedContent()}
         </PanelBody>
       )}

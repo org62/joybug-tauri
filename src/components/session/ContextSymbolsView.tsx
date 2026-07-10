@@ -7,6 +7,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { VirtualizedList } from '@/components/ui/virtualized-list';
 import { DockPanel } from '@/components/ui/panel';
 import { ContextMenu, ContextMenuItem } from '@/components/ui/context-menu';
+import { TruncatedSymbol } from '@/components/ui/truncated-symbol';
 import { Search, Code, Loader2 } from 'lucide-react';
 
 export const ContextSymbolsView = () => {
@@ -133,11 +134,9 @@ export const ContextSymbolsView = () => {
             }}
             onContextMenu={(e) => openContextMenu(e, { va: symbol.va, is_function: symbol.is_function })}
           >
-            <div className="flex-1 min-w-0">
-              <p className="text-sm font-mono truncate">
-                <span className="text-muted-foreground">{symbol.va}</span>
-                <span className="ml-2">{symbol.display_name}</span>
-              </p>
+            <div className="flex items-center gap-2 text-sm font-mono min-w-0 h-full">
+              <span className="text-muted-foreground shrink-0">{symbol.va}</span>
+              <TruncatedSymbol text={symbol.display_name} className="flex-1" />
             </div>
           </div>
         )}

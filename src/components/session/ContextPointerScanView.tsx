@@ -9,6 +9,7 @@ import { VirtualizedList } from '@/components/ui/virtualized-list';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { DockPanel, PanelFooter } from '@/components/ui/panel';
 import { ContextMenu, ContextMenuItem } from '@/components/ui/context-menu';
+import { TruncatedSymbol } from '@/components/ui/truncated-symbol';
 import {
   DropdownMenu, DropdownMenuTrigger, DropdownMenuContent,
   DropdownMenuCheckboxItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuItem,
@@ -134,9 +135,8 @@ export const ContextPointerScanView = () => {
             className="w-full h-full px-2 py-0.5 hover:bg-accent cursor-pointer font-mono text-xs flex items-center gap-2"
             onClick={() => onNavigateToMemory?.(p.resolved)}
             onContextMenu={(e) => openContextMenu(e, { entry: p })}
-            title={`${formatPath(p)} ⇒ ${p.resolved}`}
           >
-            <span className="flex-1 truncate">{formatPath(p)}</span>
+            <TruncatedSymbol text={formatPath(p)} className="flex-1" />
             <span className="shrink-0 text-muted-foreground">⇒ {p.resolved}</span>
           </div>
         )}
