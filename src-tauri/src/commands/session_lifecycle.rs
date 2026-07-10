@@ -6,7 +6,7 @@ use crate::state::{
 use joybug2::protocol::DebuggerRequest;
 use std::sync::{Arc, Mutex};
 use std::thread;
-use tauri::{State, Emitter};
+use tauri::{State, Emitter, Manager};
 use tracing::{error, info};
 
 #[tauri::command]
@@ -205,7 +205,12 @@ pub fn start_debug_session(
         let mut state = session_state.lock().unwrap();
         if state.is_local_run {
             info!("Starting embedded server for local run session: {}", session_id);
-            let server_handle = LocalServer::start()
+            let symbol_cfg = {
+                let settings = app_handle.state::<crate::settings::SettingsState>();
+                let settings = settings.lock().unwrap();
+                settings.symbol_config()
+            };
+            let server_handle = LocalServer::start_with_config(symbol_cfg)
                 .map_err(|e| Error::ConnectionFailed(format!("Failed to start embedded server: {}", e)))?;
 
             let port = server_handle.port();

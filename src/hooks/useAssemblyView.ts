@@ -105,10 +105,13 @@ export interface UseAssemblyViewOptions {
   pcAddress?: number; // Current PC from debug event
   registers?: RegisterContext;
   resolveSymbol?: SymbolResolver;
+  /** Changes when a module's symbols finish loading in the background; triggers
+   * a refresh so raw addresses upgrade to symbol names. */
+  symbolsRefreshKey?: string;
 }
 
 export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewState & AssemblyViewActions {
-  const { sessionId, isPaused, pcAddress: pcAddressProp, registers = {}, resolveSymbol } = options;
+  const { sessionId, isPaused, pcAddress: pcAddressProp, registers = {}, resolveSymbol, symbolsRefreshKey } = options;
 
   // State
   const [instructions, setInstructions] = useState<Instruction[]>([]);
@@ -266,6 +269,16 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
       scrollToPCRef.current();
     }
   }, []);
+
+  // Re-request the current view when background symbol loading completes so raw
+  // addresses upgrade to symbol names. The ref starts at the mount value, so no
+  // refresh fires until the key actually changes.
+  const prevSymbolsKey = useRef(symbolsRefreshKey);
+  useEffect(() => {
+    if (symbolsRefreshKey === prevSymbolsKey.current) return;
+    prevSymbolsKey.current = symbolsRefreshKey;
+    refresh();
+  }, [symbolsRefreshKey, refresh]);
 
   // Listen for disassembly events
   useEffect(() => {

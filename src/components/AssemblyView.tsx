@@ -38,9 +38,10 @@ interface AssemblyViewProps {
   onSetHardwareBreakpoint?: (address: string, hwType: string, hwSize: number) => void;
   onAssemblePatch?: (address: string, assemblyText: string, nopPad?: boolean) => Promise<string | null>;
   onAddBookmark?: (address: string, asmText: string) => void;
+  symbolsRefreshKey?: string;
 }
 
-export function AssemblyView({ sessionId, isPaused, address, registers, resolveSymbol, breakpointAddresses, onToggleBreakpoint, onSetHardwareBreakpoint, onAssemblePatch, onAddBookmark }: AssemblyViewProps) {
+export function AssemblyView({ sessionId, isPaused, address, registers, resolveSymbol, breakpointAddresses, onToggleBreakpoint, onSetHardwareBreakpoint, onAssemblePatch, onAddBookmark, symbolsRefreshKey }: AssemblyViewProps) {
   const [addressInput, setAddressInput] = useState("");
   // Inline assembly input state
   const [assembleTarget, setAssembleTarget] = useState<{ address: string; defaultText: string } | null>(null);
@@ -84,6 +85,7 @@ export function AssemblyView({ sessionId, isPaused, address, registers, resolveS
     pcAddress: address,
     registers,
     resolveSymbol,
+    symbolsRefreshKey,
   });
 
   // Handle go-to action

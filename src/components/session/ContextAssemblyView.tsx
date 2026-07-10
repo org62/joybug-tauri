@@ -52,6 +52,7 @@ export const ContextAssemblyView = () => {
       onSetHardwareBreakpoint={setHardwareBreakpoint}
       onAssemblePatch={assemblePatch}
       onAddBookmark={(addr, asmText) => addBookmark({ kind: 'code', address: addr, asmText })}
+      symbolsRefreshKey={sessionData.symbolsRefreshKey}
     />
   );
 };

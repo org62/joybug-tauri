@@ -86,6 +86,13 @@ pub struct DebugSettings {
     /// Number of threads to use for memory scanning. `0` = all CPU cores.
     #[serde(default)]
     pub scan_thread_count: usize,
+    /// Symbol path in `_NT_SYMBOL_PATH` syntax. Empty = env var / Microsoft symbol server.
+    /// Applies to locally launched sessions, starting with the next session.
+    #[serde(default)]
+    pub symbol_path: String,
+    /// When true, never download symbols; local caches still resolve.
+    #[serde(default)]
+    pub symbol_offline: bool,
 }
 
 impl Default for DebugSettings {
@@ -102,6 +109,21 @@ impl Default for DebugSettings {
             exception_rules: Vec::new(),
             debugger_hiding: DebuggerHidingSettings::default(),
             scan_thread_count: 0, // 0 = all cores
+            symbol_path: String::new(),
+            symbol_offline: false,
+        }
+    }
+}
+
+impl DebugSettings {
+    /// Symbol configuration for an embedded server. An empty `symbol_path`
+    /// means unset (env var / Microsoft symbol server).
+    pub fn symbol_config(&self) -> joybug2::SymbolConfig {
+        joybug2::SymbolConfig {
+            symbol_path: Some(self.symbol_path.trim())
+                .filter(|s| !s.is_empty())
+                .map(String::from),
+            offline: self.symbol_offline,
         }
     }
 }

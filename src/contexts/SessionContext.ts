@@ -95,6 +95,28 @@ export interface Module {
   path: string;
 }
 
+export type SymbolStatusKind = "loaded" | "loading" | "failed" | "not_requested";
+
+export interface ModuleSymbolStatus {
+  module_path: string;
+  base_address: string;
+  status: SymbolStatusKind;
+  symbol_count?: number | null;
+  error?: string | null;
+  pdb_path?: string | null;
+}
+
+export interface PdbLoadResult {
+  loaded: boolean;
+  symbol_count?: number | null;
+  mismatch?: {
+    pe_guid: string;
+    pe_age: number;
+    pdb_guid: string;
+    pdb_age: number;
+  } | null;
+}
+
 export interface Thread {
   id: number;
   status: string;
@@ -126,8 +148,14 @@ export interface SessionContextData {
   canUseMemoryOps: boolean;
   modules: Module[];
   threads: Thread[];
+  symbolStatuses: ModuleSymbolStatus[];
+  /** Identity of the set of modules with loaded symbols; changes when background
+   * symbol loading completes so views can refresh symbol-derived data. */
+  symbolsRefreshKey: string;
   loadModules: () => Promise<void>;
   loadThreads: () => Promise<void>;
+  loadModulePdb: (baseAddress: string, pdbPath: string, force: boolean) => Promise<PdbLoadResult>;
+  retryModuleSymbols: (baseAddress: string) => Promise<void>;
   searchSymbols: (pattern: string, limit?: number) => Promise<Symbol[]>;
   breakpointState: BreakpointState;
   patchState: PatchState;

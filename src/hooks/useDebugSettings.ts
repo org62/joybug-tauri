@@ -27,10 +27,16 @@ export interface DebugSettings {
   exception_rules: ExceptionRule[];
   debugger_hiding: DebuggerHidingSettings;
   scan_thread_count: number; // 0 = all CPU cores
+  symbol_path: string; // _NT_SYMBOL_PATH syntax; empty = env var / Microsoft symbol server
+  symbol_offline: boolean; // never download symbols
 }
 
+// Keys whose value is a boolean, derived structurally so new settings never
+// require editing a hand-maintained exclusion list.
+type BooleanSettingKey = { [K in keyof DebugSettings]: DebugSettings[K] extends boolean ? K : never }[keyof DebugSettings];
+
 export interface EventSettingItem {
-  key: keyof Omit<DebugSettings, 'exception_rules' | 'debugger_hiding' | 'scan_thread_count'>;
+  key: BooleanSettingKey;
   id: string;
   label: string;
   keywords: string[];
@@ -66,6 +72,8 @@ const DEFAULTS: DebugSettings = {
   exception_rules: [],
   debugger_hiding: DEFAULT_HIDING,
   scan_thread_count: 0,
+  symbol_path: "",
+  symbol_offline: false,
 };
 
 export function useDebugSettings() {
@@ -80,10 +88,12 @@ export function useDebugSettings() {
     }
   }, []);
 
-  const toggle = useCallback(async (key: keyof Omit<DebugSettings, 'exception_rules' | 'debugger_hiding' | 'scan_thread_count'>) => {
+  // Shared set-and-persist: apply the change optimistically, then write the
+  // whole settings object to the backend.
+  const update = useCallback(async (updater: (prev: DebugSettings) => DebugSettings) => {
     let next!: DebugSettings;
     setSettings(prev => {
-      next = { ...prev, [key]: !prev[key] };
+      next = updater(prev);
       return next;
     });
     try {
@@ -97,46 +107,25 @@ export function useDebugSettings() {
     load();
   }, [load]);
 
-  const updateExceptionRules = useCallback(async (rules: ExceptionRule[]) => {
-    let next!: DebugSettings;
-    setSettings(prev => {
-      next = { ...prev, exception_rules: rules };
-      return next;
-    });
-    try {
-      await invoke("update_debug_settings", { newSettings: next });
-    } catch (e) {
-      console.error("Failed to update exception rules:", e);
-    }
-  }, []);
+  const toggle = useCallback((key: BooleanSettingKey) =>
+    update(prev => ({ ...prev, [key]: !prev[key] })), [update]);
 
-  const toggleHiding = useCallback(async (key: keyof DebuggerHidingSettings) => {
-    let next!: DebugSettings;
-    setSettings(prev => {
+  const updateExceptionRules = useCallback((rules: ExceptionRule[]) =>
+    update(prev => ({ ...prev, exception_rules: rules })), [update]);
+
+  const toggleHiding = useCallback((key: keyof DebuggerHidingSettings) =>
+    update(prev => {
       const hiding = { ...(prev.debugger_hiding ?? DEFAULT_HIDING), [key]: !(prev.debugger_hiding ?? DEFAULT_HIDING)[key] };
-      next = { ...prev, debugger_hiding: hiding };
-      return next;
-    });
-    try {
-      await invoke("update_debug_settings", { newSettings: next });
-    } catch (e) {
-      console.error("Failed to update debugger hiding settings:", e);
-    }
-  }, []);
+      return { ...prev, debugger_hiding: hiding };
+    }), [update]);
 
-  const setScanThreadCount = useCallback(async (count: number) => {
+  const setScanThreadCount = useCallback((count: number) => {
     const sanitized = Number.isFinite(count) && count > 0 ? Math.floor(count) : 0;
-    let next!: DebugSettings;
-    setSettings(prev => {
-      next = { ...prev, scan_thread_count: sanitized };
-      return next;
-    });
-    try {
-      await invoke("update_debug_settings", { newSettings: next });
-    } catch (e) {
-      console.error("Failed to update scan thread count:", e);
-    }
-  }, []);
+    return update(prev => ({ ...prev, scan_thread_count: sanitized }));
+  }, [update]);
 
-  return { settings, toggle, updateExceptionRules, toggleHiding, setScanThreadCount };
+  const setSymbolPath = useCallback((path: string) =>
+    update(prev => ({ ...prev, symbol_path: path })), [update]);
+
+  return { settings, toggle, updateExceptionRules, toggleHiding, setScanThreadCount, setSymbolPath };
 }

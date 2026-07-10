@@ -1,7 +1,8 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
-import { ArrowLeft, Square, Play, MoveRight, CornerDownRight, CornerUpLeft, Pause, Plus, ChevronDown, Unplug } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
+import { ArrowLeft, Square, Play, MoveRight, CornerDownRight, CornerUpLeft, Pause, Plus, ChevronDown, Unplug, Loader2 } from 'lucide-react';
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -36,6 +37,8 @@ export interface SessionHeaderProps {
   toggleTab: (tabId: string) => void;
   resetLayout: () => void;
   addNewMemoryTab?: () => void;
+  /** Number of modules whose symbols are still downloading (0 hides the indicator). */
+  symbolLoadingCount?: number;
 }
 
 export const SessionHeader: React.FC<SessionHeaderProps> = ({
@@ -61,6 +64,7 @@ export const SessionHeader: React.FC<SessionHeaderProps> = ({
   resetLayout,
   addNewMemoryTab,
   dockingRef,
+  symbolLoadingCount = 0,
 }) => {
   const navigate = useNavigate();
   const { getKeybinding } = useKeybindingContext();
@@ -79,6 +83,12 @@ export const SessionHeader: React.FC<SessionHeaderProps> = ({
         <div className="flex items-center gap-3">
           <h1 className="text-xl font-bold">{session.name}</h1>
           {getStatusBadge(session.status)}
+          {symbolLoadingCount > 0 && (
+            <Badge variant="outline" size="xs" title="Symbol downloads in progress">
+              <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+              Downloading symbols ({symbolLoadingCount})
+            </Badge>
+          )}
         </div>
       </div>
 

@@ -20,6 +20,7 @@ export default defineConfig({
     "patches.spec.ts",
     "bookmarks.spec.ts",
     "disassembly.spec.ts",
+    "symbol-status.spec.ts",
     "registers.spec.ts",
     "session-lifecycle.spec.ts",
     "stepping.spec.ts",

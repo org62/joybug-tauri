@@ -55,8 +55,12 @@ export default function SessionDocked() {
     busyAction,
     modules,
     threads,
+    symbolStatuses,
+    symbolsRefreshKey,
     loadModules,
     loadThreads,
+    loadModulePdb,
+    retryModuleSymbols,
     searchSymbols,
     handleGo,
     handleGoPassException,
@@ -660,15 +664,19 @@ export default function SessionDocked() {
     canUseMemoryOps,
     modules,
     threads,
+    symbolStatuses,
+    symbolsRefreshKey,
     loadModules: async () => { await loadModules(); },
     loadThreads: async () => { await loadThreads(); },
+    loadModulePdb,
+    retryModuleSymbols,
     searchSymbols: async (pattern: string, limit?: number) => { return await searchSymbols(pattern, limit); },
     breakpointState,
     patchState,
     bookmarkState,
     onNavigateToDisassembly: handleNavigateToDisassembly,
     onNavigateToMemory: handleNavigateToMemory,
-  }), [session, displayStatus, canUseMemoryOps, modules, threads, loadModules, loadThreads, searchSymbols, breakpointState, patchState, bookmarkState, handleNavigateToDisassembly, handleNavigateToMemory]);
+  }), [session, displayStatus, canUseMemoryOps, modules, threads, symbolStatuses, symbolsRefreshKey, loadModules, loadThreads, loadModulePdb, retryModuleSymbols, searchSymbols, breakpointState, patchState, bookmarkState, handleNavigateToDisassembly, handleNavigateToMemory]);
   
   // Static tab content - components will update via context
   const dynamicTabContent = useMemo(() => ({
@@ -883,6 +891,7 @@ export default function SessionDocked() {
           toggleTab={toggleTabWithBackendUpdate}
           resetLayout={handleResetLayout}
           addNewMemoryTab={handleAddNewMemoryTab}
+          symbolLoadingCount={symbolStatuses.filter((s) => s.status === 'loading').length}
         />
 
         {/* Docking Layout */}
