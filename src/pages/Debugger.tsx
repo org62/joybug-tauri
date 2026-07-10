@@ -683,11 +683,11 @@ export default function Debugger() {
               </DialogHeader>
               <div className="space-y-3 py-2">
                 <div className="flex items-center justify-between rounded-md border p-2">
-                  <div className="space-y-0.5">
+                  <div className="min-w-0 pr-3 space-y-0.5">
                     <Label htmlFor="attachNonInvasive">Non-invasive (don't attach debugger)</Label>
                     <p className="text-xs text-muted-foreground">Open the process for memory/enumeration only — no breakpoints or stepping.</p>
                   </div>
-                  <Switch id="attachNonInvasive" checked={attachNonInvasive} onCheckedChange={setAttachNonInvasive} />
+                  <Switch id="attachNonInvasive" checked={attachNonInvasive} onCheckedChange={setAttachNonInvasive} className="shrink-0" />
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="attachServerUrl">Debug Server URL (optional)</Label>
@@ -728,7 +728,7 @@ export default function Debugger() {
                           disabled={attachingPid !== null}
                           className="flex w-full items-center justify-between h-auto px-3 py-2 rounded-none text-left text-sm font-normal"
                         >
-                          <span className="truncate font-medium">{proc.name}</span>
+                          <span className="min-w-0 truncate font-medium">{proc.name}</span>
                           <span className="ml-3 shrink-0 text-xs text-muted-foreground">
                             {attachingPid === proc.pid ? "Attaching…" : `PID ${proc.pid}`}
                           </span>
