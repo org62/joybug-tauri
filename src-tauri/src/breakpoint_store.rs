@@ -38,6 +38,10 @@ pub fn load_breakpoints(launch_command: &str) -> Vec<BreakpointInfo> {
                 bp_kind: bp.bp_kind.clone(),
                 hw_type: bp.hw_type.clone(),
                 hw_size: bp.hw_size,
+                // Same binary → module+RVA is stable, so the persisted file:line
+                // stays valid until re-resolved on module load.
+                source_file: bp.source_file.clone(),
+                source_line: bp.source_line,
             })
             .collect(),
         None => Vec::new(),

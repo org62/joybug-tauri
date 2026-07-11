@@ -10,6 +10,8 @@ pub enum UICommand {
     StepIn,
     StepOver,
     StepOut,
+    StepOverLine,
+    StepIntoLine,
     Stop,
     Detach,
     Disassembly{ arch: joybug2::interfaces::Architecture, address: u64, count: u32 },
@@ -39,6 +41,9 @@ pub enum UICommand {
     GetThreadCallStack { tid: u32 },
     ResolveThreadSymbols,
     GetModuleExtraInfo { module_base: u64 },
+    ResolveAddressToLine { address: u64 },
+    GetSourceFileLineMap { module_base: u64, file_path: String, start_line: Option<u32>, end_line: Option<u32> },
+    ListSourceFiles { module_base: u64 },
     SearchMemory { pattern: Vec<u8>, max_results: usize },
     AssemblePatch { address: u64, assembly_text: String, arch: joybug2::interfaces::Architecture, nop_pad: bool },
     UndoPatch { patch_id: String },
@@ -198,6 +203,8 @@ pub struct SerializableInstruction {
     pub jump_target: Option<String>,
     #[serde(default)]
     pub is_patched: bool,
+    pub source_file: Option<String>,
+    pub source_line: Option<u32>,
 }
 
 #[derive(serde::Serialize, Clone, Debug)]

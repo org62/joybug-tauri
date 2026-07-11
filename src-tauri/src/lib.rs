@@ -58,6 +58,7 @@ pub fn run() {
         .manage(LogsState::default())
         .manage(SettingsState::new(load_settings_from_disk()))
         .manage(commands::OobPool::default())
+        .manage(commands::SourceIndexCache::default())
         .invoke_handler(tauri::generate_handler![
             commands::greet,
             commands::create_debug_session,
@@ -111,6 +112,13 @@ pub fn run() {
             commands::update_breakpoint,
             commands::set_hardware_breakpoint,
             commands::request_module_extra_info,
+            commands::resolve_address_to_line,
+            commands::get_source_file_line_map,
+            commands::list_source_files,
+            commands::open_source_file,
+            commands::read_source_window,
+            commands::step_over_line_debug_session,
+            commands::step_into_line_debug_session,
             commands::request_scan_memory_start,
             commands::request_scan_memory_next,
             commands::request_scan_memory_get_results,

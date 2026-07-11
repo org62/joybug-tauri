@@ -53,6 +53,7 @@ export const ContextAssemblyView = () => {
       onAssemblePatch={assemblePatch}
       onAddBookmark={(addr, asmText) => addBookmark({ kind: 'code', address: addr, asmText })}
       symbolsRefreshKey={sessionData.symbolsRefreshKey}
+      onNavigateToSource={sessionData.onNavigateToSource}
     />
   );
 };

@@ -93,6 +93,11 @@ pub struct DebugSettings {
     /// When true, never download symbols; local caches still resolve.
     #[serde(default)]
     pub symbol_offline: bool,
+    /// Source path substitutions for the source view: `(from, to)` prefix pairs
+    /// applied case-insensitively when a compile-time path from the PDB doesn't
+    /// exist on this machine (like WinDbg's srcpath mapping).
+    #[serde(default)]
+    pub source_map: Vec<(String, String)>,
 }
 
 impl Default for DebugSettings {
@@ -111,6 +116,7 @@ impl Default for DebugSettings {
             scan_thread_count: 0, // 0 = all cores
             symbol_path: String::new(),
             symbol_offline: false,
+            source_map: Vec::new(),
         }
     }
 }

@@ -7,7 +7,8 @@ import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Switch } from "./ui/switch";
 import { Label } from "./ui/label";
-import { Cpu, ArrowLeft, ArrowRight, RefreshCw, ChevronRight, Circle, CircleDot, Wrench, Copy, Bookmark } from "lucide-react";
+import { Cpu, ArrowLeft, ArrowRight, RefreshCw, ChevronRight, Circle, CircleDot, Wrench, Copy, Bookmark, FileCode } from "lucide-react";
+import { sourceNavigation } from "@/lib/navigationStore";
 import { cn } from "@/lib/utils";
 import { useAssemblyView, Instruction } from "@/hooks/useAssemblyView";
 import { RegisterContext, SymbolResolver, sanitizeAddressInput } from "@/lib/hexUtils";
@@ -39,9 +40,11 @@ interface AssemblyViewProps {
   onAssemblePatch?: (address: string, assemblyText: string, nopPad?: boolean) => Promise<string | null>;
   onAddBookmark?: (address: string, asmText: string) => void;
   symbolsRefreshKey?: string;
+  /** Activate the Source tab and reveal an address's source line (context-menu action). */
+  onNavigateToSource?: (address: string) => void;
 }
 
-export function AssemblyView({ sessionId, isPaused, address, registers, resolveSymbol, breakpointAddresses, onToggleBreakpoint, onSetHardwareBreakpoint, onAssemblePatch, onAddBookmark, symbolsRefreshKey }: AssemblyViewProps) {
+export function AssemblyView({ sessionId, isPaused, address, registers, resolveSymbol, breakpointAddresses, onToggleBreakpoint, onSetHardwareBreakpoint, onAssemblePatch, onAddBookmark, symbolsRefreshKey, onNavigateToSource }: AssemblyViewProps) {
   const [addressInput, setAddressInput] = useState("");
   // Inline assembly input state
   const [assembleTarget, setAssembleTarget] = useState<{ address: string; defaultText: string } | null>(null);
@@ -402,7 +405,12 @@ export function AssemblyView({ sessionId, isPaused, address, registers, resolveS
                 isPatched={inst.is_patched ?? false}
                 showBytes={showBytes}
                 columnWidths={columnWidths}
-                onClick={(addr) => setSelectedAddress(addr.toUpperCase())}
+                onClick={(addr) => {
+                  setSelectedAddress(addr.toUpperCase());
+                  // Passive source sync: if the Source tab is mounted it scrolls
+                  // to the matching line; it does not steal the active tab.
+                  sourceNavigation.request(addr);
+                }}
                 onJumpTargetClick={handleJumpTargetClick}
                 onJumpTargetHover={handleJumpTargetHover}
                 onContextMenu={(e, addr, mnemonic, opStr) => openContextMenu(e, { address: addr, mnemonic, op_str: opStr })}
@@ -483,6 +491,14 @@ export function AssemblyView({ sessionId, isPaused, address, registers, resolveS
               }}
             >
               Add to Bookmarks
+            </ContextMenuItem>
+          )}
+          {onNavigateToSource && (
+            <ContextMenuItem
+              icon={<FileCode className="text-blue-400" />}
+              onClick={() => onNavigateToSource(contextMenu.data.address)}
+            >
+              Show Source
             </ContextMenuItem>
           )}
           <ContextMenuItem

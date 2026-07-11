@@ -3,7 +3,7 @@ import { useParams, useNavigate } from "react-router-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { disassemblyNavigation, memoryNavigation } from "@/lib/navigationStore";
+import { disassemblyNavigation, memoryNavigation, sourceNavigation } from "@/lib/navigationStore";
 import { setMouseNavHandler } from "@/lib/mouseNav";
 import { parseAddress, type ViewMode } from "@/lib/hexUtils";
 import { ArrowLeft, AlertCircle } from "lucide-react";
@@ -13,6 +13,7 @@ import { TabData } from "rc-dock";
 import { SessionContext, SessionStatus } from "@/contexts/SessionContext";
 import { isProcessAvailable, isTargetLive } from "@/lib/sessionHelpers";
 import { ContextAssemblyView } from "@/components/session/ContextAssemblyView";
+import { ContextSourceView } from "@/components/session/ContextSourceView";
 import { ContextRegisterView } from "@/components/session/ContextRegisterView";
 import { ContextModulesView } from "@/components/session/ContextModulesView";
 import { ContextThreadsView } from "@/components/session/ContextThreadsView";
@@ -155,6 +156,12 @@ export default function SessionDocked() {
     disassemblyNavigation.request(address);
   }, []);
 
+  // Activate the Source tab and reveal an address's source line.
+  const handleNavigateToSource = React.useCallback((address: string) => {
+    dockingRef.current?.showTab('source');
+    sourceNavigation.request(address);
+  }, []);
+
   // Navigate to memory view at a specific address, reusing an existing tab if open.
   // initialViewMode is used only when creating a new tab (no existing memory tab).
   const navigateToMemoryTab = React.useCallback((address: string, initialViewMode?: ViewMode) => {
@@ -265,6 +272,11 @@ export default function SessionDocked() {
           event.preventDefault();
           event.stopPropagation();
           toggleTabWithBackendUpdate("disassembly");
+          break;
+        case "panel.source":
+          event.preventDefault();
+          event.stopPropagation();
+          toggleTabWithBackendUpdate("source");
           break;
         case "panel.registers":
           event.preventDefault();
@@ -465,6 +477,16 @@ export default function SessionDocked() {
         onSelect: () => toggleTabWithBackendUpdate("disassembly"),
         keepOpen: true,
         keywords: ["disassembly", "asm", "code"],
+      },
+      {
+        id: "panel.source",
+        label: "Toggle Source",
+        group: "Windows",
+        icon: <FileCode className="size-4" />,
+        keybindingAction: "panel.source",
+        onSelect: () => toggleTabWithBackendUpdate("source"),
+        keepOpen: true,
+        keywords: ["source", "code", "c", "cpp", "line"],
       },
       {
         id: "panel.registers",
@@ -676,11 +698,13 @@ export default function SessionDocked() {
     bookmarkState,
     onNavigateToDisassembly: handleNavigateToDisassembly,
     onNavigateToMemory: handleNavigateToMemory,
-  }), [session, displayStatus, canUseMemoryOps, modules, threads, symbolStatuses, symbolsRefreshKey, loadModules, loadThreads, loadModulePdb, retryModuleSymbols, searchSymbols, breakpointState, patchState, bookmarkState, handleNavigateToDisassembly, handleNavigateToMemory]);
+    onNavigateToSource: handleNavigateToSource,
+  }), [session, displayStatus, canUseMemoryOps, modules, threads, symbolStatuses, symbolsRefreshKey, loadModules, loadThreads, loadModulePdb, retryModuleSymbols, searchSymbols, breakpointState, patchState, bookmarkState, handleNavigateToDisassembly, handleNavigateToMemory, handleNavigateToSource]);
   
   // Static tab content - components will update via context
   const dynamicTabContent = useMemo(() => ({
     disassembly: <ContextAssemblyView />,
+    source: <ContextSourceView />,
     registers: <ContextRegisterView />,
     modules: <ContextModulesView onOpenModuleInfo={handleOpenModuleInfo} />,
     threads: <ContextThreadsView onNavigateToDisassembly={handleNavigateToDisassembly} onNavigateToMemoryPointer={handleNavigateToMemoryPointer} />,
@@ -712,6 +736,12 @@ export default function SessionDocked() {
         id: "disassembly",
         title: "Disassembly",
         content: dynamicTabContent.disassembly,
+        closable: true,
+      },
+      source: {
+        id: "source",
+        title: "Source",
+        content: dynamicTabContent.source,
         closable: true,
       },
       registers: {

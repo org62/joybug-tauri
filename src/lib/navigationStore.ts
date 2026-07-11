@@ -42,3 +42,6 @@ export class NavigationChannel {
 
 export const disassemblyNavigation = new NavigationChannel();
 export const memoryNavigation = new NavigationChannel();
+// Disassembly row click → source view scrolls/highlights the matching line
+// (passive sync; does not steal the active tab).
+export const sourceNavigation = new NavigationChannel();

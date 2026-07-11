@@ -20,6 +20,10 @@ pub struct BreakpointInfo {
     pub hw_type: Option<String>,   // "Execute" | "Write" | "ReadWrite"
     #[serde(default)]
     pub hw_size: Option<u8>,       // 1, 2, 4, 8
+    #[serde(default)]
+    pub source_file: Option<String>, // resolved source file (display only)
+    #[serde(default)]
+    pub source_line: Option<u32>,    // resolved source line (display only)
 }
 
 fn default_bp_kind() -> String {
@@ -314,6 +318,21 @@ pub struct SessionStateUI {
 
     // Exception handling
     pub pass_exception_on_continue: bool,
+
+    /// In-progress source-line step. When set, the debug loop keeps single-stepping
+    /// (auto-continuing without pausing the UI) until the PC leaves the starting
+    /// source line, then clears this and pauses. `None` = normal instruction stepping.
+    pub source_step: Option<SourceStepState>,
+}
+
+/// Transient state for an active source-line step (see SessionStateUI::source_step).
+#[derive(Debug, Clone)]
+pub struct SourceStepState {
+    pub kind: joybug2::protocol::StepKind,
+    /// Starting (file, line); `None` when the start had no line info (degrades to
+    /// a single instruction step).
+    pub start: Option<(String, u32)>,
+    pub count: u32,
 }
 
 impl SessionStateUI {
@@ -356,6 +375,7 @@ impl SessionStateUI {
             patches: Vec::new(),
             bookmarks: Vec::new(),
             pass_exception_on_continue: false,
+            source_step: None,
         }
     }
 
@@ -376,6 +396,7 @@ impl SessionStateUI {
         self.is_callstack_window_open = false;
 
         self.pass_exception_on_continue = false;
+        self.source_step = None;
 
         // Keep breakpoints but mark all as inactive/unresolved
         for bp in &mut self.breakpoints {

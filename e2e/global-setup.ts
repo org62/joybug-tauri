@@ -33,6 +33,17 @@ async function waitForUrl(url: string, timeoutMs: number): Promise<void> {
 }
 
 async function globalSetup(): Promise<void> {
+  // Build the source-debugging fixtures (hello_c.exe / hello_asm.exe) with MSVC.
+  // Build-if-stale, so this is a fast no-op on repeated runs.
+  try {
+    execSync(`node "${path.join(__dirname, "fixtures", "build.mjs")}"`, {
+      stdio: "inherit",
+    });
+  } catch (e) {
+    console.error("[fixtures] build failed:", e);
+    throw e;
+  }
+
   // Check binary exists
   if (!existsSync(TAURI_BINARY)) {
     throw new Error(

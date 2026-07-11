@@ -305,6 +305,18 @@ pub fn run_debug_session(
                 crate::ui_logger::toast_info(handle, &format!("{}", event));
             }
 
+            // Drive an in-progress source-line step: keep single-stepping without
+            // pausing the UI until the PC leaves the starting source line. When it
+            // returns Some(true) the next step is already armed, so we resume; the
+            // final step falls through to the normal pause path below.
+            if let joybug2::protocol_io::DebugEvent::StepComplete { pid, tid, address, .. } = event {
+                if let Some(keep_going) = super::dispatch::advance_source_line_step(session, *pid, *tid, *address) {
+                    if keep_going {
+                        return Ok(true);
+                    }
+                }
+            }
+
             // Apply "Hide from PEB" at the initial breakpoint, before the target's
             // main() runs. This happens regardless of whether the initial breakpoint
             // is configured to pause, so anti-debug checks always see clean values.

@@ -42,3 +42,19 @@ pub fn step_pass_exception(
 ) -> Result<()> {
     super::send_paused_command(&session_id, &session_states, UICommand::GoPassException)
 }
+
+#[tauri::command]
+pub fn step_over_line_debug_session(
+    session_id: String,
+    session_states: State<'_, SessionStatesMap>,
+) -> Result<()> {
+    super::send_paused_command(&session_id, &session_states, UICommand::StepOverLine)
+}
+
+#[tauri::command]
+pub fn step_into_line_debug_session(
+    session_id: String,
+    session_states: State<'_, SessionStatesMap>,
+) -> Result<()> {
+    super::send_paused_command(&session_id, &session_states, UICommand::StepIntoLine)
+}

@@ -20,6 +20,8 @@ export interface RawBreakpoint {
   bp_kind: string;            // "software" | "hardware"
   hw_type: string | null;     // "Execute" | "Write" | "ReadWrite"
   hw_size: number | null;     // 1, 2, 4, 8
+  source_file: string | null;
+  source_line: number | null;
 }
 
 export interface RawPatch {
@@ -162,6 +164,8 @@ export interface SessionContextData {
   bookmarkState: BookmarkState;
   onNavigateToDisassembly?: (address: string) => void;
   onNavigateToMemory?: (address: string) => void;
+  /** Activate the Source tab and reveal the given address's source line. */
+  onNavigateToSource?: (address: string) => void;
 }
 
 export const SessionContext = createContext<SessionContextData | null>(null);

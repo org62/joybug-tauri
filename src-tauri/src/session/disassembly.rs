@@ -54,6 +54,8 @@ pub(crate) fn serialize_instructions(
                 is_ret: inst.is_ret,
                 jump_target: inst.jump_target.map(|addr| format!("{:#X}", addr)),
                 is_patched,
+                source_file: inst.line_info.as_ref().map(|l| l.file_path.clone()),
+                source_line: inst.line_info.as_ref().map(|l| l.line),
             }
         })
         .collect()

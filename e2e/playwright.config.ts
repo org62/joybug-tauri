@@ -24,6 +24,7 @@ export default defineConfig({
     "registers.spec.ts",
     "session-lifecycle.spec.ts",
     "stepping.spec.ts",
+    "source-view.spec.ts",
     "attach-detach.spec.ts",
     "non-invasive.spec.ts",
   ],

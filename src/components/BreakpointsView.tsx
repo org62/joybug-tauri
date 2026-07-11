@@ -145,6 +145,9 @@ export function BreakpointsView({
     const isHardware = bp.bp_kind === "hardware";
     const hwInfo = hwLabel(bp);
     const symbolText = bp.symbol || `${bp.module_name}+${bp.module_offset}`;
+    const sourceLabel = bp.source_file
+      ? `${bp.source_file.split(/[\\/]/).pop()}:${bp.source_line ?? "?"}`
+      : null;
 
     return (
       <div
@@ -204,6 +207,11 @@ export function BreakpointsView({
           {isHardware && hwInfo && (
             <Badge size="xs" className="bg-amber-500/20 text-amber-600 dark:text-amber-400 text-[10px]">
               {hwInfo}
+            </Badge>
+          )}
+          {sourceLabel && (
+            <Badge size="xs" className="bg-blue-500/15 text-blue-600 dark:text-blue-400 text-[10px] shrink-0" title={`${bp.source_file}:${bp.source_line ?? "?"}`}>
+              {sourceLabel}
             </Badge>
           )}
           <TruncatedSymbol

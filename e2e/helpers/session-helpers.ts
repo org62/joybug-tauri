@@ -1,5 +1,14 @@
 import { Page, expect } from "@playwright/test";
+import path from "path";
+import { fileURLToPath } from "url";
 import { navigateTo } from "./test-fixtures";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+/** Absolute path to a built source-debugging fixture exe (see e2e/fixtures/build.mjs). */
+export function fixtureExe(name: "hello_c" | "hello_asm"): string {
+  return path.resolve(__dirname, "..", "fixtures", "bin", `${name}.exe`);
+}
 
 /**
  * Create and start a debug session via the UI dialog.
@@ -17,6 +26,7 @@ import { navigateTo } from "./test-fixtures";
 export async function createAndStartSession(
   page: Page,
   name = "E2E Test Session",
+  launchCommand = "cmd.exe /c echo e2e_test",
 ): Promise<string> {
   await navigateTo(page, "/debugger");
 
@@ -29,7 +39,7 @@ export async function createAndStartSession(
 
   // Use a unique launch command to avoid loading persisted breakpoints
   // from previous manual debugging sessions
-  await page.getByLabel("Launch Command").fill("cmd.exe /c echo e2e_test");
+  await page.getByLabel("Launch Command").fill(launchCommand);
 
   // Click "Create & Start"
   await page.getByRole("button", { name: "Create & Start" }).click();

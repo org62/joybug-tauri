@@ -7,6 +7,7 @@ export type ActionId =
   | "debug.stepOut"
   // Panel toggles
   | "panel.disassembly"
+  | "panel.source"
   | "panel.registers"
   | "panel.modules"
   | "panel.threads"
@@ -54,6 +55,7 @@ export const ACTION_REGISTRY: Record<ActionId, ActionMeta> = {
   "debug.stepOut":   { label: "Step Out",          category: "Debug",    description: "Step out of the current function",            scope: "session" },
 
   "panel.disassembly":   { label: "Toggle Disassembly",    category: "Panels", description: "Show or hide the Disassembly panel",    scope: "session" },
+  "panel.source":        { label: "Toggle Source",         category: "Panels", description: "Show or hide the Source panel",         scope: "session" },
   "panel.registers":     { label: "Toggle Registers",      category: "Panels", description: "Show or hide the Registers panel",      scope: "session" },
   "panel.modules":       { label: "Toggle Modules",        category: "Panels", description: "Show or hide the Modules panel",        scope: "session" },
   "panel.threads":       { label: "Toggle Threads",        category: "Panels", description: "Show or hide the Threads panel",        scope: "session" },
@@ -94,6 +96,7 @@ export type ChordString = string;
 
 const SHARED_BINDINGS: Record<string, ChordString> = {
   "panel.disassembly":   "ctrl+d",
+  "panel.source":        "ctrl+shift+s",
   "panel.registers":     "ctrl+r",
   "panel.modules":       "ctrl+m",
   "panel.threads":       "ctrl+t",

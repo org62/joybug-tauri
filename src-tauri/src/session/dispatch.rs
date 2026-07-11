@@ -11,6 +11,7 @@ use super::memory::*;
 use super::patches::*;
 use super::registers::*;
 use super::runner::emit_session_event;
+use super::source::*;
 use super::symbols::*;
 use super::types::{DebugSession, UICommand};
 use crate::error::Result;
@@ -159,6 +160,64 @@ enum CommandResult {
     StopSession,
 }
 
+/// Iteration backstop for a source-line step that never leaves its line
+/// (deep recursion / tight loop). Far above any real line's instruction count.
+const MAX_SOURCE_STEP_INSTRUCTIONS: u32 = 50_000;
+
+/// Advance an in-progress source-line step on each `StepComplete`.
+///
+/// Called from the debug loop (`runner::on_event`) before the normal pause
+/// decision. Returns:
+/// - `None` — no source-line step is active; handle the event normally.
+/// - `Some(true)` — still on the starting line: the next single step was issued,
+///   so the caller should keep running (don't pause).
+/// - `Some(false)` — the step finished (line changed, no line info, cap hit, or a
+///   step error); `source_step` is cleared and the caller should pause normally.
+pub(crate) fn advance_source_line_step(
+    session: &mut DebugSession,
+    pid: u32,
+    tid: u32,
+    address: u64,
+) -> Option<bool> {
+    let (kind, start, count) = {
+        let mut s = session.state.lock().unwrap();
+        let ss = s.source_step.as_mut()?;
+        ss.count += 1;
+        (ss.kind, ss.start.clone(), ss.count)
+    };
+
+    let keep_going = match &start {
+        // No line info where we started → behave like a single instruction step.
+        None => false,
+        Some(start) => {
+            if count >= MAX_SOURCE_STEP_INSTRUCTIONS {
+                warn!("Source-line step hit iteration cap ({}); stopping", MAX_SOURCE_STEP_INSTRUCTIONS);
+                false
+            } else {
+                let current = super::source::resolve_file_line(session, pid, address);
+                // Keep stepping only while still on the exact same source line.
+                matches!(&current, Some(c) if c == start)
+            }
+        }
+    };
+
+    if keep_going {
+        // Arm the next single step; the debug loop's auto-continue resumes execution.
+        if session
+            .step(pid, tid, kind, |_s, _pid, _tid, _addr, _kind| {
+                Ok(joybug2::protocol_io::StepAction::Stop)
+            })
+            .is_ok()
+        {
+            return Some(true);
+        }
+        // Step setup failed — stop cleanly below.
+    }
+
+    session.state.lock().unwrap().source_step = None;
+    Some(false)
+}
+
 fn process_command(
     command: UICommand,
     session: &mut DebugSession,
@@ -268,6 +327,47 @@ fn process_command(
             }
             CommandResult::ResumeExecution
         }
+        UICommand::StepOverLine | UICommand::StepIntoLine => {
+            let pid = event.pid();
+            let tid = event.tid();
+            let (kind, label) = match command {
+                UICommand::StepIntoLine => (joybug2::protocol_io::StepKind::Into, "StepIntoLine"),
+                _ => (joybug2::protocol_io::StepKind::Over, "StepOverLine"),
+            };
+            debug!("📤 {} command - pid={}, tid={}", label, pid, tid);
+
+            // Record the starting source line. The debug loop (runner::on_event)
+            // keeps single-stepping without pausing until the line changes.
+            let start = session
+                .get_thread_context(pid, tid)
+                .ok()
+                .map(|ctx| ctx.get_pc())
+                .and_then(|pc| super::source::resolve_file_line(session, pid, pc));
+            {
+                let mut s = session.state.lock().unwrap();
+                s.source_step = Some(crate::state::SourceStepState { kind, start, count: 0 });
+            }
+
+            // Kick off the first underlying step. The loop continuation lives in
+            // runner::on_event so it plays nicely with the pause/continue machinery.
+            if let Err(e) = session.step(pid, tid, kind, |_s, _pid, _tid, _addr, _kind| {
+                Ok(joybug2::protocol_io::StepAction::Stop)
+            }) {
+                session.state.lock().unwrap().source_step = None;
+                let msg = format!("{} failed: {}", label, e);
+                report_step_error(session, app_handle_clone, &msg);
+                debug!("{} failed; staying paused and awaiting next command", label);
+                return CommandResult::Continue;
+            }
+
+            if let Some(handle) = app_handle_clone.as_ref() {
+                let mut s = session.state.lock().unwrap();
+                s.status = SessionStatusUI::Running;
+                drop(s);
+                emit_session_event(&session.state, handle);
+            }
+            CommandResult::ResumeExecution
+        }
         UICommand::Disassembly { arch, address, count } => {
             process_disassembly_request(session, app_handle_clone, event, arch, address, count);
             CommandResult::Continue
@@ -278,6 +378,18 @@ fn process_command(
         }
         UICommand::GetCallStack => {
             process_callstack_request(session, app_handle_clone, event);
+            CommandResult::Continue
+        }
+        UICommand::ResolveAddressToLine { address } => {
+            process_resolve_address_to_line(session, app_handle_clone, event, address);
+            CommandResult::Continue
+        }
+        UICommand::GetSourceFileLineMap { module_base, ref file_path, start_line, end_line } => {
+            process_get_source_file_line_map(session, app_handle_clone, event, module_base, file_path, start_line, end_line);
+            CommandResult::Continue
+        }
+        UICommand::ListSourceFiles { module_base } => {
+            process_list_source_files(session, app_handle_clone, event, module_base);
             CommandResult::Continue
         }
         UICommand::SearchSymbols { ref pattern, limit } => {

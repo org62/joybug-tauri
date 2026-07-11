@@ -43,7 +43,7 @@ export const DebuggerDockingConfig: DockingConfig = {
           ],
         },
         {
-          tabs: [{ id: "disassembly" }, { id: "memory" }, { id: "memory_regions" }, { id: "breakpoints" }, { id: "patches" }, { id: "bookmarks" }, { id: "memory_search" }, { id: "memory_scanner" }, { id: "pointer_scan" }, { id: "peviewer" }],
+          tabs: [{ id: "disassembly" }, { id: "source" }, { id: "memory" }, { id: "memory_regions" }, { id: "breakpoints" }, { id: "patches" }, { id: "bookmarks" }, { id: "memory_search" }, { id: "memory_scanner" }, { id: "pointer_scan" }, { id: "peviewer" }],
           activeId: "disassembly",
         },
         {
@@ -65,6 +65,7 @@ export const DebuggerDockingConfig: DockingConfig = {
   } as LayoutData,
   initialTabContents: {
     disassembly: { id: "disassembly", title: "Disassembly", content: <div>Disassembly placeholder</div> },
+    source: { id: "source", title: "Source", content: <div>Source placeholder</div> },
     registers: { id: "registers", title: "Registers", content: <StaticRegisterView context={mockContext} /> },
     modules: { id: "modules", title: "Modules", content: <div>Modules placeholder</div> },
     threads: { id: "threads", title: "Threads", content: <div>Threads placeholder</div> },

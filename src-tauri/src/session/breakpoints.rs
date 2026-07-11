@@ -16,6 +16,14 @@ fn parse_hw_type(hw_type: &str) -> Option<joybug2::protocol::HardwareBreakpointT
     }
 }
 
+/// Resolve an address to a source file/line for breakpoint display (best-effort).
+fn resolve_source_line(session: &mut DebugSession, pid: u32, address: u64) -> (Option<String>, Option<u32>) {
+    match super::source::resolve_file_line(session, pid, address) {
+        Some((path, line)) => (Some(path), Some(line)),
+        None => (None, None),
+    }
+}
+
 /// Convert hw_size u8 to joybug2 HardwareBreakpointSize
 fn parse_hw_size(hw_size: u8) -> Option<joybug2::protocol::HardwareBreakpointSize> {
     match hw_size {
@@ -126,6 +134,7 @@ pub(crate) fn process_toggle_breakpoint(
             }
             _ => None,
         };
+        let (source_file, source_line) = resolve_source_line(session, pid, address);
 
         {
             let mut state = session.state.lock().unwrap();
@@ -142,6 +151,8 @@ pub(crate) fn process_toggle_breakpoint(
                 bp_kind: "software".to_string(),
                 hw_type: None,
                 hw_size: None,
+                source_file,
+                source_line,
             });
         }
     }
@@ -390,17 +401,23 @@ pub(crate) fn reapply_breakpoints_for_module(
                 }).is_ok()
             };
             if set_ok {
+                let (source_file, source_line) = resolve_source_line(session, pid, addr);
                 let mut state = session.state.lock().unwrap();
                 if let Some(bp) = state.breakpoints.iter_mut().find(|b| b.id == bp_id) {
                     bp.address = addr;
                     bp.is_active = true;
+                    bp.source_file = source_file;
+                    bp.source_line = source_line;
                     info!("Re-applied breakpoint {} at 0x{:X}", bp.id, addr);
                 }
             }
         } else {
+            let (source_file, source_line) = resolve_source_line(session, pid, addr);
             let mut state = session.state.lock().unwrap();
             if let Some(bp) = state.breakpoints.iter_mut().find(|b| b.id == bp_id) {
                 bp.address = addr;
+                bp.source_file = source_file;
+                bp.source_line = source_line;
                 info!("Resolved address for disabled breakpoint {} at 0x{:X}", bp.id, addr);
             }
         }
@@ -500,6 +517,7 @@ pub(crate) fn process_set_hardware_breakpoint(
         }
         _ => None,
     };
+    let (source_file, source_line) = resolve_source_line(session, pid, address);
 
     {
         let mut state = session.state.lock().unwrap();
@@ -516,6 +534,8 @@ pub(crate) fn process_set_hardware_breakpoint(
             bp_kind: "hardware".to_string(),
             hw_type: Some(hw_type_str.to_string()),
             hw_size: Some(hw_size_val),
+            source_file,
+            source_line,
         });
     }
 

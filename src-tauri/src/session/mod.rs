@@ -10,6 +10,7 @@ pub(crate) mod pointer_scan;
 pub(crate) mod patches;
 mod registers;
 mod runner;
+pub(crate) mod source;
 mod symbols;
 pub mod types;
 

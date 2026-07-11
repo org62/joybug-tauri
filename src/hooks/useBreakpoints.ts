@@ -19,6 +19,8 @@ export interface Breakpoint {
   bp_kind: string;            // "software" | "hardware"
   hw_type: string | null;     // "Execute" | "Write" | "ReadWrite"
   hw_size: number | null;     // 1, 2, 4, 8
+  source_file: string | null; // resolved source file (display only)
+  source_line: number | null; // resolved source line (display only)
 }
 
 interface BreakpointsUpdatedPayload {
@@ -40,6 +42,8 @@ function convertBreakpoints(raw: RawBreakpoint[]): Breakpoint[] {
     bp_kind: bp.bp_kind ?? "software",
     hw_type: bp.hw_type ?? null,
     hw_size: bp.hw_size ?? null,
+    source_file: bp.source_file ?? null,
+    source_line: bp.source_line ?? null,
   }));
 }
 
