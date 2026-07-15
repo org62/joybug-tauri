@@ -1,7 +1,7 @@
 import { writeFileSync } from "fs";
 import path from "path";
 import { test, expect } from "../helpers/test-fixtures";
-import { createAndStartSession, cleanupSession } from "../helpers/session-helpers";
+import { createAndStartSession, cleanupSession, invoke } from "../helpers/session-helpers";
 import {
   waitForPaused,
   waitForStopped,
@@ -15,13 +15,6 @@ const BOOKMARKS_FILE = process.env.JOYBUG_E2E_DATA_DIR
   : path.join(process.env.LOCALAPPDATA || "", "JoybugTauri", "bookmarks.json");
 
 type Page = import("@playwright/test").Page;
-
-async function invoke(page: Page, cmd: string, args: Record<string, unknown>): Promise<any> {
-  return page.evaluate(
-    ({ cmd, args }) => (window as any).__TAURI_INTERNALS__.invoke(cmd, args),
-    { cmd, args },
-  );
-}
 
 async function getBookmarks(page: Page, sessionId: string): Promise<any[]> {
   const s = await invoke(page, "get_debug_session", { sessionId });
@@ -98,6 +91,33 @@ test.describe("Bookmarks", () => {
       await expect(async () => {
         expect(await getBookmarks(page, sessionId)).toHaveLength(0);
       }).toPass({ timeout: 5_000 });
+
+      // UI: changed-value highlighting. Bookmark a writable data address (the
+      // PEB), open the Bookmarks tab, then change the value — the value cell
+      // renders neutral at first (the old always-green styling is gone) and
+      // gets the shared `data-changed` marker on change.
+      const { peb } = await invoke(page, "get_session_teb_peb", { sessionId });
+      expect(peb).toBeTruthy();
+      await invoke(page, "add_bookmark", {
+        sessionId,
+        kind: "value",
+        address: peb,
+        valueType: "U32",
+        name: "e2e-val",
+      });
+      await page.getByText("Bookmarks", { exact: true }).first().click();
+      const valueSpan = page.locator('span[title="Click to edit value"]').first();
+      await expect(valueSpan).toBeVisible({ timeout: 10_000 });
+      await expect(valueSpan).not.toHaveClass(/text-green-500/);
+      await expect(valueSpan).not.toHaveAttribute("data-changed");
+
+      const [pebBm] = await getBookmarks(page, sessionId);
+      const oldPlain = parseInt(pebBm.current_value, 10);
+      const newValue = String(oldPlain === 1 ? 2 : 1);
+      await invoke(page, "set_bookmark_value", { sessionId, id: pebBm.id, value: newValue });
+      await expect(valueSpan).toHaveAttribute("data-changed", "true", { timeout: 10_000 });
+
+      await invoke(page, "remove_bookmark", { sessionId, id: pebBm.id });
 
       await cleanupSession(page, sessionId);
     } finally {

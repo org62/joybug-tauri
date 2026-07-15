@@ -1,27 +1,10 @@
 use crate::state::BookmarkInfo;
 use std::collections::HashMap;
-use std::fs;
-use std::io::Write;
-use std::path::PathBuf;
-use tracing::error;
 
-fn bookmarks_file_path() -> PathBuf {
-    crate::data_dir::joybug_data_dir().join("bookmarks.json")
-}
+const BOOKMARKS_FILE: &str = "bookmarks.json";
 
 pub fn load_bookmarks(launch_command: &str) -> Vec<BookmarkInfo> {
-    let path = bookmarks_file_path();
-    let bytes = match fs::read(&path) {
-        Ok(b) => b,
-        Err(_) => return Vec::new(),
-    };
-    let map: HashMap<String, Vec<BookmarkInfo>> = match serde_json::from_slice(&bytes) {
-        Ok(m) => m,
-        Err(e) => {
-            error!("Failed to parse bookmarks file: {}", e);
-            return Vec::new();
-        }
-    };
+    let map: HashMap<String, Vec<BookmarkInfo>> = crate::data_dir::load_json(BOOKMARKS_FILE);
     match map.get(launch_command) {
         Some(bms) => bms
             .iter()
@@ -38,14 +21,8 @@ pub fn load_bookmarks(launch_command: &str) -> Vec<BookmarkInfo> {
 }
 
 pub fn save_bookmarks(launch_command: &str, bookmarks: &[BookmarkInfo]) {
-    let path = bookmarks_file_path();
-
     // Read existing file to preserve other targets' bookmarks
-    let mut map: HashMap<String, Vec<BookmarkInfo>> = if let Ok(bytes) = fs::read(&path) {
-        serde_json::from_slice(&bytes).unwrap_or_default()
-    } else {
-        HashMap::new()
-    };
+    let mut map: HashMap<String, Vec<BookmarkInfo>> = crate::data_dir::load_json(BOOKMARKS_FILE);
 
     if bookmarks.is_empty() {
         map.remove(launch_command);
@@ -53,18 +30,5 @@ pub fn save_bookmarks(launch_command: &str, bookmarks: &[BookmarkInfo]) {
         map.insert(launch_command.to_string(), bookmarks.to_vec());
     }
 
-    if let Some(parent) = path.parent() {
-        let _ = fs::create_dir_all(parent);
-    }
-
-    match serde_json::to_vec_pretty(&map) {
-        Ok(data) => {
-            if let Err(e) = fs::File::create(&path).and_then(|mut f| f.write_all(&data)) {
-                error!("Failed to save bookmarks: {}", e);
-            }
-        }
-        Err(e) => {
-            error!("Failed to serialize bookmarks: {}", e);
-        }
-    }
+    crate::data_dir::save_json(BOOKMARKS_FILE, &map);
 }

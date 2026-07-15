@@ -11,7 +11,8 @@ import { Cpu, ArrowLeft, ArrowRight, RefreshCw, ChevronRight, Circle, CircleDot,
 import { sourceNavigation } from "@/lib/navigationStore";
 import { cn } from "@/lib/utils";
 import { useAssemblyView, Instruction } from "@/hooks/useAssemblyView";
-import { RegisterContext, SymbolResolver, sanitizeAddressInput } from "@/lib/hexUtils";
+import { RegisterContext, SymbolResolver } from "@/lib/hexUtils";
+import { AddressExpressionInput } from "@/components/AddressExpressionInput";
 import { isBenignSessionError } from "@/lib/sessionHelpers";
 import { useContextMenu } from "@/hooks/useContextMenu";
 import { useColumnWidths } from "@/hooks/useColumnWidths";
@@ -75,7 +76,6 @@ export function AssemblyView({ sessionId, isPaused, address, registers, resolveS
     canGoBack,
     canGoForward,
     jumpTargetAddress,
-    goToAddress,
     goToAddressDirect,
     scrollToAddressInView,
     goBack,
@@ -90,13 +90,6 @@ export function AssemblyView({ sessionId, isPaused, address, registers, resolveS
     resolveSymbol,
     symbolsRefreshKey,
   });
-
-  // Handle go-to action
-  const handleGoTo = useCallback(async () => {
-    if (addressInput.trim()) {
-      await goToAddress(addressInput);
-    }
-  }, [addressInput, goToAddress]);
 
   // Handle jump target click
   const handleJumpTargetClick = useCallback((jumpTarget: string) => {
@@ -236,19 +229,16 @@ export function AssemblyView({ sessionId, isPaused, address, registers, resolveS
       {/* Toolbar */}
       <PanelToolbar>
         {/* Go-to address input */}
-        <div className="flex items-center gap-1">
-          <Input
-            placeholder="rip, symbol, rax+0x10..."
-            value={addressInput}
-            onChange={(e) => setAddressInput(sanitizeAddressInput(e.target.value))}
-            onKeyDown={(e) => e.key === "Enter" && handleGoTo()}
-            inputSize="xs"
-            className="w-48 font-mono"
-          />
-          <Button variant="outline" size="xs" onClick={handleGoTo}>
-            Go
-          </Button>
-        </div>
+        <AddressExpressionInput
+          value={addressInput}
+          onChange={setAddressInput}
+          onResolve={goToAddressDirect}
+          registers={registers}
+          resolveSymbol={resolveSymbol}
+          sessionId={sessionId}
+          placeholder="rip, symbol, rax+0x10..."
+          inputClassName="w-48"
+        />
 
         {/* Navigation back/forward */}
         <div className="flex items-center gap-1">

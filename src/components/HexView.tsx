@@ -2,7 +2,6 @@ import { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo, Key
 import { Virtualizer } from "@tanstack/react-virtual";
 import { VirtualizedList } from "./ui/virtualized-list";
 import { Button } from "./ui/button";
-import { Input } from "./ui/input";
 import {
   Select,
   SelectContent,
@@ -13,6 +12,7 @@ import {
 import { Binary, Save, X, ArrowRight, Copy, ClipboardPaste, Crosshair, Bookmark } from "lucide-react";
 import { useHexEditor, ExtendStatus } from "@/hooks/useHexEditor";
 import { isProcessAvailable } from "@/lib/sessionHelpers";
+import { CHANGED_VALUE_CLASS } from "@/lib/utils";
 import { useNavigationChannel } from "@/hooks/useNavigationChannel";
 import { memoryNavigation } from "@/lib/navigationStore";
 import {
@@ -24,8 +24,8 @@ import {
   DEFAULT_CHUNK_SIZE,
   RegisterContext,
   SymbolResolver,
-  sanitizeAddressInput,
 } from "@/lib/hexUtils";
+import { AddressExpressionInput } from "@/components/AddressExpressionInput";
 import { PointerDereferenceDisplay } from "@/components/DereferenceDisplay";
 import { DockPanel, PanelToolbar, PanelFooter } from "@/components/ui/panel";
 import { ContextMenu, ContextMenuItem, ContextMenuSeparator } from "@/components/ui/context-menu";
@@ -333,19 +333,10 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
     handleKeyInput,
   ]);
 
-  // Handle goto address
-  const handleGoto = () => {
-    if (addressInput.trim()) {
-      goToAddress(addressInput.trim());
-      setAddressInput("");
-    }
-  };
-
-  // Handle enter key in address input
-  const handleAddressKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === "Enter") {
-      handleGoto();
-    }
+  // Handle goto address (expression already resolved by AddressExpressionInput)
+  const handleAddressResolved = (address: bigint) => {
+    goToAddress(address);
+    setAddressInput("");
   };
 
   // Calculate rows
@@ -484,8 +475,10 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
           <HexToolbar
             addressInput={addressInput}
             setAddressInput={setAddressInput}
-            handleAddressKeyDown={handleAddressKeyDown}
-            handleGoto={handleGoto}
+            onResolveAddress={handleAddressResolved}
+            registers={registers}
+            resolveSymbol={resolveSymbol}
+            sessionId={sessionId}
             viewMode={viewMode}
             setViewMode={setViewMode}
             pendingChanges={pendingChanges}
@@ -522,8 +515,10 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
         <HexToolbar
           addressInput={addressInput}
           setAddressInput={setAddressInput}
-          handleAddressKeyDown={handleAddressKeyDown}
-          handleGoto={handleGoto}
+          onResolveAddress={handleAddressResolved}
+          registers={registers}
+          resolveSymbol={resolveSymbol}
+          sessionId={sessionId}
           viewMode={viewMode}
           setViewMode={setViewMode}
           pendingChanges={pendingChanges}
@@ -553,8 +548,10 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
       <HexToolbar
         addressInput={addressInput}
         setAddressInput={setAddressInput}
-        handleAddressKeyDown={handleAddressKeyDown}
-        handleGoto={handleGoto}
+        onResolveAddress={handleAddressResolved}
+        registers={registers}
+        resolveSymbol={resolveSymbol}
+        sessionId={sessionId}
         viewMode={viewMode}
         setViewMode={setViewMode}
         pendingChanges={pendingChanges}
@@ -656,13 +653,14 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
                         className="inline-flex items-center gap-1 min-w-0"
                       >
                         <span
+                          data-changed={hasChangedByte || undefined}
                           className={`cursor-pointer rounded px-0.5 inline-block text-center ${
                             isSelected
                               ? "bg-primary text-primary-foreground"
                               : hasPendingChange
                               ? "bg-yellow-200 dark:bg-yellow-800"
                               : hasChangedByte
-                              ? "text-red-400 hover:bg-muted/50"
+                              ? `${CHANGED_VALUE_CLASS} hover:bg-muted/50`
                               : "hover:bg-muted/50"
                           } ${isEditing ? "ring-1 ring-primary" : ""}`}
                           style={{ minWidth: `${config.displayWidth}ch` }}
@@ -692,13 +690,14 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
                       return (
                         <span
                           key={i}
+                          data-changed={hasChanged || undefined}
                           className={`cursor-pointer ${
                             isSelected
                               ? "bg-primary text-primary-foreground"
                               : hasPending
                               ? "bg-yellow-200 dark:bg-yellow-800"
                               : hasChanged
-                              ? "text-red-400"
+                              ? CHANGED_VALUE_CLASS
                               : ""
                           } ${isAsciiEditing ? "ring-1 ring-primary" : ""}`}
                           onClick={(e) => handleAsciiClick(offset, e)}
@@ -836,8 +835,10 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
 interface HexToolbarProps {
   addressInput: string;
   setAddressInput: (value: string) => void;
-  handleAddressKeyDown: (e: KeyboardEvent<HTMLInputElement>) => void;
-  handleGoto: () => void;
+  onResolveAddress: (address: bigint) => void;
+  registers?: RegisterContext;
+  resolveSymbol?: SymbolResolver;
+  sessionId?: string;
   viewMode: ViewMode;
   setViewMode: (mode: ViewMode) => void;
   pendingChanges: Map<number, number>;
@@ -848,8 +849,10 @@ interface HexToolbarProps {
 function HexToolbar({
   addressInput,
   setAddressInput,
-  handleAddressKeyDown,
-  handleGoto,
+  onResolveAddress,
+  registers,
+  resolveSymbol,
+  sessionId,
   viewMode,
   setViewMode,
   pendingChanges,
@@ -859,24 +862,21 @@ function HexToolbar({
   return (
     <PanelToolbar>
       {/* Address input */}
-      <div className="flex items-center gap-1">
-        <Input
-          inputSize="xs"
-          placeholder="rsp, rax+0x10, symbol..."
-          value={addressInput}
-          onChange={(e) => setAddressInput(sanitizeAddressInput(e.target.value))}
-          onKeyDown={handleAddressKeyDown}
-        />
-        <Button
-          variant="outline"
-          size="xs"
-          onClick={handleGoto}
-          title="Go to address"
-        >
-          <ArrowRight />
-          <span>Go</span>
-        </Button>
-      </div>
+      <AddressExpressionInput
+        value={addressInput}
+        onChange={setAddressInput}
+        onResolve={onResolveAddress}
+        registers={registers}
+        resolveSymbol={resolveSymbol}
+        sessionId={sessionId}
+        placeholder="rsp, rax+0x10, symbol..."
+        buttonLabel={
+          <>
+            <ArrowRight />
+            <span>Go</span>
+          </>
+        }
+      />
 
       {/* View mode selector */}
       <Select value={viewMode} onValueChange={(v) => setViewMode(v as ViewMode)}>

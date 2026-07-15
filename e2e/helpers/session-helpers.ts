@@ -10,6 +10,18 @@ export function fixtureExe(name: "hello_c" | "hello_asm"): string {
   return path.resolve(__dirname, "..", "fixtures", "bin", `${name}.exe`);
 }
 
+/** Invoke a Tauri command from the page context. */
+export async function invoke(
+  page: Page,
+  cmd: string,
+  args: Record<string, unknown> = {},
+): Promise<any> {
+  return page.evaluate(
+    ({ cmd, args }) => (window as any).__TAURI_INTERNALS__.invoke(cmd, args),
+    { cmd, args },
+  );
+}
+
 /**
  * Create and start a debug session via the UI dialog.
  * Uses `cmd.exe /c "echo hello world"` as the debug target.

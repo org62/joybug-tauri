@@ -10,7 +10,8 @@ mod settings;
 mod source;
 mod stepping;
 mod symbols;
-mod types;
+pub(crate) mod types;
+mod type_system;
 mod window_state;
 
 pub use bookmarks::*;
@@ -25,6 +26,7 @@ pub use settings::*;
 pub use source::*;
 pub use stepping::*;
 pub use symbols::*;
+pub use type_system::*;
 pub use window_state::*;
 
 use std::sync::{Arc, Mutex};

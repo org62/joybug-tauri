@@ -19,6 +19,7 @@ import { ContextModulesView } from "@/components/session/ContextModulesView";
 import { ContextThreadsView } from "@/components/session/ContextThreadsView";
 import { ContextCallStackView } from "@/components/session/ContextCallStackView";
 import { ContextSymbolsView } from "@/components/session/ContextSymbolsView";
+import { ContextTypesView } from "@/components/session/ContextTypesView";
 import { ContextHexView } from "@/components/session/ContextHexView";
 import { ContextMemoryRegionsView } from "@/components/session/ContextMemoryRegionsView";
 import { ContextBreakpointsView } from "@/components/session/ContextBreakpointsView";
@@ -40,7 +41,7 @@ import type { PaletteCommand } from "@/contexts/CommandPaletteContext";
 import {
   Play, Square, Pause, ArrowDownToLine, CornerDownRight, ArrowUpFromLine, SkipForward,
   Code, Cpu, Box, Layers, ListTree, Search, HardDrive, MapPin, FileCode,
-  Plus, RotateCcw, Navigation, ScanSearch, Puzzle, Crosshair, Bookmark as BookmarkIcon,
+  Plus, RotateCcw, Navigation, ScanSearch, Puzzle, Crosshair, Bookmark as BookmarkIcon, Boxes,
 } from "lucide-react";
 
 export default function SessionDocked() {
@@ -303,6 +304,11 @@ export default function SessionDocked() {
           event.stopPropagation();
           toggleTabWithBackendUpdate("symbols");
           break;
+        case "panel.types":
+          event.preventDefault();
+          event.stopPropagation();
+          toggleTabWithBackendUpdate("types");
+          break;
         case "panel.addMemory":
           event.preventDefault();
           event.stopPropagation();
@@ -539,6 +545,16 @@ export default function SessionDocked() {
         keywords: ["symbols", "functions"],
       },
       {
+        id: "panel.types",
+        label: "Toggle Types",
+        group: "Windows",
+        icon: <Boxes className="size-4" />,
+        keybindingAction: "panel.types",
+        onSelect: () => toggleTabWithBackendUpdate("types"),
+        keepOpen: true,
+        keywords: ["types", "struct", "teb", "peb", "kuser"],
+      },
+      {
         id: "panel.memoryRegions",
         label: "Toggle Memory Regions",
         group: "Windows",
@@ -710,6 +726,7 @@ export default function SessionDocked() {
     threads: <ContextThreadsView onNavigateToDisassembly={handleNavigateToDisassembly} onNavigateToMemoryPointer={handleNavigateToMemoryPointer} />,
     callstack: <ContextCallStackView onNavigateToDisassembly={handleNavigateToDisassembly} onNavigateToMemoryPointer={handleNavigateToMemoryPointer} />,
     symbols: <ContextSymbolsView />,
+    types: <ContextTypesView />,
     memory_regions: <ContextMemoryRegionsView onNavigateToAddress={handleNavigateToMemory} />,
     breakpoints: <ContextBreakpointsView />,
     patches: <ContextPatchesView />,
@@ -772,6 +789,12 @@ export default function SessionDocked() {
         id: "symbols",
         title: "Symbols",
         content: dynamicTabContent.symbols,
+        closable: true,
+      },
+      types: {
+        id: "types",
+        title: "Types",
+        content: dynamicTabContent.types,
         closable: true,
       },
       memory: {

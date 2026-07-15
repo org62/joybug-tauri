@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { toastError, toastSuccess, toastInfo } from '@/lib/logger';
 import { formatTauriError, isProcessAvailable, isTargetLive } from '@/lib/sessionHelpers';
+import { useLiveRefresh } from '@/hooks/useLiveRefresh';
 import {
   ViewMode,
   VIEW_MODE_CONFIGS,
@@ -925,36 +926,21 @@ export function useHexEditor(options: UseHexEditorOptions): HexEditorState & Hex
     };
   }, [sessionId, setBaseAddress, shiftWindowOffsets, handleReadFailure]);
 
-  // Auto-reload memory after a debugging step.
-  // Listens for session-updated directly (bypasses React batching which can swallow
-  // the Running→Paused transition during fast steps, making status-based effects miss it).
-  useEffect(() => {
-    if (!sessionId || !listenersReady) return;
-
-    let prevStatus: string | null = null;
-
-    const setupListener = async () => {
-      const unlisten = await listen<{ id: string; status: string }>('session-updated', (event) => {
-        if (event.payload.id !== sessionId) return;
-        const newStatus = event.payload.status;
-        const wasNonPaused = prevStatus !== null && prevStatus !== 'Paused';
-        prevStatus = newStatus;
-
-        // Reload when session transitions TO Paused from Running (step/breakpoint)
-        // and user has already loaded memory at an address. The memory map may
-        // have changed, so boundary flags are cleared to allow re-probing.
-        if (newStatus === 'Paused' && wasNonPaused && initialLoadDone.current) {
-          setTopExhausted(false);
-          setBottomExhausted(false);
-          refreshWindow();
-        }
-      });
-      return unlisten;
-    };
-
-    const cleanup = setupListener();
-    return () => { cleanup.then(fn => fn?.()); };
-  }, [sessionId, listenersReady, refreshWindow]);
+  // Shared live cadence: poll the window while the target runs (or non-invasive
+  // Open) and auto-reload once after a debugging step. Polling is checked
+  // inside the tick so it picks up as soon as an address is loaded, without
+  // re-arming the interval.
+  useLiveRefresh(sessionId, isTargetLive(sessionStatus), (reason) => {
+    if (reason === 'pause') {
+      // Reload when session transitions TO Paused from Running (step/breakpoint)
+      // and user has already loaded memory at an address. The memory map may
+      // have changed, so boundary flags are cleared to allow re-probing.
+      if (!listenersReady || !initialLoadDone.current) return;
+      setTopExhausted(false);
+      setBottomExhausted(false);
+    }
+    refreshWindow();
+  });
 
   // Load memory on mount: persisted address > initialAddress
   useEffect(() => {
@@ -980,19 +966,6 @@ export function useHexEditor(options: UseHexEditorOptions): HexEditorState & Hex
       pendingRead.current = null;
     }
   }, [sessionId]);
-
-  // Poll memory while session is running (or non-invasive Open), like bookmark
-  // values. Checked inside the tick so polling picks up as soon as an address
-  // is loaded, without re-arming the interval.
-  useEffect(() => {
-    if (!sessionId || !isTargetLive(sessionStatus)) return;
-
-    const interval = setInterval(() => {
-      refreshWindow();
-    }, 500);
-
-    return () => clearInterval(interval);
-  }, [sessionId, sessionStatus, refreshWindow]);
 
   // Fetch dereference data when in pointer mode and memory data is available
   useEffect(() => {

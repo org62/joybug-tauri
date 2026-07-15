@@ -2,6 +2,8 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { formatTauriError } from '@/lib/sessionHelpers';
+import { useLiveRefresh } from '@/hooks/useLiveRefresh';
+import { useChangedValues } from '@/hooks/useChangedValues';
 
 export type ScanValueType = 'U8' | 'U16' | 'U32' | 'U64' | 'F32' | 'F64';
 
@@ -195,45 +197,28 @@ export function useMemoryScanner(sessionId: string | undefined, available: boole
     };
   }, [sessionId]);
 
-  // Auto-refresh values after step (session-updated with Paused status + active scan)
-  useEffect(() => {
-    if (!sessionId) return;
-
-    const unlisten = listen<{ id: string; status: string }>('session-updated', (event) => {
-      if (event.payload.id !== sessionId) return;
-      if (event.payload.status === 'Paused' && scanIdRef.current !== null) {
-        // Re-fetch current page to show updated values
-        invoke('request_scan_memory_get_results', {
-          sessionId,
-          scanId: scanIdRef.current,
-          offset: currentPageRef.current * PAGE_SIZE,
-          count: PAGE_SIZE,
-        }).catch(() => {});
-      }
-    });
-
-    return () => { unlisten.then(f => f()); };
-  }, [sessionId]);
-
   // Poll current-page values while the target runs live (Running / non-invasive
-  // Open), the same way the memory window and bookmarks refresh — the process
-  // keeps mutating, so re-read the visible result addresses on an interval.
-  useEffect(() => {
-    if (!sessionId || !isLive) return;
+  // Open) and re-fetch once after each step, on the shared cadence — the
+  // process keeps mutating, so re-read the visible result addresses.
+  useLiveRefresh(sessionId, isLive, () => {
+    if (!sessionId || scanIdRef.current === null) return;
+    invoke('request_scan_memory_get_results', {
+      sessionId,
+      scanId: scanIdRef.current,
+      offset: currentPageRef.current * PAGE_SIZE,
+      count: PAGE_SIZE,
+    }).catch(() => {});
+  });
 
-    const interval = setInterval(() => {
-      if (scanIdRef.current !== null) {
-        invoke('request_scan_memory_get_results', {
-          sessionId,
-          scanId: scanIdRef.current,
-          offset: currentPageRef.current * PAGE_SIZE,
-          count: PAGE_SIZE,
-        }).catch(() => {});
-      }
-    }, 1000);
-
-    return () => clearInterval(interval);
-  }, [sessionId, isLive]);
+  // Values that changed since the previous results fetch (red highlight);
+  // baseline cleared when the scan or session changes so a new scan doesn't
+  // diff against the old one.
+  const changedAddresses = useChangedValues(
+    results,
+    (e) => e.address,
+    (e) => e.value.display,
+    `${sessionId}:${scanId}`,
+  );
 
   const handleFirstScan = useCallback(async () => {
     if (!sessionId || !available) return;
@@ -309,7 +294,7 @@ export function useMemoryScanner(sessionId: string | undefined, available: boole
     scanId, valueType, compareType, value, value2,
     alignment, floatTolerance, writableOnly,
     matchCount, scanTimeUs, isScanning, isFirstScan, error,
-    results, totalCount, currentPage, totalPages, pageSize: PAGE_SIZE,
+    results, changedAddresses, totalCount, currentPage, totalPages, pageSize: PAGE_SIZE,
     // Setters
     setValueType, setCompareType, setValue, setValue2,
     setAlignment, setFloatTolerance, setWritableOnly,

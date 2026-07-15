@@ -283,6 +283,13 @@ export const SessionHeader: React.FC<SessionHeaderProps> = ({
                     <span className="ml-auto text-xs text-muted-foreground">{getKeybinding("panel.symbols")}</span>
                   </DropdownMenuCheckboxItem>
                   <DropdownMenuCheckboxItem
+                    checked={active.has('types')}
+                    onCheckedChange={() => toggleTab('types')}
+                  >
+                    <span className="flex-1">Types</span>
+                    <span className="ml-auto text-xs text-muted-foreground">{getKeybinding("panel.types")}</span>
+                  </DropdownMenuCheckboxItem>
+                  <DropdownMenuCheckboxItem
                     checked={active.has('memory_regions')}
                     onCheckedChange={() => toggleTab('memory_regions')}
                   >

@@ -1,6 +1,5 @@
 import { useState, useCallback } from "react";
 import { Button } from "./ui/button";
-import { Input } from "./ui/input";
 import { InlineEditInput } from "./ui/inline-edit-input";
 import { ResizableHeaderCell } from "./ui/resizable-header-cell";
 import { Badge } from "./ui/badge";
@@ -9,7 +8,8 @@ import { cn } from "@/lib/utils";
 import { Breakpoint } from "@/hooks/useBreakpoints";
 import { useContextMenu } from "@/hooks/useContextMenu";
 import { useColumnWidths } from "@/hooks/useColumnWidths";
-import { RegisterContext, SymbolResolver, sanitizeAddressInput, parseAddressExpression } from "@/lib/hexUtils";
+import { RegisterContext, SymbolResolver } from "@/lib/hexUtils";
+import { AddressExpressionInput } from "@/components/AddressExpressionInput";
 import { GroupedItemList } from "./GroupedItemList";
 import { DockPanel, PanelToolbar } from "./ui/panel";
 import { ContextMenu, ContextMenuItem, ContextMenuSeparator } from "./ui/context-menu";
@@ -86,20 +86,10 @@ export function BreakpointsView({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
 
-  const handleAddBreakpoint = useCallback(async () => {
-    const input = addressInput.trim();
-    if (!input) return;
-
-    try {
-      const result = await parseAddressExpression(input, registers ?? {}, resolveSymbol);
-      if (result.address !== null) {
-        onToggleBreakpoint(`0x${result.address.toString(16)}`);
-        setAddressInput("");
-      }
-    } catch (e) {
-      console.error("Failed to parse address:", e);
-    }
-  }, [addressInput, registers, resolveSymbol, onToggleBreakpoint]);
+  const handleAddBreakpoint = useCallback((address: bigint) => {
+    onToggleBreakpoint(`0x${address.toString(16)}`);
+    setAddressInput("");
+  }, [onToggleBreakpoint]);
 
   const startRename = useCallback(
     (breakpointId: string, currentName: string | null) => {
@@ -253,17 +243,17 @@ export function BreakpointsView({
         groupDotColor="red"
         renderToolbar={() => (
           <PanelToolbar>
-            <Input
-              placeholder="Address, symbol, rax+0x10..."
+            <AddressExpressionInput
               value={addressInput}
-              onChange={(e) => setAddressInput(sanitizeAddressInput(e.target.value))}
-              onKeyDown={(e) => e.key === "Enter" && handleAddBreakpoint()}
-              inputSize="xs"
-              className="flex-1 font-mono"
+              onChange={setAddressInput}
+              onResolve={handleAddBreakpoint}
+              registers={registers}
+              resolveSymbol={resolveSymbol}
+              className="flex-1"
+              inputClassName="flex-1"
+              buttonLabel={<Plus />}
+              buttonTitle="Add breakpoint"
             />
-            <Button variant="outline" size="xs" onClick={handleAddBreakpoint} title="Add breakpoint">
-              <Plus />
-            </Button>
           </PanelToolbar>
         )}
         renderHeader={() => (

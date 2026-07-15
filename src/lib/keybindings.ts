@@ -13,6 +13,7 @@ export type ActionId =
   | "panel.threads"
   | "panel.callstack"
   | "panel.symbols"
+  | "panel.types"
   | "panel.addMemory"
   | "panel.memoryRegions"
   | "panel.breakpoints"
@@ -61,6 +62,7 @@ export const ACTION_REGISTRY: Record<ActionId, ActionMeta> = {
   "panel.threads":       { label: "Toggle Threads",        category: "Panels", description: "Show or hide the Threads panel",        scope: "session" },
   "panel.callstack":     { label: "Toggle Call Stack",     category: "Panels", description: "Show or hide the Call Stack panel",     scope: "session" },
   "panel.symbols":       { label: "Toggle Symbols",        category: "Panels", description: "Show or hide the Symbols panel",        scope: "session" },
+  "panel.types":         { label: "Toggle Types",          category: "Panels", description: "Show or hide the Types panel",          scope: "session" },
   "panel.addMemory":     { label: "Add Memory Window",     category: "Panels", description: "Open a new Memory hex editor tab",      scope: "session" },
   "panel.memoryRegions": { label: "Toggle Memory Regions", category: "Panels", description: "Show or hide the Memory Regions panel", scope: "session" },
   "panel.breakpoints":   { label: "Toggle Breakpoints",    category: "Panels", description: "Show or hide the Breakpoints panel",    scope: "session" },
@@ -102,6 +104,7 @@ const SHARED_BINDINGS: Record<string, ChordString> = {
   "panel.threads":       "ctrl+t",
   "panel.callstack":     "ctrl+l",
   "panel.symbols":       "ctrl+s",
+  "panel.types":         "ctrl+shift+y",
   "panel.addMemory":     "ctrl+h",
   "panel.memoryRegions": "ctrl+g",
   "panel.breakpoints":   "ctrl+b",

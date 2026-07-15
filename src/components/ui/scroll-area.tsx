@@ -39,7 +39,11 @@ function ScrollArea({
         ref={viewportRef}
         data-slot="scroll-area-viewport"
         className={cn(
-          "focus-visible:ring-ring/50 size-full rounded-[inherit] transition-[color,box-shadow] outline-none focus-visible:ring-[3px] focus-visible:outline-1",
+          // max-h-[inherit]: a `max-h-*` on the root must constrain the viewport
+          // (its percentage height can't resolve against an auto-height root, so
+          // without this the content spills past the root unclipped and never
+          // scrolls). Roots without max-height inherit `none` — a no-op.
+          "focus-visible:ring-ring/50 size-full max-h-[inherit] rounded-[inherit] transition-[color,box-shadow] outline-none focus-visible:ring-[3px] focus-visible:outline-1",
           orientation === "vertical" && VERTICAL_CONTENT_FIX
         )}
         onScroll={onScroll}

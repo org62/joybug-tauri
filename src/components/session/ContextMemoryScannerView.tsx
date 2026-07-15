@@ -1,5 +1,6 @@
 import { useSessionContext } from '@/contexts/SessionContext';
 import { isTargetLive } from '@/lib/sessionHelpers';
+import { cn, CHANGED_VALUE_CLASS } from '@/lib/utils';
 import { useMemoryScanner, FIRST_SCAN_COMPARE_TYPES, NEXT_SCAN_COMPARE_TYPES, needsValue, needsSecondValue, ScanValueType, ScanCompareType } from '@/hooks/useMemoryScanner';
 import { useContextMenu } from '@/hooks/useContextMenu';
 import { Input } from '@/components/ui/input';
@@ -157,7 +158,10 @@ export const ContextMemoryScannerView = () => {
             onContextMenu={(e) => openContextMenu(e, { address: entry.address })}
           >
             <span className="w-[170px] shrink-0 text-muted-foreground">{entry.address}</span>
-            <span className="flex-1 truncate">{entry.value.display}</span>
+            <span
+              data-changed={scanner.changedAddresses.has(entry.address) || undefined}
+              className={cn("flex-1 truncate", scanner.changedAddresses.has(entry.address) && CHANGED_VALUE_CLASS)}
+            >{entry.value.display}</span>
           </div>
         )}
       />

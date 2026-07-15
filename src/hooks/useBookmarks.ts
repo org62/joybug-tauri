@@ -2,6 +2,8 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { ResolvedBookmark } from '@/contexts/SessionContext';
+import { useLiveRefresh } from '@/hooks/useLiveRefresh';
+import { useChangedValues } from '@/hooks/useChangedValues';
 
 export type { ResolvedBookmark } from '@/contexts/SessionContext';
 
@@ -56,14 +58,16 @@ export function useBookmarks(sessionId?: string, isPaused?: boolean, sessionBook
     refresh();
   }, [sessionId, isPaused, refresh]);
 
-  // Poll live values while the target runs (Running or non-invasive Open), like
-  // the memory view. The backend reads out-of-band when not paused, so values
-  // update without a pause.
-  useEffect(() => {
-    if (!sessionId || !isLive) return;
-    const interval = setInterval(() => { if (bookmarkCountRef.current > 0) refresh(); }, 500);
-    return () => clearInterval(interval);
-  }, [sessionId, isLive, refresh]);
+  // Poll live values while the target runs (Running or non-invasive Open) and
+  // refresh once on pause transitions, on the shared cadence. The backend reads
+  // out-of-band when not paused, so values update without a pause.
+  useLiveRefresh(sessionId, !!isLive, () => {
+    if (bookmarkCountRef.current > 0) refresh();
+  });
+
+  // Values that changed since the previous bookmarks-updated event (red
+  // highlight); baseline cleared on session end.
+  const changedValueIds = useChangedValues(bookmarks, (b) => b.id, (b) => b.current_value, sessionId);
 
   // Listen for bookmarks-updated events.
   useEffect(() => {
@@ -154,6 +158,7 @@ export function useBookmarks(sessionId?: string, isPaused?: boolean, sessionBook
 
   return useMemo(() => ({
     bookmarks,
+    changedValueIds,
     addBookmark,
     removeBookmark,
     removeBookmarks,
@@ -161,7 +166,7 @@ export function useBookmarks(sessionId?: string, isPaused?: boolean, sessionBook
     setBookmarkValue,
     toggleLock,
     refresh,
-  }), [bookmarks, addBookmark, removeBookmark, removeBookmarks, updateBookmark, setBookmarkValue, toggleLock, refresh]);
+  }), [bookmarks, changedValueIds, addBookmark, removeBookmark, removeBookmarks, updateBookmark, setBookmarkValue, toggleLock, refresh]);
 }
 
 export type BookmarkState = ReturnType<typeof useBookmarks>;

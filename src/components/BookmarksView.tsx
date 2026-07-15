@@ -5,7 +5,7 @@ import { ResizableHeaderCell } from "./ui/resizable-header-cell";
 import { Checkbox } from "./ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { X, Bookmark as BookmarkIcon, Lock, Unlock } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { cn, CHANGED_VALUE_CLASS } from "@/lib/utils";
 import type { ResolvedBookmark } from "@/hooks/useBookmarks";
 import { useContextMenu } from "@/hooks/useContextMenu";
 import { useColumnWidths } from "@/hooks/useColumnWidths";
@@ -25,6 +25,7 @@ const FIXED_COLS_PX = 24 + 32 + 32 + 16 + 160;
 
 interface BookmarksViewProps {
   bookmarks: ResolvedBookmark[];
+  changedValueIds?: Set<string>;
   onRemoveBookmark?: (id: string) => void;
   onRemoveBookmarks?: (ids: string[]) => void;
   onUpdateBookmark?: (id: string, fields: { name?: string | null; comment?: string | null; group?: string | null; valueType?: string | null }) => void;
@@ -49,6 +50,7 @@ function formatChain(b: ResolvedBookmark): string {
 
 export function BookmarksView({
   bookmarks,
+  changedValueIds,
   onRemoveBookmark,
   onRemoveBookmarks,
   onUpdateBookmark,
@@ -201,7 +203,8 @@ export function BookmarksView({
           />
         ) : (
           <span
-            className="cursor-text hover:underline text-green-500"
+            data-changed={changedValueIds?.has(b.id) || undefined}
+            className={cn("cursor-text hover:underline", changedValueIds?.has(b.id) && CHANGED_VALUE_CLASS)}
             title="Click to edit value"
             onClick={() => setEditing({ id: b.id, field: "value", draft: plainValue(b.current_value) })}
           >

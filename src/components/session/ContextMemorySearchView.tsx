@@ -5,6 +5,8 @@ import { listen } from '@tauri-apps/api/event';
 import { useSessionContext } from '@/contexts/SessionContext';
 import { formatTauriError, isTargetLive } from '@/lib/sessionHelpers';
 import { formatBytesAsHex } from '@/lib/hexUtils';
+import { cn, CHANGED_VALUE_CLASS } from '@/lib/utils';
+import { useLiveRefresh } from '@/hooks/useLiveRefresh';
 import { useContextMenu } from '@/hooks/useContextMenu';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -42,12 +44,14 @@ function stringToUtf16Le(input: string): Uint8Array {
 const SearchResultRow = ({
   address,
   preview,
+  changed,
   onMissingPreview,
   onClick,
   onContextMenu,
 }: {
   address: string;
   preview: string | null | undefined;
+  changed: boolean;
   onMissingPreview: () => void;
   onClick: () => void;
   onContextMenu: (e: React.MouseEvent) => void;
@@ -65,7 +69,10 @@ const SearchResultRow = ({
       onContextMenu={onContextMenu}
     >
       <span className="w-[170px] shrink-0">{address}</span>
-      <span className="flex-1 truncate text-muted-foreground">
+      <span
+        data-changed={changed || undefined}
+        className={cn("flex-1 truncate", changed ? CHANGED_VALUE_CLASS : "text-muted-foreground")}
+      >
         {preview === null ? '<unreadable>' : preview ?? ''}
       </span>
     </div>
@@ -81,9 +88,14 @@ export const ContextMemorySearchView = () => {
   const [isSearching, setIsSearching] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // Hex byte previews per result address, for the rows currently on screen.
-  // null = address became unreadable.
-  const [previews, setPreviews] = useState<Map<string, string | null>>(new Map());
+  // Hex byte previews per result address, for the rows currently on screen
+  // (null = address became unreadable), plus the addresses whose preview
+  // differs from the previous read (red highlight). One state so the previous
+  // previews double as the change-detection baseline.
+  const [previewState, setPreviewState] = useState<{
+    previews: Map<string, string | null>;
+    changed: Set<string>;
+  }>({ previews: new Map(), changed: new Set() });
 
   const canUse = sessionData.canUseMemoryOps;
   const sessionId = sessionData?.session?.id;
@@ -114,20 +126,29 @@ export const ContextMemorySearchView = () => {
         addresses: visible,
         size: previewLenRef.current,
       });
-      setPreviews((prev) => {
-        // Bail out when nothing changed so the 500ms live poll doesn't re-render
-        // the whole result list with identical previews.
-        let changed = false;
-        const next = new Map(prev);
+      const values = visible.map((_, i) =>
+        data[i] ? formatBytesAsHex(new Uint8Array(data[i]!)) : null,
+      );
+      // The previous previews are the change baseline: a refreshed address that
+      // differs turns red; identical again → cleared. Addresses first seen this
+      // fetch don't flash. Bail out when nothing changed so the 500ms live poll
+      // doesn't re-render the whole result list with identical previews.
+      setPreviewState((prev) => {
+        let mutated = false;
+        const previews = new Map(prev.previews);
+        const changed = new Set(prev.changed);
         visible.forEach((addr, i) => {
-          const bytes = data[i];
-          const value = bytes ? formatBytesAsHex(new Uint8Array(bytes)) : null;
-          if (!next.has(addr) || next.get(addr) !== value) {
-            next.set(addr, value);
-            changed = true;
+          const value = values[i];
+          const had = prev.previews.has(addr);
+          if (!had || prev.previews.get(addr) !== value) {
+            previews.set(addr, value);
+            mutated = true;
           }
+          const isChanged = had && prev.previews.get(addr) !== value;
+          if (isChanged && !changed.has(addr)) { changed.add(addr); mutated = true; }
+          else if (!isChanged && changed.has(addr)) { changed.delete(addr); mutated = true; }
         });
-        return changed ? next : prev;
+        return mutated ? { previews, changed } : prev;
       });
     } catch {
       // Background preview read; keep last known bytes on failure.
@@ -149,24 +170,17 @@ export const ContextMemorySearchView = () => {
     if (scheduleTimerRef.current) clearTimeout(scheduleTimerRef.current);
   }, []);
 
-  // Fresh previews when results change; poll while the target runs live and
-  // refresh after each step — same cadence as the memory window.
+  // Fresh previews when results change (new baseline — a fresh search doesn't
+  // flash red); poll while the target runs live and refresh after each step —
+  // same cadence as the memory window.
   useEffect(() => {
-    setPreviews(new Map());
+    setPreviewState({ previews: new Map(), changed: new Set() });
     if (addresses.length > 0) fetchPreviews();
   }, [addresses, fetchPreviews]);
 
-  useEffect(() => {
-    if (!sessionId || !isLive) return;
-    const interval = setInterval(() => {
-      if (addressesRef.current.length > 0) fetchPreviews();
-    }, 500);
-    return () => clearInterval(interval);
-  }, [sessionId, isLive, fetchPreviews]);
-
-  useEffect(() => {
-    if (sessionData.displayStatus === 'Paused' && addressesRef.current.length > 0) fetchPreviews();
-  }, [sessionData.displayStatus, sessionData.session?.current_event, fetchPreviews]);
+  useLiveRefresh(sessionId, isLive, () => {
+    if (addressesRef.current.length > 0) fetchPreviews();
+  });
 
   const onNavigateToDisassembly = sessionData.onNavigateToDisassembly;
   const onNavigateToMemory = sessionData.onNavigateToMemory;
@@ -182,7 +196,7 @@ export const ContextMemorySearchView = () => {
       setHasSearched(false);
       setIsSearching(false);
       setError(null);
-      setPreviews(new Map());
+      setPreviewState({ previews: new Map(), changed: new Set() });
     }
   }, [sessionId, canUse]);
 
@@ -331,7 +345,8 @@ export const ContextMemorySearchView = () => {
         renderItem={(address) => (
           <SearchResultRow
             address={address}
-            preview={previews.get(address)}
+            preview={previewState.previews.get(address)}
+            changed={previewState.changed.has(address)}
             onMissingPreview={schedulePreviewFetch}
             onClick={() => onNavigateToMemory?.(address)}
             onContextMenu={(e) => openContextMenu(e, { address })}

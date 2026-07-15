@@ -37,7 +37,7 @@ export const DebuggerDockingConfig: DockingConfig = {
               activeId: "threads",
             },
             {
-              tabs: [{ id: "symbols" }],
+              tabs: [{ id: "symbols" }, { id: "types" }],
               activeId: "symbols",
             },
           ],
@@ -71,6 +71,7 @@ export const DebuggerDockingConfig: DockingConfig = {
     threads: { id: "threads", title: "Threads", content: <div>Threads placeholder</div> },
     callstack: { id: "callstack", title: "Call Stack", content: <div>Call Stack placeholder</div> },
     symbols: { id: "symbols", title: "Symbols", content: <div>Symbols placeholder</div> },
+    types: { id: "types", title: "Types", content: <div>Types placeholder</div> },
     memory: { id: "memory", title: "Memory", content: <div>Memory placeholder</div> },
     memory_regions: { id: "memory_regions", title: "Memory Regions", content: <div>Memory Regions placeholder</div> },
     breakpoints: { id: "breakpoints", title: "Breakpoints", content: <div>Breakpoints placeholder</div> },

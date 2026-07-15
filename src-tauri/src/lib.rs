@@ -1,6 +1,7 @@
 mod bookmark_store;
 mod breakpoint_store;
 mod commands;
+mod custom_types;
 mod data_dir;
 mod error;
 mod events;
@@ -89,12 +90,22 @@ pub fn run() {
             commands::get_session_symbol_status,
             commands::load_module_pdb,
             commands::retry_module_symbols,
+            commands::list_session_types,
+            commands::get_session_type,
+            commands::get_session_type_by_index,
+            commands::get_session_teb_peb,
+            commands::list_custom_types,
+            commands::save_custom_type,
+            commands::delete_custom_type,
+            commands::parse_custom_type_text,
+            commands::resolve_custom_type,
             commands::request_session_callstack,
             commands::request_thread_callstack,
             commands::request_resolve_thread_symbols,
             commands::request_memory_read,
             commands::request_memory_write,
             commands::read_memory_batch,
+            commands::read_memory_sync,
             commands::request_set_register,
             commands::request_memory_regions,
             commands::request_dereference,

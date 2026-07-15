@@ -10,7 +10,7 @@ import {
 } from "@/components/ui/select";
 import { DereferenceEntry } from "@/lib/hexUtils";
 import { RegisterDereferenceDisplay } from "@/components/DereferenceDisplay";
-import { cn } from "@/lib/utils";
+import { cn, CHANGED_VALUE_CLASS } from "@/lib/utils";
 
 interface Serializablex64ThreadContext {
   arch: "X64";
@@ -82,9 +82,10 @@ const RegisterPair = ({ name, field, value, dereferenceEntry, showDereference = 
     <div className="flex items-center py-0.5 px-1 hover:bg-muted/50 rounded-sm text-xs min-w-0 overflow-hidden">
       <span className={cn("font-semibold text-muted-foreground shrink-0", nameWidthClass)}>{name}</span>
       <span
+        data-changed={isChanged || undefined}
         className={cn(
           "font-mono ml-1 shrink-0",
-          isChanged && "text-red-400",
+          isChanged && CHANGED_VALUE_CLASS,
           onRegisterEdit && "cursor-pointer hover:underline"
         )}
         onDoubleClick={handleDoubleClick}

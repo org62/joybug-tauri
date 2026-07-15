@@ -6,6 +6,7 @@ export function ContextBookmarksView() {
 
   const {
     bookmarks,
+    changedValueIds,
     removeBookmark,
     removeBookmarks,
     updateBookmark,
@@ -16,6 +17,7 @@ export function ContextBookmarksView() {
   return (
     <BookmarksView
       bookmarks={bookmarks}
+      changedValueIds={changedValueIds}
       onRemoveBookmark={removeBookmark}
       onRemoveBookmarks={removeBookmarks}
       onUpdateBookmark={updateBookmark}

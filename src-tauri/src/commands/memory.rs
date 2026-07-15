@@ -103,6 +103,29 @@ pub fn read_memory_batch(
     })
 }
 
+/// Read `size` bytes at a hex `address` over the pooled OOB client, returning the
+/// bytes in the command result ("sync") instead of via an event. Unlike
+/// `read_memory_batch` (capped at 64 bytes), this supports arbitrary sizes — used
+/// to read a whole struct blob for the type overlay. `None` when the read fails
+/// (e.g. unmapped page). Async so the socket round-trip stays off the main thread —
+/// the type overlay calls this per node on a 500ms cadence.
+#[tauri::command]
+pub async fn read_memory_sync(
+    session_id: String,
+    address: String,
+    size: usize,
+    session_states: State<'_, SessionStatesMap>,
+    oob_pool: State<'_, super::OobPool>,
+) -> Result<Option<Vec<u8>>> {
+    let addr = super::parse_hex_u64(&address, "address")?;
+    let size = size.clamp(1, 1024 * 1024);
+    let session_arc = super::get_session_arc(&session_id, &session_states)?;
+    let result = super::with_oob_client(&session_arc, &session_id, &oob_pool, |client, pid| {
+        client.read_memory(pid, addr, size)
+    });
+    Ok(super::flatten_oob(result).ok())
+}
+
 #[tauri::command]
 pub fn request_set_register(
     session_id: String,

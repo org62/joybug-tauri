@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { RegisterContext, SymbolResolver } from '@/lib/hexUtils';
+import { resolveSymbol as resolveSymbolByName, SearchSymbolsFn } from '@/lib/symbolUtils';
 import { SerializableThreadContext } from '@/components/RegisterView';
 import type { SessionStatus } from '@/contexts/SessionContext';
 
@@ -125,24 +126,22 @@ export async function invokeToggleBreakpoint(sessionId: string, address: string)
   await invoke('toggle_breakpoint', { sessionId, address });
 }
 
-/** Create a SymbolResolver that delegates to the session's searchSymbols function. */
+/**
+ * Create a SymbolResolver that delegates to the session's searchSymbols
+ * function via resolveSymbolByName, which understands "module!symbol" syntax
+ * and prefers exact name matches over the first fuzzy hit.
+ */
 export function createSymbolResolver(
-  searchSymbols: ((query: string, maxResults: number) => Promise<Array<{ va: string }>>) | undefined,
+  searchSymbols: SearchSymbolsFn | undefined,
 ): SymbolResolver {
   return async (name: string): Promise<bigint | null> => {
     if (!searchSymbols) return null;
     try {
-      const symbols = await searchSymbols(name, 1);
-      if (symbols.length > 0) {
-        try {
-          return BigInt(symbols[0].va);
-        } catch {
-          return null;
-        }
-      }
+      const result = await resolveSymbolByName(searchSymbols, name);
+      return result?.address ?? null;
     } catch (e) {
       console.error('Symbol resolution failed:', e);
+      return null;
     }
-    return null;
   };
 }
