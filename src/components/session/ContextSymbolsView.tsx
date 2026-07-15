@@ -1,14 +1,49 @@
-import { useEffect, useState, useCallback, useRef } from 'react';
-import { useSessionContext } from '@/contexts/SessionContext';
+import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
+import { useSessionContext, ModuleSymbolStatus } from '@/contexts/SessionContext';
 import { useContextMenu } from '@/hooks/useContextMenu';
 import { invokeToggleBreakpoint } from '@/lib/sessionHelpers';
 import { Input } from '@/components/ui/input';
+import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { VirtualizedList } from '@/components/ui/virtualized-list';
 import { DockPanel, PanelToolbar } from '@/components/ui/panel';
 import { ContextMenu, ContextMenuItem } from '@/components/ui/context-menu';
 import { TruncatedSymbol } from '@/components/ui/truncated-symbol';
 import { Search, Code, Loader2 } from 'lucide-react';
+
+const getFileName = (fullPath: string) => {
+  const parts = fullPath.split(/[\\/]/);
+  return parts[parts.length - 1];
+};
+
+function SymbolFileBadge({ status }: { status: ModuleSymbolStatus }) {
+  switch (status.status) {
+    case 'loaded':
+      return (
+        <Badge variant="outline" size="xs">
+          {status.symbol_count ?? 0} syms
+        </Badge>
+      );
+    case 'loading':
+      return (
+        <Badge variant="outline" size="xs" title="Downloading symbols…">
+          <Loader2 className="h-3 w-3 animate-spin" />
+        </Badge>
+      );
+    case 'failed':
+      return (
+        <Badge variant="destructive" size="xs" title={status.error ?? undefined}>
+          no symbols
+        </Badge>
+      );
+    default:
+      return (
+        <Badge variant="outline" size="xs" className="text-muted-foreground">
+          not loaded
+        </Badge>
+      );
+  }
+}
 
 export const ContextSymbolsView = () => {
   const sessionData = useSessionContext();
@@ -24,6 +59,14 @@ export const ContextSymbolsView = () => {
   const onNavigateToMemory = sessionData.onNavigateToMemory;
 
   const { contextMenu, openContextMenu, closeContextMenu } = useContextMenu<{ va: string; is_function: boolean }>();
+
+  const sortedStatuses = useMemo(
+    () =>
+      [...(sessionData.symbolStatuses ?? [])].sort((a, b) =>
+        getFileName(a.module_path).localeCompare(getFileName(b.module_path)),
+      ),
+    [sessionData.symbolStatuses],
+  );
 
   const toggleBreakpoint = useCallback(async (address: string) => {
     if (!sessionId) return;
@@ -93,6 +136,27 @@ export const ContextSymbolsView = () => {
     }
 
     if (!hasSearched) {
+      // No query yet: show the per-module symbol file list instead of a blank
+      // placeholder, so the panel tells you what's loaded at a glance.
+      if (isActive && sortedStatuses.length > 0) {
+        return (
+          <div>
+            {sortedStatuses.map((s) => (
+              <div key={s.base_address} className="px-2 py-1 border-b">
+                <div className="flex items-center gap-2 text-sm min-w-0">
+                  <span className="font-medium truncate">{getFileName(s.module_path)}</span>
+                  <SymbolFileBadge status={s} />
+                </div>
+                {s.pdb_path && (
+                  <p className="text-xs text-muted-foreground font-mono truncate" title={s.pdb_path}>
+                    {s.pdb_path}
+                  </p>
+                )}
+              </div>
+            ))}
+          </div>
+        );
+      }
       return (
         <div className="flex flex-col items-center justify-center h-full text-muted-foreground p-4">
           <div className="text-center">

@@ -98,6 +98,7 @@ export const SessionHeader: React.FC<SessionHeaderProps> = ({
             onClick={handleStart}
             size="sm"
             variant="outline"
+            title={`Start (${getKeybinding("debug.go")})`}
           >
             <Play className="h-4 w-4 mr-2" />
             Start
@@ -109,7 +110,7 @@ export const SessionHeader: React.FC<SessionHeaderProps> = ({
             disabled={!canPause || busyAction !== null}
             size="sm"
             variant="default"
-            title="Pause (Ctrl+Break)"
+            title={`Pause (${getKeybinding("debug.go")})`}
             aria-label="Pause"
           >
             <Pause className="h-4 w-4" />

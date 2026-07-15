@@ -6,7 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { DockPanel } from '@/components/ui/panel';
 import { VirtualizedList } from '@/components/ui/virtualized-list';
-import { ContextMenu, ContextMenuItem } from '@/components/ui/context-menu';
+import { ContextMenu, ContextMenuItem, ContextMenuSeparator } from '@/components/ui/context-menu';
 import {
   Dialog,
   DialogContent,
@@ -16,7 +16,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { useContextMenu } from '@/hooks/useContextMenu';
-import { Layers, FileSymlink, RotateCcw, Loader2 } from 'lucide-react';
+import { Layers, FileSymlink, RotateCcw, Loader2, Copy } from 'lucide-react';
 
 interface ContextModulesViewProps {
   onOpenModuleInfo?: (moduleBase: string) => void;
@@ -180,6 +180,31 @@ export const ContextModulesView: React.FC<ContextModulesViewProps> = ({ onOpenMo
 
       {contextMenu && (
         <ContextMenu x={contextMenu.x} y={contextMenu.y} onClose={closeContextMenu}>
+          <ContextMenuItem
+            icon={<Copy className="h-3.5 w-3.5 text-muted-foreground" />}
+            onClick={() => navigator.clipboard.writeText(contextMenu.data.base_address)}
+          >
+            Copy Base Address
+          </ContextMenuItem>
+          <ContextMenuItem
+            icon={<Copy className="h-3.5 w-3.5 text-muted-foreground" />}
+            onClick={() => navigator.clipboard.writeText(contextMenu.data.path)}
+          >
+            Copy Full Path
+          </ContextMenuItem>
+          {statusByBase.get(contextMenu.data.base_address)?.pdb_path && (
+            <ContextMenuItem
+              icon={<Copy className="h-3.5 w-3.5 text-muted-foreground" />}
+              onClick={() =>
+                navigator.clipboard.writeText(
+                  statusByBase.get(contextMenu.data.base_address)!.pdb_path!,
+                )
+              }
+            >
+              Copy Symbol Path
+            </ContextMenuItem>
+          )}
+          <ContextMenuSeparator />
           <ContextMenuItem
             icon={<FileSymlink className="h-3.5 w-3.5" />}
             onClick={() => handleLoadPdbFromFile(contextMenu.data)}

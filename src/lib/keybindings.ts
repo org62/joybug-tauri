@@ -50,7 +50,7 @@ export interface ActionMeta {
 }
 
 export const ACTION_REGISTRY: Record<ActionId, ActionMeta> = {
-  "debug.go":        { label: "Go / Continue",    category: "Debug",    description: "Resume execution",                           scope: "session" },
+  "debug.go":        { label: "Go / Break",       category: "Debug",    description: "Continue when paused, break in while running, start when stopped", scope: "session" },
   "debug.stepIn":    { label: "Step Into",         category: "Debug",    description: "Step into the next instruction or function",  scope: "session" },
   "debug.stepOver":  { label: "Step Over",         category: "Debug",    description: "Step over the next instruction",              scope: "session" },
   "debug.stepOut":   { label: "Step Out",          category: "Debug",    description: "Step out of the current function",            scope: "session" },

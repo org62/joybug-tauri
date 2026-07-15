@@ -349,7 +349,8 @@ function InspectMode({
             </p>
           </div>
         ) : (
-          <div className="p-1 text-xs">
+          // pr-3 keeps ml-auto values clear of the overlay scrollbar (w-2.5).
+          <div className="p-1 pr-3 text-xs">
             <div className="flex items-center gap-2 px-1 py-1 font-mono">
               <span className="font-semibold">{rootLayout.name}</span>
               <span className="text-muted-foreground">

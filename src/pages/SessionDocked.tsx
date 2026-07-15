@@ -247,11 +247,14 @@ export default function SessionDocked() {
       if (!action) return;
 
       switch (action) {
-        // Debug stepping
+        // Debug stepping. The go key toggles execution: continue when paused,
+        // break in while running, start when the session is stopped.
         case "debug.go":
           event.preventDefault();
           event.stopPropagation();
-          handleGo();
+          if (canStep) handleGo();
+          else if (canPause) handlePause();
+          else if (canStart) handleStart();
           break;
         case "debug.stepIn":
           event.preventDefault();
@@ -385,7 +388,7 @@ export default function SessionDocked() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [handleGo, handleStepIn, handleStepOver, handleStepOut, toggleTabWithBackendUpdate, handleCloseActiveTab, reverseLookup, setOpen, enterSubInput, handleNavigateToDisassembly, handleNavigateToMemory]);
+  }, [handleGo, handlePause, handleStart, canStep, canPause, canStart, handleStepIn, handleStepOver, handleStepOut, toggleTabWithBackendUpdate, handleCloseActiveTab, reverseLookup, setOpen, enterSubInput, handleNavigateToDisassembly, handleNavigateToMemory]);
 
   const isPaused = displayStatus === 'Paused';
   // Memory/enumeration ops work over OOB whenever a process is available: paused,

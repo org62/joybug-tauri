@@ -659,7 +659,7 @@ export default function Debugger() {
                   <Button onClick={() => handleUpdateSession().catch(() => {})}>Update Session</Button>
                 ) : (
                   <>
-                    <Button onClick={() => handleCreateSession().catch(() => { /* error already toasted */})}>
+                    <Button variant="outline" onClick={() => handleCreateSession().catch(() => { /* error already toasted */})}>
                       Create Session
                     </Button>
                     <Button onClick={handleCreateAndStart} variant="default">
