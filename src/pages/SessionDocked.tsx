@@ -28,6 +28,7 @@ import { ContextBookmarksView } from "@/components/session/ContextBookmarksView"
 import { ContextMemorySearchView } from "@/components/session/ContextMemorySearchView";
 import { ContextMemoryScannerView } from "@/components/session/ContextMemoryScannerView";
 import { ContextPointerScanView } from "@/components/session/ContextPointerScanView";
+import { ContextStringsView } from "@/components/session/ContextStringsView";
 import { ContextModuleInfoView } from "@/components/session/ContextModuleInfoView";
 import { useDebugSession } from "@/hooks/useDebugSession";
 import { useBreakpoints } from "@/hooks/useBreakpoints";
@@ -41,7 +42,7 @@ import type { PaletteCommand } from "@/contexts/CommandPaletteContext";
 import {
   Play, Square, Pause, ArrowDownToLine, CornerDownRight, ArrowUpFromLine, SkipForward,
   Code, Cpu, Box, Layers, ListTree, Search, HardDrive, MapPin, FileCode,
-  Plus, RotateCcw, Navigation, ScanSearch, Puzzle, Crosshair, Bookmark as BookmarkIcon, Boxes,
+  Plus, RotateCcw, Navigation, ScanSearch, Puzzle, Crosshair, Bookmark as BookmarkIcon, Boxes, Type,
 } from "lucide-react";
 
 export default function SessionDocked() {
@@ -352,6 +353,11 @@ export default function SessionDocked() {
           event.stopPropagation();
           toggleTabWithBackendUpdate("pointer_scan");
           break;
+        case "panel.strings":
+          event.preventDefault();
+          event.stopPropagation();
+          toggleTabWithBackendUpdate("strings");
+          break;
         case "panel.peViewer":
           event.preventDefault();
           event.stopPropagation();
@@ -628,6 +634,16 @@ export default function SessionDocked() {
         keywords: ["pointer", "scan", "path", "cheat", "static"],
       },
       {
+        id: "panel.strings",
+        label: "Toggle Strings",
+        group: "Windows",
+        icon: <Type className="size-4" />,
+        keybindingAction: "panel.strings",
+        onSelect: () => toggleTabWithBackendUpdate("strings"),
+        keepOpen: true,
+        keywords: ["strings", "ascii", "unicode", "utf16", "text"],
+      },
+      {
         id: "panel.peViewer",
         label: "Toggle PE Viewer",
         group: "Windows",
@@ -737,6 +753,7 @@ export default function SessionDocked() {
     memory_search: <ContextMemorySearchView />,
     memory_scanner: <ContextMemoryScannerView />,
     pointer_scan: <ContextPointerScanView />,
+    strings: <ContextStringsView />,
     peviewer: <ContextModuleInfoView />,
   }), [handleNavigateToMemory, handleNavigateToDisassembly, handleNavigateToMemoryPointer, handleOpenModuleInfo]);
 
@@ -846,6 +863,12 @@ export default function SessionDocked() {
         id: "pointer_scan",
         title: "Pointer Scan",
         content: dynamicTabContent.pointer_scan,
+        closable: true,
+      },
+      strings: {
+        id: "strings",
+        title: "Strings",
+        content: dynamicTabContent.strings,
         closable: true,
       },
       peviewer: {

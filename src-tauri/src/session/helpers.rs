@@ -1,8 +1,20 @@
 use crate::state::{SessionStateUI, SessionStatusUI};
-use tauri::AppHandle;
+use tauri::{AppHandle, Emitter};
 use tracing::info;
 
-use super::types::DebugSession;
+use super::types::{DebugSession, ScanError};
+
+/// Emits a `ScanError` payload on the given scan-domain error event
+/// (e.g. "scan-memory-error", "pointer-scan-error", "string-scan-error").
+pub(crate) fn emit_scan_error(
+    handle: &AppHandle,
+    event: &str,
+    session_id: String,
+    error: impl std::fmt::Display,
+) {
+    let err = ScanError { session_id, error: error.to_string() };
+    let _ = handle.emit(event, &err);
+}
 
 /// Format bytes into human readable format (KB, MB, GB)
 pub(crate) fn format_bytes(bytes: u64) -> String {

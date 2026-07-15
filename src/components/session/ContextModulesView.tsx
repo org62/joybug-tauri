@@ -16,6 +16,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { useContextMenu } from '@/hooks/useContextMenu';
+import { moduleBasename } from '@/lib/sessionHelpers';
 import { Layers, FileSymlink, RotateCcw, Loader2, Copy } from 'lucide-react';
 
 interface ContextModulesViewProps {
@@ -86,7 +87,7 @@ export const ContextModulesView: React.FC<ContextModulesViewProps> = ({ onOpenMo
     try {
       const result = await sessionData.loadModulePdb(module.base_address, pdbPath, force);
       if (result.loaded) {
-        toast.success(`Loaded ${result.symbol_count ?? 0} symbols for ${getFileName(module.name)}`);
+        toast.success(`Loaded ${result.symbol_count ?? 0} symbols for ${moduleBasename(module.name)}`);
       } else if (result.mismatch) {
         setMismatchPrompt({ module, pdbPath, mismatch: result.mismatch });
       }
@@ -111,7 +112,7 @@ export const ContextModulesView: React.FC<ContextModulesViewProps> = ({ onOpenMo
   const handleRetrySymbols = async (module: Module) => {
     try {
       await sessionData.retryModuleSymbols(module.base_address);
-      toast.success(`Retrying symbol download for ${getFileName(module.name)}`);
+      toast.success(`Retrying symbol download for ${moduleBasename(module.name)}`);
     } catch (error) {
       toast.error(`Failed to retry symbol download: ${error}`);
     }
@@ -128,11 +129,6 @@ export const ContextModulesView: React.FC<ContextModulesViewProps> = ({ onOpenMo
     }
 
     return `${size.toFixed(1)} ${units[unitIndex]}`;
-  };
-
-  const getFileName = (fullPath: string) => {
-    const parts = fullPath.split(/[\\/]/);
-    return parts[parts.length - 1];
   };
 
   return (
@@ -152,7 +148,7 @@ export const ContextModulesView: React.FC<ContextModulesViewProps> = ({ onOpenMo
             >
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 mb-1">
-                  <h3 className="font-medium text-sm truncate">{getFileName(module.name)}</h3>
+                  <h3 className="font-medium text-sm truncate">{moduleBasename(module.name)}</h3>
                   <Badge variant="outline" size="xs">
                     {formatBytes(module.size)}
                   </Badge>

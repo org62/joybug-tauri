@@ -54,6 +54,12 @@ export function isBenignSessionError(message: string): boolean {
   return /no active process|must be paused|session not/i.test(message);
 }
 
+/** Basename of a module path ("C:\\Windows\\System32\\ntdll.dll" -> "ntdll.dll"). */
+export function moduleBasename(path: string): string {
+  const parts = path.split(/[\\/]/);
+  return parts[parts.length - 1] || path;
+}
+
 /** Convert a thread context snapshot to a flat register name -> value map for address expression parsing. */
 export function contextToRegisters(context: SerializableThreadContext | undefined): RegisterContext {
   if (!context) return {};

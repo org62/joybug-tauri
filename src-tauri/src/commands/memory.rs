@@ -334,6 +334,18 @@ use crate::session::pointer_scan::{
     process_pointer_scan_apply_filter, process_pointer_scan_get_results,
     process_pointer_scan_rescan, process_pointer_scan_reset, process_pointer_scan_start,
 };
+use crate::session::string_scan::{
+    process_string_scan_get_results, process_string_scan_reset, process_string_scan_start,
+};
+
+/// Scanner thread count from settings; `0` (the default) means "all cores",
+/// mapped to `None` for the scanner.
+fn scan_thread_count(settings: &crate::settings::SettingsState) -> Option<usize> {
+    match settings.lock().map(|s| s.scan_thread_count).unwrap_or(0) {
+        0 => None,
+        n => Some(n),
+    }
+}
 
 #[tauri::command]
 pub fn request_scan_memory_start(
@@ -350,15 +362,10 @@ pub fn request_scan_memory_start(
     oob_pool: State<'_, super::OobPool>,
     app_handle: tauri::AppHandle,
 ) -> Result<()> {
-    // `0` (the default) means "all cores"; map it to `None` for the scanner.
-    let thread_count = match settings.lock().map(|s| s.scan_thread_count).unwrap_or(0) {
-        0 => None,
-        n => Some(n),
-    };
+    let thread_count = scan_thread_count(&settings);
     let session_arc = super::get_session_arc(&session_id, &session_states)?;
-    let handle = Some(app_handle);
     super::with_oob_scan_client(&session_arc, &session_id, &oob_pool, |client, pid| {
-        process_scan_memory_start(client, &handle, pid, &value_type, &compare_type, value, value2, alignment, float_tolerance, writable_only, thread_count);
+        process_scan_memory_start(client, &app_handle, pid, &value_type, &compare_type, value, value2, alignment, float_tolerance, writable_only, thread_count);
     })?;
     info!("Scan memory start processed for session {}", session_id);
     Ok(())
@@ -378,9 +385,8 @@ pub fn request_scan_memory_next(
     app_handle: tauri::AppHandle,
 ) -> Result<()> {
     let session_arc = super::get_session_arc(&session_id, &session_states)?;
-    let handle = Some(app_handle);
     super::with_oob_scan_client(&session_arc, &session_id, &oob_pool, |client, _pid| {
-        process_scan_memory_next(client, &handle, scan_id, &value_type, &compare_type, value, value2, float_tolerance);
+        process_scan_memory_next(client, &app_handle, scan_id, &value_type, &compare_type, value, value2, float_tolerance);
     })?;
     info!("Scan memory next processed for session {}", session_id);
     Ok(())
@@ -397,9 +403,8 @@ pub fn request_scan_memory_get_results(
     app_handle: tauri::AppHandle,
 ) -> Result<()> {
     let session_arc = super::get_session_arc(&session_id, &session_states)?;
-    let handle = Some(app_handle);
     super::with_oob_scan_client(&session_arc, &session_id, &oob_pool, |client, _pid| {
-        process_scan_memory_get_results(client, &handle, scan_id, offset, count);
+        process_scan_memory_get_results(client, &app_handle, scan_id, offset, count);
     })?;
     info!("Scan memory get results processed for session {}", session_id);
     Ok(())
@@ -414,9 +419,8 @@ pub fn request_scan_memory_reset(
     app_handle: tauri::AppHandle,
 ) -> Result<()> {
     let session_arc = super::get_session_arc(&session_id, &session_states)?;
-    let handle = Some(app_handle);
     super::with_oob_scan_client(&session_arc, &session_id, &oob_pool, |client, _pid| {
-        process_scan_memory_reset(client, &handle, scan_id);
+        process_scan_memory_reset(client, &app_handle, scan_id);
     })?;
     info!("Scan memory reset processed for session {}", session_id);
     Ok(())
@@ -439,9 +443,8 @@ pub fn request_pointer_scan_start(
     app_handle: tauri::AppHandle,
 ) -> Result<()> {
     let session_arc = super::get_session_arc(&session_id, &session_states)?;
-    let handle = Some(app_handle);
     super::with_oob_scan_client(&session_arc, &session_id, &oob_pool, |client, pid| {
-        process_pointer_scan_start(client, &handle, pid, target_address, max_offset, max_depth, max_results, modules, writable_only);
+        process_pointer_scan_start(client, &app_handle, pid, target_address, max_offset, max_depth, max_results, modules, writable_only);
     })?;
     info!("Pointer scan start processed for session {}", session_id);
     Ok(())
@@ -459,9 +462,8 @@ pub fn request_pointer_scan_get_results(
     app_handle: tauri::AppHandle,
 ) -> Result<()> {
     let session_arc = super::get_session_arc(&session_id, &session_states)?;
-    let handle = Some(app_handle);
     super::with_oob_scan_client(&session_arc, &session_id, &oob_pool, |client, pid| {
-        process_pointer_scan_get_results(client, &handle, pid, results_path, offset, count, offset_filter);
+        process_pointer_scan_get_results(client, &app_handle, pid, results_path, offset, count, offset_filter);
     })?;
     info!("Pointer scan get results processed for session {}", session_id);
     Ok(())
@@ -476,9 +478,8 @@ pub fn request_pointer_scan_reset(
     app_handle: tauri::AppHandle,
 ) -> Result<()> {
     let session_arc = super::get_session_arc(&session_id, &session_states)?;
-    let handle = Some(app_handle);
     super::with_oob_scan_client(&session_arc, &session_id, &oob_pool, |client, _pid| {
-        process_pointer_scan_reset(client, &handle, results_path);
+        process_pointer_scan_reset(client, &app_handle, results_path);
     })?;
     info!("Pointer scan reset processed for session {}", session_id);
     Ok(())
@@ -494,9 +495,8 @@ pub fn request_pointer_scan_apply_filter(
     app_handle: tauri::AppHandle,
 ) -> Result<()> {
     let session_arc = super::get_session_arc(&session_id, &session_states)?;
-    let handle = Some(app_handle);
     super::with_oob_scan_client(&session_arc, &session_id, &oob_pool, |client, _pid| {
-        process_pointer_scan_apply_filter(client, &handle, results_path, offset_filter);
+        process_pointer_scan_apply_filter(client, &app_handle, results_path, offset_filter);
     })?;
     info!("Pointer scan apply-filter processed for session {}", session_id);
     Ok(())
@@ -512,10 +512,80 @@ pub fn request_pointer_scan_rescan(
     app_handle: tauri::AppHandle,
 ) -> Result<()> {
     let session_arc = super::get_session_arc(&session_id, &session_states)?;
-    let handle = Some(app_handle);
     super::with_oob_scan_client(&session_arc, &session_id, &oob_pool, |client, pid| {
-        process_pointer_scan_rescan(client, &handle, pid, results_path, target_address);
+        process_pointer_scan_rescan(client, &app_handle, pid, results_path, target_address);
     })?;
     info!("Pointer scan rescan processed for session {} (target 0x{:X})", session_id, target_address);
+    Ok(())
+}
+
+// --- String Scan ---
+
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub fn request_string_scan_start(
+    session_id: String,
+    // `None` span bounds mean "the whole address space" — JS numbers can't
+    // carry u64::MAX exactly, so the frontend omits them instead.
+    start_address: Option<u64>,
+    size: Option<u64>,
+    min_length: u32,
+    region_filter: String,
+    encodings: String,
+    contains: String,
+    session_states: State<'_, SessionStatesMap>,
+    settings: State<'_, crate::settings::SettingsState>,
+    oob_pool: State<'_, super::OobPool>,
+    app_handle: tauri::AppHandle,
+) -> Result<()> {
+    let thread_count = scan_thread_count(&settings);
+    let start_address = start_address.unwrap_or(0);
+    let size = size.unwrap_or(u64::MAX);
+    let session_arc = super::get_session_arc(&session_id, &session_states)?;
+    super::with_oob_scan_client(&session_arc, &session_id, &oob_pool, |client, pid| {
+        process_string_scan_start(
+            client, &app_handle, pid, start_address, size, min_length, thread_count,
+            &region_filter, &encodings, contains,
+        );
+    })?;
+    info!("String scan start processed for session {}", session_id);
+    Ok(())
+}
+
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub fn request_string_scan_get_results(
+    session_id: String,
+    results_path: String,
+    offset: u64,
+    count: u64,
+    filter: String,
+    sort_key: String,
+    ascending: bool,
+    session_states: State<'_, SessionStatesMap>,
+    oob_pool: State<'_, super::OobPool>,
+    app_handle: tauri::AppHandle,
+) -> Result<()> {
+    let session_arc = super::get_session_arc(&session_id, &session_states)?;
+    super::with_oob_scan_client(&session_arc, &session_id, &oob_pool, |client, _pid| {
+        process_string_scan_get_results(client, &app_handle, results_path, offset, count, filter, &sort_key, ascending);
+    })?;
+    info!("String scan get results processed for session {}", session_id);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn request_string_scan_reset(
+    session_id: String,
+    results_path: String,
+    session_states: State<'_, SessionStatesMap>,
+    oob_pool: State<'_, super::OobPool>,
+    app_handle: tauri::AppHandle,
+) -> Result<()> {
+    let session_arc = super::get_session_arc(&session_id, &session_states)?;
+    super::with_oob_scan_client(&session_arc, &session_id, &oob_pool, |client, _pid| {
+        process_string_scan_reset(client, &app_handle, results_path);
+    })?;
+    info!("String scan reset processed for session {}", session_id);
     Ok(())
 }

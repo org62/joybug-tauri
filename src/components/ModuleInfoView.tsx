@@ -17,6 +17,7 @@ import type {
 } from '@/hooks/useModuleInfo';
 import { Loader2, FileWarning, FileSearch } from 'lucide-react';
 import { useVirtualizer } from '@tanstack/react-virtual';
+import { moduleBasename } from '@/lib/sessionHelpers';
 
 interface ModuleInfoViewProps {
   modules: Module[];
@@ -128,11 +129,6 @@ function formatSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function getFileName(fullPath: string): string {
-  const parts = fullPath.split(/[\\/]/);
-  return parts[parts.length - 1];
-}
-
 // --- Clickable address link ---
 
 const AddressLink: React.FC<{
@@ -170,7 +166,7 @@ const PEHeadersSection: React.FC<{
     <div className="space-y-3">
       {/* Module summary header */}
       <div className="border-b pb-2">
-        <h3 className="font-semibold text-sm">{getFileName(moduleName)}</h3>
+        <h3 className="font-semibold text-sm">{moduleBasename(moduleName)}</h3>
         <div className="text-xs text-muted-foreground mt-1 space-y-0.5">
           <div>Base: <AddressLink address={moduleBase} onClick={onNavigateToMemory} /></div>
           <div>
@@ -382,7 +378,7 @@ export const ModuleInfoView: React.FC<ModuleInfoViewProps> = ({
               <SelectItem key={m.base_address} value={m.base_address} className="text-xs">
                 <span className="font-mono">{m.base_address}</span>
                 {' — '}
-                {getFileName(m.name)}
+                {moduleBasename(m.name)}
               </SelectItem>
             ))}
           </SelectContent>

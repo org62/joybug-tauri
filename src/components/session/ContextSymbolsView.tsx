@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { useSessionContext, ModuleSymbolStatus } from '@/contexts/SessionContext';
 import { useContextMenu } from '@/hooks/useContextMenu';
-import { invokeToggleBreakpoint } from '@/lib/sessionHelpers';
+import { invokeToggleBreakpoint, moduleBasename } from '@/lib/sessionHelpers';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -10,11 +10,6 @@ import { DockPanel, PanelToolbar } from '@/components/ui/panel';
 import { ContextMenu, ContextMenuItem } from '@/components/ui/context-menu';
 import { TruncatedSymbol } from '@/components/ui/truncated-symbol';
 import { Search, Code, Loader2 } from 'lucide-react';
-
-const getFileName = (fullPath: string) => {
-  const parts = fullPath.split(/[\\/]/);
-  return parts[parts.length - 1];
-};
 
 function SymbolFileBadge({ status }: { status: ModuleSymbolStatus }) {
   switch (status.status) {
@@ -63,7 +58,7 @@ export const ContextSymbolsView = () => {
   const sortedStatuses = useMemo(
     () =>
       [...(sessionData.symbolStatuses ?? [])].sort((a, b) =>
-        getFileName(a.module_path).localeCompare(getFileName(b.module_path)),
+        moduleBasename(a.module_path).localeCompare(moduleBasename(b.module_path)),
       ),
     [sessionData.symbolStatuses],
   );
@@ -144,7 +139,7 @@ export const ContextSymbolsView = () => {
             {sortedStatuses.map((s) => (
               <div key={s.base_address} className="px-2 py-1 border-b">
                 <div className="flex items-center gap-2 text-sm min-w-0">
-                  <span className="font-medium truncate">{getFileName(s.module_path)}</span>
+                  <span className="font-medium truncate">{moduleBasename(s.module_path)}</span>
                   <SymbolFileBadge status={s} />
                 </div>
                 {s.pdb_path && (

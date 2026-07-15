@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { formatTauriError } from '@/lib/sessionHelpers';
+import { parseAddressToNumber } from '@/lib/hexUtils';
 
 export interface PointerPathEntry {
   module_index: number;
@@ -222,7 +223,7 @@ export function usePointerScan(sessionId: string | undefined, available: boolean
 
   const handleScan = useCallback(async () => {
     if (!sessionId || !available) return;
-    const target = parseAddr(targetAddress);
+    const target = parseAddressToNumber(targetAddress);
     if (target === null) {
       setError('Invalid target address');
       return;
@@ -236,7 +237,7 @@ export function usePointerScan(sessionId: string | undefined, available: boolean
 
     // Restrict static bases to the selected modules (empty => all).
     const moduleBases = selectedModuleBases
-      .map((b) => parseAddr(b))
+      .map((b) => parseAddressToNumber(b))
       .filter((n): n is number => n !== null);
 
     setIsScanning(true);
@@ -274,7 +275,7 @@ export function usePointerScan(sessionId: string | undefined, available: boolean
   // (possibly changed) target address. Reuses the start-result event flow.
   const handleRescan = useCallback(async () => {
     if (!sessionId || !available || resultsPath === null) return;
-    const target = parseAddr(targetAddress);
+    const target = parseAddressToNumber(targetAddress);
     if (target === null) {
       setError('Invalid target address');
       return;
@@ -335,15 +336,6 @@ function parseOffsetFilter(s: string): number[] {
       return isNaN(n) ? null : n;
     })
     .filter((n): n is number => n !== null);
-}
-
-// Parse an address string (always hex, with or without an "0x" prefix) to a JS
-// number — addresses stay < 2^53 in practice.
-function parseAddr(s: string): number | null {
-  const t = s.trim();
-  if (!t) return null;
-  const n = parseInt(t, 16);
-  return isNaN(n) ? null : n;
 }
 
 function parseIntFlexible(s: string): number | null {

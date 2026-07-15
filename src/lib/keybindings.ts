@@ -22,6 +22,7 @@ export type ActionId =
   | "panel.memorySearch"
   | "panel.memoryScanner"
   | "panel.pointerScan"
+  | "panel.strings"
   | "panel.peViewer"
   | "panel.closeTab"
   // Navigation (global)
@@ -71,6 +72,7 @@ export const ACTION_REGISTRY: Record<ActionId, ActionMeta> = {
   "panel.memorySearch":  { label: "Toggle Memory Search",  category: "Panels", description: "Show or hide the Memory Search panel",  scope: "session" },
   "panel.memoryScanner": { label: "Toggle Memory Scanner", category: "Panels", description: "Show or hide the Memory Scanner panel", scope: "session" },
   "panel.pointerScan":   { label: "Toggle Pointer Scan",   category: "Panels", description: "Show or hide the Pointer Scan panel",   scope: "session" },
+  "panel.strings":       { label: "Toggle Strings",        category: "Panels", description: "Show or hide the Strings panel",        scope: "session" },
   "panel.peViewer":      { label: "Toggle PE Viewer",      category: "Panels", description: "Show or hide the PE Viewer panel",      scope: "session" },
   "panel.closeTab":      { label: "Close Active Tab",      category: "Panels", description: "Close the currently focused dock tab",     scope: "session" },
 

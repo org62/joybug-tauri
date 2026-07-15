@@ -3,18 +3,13 @@ use std::collections::HashMap;
 use tauri::{AppHandle, Emitter};
 use tracing::{debug, error, info};
 
-use super::helpers::{extract_module_name, find_module_for_address, format_symbol, get_modules_snapshot};
+use super::helpers::{emit_scan_error, extract_module_name, find_module_for_address, format_symbol, get_modules_snapshot};
 use super::types::*;
-
-fn emit_pointer_scan_error(handle: &AppHandle, session_id: String, error: impl std::fmt::Display) {
-    let err = ScanError { session_id, error: error.to_string() };
-    let _ = handle.emit("pointer-scan-error", &err);
-}
 
 /// Processes a pointer scan start request. Uses all cores (thread_count = None).
 pub(crate) fn process_pointer_scan_start(
     session: &mut DebugSession,
-    app_handle_clone: &Option<AppHandle>,
+    handle: &AppHandle,
     pid: u32,
     target_address: u64,
     max_offset: u64,
@@ -26,7 +21,6 @@ pub(crate) fn process_pointer_scan_start(
     debug!("📤 Processing pointer scan start: pid={}, target=0x{:X}, max_offset=0x{:X}, max_depth={}, modules={:?}, writable_only={}",
         pid, target_address, max_offset, max_depth, modules.as_ref().map(|m| m.len()), writable_only);
 
-    let Some(ref handle) = app_handle_clone else { return };
     let session_id = session.state.lock().unwrap().id.clone();
 
     // thread_count = None => use all available cores.
@@ -40,7 +34,7 @@ pub(crate) fn process_pointer_scan_start(
         }
         Err(e) => {
             error!("Pointer scan start failed: {}", e);
-            emit_pointer_scan_error(handle, session_id, e);
+            emit_scan_error(handle, "pointer-scan-error", session_id, e);
         }
     }
 }
@@ -50,14 +44,13 @@ pub(crate) fn process_pointer_scan_start(
 /// (so the frontend refreshes the same way it does after a fresh scan).
 pub(crate) fn process_pointer_scan_rescan(
     session: &mut DebugSession,
-    app_handle_clone: &Option<AppHandle>,
+    handle: &AppHandle,
     pid: u32,
     results_path: String,
     target_address: u64,
 ) {
     debug!("📤 Processing pointer scan rescan: results_path={}, target=0x{:X}", results_path, target_address);
 
-    let Some(ref handle) = app_handle_clone else { return };
     let session_id = session.state.lock().unwrap().id.clone();
 
     match session.pointer_scan_rescan(pid, results_path, target_address) {
@@ -70,7 +63,7 @@ pub(crate) fn process_pointer_scan_rescan(
         }
         Err(e) => {
             error!("Pointer rescan failed: {}", e);
-            emit_pointer_scan_error(handle, session_id, e);
+            emit_scan_error(handle, "pointer-scan-error", session_id, e);
         }
     }
 }
@@ -79,7 +72,7 @@ pub(crate) fn process_pointer_scan_rescan(
 /// The static base of each path is symbolized ("module!name+0xoff").
 pub(crate) fn process_pointer_scan_get_results(
     session: &mut DebugSession,
-    app_handle_clone: &Option<AppHandle>,
+    handle: &AppHandle,
     pid: u32,
     results_path: String,
     offset: u64,
@@ -88,7 +81,6 @@ pub(crate) fn process_pointer_scan_get_results(
 ) {
     debug!("📤 Processing pointer scan get results: results_path={}, offset={}, count={}, filter={:?}", results_path, offset, count, offset_filter);
 
-    let Some(ref handle) = app_handle_clone else { return };
     let session_id = session.state.lock().unwrap().id.clone();
 
     match session.pointer_scan_get_results(pid, results_path.clone(), offset, count, offset_filter) {
@@ -129,7 +121,7 @@ pub(crate) fn process_pointer_scan_get_results(
         }
         Err(e) => {
             error!("Pointer scan get results failed: {}", e);
-            emit_pointer_scan_error(handle, session_id, e);
+            emit_scan_error(handle, "pointer-scan-error", session_id, e);
         }
     }
 }
@@ -139,13 +131,12 @@ pub(crate) fn process_pointer_scan_get_results(
 /// `pointer-scan-start-result` so the frontend refreshes like after a fresh scan.
 pub(crate) fn process_pointer_scan_apply_filter(
     session: &mut DebugSession,
-    app_handle_clone: &Option<AppHandle>,
+    handle: &AppHandle,
     results_path: String,
     offset_filter: Vec<u64>,
 ) {
     debug!("📤 Processing pointer scan apply filter: results_path={}, filter={:?}", results_path, offset_filter);
 
-    let Some(ref handle) = app_handle_clone else { return };
     let session_id = session.state.lock().unwrap().id.clone();
 
     match session.pointer_scan_apply_filter(results_path, offset_filter) {
@@ -158,7 +149,7 @@ pub(crate) fn process_pointer_scan_apply_filter(
         }
         Err(e) => {
             error!("Pointer scan apply filter failed: {}", e);
-            emit_pointer_scan_error(handle, session_id, e);
+            emit_scan_error(handle, "pointer-scan-error", session_id, e);
         }
     }
 }
@@ -166,17 +157,15 @@ pub(crate) fn process_pointer_scan_apply_filter(
 /// Processes a pointer scan reset request.
 pub(crate) fn process_pointer_scan_reset(
     session: &mut DebugSession,
-    app_handle_clone: &Option<AppHandle>,
+    handle: &AppHandle,
     results_path: String,
 ) {
     debug!("📤 Processing pointer scan reset: results_path={}", results_path);
 
     if let Err(e) = session.pointer_scan_reset(results_path.clone()) {
         error!("Pointer scan reset failed: {}", e);
-        if let Some(ref handle) = app_handle_clone {
-            let session_id = session.state.lock().unwrap().id.clone();
-            emit_pointer_scan_error(handle, session_id, e);
-        }
+        let session_id = session.state.lock().unwrap().id.clone();
+        emit_scan_error(handle, "pointer-scan-error", session_id, e);
     } else {
         debug!("📥 Pointer scan reset complete for results_path={}", results_path);
     }

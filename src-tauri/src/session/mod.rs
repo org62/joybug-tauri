@@ -7,6 +7,7 @@ mod emulation;
 pub(crate) mod helpers;
 pub(crate) mod memory;
 pub(crate) mod pointer_scan;
+pub(crate) mod string_scan;
 pub(crate) mod patches;
 mod registers;
 mod runner;

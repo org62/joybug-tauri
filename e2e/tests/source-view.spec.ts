@@ -1,41 +1,28 @@
 import { test, expect } from "../helpers/test-fixtures";
-import { createAndStartSession, cleanupSession, fixtureExe } from "../helpers/session-helpers";
+import { createAndStartSession, cleanupSession, fixtureExe, invoke } from "../helpers/session-helpers";
 import {
   waitForPaused,
   configureMinimalStopSettings,
   restoreDefaultSettings,
   continueSession,
 } from "../helpers/wait-helpers";
+import { installEventCapture, waitForCapturedEvent } from "../helpers/event-helpers";
 import type { Page } from "@playwright/test";
 
 /**
  * Invoke a fire-and-forget backend command and resolve with the payload of the
- * first matching Tauri event it emits. Uses the same low-level event plumbing
- * (`transformCallback` + `plugin:event|listen`) the app's `listen()` is built on.
+ * first matching Tauri event it emits (bucket capture from event-helpers).
  */
 async function invokeAndCaptureEvent<T = any>(
   page: Page,
   opts: { event: string; command: string; args: Record<string, unknown>; matchKey?: string; matchValue?: string; timeout?: number },
 ): Promise<T> {
-  return page.evaluate((o) => {
-    const internals = (window as any).__TAURI_INTERNALS__;
-    return new Promise<any>((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error(`timeout waiting for ${o.event}`)), o.timeout ?? 8000);
-      const handlerId = internals.transformCallback((evt: any) => {
-        const p = evt.payload;
-        if (o.matchKey && o.matchValue) {
-          const v = String(p?.[o.matchKey] ?? "").toLowerCase();
-          if (!v.includes(o.matchValue.toLowerCase())) return;
-        }
-        clearTimeout(timer);
-        resolve(p);
-      });
-      internals
-        .invoke("plugin:event|listen", { event: o.event, target: { kind: "Any" }, handler: handlerId })
-        .then(() => internals.invoke(o.command, o.args))
-        .catch((e: any) => { clearTimeout(timer); reject(e); });
-    });
-  }, opts) as Promise<T>;
+  await installEventCapture(page, [opts.event]);
+  await invoke(page, opts.command, opts.args);
+  return waitForCapturedEvent(page, opts.event, (p) => {
+    if (!opts.matchKey || !opts.matchValue) return true;
+    return String(p?.[opts.matchKey] ?? "").toLowerCase().includes(opts.matchValue.toLowerCase());
+  }, opts.timeout ?? 8000);
 }
 
 /** Poll get_session_symbol_status until the named module reports "loaded". */

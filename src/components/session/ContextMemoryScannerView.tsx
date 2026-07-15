@@ -5,13 +5,14 @@ import { useMemoryScanner, FIRST_SCAN_COMPARE_TYPES, NEXT_SCAN_COMPARE_TYPES, ne
 import { useContextMenu } from '@/hooks/useContextMenu';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import { DockPanel, PanelToolbar, PanelFooter } from '@/components/ui/panel';
+import { DockPanel, PanelToolbar } from '@/components/ui/panel';
+import { PaginationFooter } from '@/components/ui/pagination-footer';
 import { ContextMenu, ContextMenuItem } from '@/components/ui/context-menu';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { VirtualizedList } from '@/components/ui/virtualized-list';
-import { ScanSearch, Loader2, AlertTriangle, ChevronLeft, ChevronRight } from 'lucide-react';
+import { ScanSearch, Loader2, AlertTriangle } from 'lucide-react';
 
 const VALUE_TYPES: ScanValueType[] = ['U8', 'U16', 'U32', 'U64', 'F32', 'F64'];
 
@@ -307,29 +308,8 @@ export const ContextMemoryScannerView = () => {
       </div>
 
       {/* Pagination */}
-      {scanner.totalPages > 1 && (
-        <PanelFooter className="justify-between text-xs text-muted-foreground">
-          <Button
-            size="icon-xs"
-            variant="ghost"
-            disabled={scanner.currentPage === 0}
-            onClick={() => scanner.loadPage(scanner.currentPage - 1)}
-          >
-            <ChevronLeft />
-          </Button>
-          <span>
-            Page {scanner.currentPage + 1} of {scanner.totalPages} ({scanner.totalCount.toLocaleString()} total)
-          </span>
-          <Button
-            size="icon-xs"
-            variant="ghost"
-            disabled={scanner.currentPage >= scanner.totalPages - 1}
-            onClick={() => scanner.loadPage(scanner.currentPage + 1)}
-          >
-            <ChevronRight />
-          </Button>
-        </PanelFooter>
-      )}
+      <PaginationFooter currentPage={scanner.currentPage} totalPages={scanner.totalPages}
+        totalCount={scanner.totalCount} onPageChange={scanner.loadPage} />
 
       {/* Context Menu */}
       {contextMenu && (

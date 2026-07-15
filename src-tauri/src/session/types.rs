@@ -317,3 +317,34 @@ pub struct PointerScanResultsPayload {
     pub paths: Vec<PointerPathEntry>,
     pub total_count: u64,
 }
+
+/// Event payload for a started string scan.
+#[derive(serde::Serialize)]
+pub struct StringScanStartResult {
+    pub session_id: String,
+    pub results_path: String,
+    pub match_count: u64,
+    pub scan_time_us: u64,
+    /// True if more strings existed than the cap; only the first are stored.
+    pub capped: bool,
+}
+
+/// A single discovered string. `address` is a hex string so 64-bit values survive
+/// the trip to JavaScript without precision loss.
+#[derive(serde::Serialize)]
+pub struct StringEntry {
+    pub address: String,
+    pub encoding: String,
+    pub length: u32,
+    pub text: String,
+    pub truncated: bool,
+}
+
+/// Event payload for a page of string scan results.
+#[derive(serde::Serialize)]
+pub struct StringScanResultsPayload {
+    pub session_id: String,
+    pub results_path: String,
+    pub strings: Vec<StringEntry>,
+    pub total_count: u64,
+}

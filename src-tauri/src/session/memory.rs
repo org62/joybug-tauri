@@ -1,7 +1,7 @@
 use tauri::{AppHandle, Emitter};
 use tracing::{debug, error, info};
 
-use super::helpers::format_bytes;
+use super::helpers::{emit_scan_error, format_bytes};
 use super::types::*;
 
 /// Processes a memory read request and emits results to the frontend
@@ -474,11 +474,6 @@ fn format_scan_value(val: &joybug2::protocol::ScanValue) -> ScanValueEntry {
     }
 }
 
-fn emit_scan_error(handle: &AppHandle, session_id: String, error: impl std::fmt::Display) {
-    let err = ScanError { session_id, error: error.to_string() };
-    let _ = handle.emit("scan-memory-error", &err);
-}
-
 /// A typed value string that fails to parse must error out rather than
 /// silently become None (the scanner would report a misleading "requires a
 /// value"). Returns false (after emitting the error) when the value didn't parse.
@@ -491,7 +486,7 @@ fn scan_value_parsed(
 ) -> bool {
     if let Some(s) = raw {
         if !s.trim().is_empty() && parsed.is_none() {
-            emit_scan_error(handle, session_id.to_string(), format!("Invalid value '{}' for {:?}", s.trim(), vt));
+            emit_scan_error(handle, "scan-memory-error", session_id.to_string(), format!("Invalid value '{}' for {:?}", s.trim(), vt));
             return false;
         }
     }
@@ -501,7 +496,7 @@ fn scan_value_parsed(
 /// Processes a scan memory start request
 pub(crate) fn process_scan_memory_start(
     session: &mut DebugSession,
-    app_handle_clone: &Option<AppHandle>,
+    handle: &AppHandle,
     pid: u32,
     value_type_str: &str,
     compare_type_str: &str,
@@ -520,7 +515,6 @@ pub(crate) fn process_scan_memory_start(
 
     debug!("📤 Processing scan memory start: pid={}, type={:?}, compare={:?}, threads={:?}", pid, vt, ct, thread_count);
 
-    let Some(ref handle) = app_handle_clone else { return };
     let session_id = session.state.lock().unwrap().id.clone();
 
     if !scan_value_parsed(handle, &session_id, vt, value.as_deref(), &val)
@@ -539,7 +533,7 @@ pub(crate) fn process_scan_memory_start(
         }
         Err(e) => {
             error!("Scan memory start failed: {}", e);
-            emit_scan_error(handle, session_id, e);
+            emit_scan_error(handle, "scan-memory-error", session_id, e);
         }
     }
 }
@@ -547,7 +541,7 @@ pub(crate) fn process_scan_memory_start(
 /// Processes a scan memory next request
 pub(crate) fn process_scan_memory_next(
     session: &mut DebugSession,
-    app_handle_clone: &Option<AppHandle>,
+    handle: &AppHandle,
     scan_id: u64,
     value_type_str: &str,
     compare_type_str: &str,
@@ -563,7 +557,6 @@ pub(crate) fn process_scan_memory_next(
 
     debug!("📤 Processing scan memory next: scan_id={}, compare={:?}", scan_id, ct);
 
-    let Some(ref handle) = app_handle_clone else { return };
     let session_id = session.state.lock().unwrap().id.clone();
 
     if !scan_value_parsed(handle, &session_id, vt, value.as_deref(), &val)
@@ -582,7 +575,7 @@ pub(crate) fn process_scan_memory_next(
         }
         Err(e) => {
             error!("Scan memory next failed: {}", e);
-            emit_scan_error(handle, session_id, e);
+            emit_scan_error(handle, "scan-memory-error", session_id, e);
         }
     }
 }
@@ -590,14 +583,13 @@ pub(crate) fn process_scan_memory_next(
 /// Processes a scan memory get results request
 pub(crate) fn process_scan_memory_get_results(
     session: &mut DebugSession,
-    app_handle_clone: &Option<AppHandle>,
+    handle: &AppHandle,
     scan_id: u64,
     offset: u64,
     count: u64,
 ) {
     debug!("📤 Processing scan memory get results: scan_id={}, offset={}, count={}", scan_id, offset, count);
 
-    let Some(ref handle) = app_handle_clone else { return };
     let session_id = session.state.lock().unwrap().id.clone();
 
     match session.scan_memory_get_results(scan_id, offset, count) {
@@ -616,7 +608,7 @@ pub(crate) fn process_scan_memory_get_results(
         }
         Err(e) => {
             error!("Scan memory get results failed: {}", e);
-            emit_scan_error(handle, session_id, e);
+            emit_scan_error(handle, "scan-memory-error", session_id, e);
         }
     }
 }
@@ -624,17 +616,15 @@ pub(crate) fn process_scan_memory_get_results(
 /// Processes a scan memory reset request
 pub(crate) fn process_scan_memory_reset(
     session: &mut DebugSession,
-    app_handle_clone: &Option<AppHandle>,
+    handle: &AppHandle,
     scan_id: u64,
 ) {
     debug!("📤 Processing scan memory reset: scan_id={}", scan_id);
 
     if let Err(e) = session.scan_memory_reset(scan_id) {
         error!("Scan memory reset failed: {}", e);
-        if let Some(ref handle) = app_handle_clone {
-            let session_id = session.state.lock().unwrap().id.clone();
-            emit_scan_error(handle, session_id, e);
-        }
+        let session_id = session.state.lock().unwrap().id.clone();
+        emit_scan_error(handle, "scan-memory-error", session_id, e);
     } else {
         debug!("📥 Scan reset complete for scan_id={}", scan_id);
     }

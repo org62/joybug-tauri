@@ -7,14 +7,17 @@ import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import { VirtualizedList } from '@/components/ui/virtualized-list';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { DockPanel, PanelToolbar, PanelFooter } from '@/components/ui/panel';
+import { DockPanel, PanelToolbar } from '@/components/ui/panel';
 import { ContextMenu, ContextMenuItem } from '@/components/ui/context-menu';
 import { TruncatedSymbol } from '@/components/ui/truncated-symbol';
 import {
   DropdownMenu, DropdownMenuTrigger, DropdownMenuContent,
   DropdownMenuCheckboxItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuItem,
 } from '@/components/ui/dropdown-menu';
-import { Crosshair, Loader2, AlertTriangle, ChevronLeft, ChevronRight, ChevronDown } from 'lucide-react';
+import { Crosshair, Loader2, AlertTriangle, ChevronDown } from 'lucide-react';
+import { EmptyState } from '@/components/ui/empty-state';
+import { PaginationFooter } from '@/components/ui/pagination-footer';
+import { moduleBasename } from '@/lib/sessionHelpers';
 
 function formatPath(p: PointerPathEntry): string {
   let s = p.base_symbol ?? `${p.module_base}+${p.base_offset}`;
@@ -22,26 +25,6 @@ function formatPath(p: PointerPathEntry): string {
   return s;
 }
 
-// Basename of a module path (e.g. "C:\\Windows\\System32\\ntdll.dll" -> "ntdll.dll").
-function moduleBasename(path: string): string {
-  const parts = path.split(/[\\/]/);
-  return parts[parts.length - 1] || path;
-}
-
-// Centered icon + title + subtitle, shared by every non-results state.
-function EmptyState({ icon, title, subtitle, danger }: {
-  icon: React.ReactNode; title: string; subtitle: string; danger?: boolean;
-}) {
-  return (
-    <div className="flex flex-col items-center justify-center h-full text-muted-foreground p-4">
-      <div className="text-center">
-        {icon}
-        <p className="text-base font-medium">{title}</p>
-        <p className={`text-sm mt-1${danger ? ' text-destructive' : ''}`}>{subtitle}</p>
-      </div>
-    </div>
-  );
-}
 
 export const ContextPointerScanView = () => {
   const sessionData = useSessionContext();
@@ -303,29 +286,8 @@ export const ContextPointerScanView = () => {
       </div>
 
       {/* Pagination (fixed footer) */}
-      {scan.totalPages > 1 && (
-        <PanelFooter className="justify-between text-xs text-muted-foreground">
-          <Button
-            size="icon-xs"
-            variant="ghost"
-            disabled={scan.currentPage === 0}
-            onClick={() => scan.loadPage(scan.currentPage - 1)}
-          >
-            <ChevronLeft />
-          </Button>
-          <span>
-            Page {scan.currentPage + 1} of {scan.totalPages} ({scan.totalCount.toLocaleString()} total)
-          </span>
-          <Button
-            size="icon-xs"
-            variant="ghost"
-            disabled={scan.currentPage >= scan.totalPages - 1}
-            onClick={() => scan.loadPage(scan.currentPage + 1)}
-          >
-            <ChevronRight />
-          </Button>
-        </PanelFooter>
-      )}
+      <PaginationFooter currentPage={scan.currentPage} totalPages={scan.totalPages}
+        totalCount={scan.totalCount} onPageChange={scan.loadPage} />
 
       {/* Context Menu */}
       {contextMenu && (
