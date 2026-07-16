@@ -15,7 +15,7 @@ pub struct BreakpointInfo {
     pub enabled: bool,           // user toggle
     pub is_active: bool,         // currently set in debuggee
     #[serde(default = "default_bp_kind")]
-    pub bp_kind: String,           // "software" | "hardware"
+    pub bp_kind: String,           // "software" | "hardware" | "watchpoint"
     #[serde(default)]
     pub hw_type: Option<String>,   // "Execute" | "Write" | "ReadWrite"
     #[serde(default)]

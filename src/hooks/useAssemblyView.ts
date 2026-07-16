@@ -25,6 +25,11 @@ export interface Instruction {
   is_patched?: boolean;
 }
 
+// Expected when the session is running or mid-teardown — not a user-facing
+// failure; the view clears itself on session end.
+const isBenignStateError = (msg: string) =>
+  msg.includes('InvalidSessionState') || msg.includes('must be paused');
+
 // Event payloads from Tauri
 interface FunctionDisassemblyResult {
   session_id: string;
@@ -166,8 +171,7 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
       setCurrentAddress(address);
     } catch (err) {
       const errorMessage = formatTauriError(err);
-      // Ignore expected errors when session is running
-      if (!errorMessage.includes('InvalidSessionState') && !errorMessage.includes('must be paused')) {
+      if (!isBenignStateError(errorMessage)) {
         console.error('Failed to request function disassembly:', err);
         setError(errorMessage);
         toastError(`Failed to request disassembly: ${errorMessage}`, sessionId);
@@ -304,7 +308,7 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
       (event) => {
         if (event.payload.session_id === sessionId) {
           const msg = event.payload.error || '';
-          if (!msg.includes('InvalidSessionState') && !msg.includes('must be paused')) {
+          if (!isBenignStateError(msg)) {
             setError(msg);
             toastError(`Disassembly failed: ${msg}`, sessionId);
           }

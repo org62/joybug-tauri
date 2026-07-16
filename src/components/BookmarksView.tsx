@@ -4,7 +4,7 @@ import { InlineEditInput } from "./ui/inline-edit-input";
 import { ResizableHeaderCell } from "./ui/resizable-header-cell";
 import { Checkbox } from "./ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
-import { X, Bookmark as BookmarkIcon, Lock, Unlock } from "lucide-react";
+import { X, Bookmark as BookmarkIcon, Lock, Unlock, Fingerprint } from "lucide-react";
 import { cn, CHANGED_VALUE_CLASS } from "@/lib/utils";
 import type { ResolvedBookmark } from "@/hooks/useBookmarks";
 import { useContextMenu } from "@/hooks/useContextMenu";
@@ -33,6 +33,17 @@ interface BookmarksViewProps {
   onToggleLock?: (id: string, locked: boolean) => void;
   onNavigateToDisassembly?: (address: string) => void;
   onNavigateToMemory?: (address: string) => void;
+  onFindAccesses?: (address: string, mode: "Write" | "ReadWrite", size: number) => void;
+}
+
+/** Watchpoint size (bytes) implied by a bookmark's value type. */
+function valueTypeSize(vt: string | null): number {
+  switch (vt) {
+    case "U8": return 1;
+    case "U16": return 2;
+    case "U64": case "F64": return 8;
+    default: return 4; // U32, F32, or unknown
+  }
 }
 
 /** Strip the " (0x..)" suffix the backend adds to integer displays, for editing. */
@@ -58,6 +69,7 @@ export function BookmarksView({
   onToggleLock,
   onNavigateToDisassembly,
   onNavigateToMemory,
+  onFindAccesses,
 }: BookmarksViewProps) {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [editing, setEditing] = useState<{ id: string; field: "name" | "value"; draft: string } | null>(null);
@@ -329,6 +341,17 @@ export function BookmarksView({
             <ContextMenuItem onClick={() => update(b.id, { group: generateNewGroupName() })}>
               Set Group
             </ContextMenuItem>
+            {onFindAccesses && b.kind !== "code" && b.is_resolved && b.resolved_address.startsWith("0x") && (
+              <>
+                <ContextMenuSeparator />
+                <ContextMenuItem icon={<Fingerprint />} onClick={() => onFindAccesses(b.resolved_address, "Write", valueTypeSize(b.value_type))}>
+                  Find what writes to this address
+                </ContextMenuItem>
+                <ContextMenuItem icon={<Fingerprint />} onClick={() => onFindAccesses(b.resolved_address, "ReadWrite", valueTypeSize(b.value_type))}>
+                  Find what accesses (read/write)
+                </ContextMenuItem>
+              </>
+            )}
             <ContextMenuSeparator />
             <ContextMenuItem destructive onClick={() => onRemoveBookmark?.(contextMenu.data.id)}>
               Remove Bookmark

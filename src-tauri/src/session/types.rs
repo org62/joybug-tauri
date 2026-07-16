@@ -38,6 +38,8 @@ pub enum UICommand {
     EnableBreakpointGroup { group: String, enabled: bool },
     UpdateBreakpoint { breakpoint_id: String, name: Option<String>, group: Option<String> },
     SetHardwareBreakpoint { address: u64, hw_type: String, hw_size: u8 },
+    StartWatchpointTrace { address: u64, hw_type: String, hw_size: u8 },
+    StopWatchpointTrace { breakpoint_id: String },
     GetThreadCallStack { tid: u32 },
     ResolveThreadSymbols,
     GetModuleExtraInfo { module_base: u64 },

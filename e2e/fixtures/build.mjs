@@ -77,6 +77,17 @@ function main() {
     console.log("[fixtures] hello_c.exe up to date");
   }
 
+  // --- watch_c.exe ---
+  const wSrc = path.join(SRC, "watch_c.c");
+  const wExe = path.join(BIN, "watch_c.exe");
+  const wPdb = path.join(BIN, "watch_c.pdb");
+  if (isStale([wExe, wPdb], [wSrc])) {
+    console.log("[fixtures] compiling watch_c.exe");
+    run("cl.exe", ["/nologo", "/Od", "/Zi", `/Fe:${wExe}`, `/Fd:${wPdb}`, `/Fo:${BIN}\\`, wSrc, "/link", "/DEBUG"]);
+  } else {
+    console.log("[fixtures] watch_c.exe up to date");
+  }
+
   // --- hello_asm.exe ---
   const aSrc = path.join(SRC, "hello_asm.asm");
   const aObj = path.join(BIN, "hello_asm.obj");

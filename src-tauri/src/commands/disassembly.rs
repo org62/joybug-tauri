@@ -1,4 +1,4 @@
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::session::disassembly::{applied_patch_ranges, serialize_instructions};
 use crate::session::types::SerializableInstruction;
 use crate::session::UICommand;
@@ -30,6 +30,11 @@ pub fn request_disassembly(
                 (state.modules.clone(), applied_patch_ranges(&state))
             };
             let disasm = super::with_oob_client(&session_arc, &session_id, &oob_pool, |oob, pid| oob.disassemble_memory(pid, address, count, arch));
+            // A session that stopped between request and dispatch can't serve this;
+            // the view resets on session end, so don't surface an error for the race.
+            if matches!(disasm, Err(Error::InvalidSessionState(_))) {
+                return Ok(());
+            }
             match super::flatten_oob(disasm) {
                 Ok(instructions) => {
                     let serializable = serialize_instructions(&instructions, &modules, &patched_ranges);
@@ -80,6 +85,11 @@ pub fn request_function_disassembly(
                 (state.modules.clone(), applied_patch_ranges(&state))
             };
             let disasm = super::with_oob_client(&session_arc, &session_id, &oob_pool, |oob, pid| oob.disassemble_function(pid, address, max_instructions, arch));
+            // A session that stopped between request and dispatch can't serve this;
+            // the view resets on session end, so don't surface an error for the race.
+            if matches!(disasm, Err(Error::InvalidSessionState(_))) {
+                return Ok(());
+            }
             match super::flatten_oob(disasm) {
                 Ok((instructions, function_start, function_end, function_name)) => {
                     let serializable = serialize_instructions(&instructions, &modules, &patched_ranges);

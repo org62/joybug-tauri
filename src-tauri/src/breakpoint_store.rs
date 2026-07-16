@@ -16,7 +16,10 @@ pub fn load_breakpoints(launch_command: &str) -> Vec<BreakpointInfo> {
                 name: bp.name.clone(),
                 group: bp.group.clone(),
                 symbol: bp.symbol.clone(),
-                enabled: bp.enabled,
+                // A persisted access trace reloads inert (disabled) — its collected
+                // results are session-live only, so re-arming (which starts a fresh
+                // trace on module load) is an explicit user action.
+                enabled: bp.enabled && bp.bp_kind != "watchpoint",
                 is_active: false,
                 bp_kind: bp.bp_kind.clone(),
                 hw_type: bp.hw_type.clone(),

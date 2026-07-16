@@ -25,6 +25,7 @@ export function ContextBookmarksView() {
       onToggleLock={toggleLock}
       onNavigateToDisassembly={sessionData.onNavigateToDisassembly}
       onNavigateToMemory={sessionData.onNavigateToMemory}
+      onFindAccesses={sessionData.onFindAccesses}
     />
   );
 }

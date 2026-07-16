@@ -43,7 +43,7 @@ export const DebuggerDockingConfig: DockingConfig = {
           ],
         },
         {
-          tabs: [{ id: "disassembly" }, { id: "source" }, { id: "memory" }, { id: "memory_regions" }, { id: "breakpoints" }, { id: "patches" }, { id: "bookmarks" }, { id: "memory_search" }, { id: "memory_scanner" }, { id: "pointer_scan" }, { id: "strings" }, { id: "code_explorer" }, { id: "peviewer" }],
+          tabs: [{ id: "disassembly" }, { id: "source" }, { id: "memory" }, { id: "memory_regions" }, { id: "breakpoints" }, { id: "patches" }, { id: "bookmarks" }, { id: "memory_search" }, { id: "memory_scanner" }, { id: "pointer_scan" }, { id: "strings" }, { id: "code_explorer" }, { id: "peviewer" }, { id: "access_trace" }],
           activeId: "disassembly",
         },
         {
@@ -83,6 +83,7 @@ export const DebuggerDockingConfig: DockingConfig = {
     strings: { id: "strings", title: "Strings", content: <div>Strings placeholder</div> },
     code_explorer: { id: "code_explorer", title: "Code Explorer", content: <div>Code Explorer placeholder</div> },
     peviewer: { id: "peviewer", title: "PE Viewer", content: <div>PE Viewer placeholder</div> },
+    access_trace: { id: "access_trace", title: "Access Trace", content: <div>Access Trace placeholder</div> },
   } as { [key: string]: TabData },
   tabContentMap: {
     registers: <StaticRegisterView context={mockContext} />,

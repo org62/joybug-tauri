@@ -3,6 +3,7 @@ import { SerializableThreadContext } from "@/components/RegisterView";
 import type { BreakpointState } from "@/hooks/useBreakpoints";
 import type { PatchState } from "@/hooks/usePatches";
 import type { BookmarkState } from "@/hooks/useBookmarks";
+import type { WatchpointTraceState } from "@/hooks/useWatchpointTrace";
 
 // Re-export for convenience in other components
 export { type SerializableThreadContext } from "@/components/RegisterView";
@@ -17,7 +18,7 @@ export interface RawBreakpoint {
   symbol: string | null;
   enabled: boolean;
   is_active: boolean;
-  bp_kind: string;            // "software" | "hardware"
+  bp_kind: string;            // "software" | "hardware" | "watchpoint"
   hw_type: string | null;     // "Execute" | "Write" | "ReadWrite"
   hw_size: number | null;     // 1, 2, 4, 8
   source_file: string | null;
@@ -162,10 +163,14 @@ export interface SessionContextData {
   breakpointState: BreakpointState;
   patchState: PatchState;
   bookmarkState: BookmarkState;
+  watchpointState: WatchpointTraceState;
   onNavigateToDisassembly?: (address: string) => void;
   onNavigateToMemory?: (address: string) => void;
   /** Activate the Source tab and reveal the given address's source line. */
   onNavigateToSource?: (address: string) => void;
+  /** Start a hardware access trace ("find what reads/writes this address"): arm a
+   * watchpoint of the given mode/size and open the Access Trace panel. */
+  onFindAccesses?: (address: string, mode: "Write" | "ReadWrite", size: number) => void;
 }
 
 export const SessionContext = createContext<SessionContextData | null>(null);

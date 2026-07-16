@@ -34,10 +34,11 @@ interface BreakpointsViewProps {
   resolveSymbol?: SymbolResolver;
 }
 
-/** Breakpoint dot color depends on bp_kind: red for software, amber/orange for hardware */
-function BreakpointDot({ enabled, isActive, isHardware, onClick }: { enabled: boolean; isActive: boolean; isHardware: boolean; onClick: () => void }) {
-  const activeColor = isHardware ? "bg-amber-500" : "bg-red-500";
-  const pendingColor = isHardware ? "border-amber-500" : "border-red-500";
+/** Breakpoint dot color depends on bp_kind: red software, amber hardware, violet watchpoint (access trace) */
+function BreakpointDot({ enabled, isActive, kind, onClick }: { enabled: boolean; isActive: boolean; kind: string; onClick: () => void }) {
+  const activeColor = kind === "watchpoint" ? "bg-violet-500" : kind === "hardware" ? "bg-amber-500" : "bg-red-500";
+  const pendingColor = kind === "watchpoint" ? "border-violet-500" : kind === "hardware" ? "border-amber-500" : "border-red-500";
+  const prefix = kind === "watchpoint" ? "Watch: " : kind === "hardware" ? "HW: " : "";
 
   return (
     <Button
@@ -46,7 +47,7 @@ function BreakpointDot({ enabled, isActive, isHardware, onClick }: { enabled: bo
       className="w-4 h-4 p-0 shrink-0 hover:bg-transparent"
       onClick={(e) => { e.stopPropagation(); onClick(); }}
       title={
-        (isHardware ? "HW: " : "") +
+        prefix +
         (enabled ? (isActive ? "Enabled (active)" : "Enabled (pending)") : "Disabled")
       }
     >
@@ -122,8 +123,13 @@ export function BreakpointsView({
     return name;
   }, [breakpoints]);
 
-  // HW type label for display
+  // HW type label for display (hardware breakpoints and watchpoints)
   const hwLabel = (bp: Breakpoint) => {
+    if (bp.bp_kind === "watchpoint") {
+      const t = bp.hw_type === "ReadWrite" ? "R/W" : bp.hw_type === "Write" ? "W" : (bp.hw_type ?? "");
+      const size = bp.hw_size && bp.hw_size > 1 ? ` ${bp.hw_size}B` : "";
+      return `Watch ${t}${size}`;
+    }
     if (bp.bp_kind !== "hardware") return null;
     const parts = [bp.hw_type ?? "Execute"];
     if (bp.hw_size && bp.hw_size > 1) parts.push(`${bp.hw_size}B`);
@@ -133,6 +139,7 @@ export function BreakpointsView({
   const renderBreakpointRow = (bp: Breakpoint, isDragOverlay?: boolean) => {
     const isEditingName = editingId === bp.id;
     const isHardware = bp.bp_kind === "hardware";
+    const isWatchpoint = bp.bp_kind === "watchpoint";
     const hwInfo = hwLabel(bp);
     const symbolText = bp.symbol || `${bp.module_name}+${bp.module_offset}`;
     const sourceLabel = bp.source_file
@@ -152,7 +159,7 @@ export function BreakpointsView({
           <BreakpointDot
             enabled={bp.enabled}
             isActive={bp.is_active}
-            isHardware={isHardware}
+            kind={bp.bp_kind}
             onClick={() => onEnableBreakpoint(bp.id, !bp.enabled)}
           />
         </span>
@@ -192,11 +199,26 @@ export function BreakpointsView({
           </span>
         </span>
 
-        {/* Symbol + HW type badge */}
+        {/* Symbol + HW/watchpoint type badge */}
         <span className="flex-1 min-w-0 flex items-center gap-1.5 text-muted-foreground">
-          {isHardware && hwInfo && (
-            <Badge size="xs" className="bg-amber-500/20 text-amber-600 dark:text-amber-400 text-[10px]">
+          {(isHardware || isWatchpoint) && hwInfo && (
+            <Badge size="xs" className={cn(
+              "text-[10px] shrink-0",
+              isWatchpoint
+                ? "bg-violet-500/20 text-violet-600 dark:text-violet-400"
+                : "bg-amber-500/20 text-amber-600 dark:text-amber-400",
+            )}>
               {hwInfo}
+            </Badge>
+          )}
+          {isWatchpoint && (
+            <Badge size="xs" className={cn(
+              "text-[10px] shrink-0",
+              bp.tracing
+                ? "bg-violet-500/20 text-violet-600 dark:text-violet-400 animate-pulse"
+                : "bg-muted text-muted-foreground",
+            )}>
+              {bp.tracing ? "tracing…" : "stopped"}
             </Badge>
           )}
           {sourceLabel && (

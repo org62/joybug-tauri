@@ -13,6 +13,7 @@ mod stepping;
 mod symbols;
 pub(crate) mod types;
 mod type_system;
+mod watchpoints;
 mod window_state;
 
 pub use bookmarks::*;
@@ -29,6 +30,7 @@ pub use source::*;
 pub use stepping::*;
 pub use symbols::*;
 pub use type_system::*;
+pub use watchpoints::*;
 pub use window_state::*;
 
 use std::sync::{Arc, Mutex};
@@ -161,6 +163,13 @@ impl OobPool {
 fn oob_pid(session_arc: &Arc<Mutex<SessionStateUI>>) -> Result<u32> {
     let pid = {
         let state = session_arc.lock().unwrap();
+        // A stopped session has no live target: fast-fail so background pollers
+        // that are still in flight when the session stops return immediately,
+        // instead of slow-failing (~seconds) against the dying server and
+        // serialising ahead of stop/delete on the command executor.
+        if matches!(state.status, SessionStatusUI::Stopped) {
+            return Err(Error::InvalidSessionState("Session is stopped".to_string()));
+        }
         state
             .current_event
             .as_ref()

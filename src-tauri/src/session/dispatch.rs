@@ -452,6 +452,14 @@ fn process_command(
             process_set_hardware_breakpoint(session, app_handle_clone, event.pid(), address, hw_type, hw_size);
             CommandResult::Continue
         }
+        UICommand::StartWatchpointTrace { address, ref hw_type, hw_size } => {
+            process_start_watchpoint_trace(session, app_handle_clone, event.pid(), address, hw_type, hw_size);
+            CommandResult::Continue
+        }
+        UICommand::StopWatchpointTrace { ref breakpoint_id } => {
+            process_stop_watchpoint_trace(session, app_handle_clone, event.pid(), breakpoint_id);
+            CommandResult::Continue
+        }
         UICommand::GetThreadCallStack { tid } => {
             process_thread_callstack_request(session, app_handle_clone, event.pid(), tid);
             CommandResult::Continue

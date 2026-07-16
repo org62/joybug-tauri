@@ -14,7 +14,7 @@ export interface ModuleData {
 }
 
 /** Absolute path to a built source-debugging fixture exe (see e2e/fixtures/build.mjs). */
-export function fixtureExe(name: "hello_c" | "hello_asm"): string {
+export function fixtureExe(name: "hello_c" | "hello_asm" | "watch_c"): string {
   return path.resolve(__dirname, "..", "fixtures", "bin", `${name}.exe`);
 }
 

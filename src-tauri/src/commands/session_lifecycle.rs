@@ -7,7 +7,7 @@ use joybug2::protocol::DebuggerRequest;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use tauri::{State, Emitter, Manager};
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 #[tauri::command]
 pub fn greet(name: &str) -> String {
@@ -298,10 +298,18 @@ fn spawn_debug_loop(
                     info!("Debug session {} completed successfully", session_id);
                 }
                 Err(e) => {
-                    state.status = SessionStatusUI::Error(e.to_string());
-                    let error_message = format!("Debug session {} failed: {}", session_id, e);
-                    error!("{}", &error_message);
-                    crate::ui_logger::log_error(&app_handle, &error_message, Some(session_id.clone()));
+                    // A user-initiated stop marks the session Stopped up front and
+                    // then tears down the server, which surfaces here as a
+                    // connection error. Keep it Stopped rather than flipping to a
+                    // spurious Error.
+                    if matches!(state.status, SessionStatusUI::Stopped) {
+                        info!("Debug session {} stopped by user", session_id);
+                    } else {
+                        state.status = SessionStatusUI::Error(e.to_string());
+                        let error_message = format!("Debug session {} failed: {}", session_id, e);
+                        error!("{}", &error_message);
+                        crate::ui_logger::log_error(&app_handle, &error_message, Some(session_id.clone()));
+                    }
                 }
             }
             state.debug_result = Some(result.map_err(|e| e.to_string()));
@@ -375,21 +383,46 @@ pub fn stop_debug_session(
     oob_pool.remove(&session_id);
 
     if let Some(session_state) = session_state {
+        // Snapshot the target before teardown.
+        let (pid, server_url, non_invasive, already_stopped) = {
+            let state = session_state.lock().unwrap();
+            let pid = state.current_event.as_ref().map(|ev| ev.pid()).or(state.open_pid).unwrap_or(0);
+            (pid, state.server_url.clone(), state.non_invasive, matches!(state.status, SessionStatusUI::Stopped))
+        };
+
+        // Terminate an invasive target so stopping a *running* session doesn't
+        // leak the debuggee, and so a debug loop blocked in WaitForDebugEvent
+        // unwinds on the resulting exit event (paused loops unwind via the Stop
+        // command below). Sent over a fresh OOB connection while the server is
+        // still up. Non-invasive sessions only opened the process read-only, so
+        // they are left running (see [[server-side-continuous-ops]]).
+        if pid != 0 && !non_invasive && !already_stopped {
+            if let Err(e) = send_out_of_band_request(&server_url, DebuggerRequest::TerminateProcess { pid }) {
+                warn!("stop: terminating target pid {} failed (already gone?): {}", pid, e);
+            }
+        }
+
         {
             let mut state = session_state.lock().unwrap();
             if let Some(sender) = state.ui_sender.take() {
                 info!("Stopping session by dropping the step_sender.");
                 let _ = sender.send(UICommand::Stop);
             }
-            // Non-invasive sessions have no debug-loop thread to flip the status
-            // on exit, so transition them to Stopped here.
-            if state.non_invasive {
-                state.status = SessionStatusUI::Stopped;
-                state.open_pid = None;
-            }
+            // Mark the session Stopped immediately (not only for non-invasive
+            // sessions). A running target's debug-loop thread only flips the
+            // status once it unwinds; until then, the still-mounted UI keeps
+            // firing background OOB polls that slow-fail against the dying
+            // server and serialise ahead of this stop/delete. Marking Stopped
+            // now makes those polls short-circuit (see `oob_pid`) and updates
+            // the UI at once.
+            state.status = SessionStatusUI::Stopped;
+            state.open_pid = None;
         }
 
-        if let Some(mut server_handle) = embedded_servers.lock().unwrap().remove(&session_id) {
+        // Bind the handle out of the map lock before stopping it, so a slow
+        // server shutdown never holds the embedded-servers mutex.
+        let server_handle = embedded_servers.lock().unwrap().remove(&session_id);
+        if let Some(mut server_handle) = server_handle {
             info!("Stopping embedded server for session {}", session_id);
             server_handle.stop();
         }

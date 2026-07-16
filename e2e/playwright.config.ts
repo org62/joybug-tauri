@@ -30,5 +30,6 @@ export default defineConfig({
     "non-invasive.spec.ts",
     "strings-view.spec.ts",
     "code-explorer.spec.ts",
+    "watchpoint-trace.spec.ts",
   ],
 });

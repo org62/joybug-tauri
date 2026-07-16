@@ -35,6 +35,43 @@ fn parse_hw_size(hw_size: u8) -> Option<joybug2::protocol::HardwareBreakpointSiz
     }
 }
 
+/// Remove a breakpoint of any kind at `address` from the debuggee. Watchpoints are
+/// torn down via `stop_watchpoint_trace`; hardware breakpoints via
+/// `remove_hardware_breakpoint`; software via `remove_breakpoint`.
+fn remove_bp_of_kind(session: &mut DebugSession, pid: u32, address: u64, bp_kind: &str) -> Result<(), String> {
+    match bp_kind {
+        "hardware" => session.remove_hardware_breakpoint(pid, address),
+        "watchpoint" => session.stop_watchpoint_trace(pid, address),
+        _ => session.remove_breakpoint(pid, address),
+    }
+    .map_err(|e| e.to_string())
+}
+
+/// Arm a breakpoint of any kind at `address` in the debuggee: a fresh silent access
+/// trace for watchpoints, a Keep-handler hardware breakpoint for `"hardware"`, and a
+/// Keep-handler software breakpoint otherwise.
+fn arm_bp_of_kind(session: &mut DebugSession, pid: u32, address: u64, bp_kind: &str, hw_type: Option<&str>, hw_size: Option<u8>) -> Result<(), String> {
+    match bp_kind {
+        "hardware" | "watchpoint" => {
+            let t = hw_type.and_then(parse_hw_type)
+                .unwrap_or(joybug2::protocol::HardwareBreakpointType::Execute);
+            let s = hw_size.and_then(parse_hw_size)
+                .unwrap_or(joybug2::protocol::HardwareBreakpointSize::Byte1);
+            if bp_kind == "watchpoint" {
+                session.start_watchpoint_trace(pid, address, t, s)
+            } else {
+                session.set_hardware_breakpoint_at(pid, address, t, s, |_s, _p, _t, _a| {
+                    Ok(joybug2::protocol_io::BreakpointDecision::Keep)
+                })
+            }
+        }
+        _ => session.set_breakpoint_at(pid, address, None, |_s, _p, _t, _a| {
+            Ok(joybug2::protocol_io::BreakpointDecision::Keep)
+        }),
+    }
+    .map_err(|e| e.to_string())
+}
+
 /// Persist breakpoints to disk for the current session's launch command
 pub(crate) fn persist_breakpoints(session_state: &Arc<Mutex<SessionStateUI>>) {
     let state = session_state.lock().unwrap();
@@ -175,12 +212,7 @@ pub(crate) fn process_remove_breakpoint(
 
     if let Some(bp) = bp_info {
         if bp.is_active {
-            let result = if bp.bp_kind == "hardware" {
-                session.remove_hardware_breakpoint(pid, bp.address)
-            } else {
-                session.remove_breakpoint(pid, bp.address)
-            };
-            if let Err(e) = result {
+            if let Err(e) = remove_bp_of_kind(session, pid, bp.address, &bp.bp_kind) {
                 warn!("Failed to remove breakpoint at 0x{:X}: {}", bp.address, e);
             }
         }
@@ -210,12 +242,7 @@ pub(crate) fn process_remove_breakpoints(
 
         if let Some(bp) = bp_info {
             if bp.is_active {
-                let result = if bp.bp_kind == "hardware" {
-                    session.remove_hardware_breakpoint(pid, bp.address)
-                } else {
-                    session.remove_breakpoint(pid, bp.address)
-                };
-                if let Err(e) = result {
+                if let Err(e) = remove_bp_of_kind(session, pid, bp.address, &bp.bp_kind) {
                     warn!("Failed to remove breakpoint at 0x{:X}: {}", bp.address, e);
                 }
             }
@@ -255,19 +282,7 @@ pub(crate) fn apply_enable_breakpoint(
         };
 
         if enabled && !bp.is_active && address != 0 {
-            let set_result = if bp.bp_kind == "hardware" {
-                let hw_type = bp.hw_type.as_deref().and_then(parse_hw_type)
-                    .unwrap_or(joybug2::protocol::HardwareBreakpointType::Execute);
-                let hw_size = bp.hw_size.and_then(parse_hw_size)
-                    .unwrap_or(joybug2::protocol::HardwareBreakpointSize::Byte1);
-                session.set_hardware_breakpoint_at(pid, address, hw_type, hw_size, |_s, _p, _t, _a| {
-                    Ok(joybug2::protocol_io::BreakpointDecision::Keep)
-                })
-            } else {
-                session.set_breakpoint_at(pid, address, None, |_s, _p, _t, _a| {
-                    Ok(joybug2::protocol_io::BreakpointDecision::Keep)
-                })
-            };
+            let set_result = arm_bp_of_kind(session, pid, address, &bp.bp_kind, bp.hw_type.as_deref(), bp.hw_size);
             match set_result {
                 Ok(()) => {
                     let mut state = session.state.lock().unwrap();
@@ -291,12 +306,7 @@ pub(crate) fn apply_enable_breakpoint(
                 }
             }
         } else if !enabled && bp.is_active {
-            let remove_result = if bp.bp_kind == "hardware" {
-                session.remove_hardware_breakpoint(pid, address)
-            } else {
-                session.remove_breakpoint(pid, address)
-            };
-            if let Err(e) = remove_result {
+            if let Err(e) = remove_bp_of_kind(session, pid, address, &bp.bp_kind) {
                 warn!("Failed to disable breakpoint: {}", e);
             }
             let mut state = session.state.lock().unwrap();
@@ -385,19 +395,7 @@ pub(crate) fn reapply_breakpoints_for_module(
 
     for (bp_id, addr, enabled, bp_kind, hw_type, hw_size) in breakpoints_to_apply {
         if enabled {
-            let set_ok = if bp_kind == "hardware" {
-                let hw_t = hw_type.as_deref().and_then(parse_hw_type)
-                    .unwrap_or(joybug2::protocol::HardwareBreakpointType::Execute);
-                let hw_s = hw_size.and_then(parse_hw_size)
-                    .unwrap_or(joybug2::protocol::HardwareBreakpointSize::Byte1);
-                session.set_hardware_breakpoint_at(pid, addr, hw_t, hw_s, |_s, _p, _t, _a| {
-                    Ok(joybug2::protocol_io::BreakpointDecision::Keep)
-                }).is_ok()
-            } else {
-                session.set_breakpoint_at(pid, addr, None, |_s, _p, _t, _a| {
-                    Ok(joybug2::protocol_io::BreakpointDecision::Keep)
-                }).is_ok()
-            };
+            let set_ok = arm_bp_of_kind(session, pid, addr, &bp_kind, hw_type.as_deref(), hw_size).is_ok();
             if set_ok {
                 let (source_file, source_line) = resolve_source_line(session, pid, addr);
                 let mut state = session.state.lock().unwrap();
@@ -422,7 +420,7 @@ pub(crate) fn reapply_breakpoints_for_module(
     }
 }
 
-/// Processes a set hardware breakpoint request
+/// Processes a set hardware breakpoint request (breaks into the debugger on hit).
 pub(crate) fn process_set_hardware_breakpoint(
     session: &mut DebugSession,
     app_handle_clone: &Option<AppHandle>,
@@ -431,6 +429,37 @@ pub(crate) fn process_set_hardware_breakpoint(
     hw_type_str: &str,
     hw_size_val: u8,
 ) {
+    arm_hardware_at(session, app_handle_clone, pid, address, hw_type_str, hw_size_val, false);
+}
+
+/// Processes a start-watchpoint-trace request: arm a hardware watchpoint in silent
+/// "find what reads/writes this address" mode. Same setup as a hardware breakpoint,
+/// but the server records accessors and auto-continues instead of breaking; the
+/// breakpoint row is tagged `bp_kind == "watchpoint"` (the frontend shows an
+/// active watchpoint as "tracing").
+pub(crate) fn process_start_watchpoint_trace(
+    session: &mut DebugSession,
+    app_handle_clone: &Option<AppHandle>,
+    pid: u32,
+    address: u64,
+    hw_type_str: &str,
+    hw_size_val: u8,
+) {
+    arm_hardware_at(session, app_handle_clone, pid, address, hw_type_str, hw_size_val, true);
+}
+
+/// Shared implementation for arming a hardware breakpoint (`is_trace == false`) or a
+/// silent access trace (`is_trace == true`) at `address`.
+fn arm_hardware_at(
+    session: &mut DebugSession,
+    app_handle_clone: &Option<AppHandle>,
+    pid: u32,
+    address: u64,
+    hw_type_str: &str,
+    hw_size_val: u8,
+    is_trace: bool,
+) {
+    let kind_label = if is_trace { "access trace" } else { "hardware breakpoint" };
 
     // If a breakpoint already exists at this address, remove it first
     let existing_bp_id = {
@@ -439,18 +468,13 @@ pub(crate) fn process_set_hardware_breakpoint(
     };
     if let Some((bp_id, bp_kind, is_active)) = existing_bp_id {
         if is_active {
-            let result = if bp_kind == "hardware" {
-                session.remove_hardware_breakpoint(pid, address)
-            } else {
-                session.remove_breakpoint(pid, address)
-            };
-            if let Err(e) = result {
+            if let Err(e) = remove_bp_of_kind(session, pid, address, &bp_kind) {
                 warn!("Failed to remove existing breakpoint at 0x{:X}: {}", address, e);
             }
         }
         let mut state = session.state.lock().unwrap();
         state.breakpoints.retain(|bp| bp.id != bp_id);
-        info!("Removed existing breakpoint at 0x{:X} before setting hardware breakpoint", address);
+        info!("Removed existing breakpoint at 0x{:X} before setting {}", address, kind_label);
     }
 
     let hw_type = match parse_hw_type(hw_type_str) {
@@ -492,15 +516,20 @@ pub(crate) fn process_set_hardware_breakpoint(
     let bp_id = uuid::Uuid::new_v4().to_string();
     let mut is_active = false;
 
-    match session.set_hardware_breakpoint_at(pid, address, hw_type, hw_size, |_session, _pid, _tid, _addr| {
-        Ok(joybug2::protocol_io::BreakpointDecision::Keep)
-    }) {
+    let arm_result = if is_trace {
+        session.start_watchpoint_trace(pid, address, hw_type, hw_size)
+    } else {
+        session.set_hardware_breakpoint_at(pid, address, hw_type, hw_size, |_session, _pid, _tid, _addr| {
+            Ok(joybug2::protocol_io::BreakpointDecision::Keep)
+        })
+    };
+    match arm_result {
         Ok(()) => {
             is_active = true;
-            info!("Set hardware breakpoint at 0x{:X} ({}+0x{:X}, type={}, size={})", address, module_name, module_offset, hw_type_str, hw_size_val);
+            info!("Set {} at 0x{:X} ({}+0x{:X}, type={}, size={})", kind_label, address, module_name, module_offset, hw_type_str, hw_size_val);
         }
         Err(e) => {
-            let msg = format!("Failed to set hardware breakpoint at 0x{:X}: {}", address, e);
+            let msg = format!("Failed to set {} at 0x{:X}: {}", kind_label, address, e);
             error!("{}", msg);
             if let Some(ref handle) = app_handle_clone {
                 crate::ui_logger::log_error(handle, &msg, None);
@@ -529,13 +558,54 @@ pub(crate) fn process_set_hardware_breakpoint(
             symbol,
             enabled: true,
             is_active,
-            bp_kind: "hardware".to_string(),
+            bp_kind: if is_trace { "watchpoint".to_string() } else { "hardware".to_string() },
             hw_type: Some(hw_type_str.to_string()),
             hw_size: Some(hw_size_val),
             source_file,
             source_line,
         });
     }
+
+    emit_breakpoints_event(session, app_handle_clone);
+    persist_breakpoints(&session.state);
+}
+
+/// Processes a stop-watchpoint-trace request: tear down the hardware watchpoint but
+/// keep the breakpoint row (inactive) as a record. The collected accessors live in
+/// the frontend panel, which retains them.
+pub(crate) fn process_stop_watchpoint_trace(
+    session: &mut DebugSession,
+    app_handle_clone: &Option<AppHandle>,
+    pid: u32,
+    breakpoint_id: &str,
+) {
+    let address = {
+        let state = session.state.lock().unwrap();
+        state.breakpoints.iter()
+            .find(|bp| bp.id == breakpoint_id && bp.bp_kind == "watchpoint")
+            .map(|bp| bp.address)
+    };
+    let Some(address) = address else {
+        warn!("StopWatchpointTrace: no watchpoint with id {}", breakpoint_id);
+        return;
+    };
+
+    if address != 0 {
+        if let Err(e) = session.stop_watchpoint_trace(pid, address) {
+            warn!("Failed to stop watchpoint trace at 0x{:X}: {}", address, e);
+        }
+    }
+
+    {
+        let mut state = session.state.lock().unwrap();
+        if let Some(bp) = state.breakpoints.iter_mut().find(|bp| bp.id == breakpoint_id) {
+            bp.is_active = false;
+            // A stopped trace is inert: mark it disabled so a module reload does not
+            // silently re-arm it (re-enable from the panel restarts collection).
+            bp.enabled = false;
+        }
+    }
+    info!("Stopped access trace (breakpoint {})", breakpoint_id);
 
     emit_breakpoints_event(session, app_handle_clone);
     persist_breakpoints(&session.state);

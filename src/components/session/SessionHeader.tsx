@@ -360,6 +360,12 @@ export const SessionHeader: React.FC<SessionHeaderProps> = ({
                     <span className="flex-1">PE Viewer</span>
                     <span className="ml-auto text-xs text-muted-foreground">{getKeybinding("panel.peViewer")}</span>
                   </DropdownMenuCheckboxItem>
+                  <DropdownMenuCheckboxItem
+                    checked={active.has('access_trace')}
+                    onCheckedChange={() => toggleTab('access_trace')}
+                  >
+                    <span className="flex-1">Access Trace</span>
+                  </DropdownMenuCheckboxItem>
                   {addNewMemoryTab && (
                     <DropdownMenuItem onSelect={(e: Event) => { e.preventDefault(); addNewMemoryTab(); }}>
                       <Plus />

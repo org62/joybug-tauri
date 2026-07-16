@@ -9,7 +9,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "./ui/select";
-import { Binary, Save, X, ArrowRight, Copy, ClipboardPaste, Crosshair, Bookmark } from "lucide-react";
+import { Binary, Save, X, ArrowRight, Copy, ClipboardPaste, Crosshair, Bookmark, Fingerprint } from "lucide-react";
 import { useHexEditor, ExtendStatus } from "@/hooks/useHexEditor";
 import { isProcessAvailable } from "@/lib/sessionHelpers";
 import { CHANGED_VALUE_CLASS } from "@/lib/utils";
@@ -41,6 +41,7 @@ interface HexViewProps {
   initialViewMode?: ViewMode;
   onSetHardwareBreakpoint?: (address: string, hwType: string, hwSize: number) => void;
   onAddBookmark?: (address: string, valueType: string) => void;
+  onFindAccesses?: (address: string, mode: "Write" | "ReadWrite", size: number) => void;
 }
 
 const VIEWMODE_VALUE_TYPE: Record<ViewMode, string> = {
@@ -55,7 +56,7 @@ const EDGE_EXTEND_THRESHOLD = ROW_HEIGHT * 6;
 // rows: at most one full chunk's worth of rows.
 const MAX_WHEEL_REVEAL = (DEFAULT_CHUNK_SIZE / BYTES_PER_ROW) * ROW_HEIGHT;
 
-export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}, resolveSymbol, initialAddress, initialViewMode, onSetHardwareBreakpoint, onAddBookmark }: HexViewProps) {
+export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}, resolveSymbol, initialAddress, initialViewMode, onSetHardwareBreakpoint, onAddBookmark, onFindAccesses }: HexViewProps) {
   const {
     baseAddress,
     memoryData,
@@ -802,26 +803,47 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
               </ContextMenuItem>
             </>
           )}
-          {onSetHardwareBreakpoint && selectionStart !== null && (() => {
+          {(onSetHardwareBreakpoint || onFindAccesses) && selectionStart !== null && (() => {
             const address = baseAddress + BigInt(selectionStart);
             const selSize = selectionEnd !== null ? Math.abs(selectionEnd - selectionStart) + 1 : 1;
             const hwSize = selSize >= 8 ? 8 : selSize >= 4 ? 4 : selSize >= 2 ? 2 : 1;
             const addrStr = `0x${address.toString(16)}`;
             return (
               <>
-                <ContextMenuSeparator />
-                <ContextMenuItem
-                  icon={<Crosshair />}
-                  onClick={() => onSetHardwareBreakpoint(addrStr, "Write", hwSize)}
-                >
-                  Break on Write ({hwSize}B)
-                </ContextMenuItem>
-                <ContextMenuItem
-                  icon={<Crosshair />}
-                  onClick={() => onSetHardwareBreakpoint(addrStr, "ReadWrite", hwSize)}
-                >
-                  Break on Read/Write ({hwSize}B)
-                </ContextMenuItem>
+                {onSetHardwareBreakpoint && (
+                  <>
+                    <ContextMenuSeparator />
+                    <ContextMenuItem
+                      icon={<Crosshair />}
+                      onClick={() => onSetHardwareBreakpoint(addrStr, "Write", hwSize)}
+                    >
+                      Break on Write ({hwSize}B)
+                    </ContextMenuItem>
+                    <ContextMenuItem
+                      icon={<Crosshair />}
+                      onClick={() => onSetHardwareBreakpoint(addrStr, "ReadWrite", hwSize)}
+                    >
+                      Break on Read/Write ({hwSize}B)
+                    </ContextMenuItem>
+                  </>
+                )}
+                {onFindAccesses && (
+                  <>
+                    <ContextMenuSeparator />
+                    <ContextMenuItem
+                      icon={<Fingerprint />}
+                      onClick={() => onFindAccesses(addrStr, "Write", hwSize)}
+                    >
+                      Find what writes to this address ({hwSize}B)
+                    </ContextMenuItem>
+                    <ContextMenuItem
+                      icon={<Fingerprint />}
+                      onClick={() => onFindAccesses(addrStr, "ReadWrite", hwSize)}
+                    >
+                      Find what accesses (read/write) ({hwSize}B)
+                    </ContextMenuItem>
+                  </>
+                )}
               </>
             );
           })()}

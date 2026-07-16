@@ -41,6 +41,7 @@ export const ContextHexView = ({ memoryViewId, initialAddress, initialViewMode }
       initialViewMode={initialViewMode}
       onSetHardwareBreakpoint={setHardwareBreakpoint}
       onAddBookmark={(address, valueType) => addBookmark({ kind: 'value', address, valueType })}
+      onFindAccesses={sessionData.onFindAccesses}
     />
   );
 };

@@ -31,8 +31,10 @@ import { ContextPointerScanView } from "@/components/session/ContextPointerScanV
 import { ContextStringsView } from "@/components/session/ContextStringsView";
 import { ContextCodeExplorerView } from "@/components/session/ContextCodeExplorerView";
 import { ContextModuleInfoView } from "@/components/session/ContextModuleInfoView";
+import { ContextWatchpointAccessView } from "@/components/session/ContextWatchpointAccessView";
 import { useDebugSession } from "@/hooks/useDebugSession";
 import { useBreakpoints } from "@/hooks/useBreakpoints";
+import { useWatchpointTrace } from "@/hooks/useWatchpointTrace";
 import { usePatches } from "@/hooks/usePatches";
 import { useBookmarks } from "@/hooks/useBookmarks";
 import { SessionHeader } from "@/components/session/SessionHeader";
@@ -43,7 +45,7 @@ import type { PaletteCommand } from "@/contexts/CommandPaletteContext";
 import {
   Play, Square, Pause, ArrowDownToLine, CornerDownRight, ArrowUpFromLine, SkipForward,
   Code, Cpu, Box, Layers, ListTree, Search, HardDrive, MapPin, FileCode,
-  Plus, RotateCcw, Navigation, ScanSearch, Puzzle, Crosshair, Bookmark as BookmarkIcon, Boxes, Type, Radar,
+  Plus, RotateCcw, Navigation, ScanSearch, Puzzle, Crosshair, Bookmark as BookmarkIcon, Boxes, Type, Radar, Fingerprint,
 } from "lucide-react";
 
 export default function SessionDocked() {
@@ -201,6 +203,11 @@ export default function SessionDocked() {
         window.dispatchEvent(new CustomEvent('select-peviewer-module', { detail: moduleBase }));
       }, 0);
     }
+  }, []);
+
+  // Open the Access Trace panel (singleton) — focus it if already open.
+  const handleOpenAccessTrace = React.useCallback(() => {
+    dockingRef.current?.showTab('access_trace');
   }, []);
 
   // Initial state detection - sync when docking becomes ready
@@ -670,6 +677,15 @@ export default function SessionDocked() {
         keywords: ["pe", "portable", "executable", "viewer"],
       },
       {
+        id: "panel.accessTrace",
+        label: "Toggle Access Trace",
+        group: "Windows",
+        icon: <Fingerprint className="size-4" />,
+        onSelect: () => toggleTabWithBackendUpdate("access_trace"),
+        keepOpen: true,
+        keywords: ["access", "trace", "watchpoint", "reads", "writes", "hardware", "what accesses"],
+      },
+      {
         id: "panel.addMemory",
         label: "Add Memory Window",
         group: "Windows",
@@ -730,6 +746,14 @@ export default function SessionDocked() {
   const breakpointState = useBreakpoints(session?.id, isPaused, session?.breakpoints);
   const patchState = usePatches(session?.id, isPaused, session?.patches);
   const bookmarkState = useBookmarks(session?.id, isPaused, session?.bookmarks, isTargetLive(displayStatus));
+  const watchpointState = useWatchpointTrace(session?.id, breakpointState.breakpoints, isTargetLive(displayStatus));
+
+  // "Find what reads/writes this address": arm a watchpoint access trace and open
+  // the Access Trace panel to watch accessors accumulate.
+  const handleFindAccesses = React.useCallback((address: string, mode: "Write" | "ReadWrite", size: number) => {
+    watchpointState.startTrace(address, mode, size);
+    handleOpenAccessTrace();
+  }, [watchpointState.startTrace, handleOpenAccessTrace]);
 
   const contextValue = useMemo(() => ({
     session,
@@ -750,10 +774,12 @@ export default function SessionDocked() {
     breakpointState,
     patchState,
     bookmarkState,
+    watchpointState,
     onNavigateToDisassembly: handleNavigateToDisassembly,
     onNavigateToMemory: handleNavigateToMemory,
     onNavigateToSource: handleNavigateToSource,
-  }), [session, displayStatus, canUseMemoryOps, modules, threads, symbolStatuses, symbolsRefreshKey, loadModules, loadThreads, loadModulePdb, retryModuleSymbols, searchSymbols, breakpointState, patchState, bookmarkState, handleNavigateToDisassembly, handleNavigateToMemory, handleNavigateToSource]);
+    onFindAccesses: handleFindAccesses,
+  }), [session, displayStatus, canUseMemoryOps, modules, threads, symbolStatuses, symbolsRefreshKey, loadModules, loadThreads, loadModulePdb, retryModuleSymbols, searchSymbols, breakpointState, patchState, bookmarkState, watchpointState, handleNavigateToDisassembly, handleNavigateToMemory, handleNavigateToSource, handleFindAccesses]);
   
   // Static tab content - components will update via context
   const dynamicTabContent = useMemo(() => ({
@@ -775,6 +801,7 @@ export default function SessionDocked() {
     strings: <ContextStringsView />,
     code_explorer: <ContextCodeExplorerView />,
     peviewer: <ContextModuleInfoView />,
+    access_trace: <ContextWatchpointAccessView />,
   }), [handleNavigateToMemory, handleNavigateToDisassembly, handleNavigateToMemoryPointer, handleOpenModuleInfo]);
 
   // Factory for creating dynamic tab content (e.g., memory tabs restored from storage)
@@ -901,6 +928,12 @@ export default function SessionDocked() {
         id: "peviewer",
         title: "PE Viewer",
         content: dynamicTabContent.peviewer,
+        closable: true,
+      },
+      access_trace: {
+        id: "access_trace",
+        title: "Access Trace",
+        content: dynamicTabContent.access_trace,
         closable: true,
       },
     };
