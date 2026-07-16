@@ -43,7 +43,7 @@ export const DebuggerDockingConfig: DockingConfig = {
           ],
         },
         {
-          tabs: [{ id: "disassembly" }, { id: "source" }, { id: "memory" }, { id: "memory_regions" }, { id: "breakpoints" }, { id: "patches" }, { id: "bookmarks" }, { id: "memory_search" }, { id: "memory_scanner" }, { id: "pointer_scan" }, { id: "strings" }, { id: "peviewer" }],
+          tabs: [{ id: "disassembly" }, { id: "source" }, { id: "memory" }, { id: "memory_regions" }, { id: "breakpoints" }, { id: "patches" }, { id: "bookmarks" }, { id: "memory_search" }, { id: "memory_scanner" }, { id: "pointer_scan" }, { id: "strings" }, { id: "code_explorer" }, { id: "peviewer" }],
           activeId: "disassembly",
         },
         {
@@ -81,6 +81,7 @@ export const DebuggerDockingConfig: DockingConfig = {
     memory_scanner: { id: "memory_scanner", title: "Memory Scanner", content: <div>Memory Scanner placeholder</div> },
     pointer_scan: { id: "pointer_scan", title: "Pointer Scan", content: <div>Pointer Scan placeholder</div> },
     strings: { id: "strings", title: "Strings", content: <div>Strings placeholder</div> },
+    code_explorer: { id: "code_explorer", title: "Code Explorer", content: <div>Code Explorer placeholder</div> },
     peviewer: { id: "peviewer", title: "PE Viewer", content: <div>PE Viewer placeholder</div> },
   } as { [key: string]: TabData },
   tabContentMap: {

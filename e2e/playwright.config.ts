@@ -29,5 +29,6 @@ export default defineConfig({
     "attach-detach.spec.ts",
     "non-invasive.spec.ts",
     "strings-view.spec.ts",
+    "code-explorer.spec.ts",
   ],
 });

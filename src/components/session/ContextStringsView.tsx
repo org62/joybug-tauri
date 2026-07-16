@@ -11,35 +11,17 @@ import { VirtualizedList } from '@/components/ui/virtualized-list';
 import { DockPanel, PanelToolbar } from '@/components/ui/panel';
 import { ContextMenu, ContextMenuItem, ContextMenuSeparator } from '@/components/ui/context-menu';
 import { ResizableHeaderCell } from '@/components/ui/resizable-header-cell';
+import { SortHeader } from '@/components/ui/sort-header';
 import { EmptyState } from '@/components/ui/empty-state';
 import { PaginationFooter } from '@/components/ui/pagination-footer';
 import {
   Select, SelectTrigger, SelectValue, SelectContent, SelectItem,
 } from '@/components/ui/select';
 import {
-  Type, Loader2, AlertTriangle, ChevronUp, ChevronDown, Search,
+  Type, Loader2, AlertTriangle, Search,
 } from 'lucide-react';
 import { moduleBasename } from '@/lib/sessionHelpers';
 import { parseAddressToNumber } from '@/lib/hexUtils';
-
-// Clickable, sortable column header label. Not a raw <button> (lint forbids those
-// in views); a span with role/onClick carries the sort affordance + chevron.
-function SortHeader({ label, active, asc, onClick }: {
-  label: string; active: boolean; asc: boolean; onClick: () => void;
-}) {
-  return (
-    <span
-      role="button"
-      tabIndex={0}
-      className="inline-flex items-center gap-0.5 cursor-pointer select-none hover:text-foreground"
-      onClick={onClick}
-      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick(); } }}
-    >
-      {label}
-      {active && (asc ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />)}
-    </span>
-  );
-}
 
 const SCOPE_OPTIONS: { value: StringScanScope; label: string }[] = [
   { value: 'module', label: 'Module' },

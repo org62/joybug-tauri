@@ -247,9 +247,7 @@ pub(crate) fn apply_enable_breakpoint(
     if let Some(bp) = bp_info {
         let address = if bp.address == 0 && enabled {
             let state = session.state.lock().unwrap();
-            state.modules.iter()
-                .find(|m| m.name.eq_ignore_ascii_case(&bp.module_name) ||
-                      module_short_name(&m.name).eq_ignore_ascii_case(&bp.module_name))
+            super::helpers::find_module_by_name(&state.modules, &bp.module_name)
                 .map(|m| m.base + bp.module_offset)
                 .unwrap_or(0)
         } else {

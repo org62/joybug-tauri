@@ -28,7 +28,10 @@ export const test = base.extend<TestFixtures>({
     );
 
     // Pin theme in localStorage so next-themes doesn't re-detect system
-    // preference on each CDP reconnect (which causes dark↔light flicker)
+    // preference on each CDP reconnect (which causes dark↔light flicker),
+    // then clear everything else so each test starts from default UI state
+    // (a dock layout persisted from before a feature existed would otherwise
+    // hide that feature's default tabs).
     await page.evaluate(() => {
       if (!localStorage.getItem("theme")) {
         const isDark =
@@ -36,6 +39,9 @@ export const test = base.extend<TestFixtures>({
           window.matchMedia("(prefers-color-scheme: dark)").matches;
         localStorage.setItem("theme", isDark ? "dark" : "light");
       }
+      const theme = localStorage.getItem("theme");
+      localStorage.clear();
+      if (theme) localStorage.setItem("theme", theme);
     });
 
     // Disable quick emulation in disassembly view — it consumes CPU without

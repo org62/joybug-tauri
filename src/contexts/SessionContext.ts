@@ -154,8 +154,8 @@ export interface SessionContextData {
   /** Identity of the set of modules with loaded symbols; changes when background
    * symbol loading completes so views can refresh symbol-derived data. */
   symbolsRefreshKey: string;
-  loadModules: () => Promise<void>;
-  loadThreads: () => Promise<void>;
+  loadModules: () => Promise<Module[]>;
+  loadThreads: () => Promise<Thread[]>;
   loadModulePdb: (baseAddress: string, pdbPath: string, force: boolean) => Promise<PdbLoadResult>;
   retryModuleSymbols: (baseAddress: string) => Promise<void>;
   searchSymbols: (pattern: string, limit?: number) => Promise<Symbol[]>;

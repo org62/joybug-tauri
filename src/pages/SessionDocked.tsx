@@ -29,6 +29,7 @@ import { ContextMemorySearchView } from "@/components/session/ContextMemorySearc
 import { ContextMemoryScannerView } from "@/components/session/ContextMemoryScannerView";
 import { ContextPointerScanView } from "@/components/session/ContextPointerScanView";
 import { ContextStringsView } from "@/components/session/ContextStringsView";
+import { ContextCodeExplorerView } from "@/components/session/ContextCodeExplorerView";
 import { ContextModuleInfoView } from "@/components/session/ContextModuleInfoView";
 import { useDebugSession } from "@/hooks/useDebugSession";
 import { useBreakpoints } from "@/hooks/useBreakpoints";
@@ -42,7 +43,7 @@ import type { PaletteCommand } from "@/contexts/CommandPaletteContext";
 import {
   Play, Square, Pause, ArrowDownToLine, CornerDownRight, ArrowUpFromLine, SkipForward,
   Code, Cpu, Box, Layers, ListTree, Search, HardDrive, MapPin, FileCode,
-  Plus, RotateCcw, Navigation, ScanSearch, Puzzle, Crosshair, Bookmark as BookmarkIcon, Boxes, Type,
+  Plus, RotateCcw, Navigation, ScanSearch, Puzzle, Crosshair, Bookmark as BookmarkIcon, Boxes, Type, Radar,
 } from "lucide-react";
 
 export default function SessionDocked() {
@@ -358,6 +359,11 @@ export default function SessionDocked() {
           event.stopPropagation();
           toggleTabWithBackendUpdate("strings");
           break;
+        case "panel.codeExplorer":
+          event.preventDefault();
+          event.stopPropagation();
+          toggleTabWithBackendUpdate("code_explorer");
+          break;
         case "panel.peViewer":
           event.preventDefault();
           event.stopPropagation();
@@ -644,6 +650,16 @@ export default function SessionDocked() {
         keywords: ["strings", "ascii", "unicode", "utf16", "text"],
       },
       {
+        id: "panel.codeExplorer",
+        label: "Toggle Code Explorer",
+        group: "Windows",
+        icon: <Radar className="size-4" />,
+        keybindingAction: "panel.codeExplorer",
+        onSelect: () => toggleTabWithBackendUpdate("code_explorer"),
+        keepOpen: true,
+        keywords: ["code", "explorer", "coverage", "heatmap", "functions", "breakpoint"],
+      },
+      {
         id: "panel.peViewer",
         label: "Toggle PE Viewer",
         group: "Windows",
@@ -723,8 +739,11 @@ export default function SessionDocked() {
     threads,
     symbolStatuses,
     symbolsRefreshKey,
-    loadModules: async () => { await loadModules(); },
-    loadThreads: async () => { await loadThreads(); },
+    // Passed through unwrapped: views depend on these in effects, and the
+    // useDebugSession callbacks are stable per session (an inline wrapper here
+    // would change identity on every session-updated event and re-fire them).
+    loadModules,
+    loadThreads,
     loadModulePdb,
     retryModuleSymbols,
     searchSymbols: async (pattern: string, limit?: number) => { return await searchSymbols(pattern, limit); },
@@ -754,6 +773,7 @@ export default function SessionDocked() {
     memory_scanner: <ContextMemoryScannerView />,
     pointer_scan: <ContextPointerScanView />,
     strings: <ContextStringsView />,
+    code_explorer: <ContextCodeExplorerView />,
     peviewer: <ContextModuleInfoView />,
   }), [handleNavigateToMemory, handleNavigateToDisassembly, handleNavigateToMemoryPointer, handleOpenModuleInfo]);
 
@@ -869,6 +889,12 @@ export default function SessionDocked() {
         id: "strings",
         title: "Strings",
         content: dynamicTabContent.strings,
+        closable: true,
+      },
+      code_explorer: {
+        id: "code_explorer",
+        title: "Code Explorer",
+        content: dynamicTabContent.code_explorer,
         closable: true,
       },
       peviewer: {

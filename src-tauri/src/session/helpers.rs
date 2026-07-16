@@ -103,6 +103,19 @@ pub(crate) fn module_short_name(full_path: &str) -> String {
         .unwrap_or_else(|| full_path.to_string())
 }
 
+/// Finds a module by a user-supplied identifier: case-insensitive full path or
+/// short file name (e.g. "ntdll.dll"). The one resolution rule for commands
+/// that take a module name from the frontend.
+pub(crate) fn find_module_by_name<'a>(
+    modules: &'a [joybug2::protocol_io::ModuleInfo],
+    name: &str,
+) -> Option<&'a joybug2::protocol_io::ModuleInfo> {
+    modules.iter().find(|m| {
+        m.name.eq_ignore_ascii_case(name)
+            || module_short_name(&m.name).eq_ignore_ascii_case(name)
+    })
+}
+
 /// Reports a step error to the UI logger and toast.
 pub(crate) fn report_step_error(
     session: &DebugSession,

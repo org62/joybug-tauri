@@ -347,6 +347,13 @@ export const SessionHeader: React.FC<SessionHeaderProps> = ({
                     <span className="ml-auto text-xs text-muted-foreground">{getKeybinding("panel.strings")}</span>
                   </DropdownMenuCheckboxItem>
                   <DropdownMenuCheckboxItem
+                    checked={active.has('code_explorer')}
+                    onCheckedChange={() => toggleTab('code_explorer')}
+                  >
+                    <span className="flex-1">Code Explorer</span>
+                    <span className="ml-auto text-xs text-muted-foreground">{getKeybinding("panel.codeExplorer")}</span>
+                  </DropdownMenuCheckboxItem>
+                  <DropdownMenuCheckboxItem
                     checked={active.has('peviewer')}
                     onCheckedChange={() => toggleTab('peviewer')}
                   >

@@ -5,6 +5,14 @@ import { navigateTo } from "./test-fixtures";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+/** Module entry as returned by the `get_session_modules` command. */
+export interface ModuleData {
+  name: string;
+  base_address: string;
+  size: number;
+  path: string;
+}
+
 /** Absolute path to a built source-debugging fixture exe (see e2e/fixtures/build.mjs). */
 export function fixtureExe(name: "hello_c" | "hello_asm"): string {
   return path.resolve(__dirname, "..", "fixtures", "bin", `${name}.exe`);

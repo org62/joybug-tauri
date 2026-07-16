@@ -1,5 +1,5 @@
 import { test, expect } from "../helpers/test-fixtures";
-import { createAndStartSession, cleanupSession, invoke } from "../helpers/session-helpers";
+import { createAndStartSession, cleanupSession, invoke, type ModuleData } from "../helpers/session-helpers";
 import {
   waitForPaused,
   configureMinimalStopSettings,
@@ -11,13 +11,6 @@ import {
   waitForCapturedEvent,
 } from "../helpers/event-helpers";
 import type { Page } from "@playwright/test";
-
-interface ModuleData {
-  name: string;
-  base_address: string;
-  size: number;
-  path: string;
-}
 
 interface StringEntry {
   address: string;

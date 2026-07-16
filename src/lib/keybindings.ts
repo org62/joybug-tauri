@@ -23,6 +23,7 @@ export type ActionId =
   | "panel.memoryScanner"
   | "panel.pointerScan"
   | "panel.strings"
+  | "panel.codeExplorer"
   | "panel.peViewer"
   | "panel.closeTab"
   // Navigation (global)
@@ -73,6 +74,7 @@ export const ACTION_REGISTRY: Record<ActionId, ActionMeta> = {
   "panel.memoryScanner": { label: "Toggle Memory Scanner", category: "Panels", description: "Show or hide the Memory Scanner panel", scope: "session" },
   "panel.pointerScan":   { label: "Toggle Pointer Scan",   category: "Panels", description: "Show or hide the Pointer Scan panel",   scope: "session" },
   "panel.strings":       { label: "Toggle Strings",        category: "Panels", description: "Show or hide the Strings panel",        scope: "session" },
+  "panel.codeExplorer":  { label: "Toggle Code Explorer",  category: "Panels", description: "Show or hide the Code Explorer panel",  scope: "session" },
   "panel.peViewer":      { label: "Toggle PE Viewer",      category: "Panels", description: "Show or hide the PE Viewer panel",      scope: "session" },
   "panel.closeTab":      { label: "Close Active Tab",      category: "Panels", description: "Close the currently focused dock tab",     scope: "session" },
 
@@ -111,6 +113,7 @@ const SHARED_BINDINGS: Record<string, ChordString> = {
   "panel.memoryRegions": "ctrl+g",
   "panel.breakpoints":   "ctrl+b",
   "panel.memorySearch":  "ctrl+shift+f",
+  "panel.codeExplorer":  "ctrl+shift+e",
   "panel.peViewer":      "ctrl+p",
   "panel.closeTab":      "ctrl+w",
 

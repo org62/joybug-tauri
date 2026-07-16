@@ -1,5 +1,6 @@
 mod bookmarks;
 mod breakpoints;
+mod coverage;
 mod disassembly;
 mod emulation;
 mod logging;
@@ -16,6 +17,7 @@ mod window_state;
 
 pub use bookmarks::*;
 pub use breakpoints::*;
+pub use coverage::*;
 pub use disassembly::*;
 pub use emulation::*;
 pub use logging::*;
