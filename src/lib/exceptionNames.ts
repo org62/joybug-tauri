@@ -1,0 +1,39 @@
+// Symbolic names for common Windows exception / NTSTATUS codes, so the UI can
+// show "EXCEPTION_SINGLE_STEP" instead of a bare 0x80000004.
+
+export const EXCEPTION_SINGLE_STEP = 0x80000004;
+
+const EXCEPTION_NAMES: Record<number, string> = {
+  0x80000001: "EXCEPTION_GUARD_PAGE",
+  0x80000002: "EXCEPTION_DATATYPE_MISALIGNMENT",
+  0x80000003: "EXCEPTION_BREAKPOINT",
+  [EXCEPTION_SINGLE_STEP]: "EXCEPTION_SINGLE_STEP",
+  0xc0000005: "EXCEPTION_ACCESS_VIOLATION",
+  0xc0000006: "EXCEPTION_IN_PAGE_ERROR",
+  0xc000001d: "EXCEPTION_ILLEGAL_INSTRUCTION",
+  0xc0000025: "EXCEPTION_NONCONTINUABLE_EXCEPTION",
+  0xc0000026: "EXCEPTION_INVALID_DISPOSITION",
+  0xc000008c: "EXCEPTION_ARRAY_BOUNDS_EXCEEDED",
+  0xc000008d: "EXCEPTION_FLT_DENORMAL_OPERAND",
+  0xc000008e: "EXCEPTION_FLT_DIVIDE_BY_ZERO",
+  0xc000008f: "EXCEPTION_FLT_INEXACT_RESULT",
+  0xc0000090: "EXCEPTION_FLT_INVALID_OPERATION",
+  0xc0000091: "EXCEPTION_FLT_OVERFLOW",
+  0xc0000092: "EXCEPTION_FLT_STACK_CHECK",
+  0xc0000093: "EXCEPTION_FLT_UNDERFLOW",
+  0xc0000094: "EXCEPTION_INT_DIVIDE_BY_ZERO",
+  0xc0000095: "EXCEPTION_INT_OVERFLOW",
+  0xc0000096: "EXCEPTION_PRIV_INSTRUCTION",
+  0xc00000fd: "EXCEPTION_STACK_OVERFLOW",
+  0xe06d7363: "EXCEPTION_MSVC_CPP", // C++ EH throw
+};
+
+/** Format an exception code as 0x-padded hex (e.g. 0xC0000005). */
+export function formatExceptionCode(code: number): string {
+  return `0x${code.toString(16).padStart(8, "0").toUpperCase()}`;
+}
+
+/** Symbolic name for a code if known, otherwise its hex representation. */
+export function exceptionName(code: number): string {
+  return EXCEPTION_NAMES[code] ?? formatExceptionCode(code);
+}

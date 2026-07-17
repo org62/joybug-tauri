@@ -288,11 +288,6 @@ pub fn run_debug_session(
                 &format!("Received debug event: {}", event),
                 Some(session.state.lock().unwrap().id.clone()),
             );
-            let is_internal_single_step = matches!(
-                event,
-                joybug2::protocol_io::DebugEvent::Exception { code, first_chance: true, .. }
-                    if *code == 0x80000004
-            );
             // Toast for events here; Output/DllLoaded/DllUnloaded are toasted separately
             // below / above (with richer messages). The frontend dispatcher coalesces any
             // bursts (e.g. thousands of thread-creates) into a single summary toast.
@@ -301,7 +296,7 @@ pub fn run_debug_session(
                 joybug2::protocol_io::DebugEvent::Output { .. }
                     | joybug2::protocol_io::DebugEvent::DllLoaded { .. }
                     | joybug2::protocol_io::DebugEvent::DllUnloaded { .. }
-            ) && !is_internal_single_step {
+            ) {
                 crate::ui_logger::toast_info(handle, &format!("{}", event));
             }
 
@@ -389,8 +384,11 @@ pub fn run_debug_session(
                     joybug2::protocol_io::DebugEvent::DllLoaded { .. } => settings.stop_on_dll_load,
                     joybug2::protocol_io::DebugEvent::DllUnloaded { .. } => settings.stop_on_dll_unload,
                     joybug2::protocol_io::DebugEvent::InitialBreakpoint { .. } => settings.stop_on_initial_breakpoint,
-                    joybug2::protocol_io::DebugEvent::Exception { code, first_chance: true, .. }
-                        if *code == 0x80000004 => false,
+                    // A single-step exception (0x80000004) reaching the client is
+                    // always program-raised: debugger-initiated steps surface as
+                    // StepComplete and internal re-arms are consumed server-side. So
+                    // it flows through the normal per-code exception-rule path below
+                    // (default: pause), letting the user choose Go (Pass Exception).
                     joybug2::protocol_io::DebugEvent::Exception { code, first_chance, .. } => {
                         // Check per-code exception rules
                         let mut found = false;

@@ -2,7 +2,8 @@ import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { ArrowLeft, Square, Play, MoveRight, CornerDownRight, CornerUpLeft, Pause, Plus, ChevronDown, Unplug, Loader2 } from 'lucide-react';
+import { ArrowLeft, Square, Play, MoveRight, CornerDownRight, CornerUpLeft, Pause, Plus, ChevronDown, Unplug, Loader2, AlertTriangle } from 'lucide-react';
+import { exceptionName, formatExceptionCode, EXCEPTION_SINGLE_STEP } from '@/lib/exceptionNames';
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -11,7 +12,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { DockWindowsMenu, DockWindowsMenuGroup } from '@/components/DockWindowsMenu';
 import { SESSION_TAB_DEFS, SESSION_TAB_CATEGORIES } from '@/lib/sessionTabs';
-import { DebugSession, SessionStatus } from '@/contexts/SessionContext';
+import { DebugEventInfo, DebugSession, SessionStatus } from '@/contexts/SessionContext';
 import { useKeybindingContext } from '@/contexts/KeybindingContext';
 
 export interface SessionHeaderProps {
@@ -40,6 +41,29 @@ export interface SessionHeaderProps {
   /** Number of modules whose symbols are still downloading (0 hides the indicator). */
   symbolLoadingCount?: number;
 }
+
+const ExceptionBadge: React.FC<{ event: DebugEventInfo | null }> = ({ event }) => {
+  if (event?.event_type !== "Exception" || event.exception_code == null) return null;
+  const code = event.exception_code;
+  const name = exceptionName(code);
+  const secondChance = event.exception_first_chance === false;
+  // A single-step exception reaching us is always program-raised — the
+  // debugger's own steps surface as StepComplete, never as an Exception.
+  // Spell that out so the user isn't misled into thinking they stepped.
+  const isProgramSingleStep = code === EXCEPTION_SINGLE_STEP;
+  const label = isProgramSingleStep
+    ? `${name} · raised by program`
+    : `${name}${secondChance ? " · second-chance" : ""}`;
+  const title = isProgramSingleStep
+    ? "The debuggee raised this single-step exception itself — this is NOT a debugger step. Use Go ▸ Pass Exception to deliver it to the program's own handler, or Go ▸ Handle Exception to swallow it."
+    : `${name} (${formatExceptionCode(code)}) — ${secondChance ? "second" : "first"}-chance`;
+  return (
+    <Badge variant="destructive" size="xs" title={title}>
+      <AlertTriangle className="h-3 w-3 mr-1" />
+      {label}
+    </Badge>
+  );
+};
 
 export const SessionHeader: React.FC<SessionHeaderProps> = ({
   session,
@@ -104,6 +128,7 @@ export const SessionHeader: React.FC<SessionHeaderProps> = ({
         <div className="flex items-center gap-3">
           <h1 className="text-xl font-bold">{session.name}</h1>
           {getStatusBadge(session.status)}
+          <ExceptionBadge event={session.current_event} />
           {symbolLoadingCount > 0 && (
             <Badge variant="outline" size="xs" title="Symbol downloads in progress">
               <Loader2 className="h-3 w-3 mr-1 animate-spin" />
