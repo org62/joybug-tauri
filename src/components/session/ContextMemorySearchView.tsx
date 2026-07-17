@@ -8,6 +8,7 @@ import { formatBytesAsHex } from '@/lib/hexUtils';
 import { cn, CHANGED_VALUE_CLASS } from '@/lib/utils';
 import { useLiveRefresh } from '@/hooks/useLiveRefresh';
 import { useContextMenu } from '@/hooks/useContextMenu';
+import { usePanelFocus } from '@/hooks/usePanelFocus';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { DockPanel, PanelToolbar } from '@/components/ui/panel';
@@ -81,6 +82,7 @@ const SearchResultRow = ({
 
 export const ContextMemorySearchView = () => {
   const sessionData = useSessionContext();
+  const focusRef = usePanelFocus<HTMLInputElement>('memory_search');
   const [searchTerm, setSearchTerm] = useState('');
   const [searchMode, setSearchMode] = useState<SearchMode>('hex');
   const [addresses, setAddresses] = useState<string[]>([]);
@@ -361,6 +363,7 @@ export const ContextMemorySearchView = () => {
       <PanelToolbar stack>
         <div className="flex gap-1">
           <Input
+            ref={focusRef}
             type="text"
             inputSize="xs"
             placeholder={

@@ -1,5 +1,5 @@
 import { test, expect } from "../helpers/test-fixtures";
-import { createAndStartSession, cleanupSession, invoke, type ModuleData } from "../helpers/session-helpers";
+import { createAndStartSession, cleanupSession, invoke, goToWindow, type ModuleData } from "../helpers/session-helpers";
 import {
   waitForPaused,
   configureMinimalStopSettings,
@@ -136,11 +136,10 @@ test.describe("Strings View", () => {
       // The longest strings come first; cmd.exe surely has one > 5 chars.
       expect((res.strings as StringEntry[])[0].length).toBeGreaterThan(5);
 
-      // 6. UI smoke: the Strings view is registered in the dock and its toolbar
-      // ("Min len" is unique to this view) is mounted and rendering. (The tab lives
-      // in the center panel's overflow, so we assert it's attached rather than
-      // fighting rc-dock to focus it.)
-      await expect(page.getByText("Min len", { exact: false }).first()).toBeAttached({ timeout: 10_000 });
+      // 6. UI smoke: opening the Strings window mounts its toolbar ("Min len" is
+      // unique to this view). Not in the default layout, so ask for it.
+      await goToWindow(page, "Strings");
+      await expect(page.getByText("Min len", { exact: false }).first()).toBeVisible({ timeout: 10_000 });
 
       await invoke(page, "request_string_scan_reset", { sessionId, resultsPath });
       await cleanupSession(page, sessionId);

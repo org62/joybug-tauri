@@ -1,9 +1,10 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useSessionContext } from '@/contexts/SessionContext';
 import { useModuleInfo } from '@/hooks/useModuleInfo';
+import { useNavigationChannel } from '@/hooks/useNavigationChannel';
+import { peviewerModuleNavigation } from '@/lib/navigationStore';
 import { ModuleInfoView } from '@/components/ModuleInfoView';
 
-const SELECT_MODULE_EVENT = 'select-peviewer-module';
 const STORAGE_KEY = 'peviewer-selected-module';
 
 export const ContextModuleInfoView: React.FC<{
@@ -26,17 +27,9 @@ export const ContextModuleInfoView: React.FC<{
     sessionStorage.setItem(STORAGE_KEY, base);
   }, []);
 
-  // Listen for external module selection events (from modules list click)
-  useEffect(() => {
-    const handler = (e: Event) => {
-      const detail = (e as CustomEvent<string>).detail;
-      if (detail) {
-        handleModuleSelect(detail);
-      }
-    };
-    window.addEventListener(SELECT_MODULE_EVENT, handler);
-    return () => window.removeEventListener(SELECT_MODULE_EVENT, handler);
-  }, [handleModuleSelect]);
+  // External module selection (modules list click) — consumed on mount too, so
+  // a selection made while this tab was closed lands once the tab opens.
+  useNavigationChannel(peviewerModuleNavigation, handleModuleSelect);
 
   // Clear selection when session ends
   useEffect(() => {

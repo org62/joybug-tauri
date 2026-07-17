@@ -1,5 +1,5 @@
 import { test, expect } from "../helpers/test-fixtures";
-import { createAndStartSession, cleanupSession, invoke } from "../helpers/session-helpers";
+import { createAndStartSession, cleanupSession, invoke, goToWindow } from "../helpers/session-helpers";
 import {
   waitForPaused,
   configureMinimalStopSettings,
@@ -113,7 +113,8 @@ test.describe("Type System", () => {
       expect(kuserBytes.length).toBe(64);
 
       // UI smoke: open the Types tab and overlay KUSER via the quick button.
-      await page.getByText("Types", { exact: true }).first().click();
+      // Not in the default layout, so ask for it rather than clicking a tab header.
+      await goToWindow(page, "Types");
       await page.getByRole("button", { name: "KUSER" }).first().click();
       await expect(page.getByText("NtSystemRoot", { exact: false }).first()).toBeVisible({
         timeout: 15_000,

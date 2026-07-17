@@ -1,6 +1,14 @@
 import React from "react";
 import { LayoutData, LayoutBase, TabData } from "rc-dock";
 
+/** Where a tab should land when it is opened into a layout that lacks it. */
+export interface TabPlacement {
+  /** A panel already holding one of these wins over `homePanelId`. */
+  siblingTabIds?: string[];
+  /** Panel id seeded in `initialLayout`. */
+  homePanelId?: string;
+}
+
 export interface DockingConfig {
   storagePrefix?: string;
   initialLayout: LayoutData;
@@ -8,6 +16,8 @@ export interface DockingConfig {
   tabContentMap: Record<string, React.ReactElement>;
   tabContentFactory?: (tabId: string) => React.ReactElement | null;
   onTabsChanged?: (activeTabIds: string[]) => void;
+  /** Resolve where a tab belongs. Omit to always append to the first panel. */
+  placement?: (tabId: string) => TabPlacement | undefined;
 }
 
 export interface DockingOperations {
@@ -101,15 +111,31 @@ function activateTab(dockbox: any, tabId: string) {
   walk(dockbox);
 }
 
-/** Add a tab to the first panel found in the layout and activate it */
-function addTabToFirstPanel(dockbox: any, tabId: string) {
-  let panel: any;
-  const findPanel = (box: any) => {
-    if (panel || !box) return;
-    if (box.tabs) { panel = box; return; }
-    if (box.children) box.children.forEach(findPanel);
+/** Find the first panel (box holding `tabs`) matching the predicate, or null. */
+function findPanel(dockbox: any, match: (panel: any) => boolean): any | null {
+  let result: any = null;
+  const walk = (box: any) => {
+    if (result || !box) return;
+    if (box.tabs && match(box)) { result = box; return; }
+    if (box.children) box.children.forEach(walk);
   };
-  findPanel(dockbox);
+  walk(dockbox);
+  return result;
+}
+
+/**
+ * Add a tab to the best available panel and activate it. Placement order:
+ * a panel already holding a sibling (so a re-opened tab rejoins its family
+ * wherever the user dragged it), then the tab's declared home panel, then the
+ * first panel as a last resort. Callers that pass no placement get that last
+ * resort — the historical behaviour.
+ */
+function addTabToBestPanel(dockbox: any, tabId: string, placement?: TabPlacement) {
+  const { siblingTabIds, homePanelId } = placement ?? {};
+  const panel =
+    (siblingTabIds?.length ? findPanel(dockbox, (p) => p.tabs.some((t: any) => siblingTabIds.includes(t.id))) : null) ??
+    (homePanelId ? findPanel(dockbox, (p) => p.id === homePanelId) : null) ??
+    findPanel(dockbox, () => true);
 
   if (panel?.tabs) {
     panel.tabs.push({ id: tabId });
@@ -158,6 +184,7 @@ export function useDocking(config: DockingConfig): DockingState & DockingOperati
     tabContentMap,
     tabContentFactory,
     onTabsChanged,
+    placement,
   } = config;
 
   const LAYOUT_STORAGE_KEY = `${storagePrefix}.layout`;
@@ -350,32 +377,12 @@ export function useDocking(config: DockingConfig): DockingState & DockingOperati
       // Use getSerializableLayout to avoid circular references from React elements
       const newLayout = JSON.parse(JSON.stringify(getSerializableLayout(currentLayout)));
 
-      // Try to find existing panel with same type tabs, or any panel
-      let targetPanel: any = null;
-      const findPanel = (box: any) => {
-        if (targetPanel) return;
-        if (box.tabs) {
-          // Prefer panel that already has tabs of this type
-          const hasTypeTab = box.tabs.some((t: any) => t.id === type || t.id?.startsWith(`${type}-`));
-          if (hasTypeTab || !targetPanel) {
-            targetPanel = box;
-          }
-        }
-        if (box.children) {
-          box.children.forEach(findPanel);
-        }
-      };
-      findPanel(newLayout.dockbox);
-
-      if (targetPanel?.tabs) {
-        targetPanel.tabs.push({ id: newId });
-        targetPanel.activeId = newId;
-      } else {
-        if (!newLayout.dockbox.children) {
-          newLayout.dockbox.children = [];
-        }
-        newLayout.dockbox.children.push({ tabs: [{ id: newId }], activeId: newId });
-      }
+      // Land next to a tab of the same type; failing that, the type's home panel.
+      const siblingTabIds = Array.from(existingIds).map((n) => (n === 0 ? type : `${type}-${n}`));
+      addTabToBestPanel(newLayout.dockbox, newId, {
+        siblingTabIds,
+        homePanelId: placement?.(type)?.homePanelId,
+      });
 
       localStorage.setItem(LAYOUT_STORAGE_KEY, JSON.stringify(newLayout));
 
@@ -383,7 +390,7 @@ export function useDocking(config: DockingConfig): DockingState & DockingOperati
     });
 
     return newId;
-  }, [layout, LAYOUT_STORAGE_KEY]);
+  }, [layout, LAYOUT_STORAGE_KEY, placement]);
 
   const resetLayout = React.useCallback(() => {
     setLayout(initialLayout);
@@ -435,7 +442,7 @@ export function useDocking(config: DockingConfig): DockingState & DockingOperati
       } else if (exists) {
         activateTab(newLayout.dockbox, tabId);
       } else {
-        addTabToFirstPanel(newLayout.dockbox, tabId);
+        addTabToBestPanel(newLayout.dockbox, tabId, placement?.(tabId));
       }
 
       localStorage.setItem(LAYOUT_STORAGE_KEY, JSON.stringify(newLayout));
@@ -446,7 +453,7 @@ export function useDocking(config: DockingConfig): DockingState & DockingOperati
 
       return newLayout;
     });
-  }, [LAYOUT_STORAGE_KEY, onTabsChanged]);
+  }, [LAYOUT_STORAGE_KEY, onTabsChanged, placement]);
 
   const showTab = React.useCallback((tabId: string) => {
     setLayout((currentLayout) => {
@@ -464,7 +471,7 @@ export function useDocking(config: DockingConfig): DockingState & DockingOperati
       if (exists) {
         activateTab(newLayout.dockbox, tabId);
       } else {
-        addTabToFirstPanel(newLayout.dockbox, tabId);
+        addTabToBestPanel(newLayout.dockbox, tabId, placement?.(tabId));
       }
 
       localStorage.setItem(LAYOUT_STORAGE_KEY, JSON.stringify(newLayout));
@@ -475,7 +482,7 @@ export function useDocking(config: DockingConfig): DockingState & DockingOperati
 
       return newLayout;
     });
-  }, [LAYOUT_STORAGE_KEY, onTabsChanged]);
+  }, [LAYOUT_STORAGE_KEY, onTabsChanged, placement]);
 
   const onLayoutChange = React.useCallback(
     (

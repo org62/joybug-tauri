@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { useTypes, type UseTypes } from "@/hooks/useTypes";
 import { useLiveRefresh } from "@/hooks/useLiveRefresh";
 import { usePopoverDismiss } from "@/hooks/usePopoverDismiss";
+import { usePanelFocus } from "@/hooks/usePanelFocus";
 import { cn, CHANGED_VALUE_CLASS } from "@/lib/utils";
 import type { RegisterContext, SymbolResolver } from "@/lib/hexUtils";
 import { AddressExpressionInput } from "@/components/AddressExpressionInput";
@@ -49,6 +50,8 @@ export interface TypesViewProps {
   registers: RegisterContext;
   resolveSymbol: SymbolResolver;
   onNavigateToMemory?: (address: string) => void;
+  /** Dock tab id — "Go to" that tab focuses the type-name input. */
+  focusTabId?: string;
 }
 
 export const TypesView = ({
@@ -58,6 +61,7 @@ export const TypesView = ({
   registers,
   resolveSymbol,
   onNavigateToMemory,
+  focusTabId,
 }: TypesViewProps) => {
   const ts = useTypes(sessionId);
 
@@ -105,6 +109,7 @@ export const TypesView = ({
           registers={registers}
           resolveSymbol={resolveSymbol}
           onNavigateToMemory={onNavigateToMemory}
+          focusTabId={focusTabId}
         />
       ) : (
         <CustomMode ts={ts} customTypes={customTypes} onChanged={reloadCustom} />
@@ -125,6 +130,7 @@ interface InspectProps {
   registers: RegisterContext;
   resolveSymbol: SymbolResolver;
   onNavigateToMemory?: (address: string) => void;
+  focusTabId?: string;
 }
 
 function InspectMode({
@@ -135,7 +141,9 @@ function InspectMode({
   registers,
   resolveSymbol,
   onNavigateToMemory,
+  focusTabId,
 }: InspectProps) {
+  const focusRef = usePanelFocus<HTMLInputElement>(focusTabId);
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<TypeSummary[]>([]);
   const [showResults, setShowResults] = useState(false);
@@ -252,6 +260,7 @@ function InspectMode({
       <PanelToolbar stack>
         <div ref={anchorRef}>
           <Input
+            ref={focusRef}
             inputSize="xs"
             placeholder={isActive ? "Type name (e.g. _PEB, _TEB)…" : "Open, attach, or run a process"}
             value={query}

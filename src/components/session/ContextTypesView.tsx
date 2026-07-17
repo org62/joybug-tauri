@@ -24,6 +24,7 @@ export const ContextTypesView = () => {
       registers={registers}
       resolveSymbol={resolveSymbol}
       onNavigateToMemory={sessionData.onNavigateToMemory}
+      focusTabId="types"
     />
   );
 };

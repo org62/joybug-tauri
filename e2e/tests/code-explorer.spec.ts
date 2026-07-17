@@ -1,5 +1,5 @@
 import { test, expect } from "../helpers/test-fixtures";
-import { createAndStartSession, cleanupSession, invoke, type ModuleData } from "../helpers/session-helpers";
+import { createAndStartSession, cleanupSession, invoke, goToWindow, type ModuleData } from "../helpers/session-helpers";
 import { waitForPaused, goAndWaitForPause } from "../helpers/wait-helpers";
 import type { Page } from "@playwright/test";
 
@@ -39,16 +39,10 @@ test.describe("Code Explorer", () => {
     try {
       await waitForPaused(page, sessionId);
 
-      // code_explorer is in the default dock layout (the fixture resets any
-      // persisted layout, so the default is what renders).
+      // Code Explorer is not in the default layout — open it on demand.
+      await goToWindow(page, "Code Explorer");
       const ceTab = page.locator("[id$='-tab-code_explorer']").first();
-
-      // Activate the tab; rc-dock can re-assert the default active tab on
-      // re-render, so click until aria-selected sticks.
-      await expect(async () => {
-        await ceTab.click({ force: true });
-        await expect(ceTab).toHaveAttribute("aria-selected", "true", { timeout: 1_000 });
-      }).toPass({ timeout: 10_000 });
+      await expect(ceTab).toHaveAttribute("aria-selected", "true", { timeout: 5_000 });
 
       // The panel's empty-state prompt should render.
       await expect(page.getByText(/Pick a module and click Start/i)).toBeVisible({ timeout: 5_000 });

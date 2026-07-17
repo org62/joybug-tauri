@@ -6,6 +6,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { VirtualizedList } from '@/components/ui/virtualized-list';
 import { TruncatedSymbol } from '@/components/ui/truncated-symbol';
 import { EmptyState } from '@/components/ui/empty-state';
+import { usePanelFocus } from '@/hooks/usePanelFocus';
 
 /** The fields every symbol source (session or PE file) returns per hit. */
 export interface SymbolSearchItem {
@@ -36,6 +37,8 @@ interface SymbolSearchViewProps<T extends SymbolSearchItem> {
   onRowContextMenu?: (e: React.MouseEvent, item: T) => void;
   /** Clears results whenever this changes (e.g. session id / file path). */
   resetKey?: unknown;
+  /** Dock tab id — "Go to" that tab focuses the search input. Omit outside a dock tab. */
+  focusTabId?: string;
   /** Extra content rendered inside the panel (e.g. a context menu). */
   children?: ReactNode;
 }
@@ -47,8 +50,9 @@ interface SymbolSearchViewProps<T extends SymbolSearchItem> {
  */
 export function SymbolSearchView<T extends SymbolSearchItem>({
   searchSymbols, enabled, placeholder, idleTitle, idleSubtitle, formatAddress,
-  onSelect, onRowContextMenu, resetKey, children,
+  onSelect, onRowContextMenu, resetKey, focusTabId, children,
 }: SymbolSearchViewProps<T>) {
+  const focusRef = usePanelFocus<HTMLInputElement>(focusTabId);
   const [term, setTerm] = useState('');
   const [symbols, setSymbols] = useState<T[]>([]);
   const [searching, setSearching] = useState(false);
@@ -118,6 +122,7 @@ export function SymbolSearchView<T extends SymbolSearchItem>({
     <DockPanel>
       <PanelToolbar stack>
         <Input
+          ref={focusRef}
           inputSize="xs"
           className="w-full"
           placeholder={placeholder}

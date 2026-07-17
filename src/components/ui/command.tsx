@@ -31,14 +31,18 @@ function CommandDialog({
   children,
   title = "Command Palette",
   description = "Search for a command to run...",
+  onCloseAutoFocus,
   ...props
 }: React.ComponentProps<typeof Dialog> & {
   title?: string
   description?: string
+  /** Radix restores focus to the previously-focused element on close. Pass
+   *  `(e) => e.preventDefault()` when a command focuses something itself. */
+  onCloseAutoFocus?: React.ComponentProps<typeof DialogContent>["onCloseAutoFocus"]
 }) {
   return (
     <Dialog {...props}>
-      <DialogContent className="overflow-hidden p-0 top-[20%] translate-y-0 max-h-[calc(100vh-20%-1rem)] flex flex-col" showCloseButton={false}>
+      <DialogContent className="overflow-hidden p-0 top-[20%] translate-y-0 max-h-[calc(100vh-20%-1rem)] flex flex-col" showCloseButton={false} onCloseAutoFocus={onCloseAutoFocus}>
         <DialogHeader className="sr-only">
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>{description}</DialogDescription>

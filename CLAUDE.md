@@ -101,10 +101,10 @@ The joybug2 external crate has integration tests (`external/joybug2/tests/`) tha
 
 ### Adding a New Dock Tab
 1. Build the view as `<DockPanel><PanelToolbar/><PanelBody/></DockPanel>` (from `@/components/ui/panel`); use `size="xs"` controls and `<ContextMenu>` for right-click menus (see UI layout primitives above)
-2. Add tab definition and initial placement in `src/lib/dockingConfigs.tsx`
-3. Add dynamic content rendering in `SessionDocked.tsx`
-4. Add menu entry in `SessionHeader.tsx` (Windows menu)
-5. Add keyboard shortcut in `SessionDocked.tsx` if needed
+2. Add a row to `SESSION_TAB_DEFS` in `src/lib/sessionTabs.tsx` (id, title, category, home panel, icon, palette keywords, optional keybinding action). The Windows menu, command palette, and panel chords all derive from this table.
+3. Add the content element to `dynamicTabContent` in `SessionDocked.tsx` — it's typed against the registry, so forgetting this is a compile error
+4. If the tab gets a chord, add the `panel.*` action in `src/lib/keybindings.ts`
+5. Optionally register the view's primary input with `usePanelFocus("<tab id>")` so "Go to X" focuses it
 6. Run `npm run lint` — the guardrails reject raw `overflow-*` scroll classes and raw `<button>` in views
 
 ### Adding a New UICommand

@@ -142,6 +142,7 @@ export const ContextStringsView = () => {
       columnWidthsKey="stringsView"
       onNavigateToMemory={onNavigateToMemory}
       onNavigateToDisassembly={onNavigateToDisassembly}
+      focusTabId="strings"
     />
   );
 };

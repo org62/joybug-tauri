@@ -103,7 +103,11 @@ export function CommandPalette() {
   };
 
   return (
-    <CommandDialog open={isOpen} onOpenChange={handleOpenChange}>
+    // Radix restores focus to whatever was focused before the palette opened.
+    // "Go to X" focuses the target panel's input as it closes, so let the
+    // command's own focus win; otherwise focus falls to the body, which is
+    // where it effectively went before this existed.
+    <CommandDialog open={isOpen} onOpenChange={handleOpenChange} onCloseAutoFocus={(e) => e.preventDefault()}>
       {subInput ? (
         <div className="flex flex-col">
           <div className="flex items-center gap-1.5 border-b px-3 py-2 text-xs text-muted-foreground">

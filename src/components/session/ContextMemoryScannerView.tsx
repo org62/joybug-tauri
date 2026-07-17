@@ -3,6 +3,7 @@ import { isTargetLive } from '@/lib/sessionHelpers';
 import { cn, CHANGED_VALUE_CLASS } from '@/lib/utils';
 import { useMemoryScanner, FIRST_SCAN_COMPARE_TYPES, NEXT_SCAN_COMPARE_TYPES, needsValue, needsSecondValue, ScanValueType, ScanCompareType } from '@/hooks/useMemoryScanner';
 import { useContextMenu } from '@/hooks/useContextMenu';
+import { usePanelFocus } from '@/hooks/usePanelFocus';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { DockPanel, PanelToolbar } from '@/components/ui/panel';
@@ -39,6 +40,7 @@ const COMPARE_LABELS: Record<ScanCompareType, string> = {
 
 export const ContextMemoryScannerView = () => {
   const sessionData = useSessionContext();
+  const focusRef = usePanelFocus<HTMLInputElement>('memory_scanner');
   const canUse = sessionData.canUseMemoryOps;
   // Live = the target keeps running (invasive Running or non-invasive Open), so
   // scan values must be polled; Paused is static and refreshes only after a step.
@@ -202,6 +204,7 @@ export const ContextMemoryScannerView = () => {
           </Select>
           {showValue && (
             <Input
+              ref={focusRef}
               type="text"
               inputSize="xs"
               placeholder={showValue2 ? 'Min' : isDeltaCompare ? 'Amount' : 'Value (dec or 0x hex)'}

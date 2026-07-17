@@ -17,6 +17,7 @@ import {
   Select, SelectTrigger, SelectValue, SelectContent, SelectItem,
 } from '@/components/ui/select';
 import { Type, Loader2, AlertTriangle, Search } from 'lucide-react';
+import { usePanelFocus } from '@/hooks/usePanelFocus';
 
 interface StringsPanelProps {
   scan: StringScanController;
@@ -36,6 +37,8 @@ interface StringsPanelProps {
   onNavigateToMemory?: (address: string) => void;
   memoryNavLabel?: string;
   onNavigateToDisassembly?: (address: string) => void;
+  /** Dock tab id — "Go to" that tab focuses the Contains input. Omit outside a dock tab. */
+  focusTabId?: string;
 }
 
 /**
@@ -47,8 +50,10 @@ interface StringsPanelProps {
 export const StringsPanel = ({
   scan, scopeControls, onScan, scanDisabled, controlsDisabled = false, unavailable,
   columnWidthsKey, formatAddress, onNavigateToMemory, memoryNavLabel = 'Go to Memory View',
-  onNavigateToDisassembly,
+  onNavigateToDisassembly, focusTabId,
 }: StringsPanelProps) => {
+  // Contains, not the post-scan Filter: it's the input that's always present.
+  const focusRef = usePanelFocus<HTMLInputElement>(focusTabId);
   const { contextMenu, openContextMenu, closeContextMenu } = useContextMenu<{ entry: StringEntry }>();
   const { columnWidths, handleColumnResizeStart } = useColumnWidths(columnWidthsKey, {
     address: 150, encoding: 55, length: 55,
@@ -170,6 +175,7 @@ export const StringsPanel = ({
             />
           </div>
           <Input
+            ref={focusRef}
             type="text"
             inputSize="xs"
             placeholder="Contains (optional)"

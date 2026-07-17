@@ -5,7 +5,7 @@ export type ActionId =
   | "debug.stepIn"
   | "debug.stepOver"
   | "debug.stepOut"
-  // Panel toggles
+  // Panels — these navigate to a panel; only panel.closeTab closes one
   | "panel.disassembly"
   | "panel.source"
   | "panel.registers"
@@ -57,25 +57,25 @@ export const ACTION_REGISTRY: Record<ActionId, ActionMeta> = {
   "debug.stepOver":  { label: "Step Over",         category: "Debug",    description: "Step over the next instruction",              scope: "session" },
   "debug.stepOut":   { label: "Step Out",          category: "Debug",    description: "Step out of the current function",            scope: "session" },
 
-  "panel.disassembly":   { label: "Toggle Disassembly",    category: "Panels", description: "Show or hide the Disassembly panel",    scope: "session" },
-  "panel.source":        { label: "Toggle Source",         category: "Panels", description: "Show or hide the Source panel",         scope: "session" },
-  "panel.registers":     { label: "Toggle Registers",      category: "Panels", description: "Show or hide the Registers panel",      scope: "session" },
-  "panel.modules":       { label: "Toggle Modules",        category: "Panels", description: "Show or hide the Modules panel",        scope: "session" },
-  "panel.threads":       { label: "Toggle Threads",        category: "Panels", description: "Show or hide the Threads panel",        scope: "session" },
-  "panel.callstack":     { label: "Toggle Call Stack",     category: "Panels", description: "Show or hide the Call Stack panel",     scope: "session" },
-  "panel.symbols":       { label: "Toggle Symbols",        category: "Panels", description: "Show or hide the Symbols panel",        scope: "session" },
-  "panel.types":         { label: "Toggle Types",          category: "Panels", description: "Show or hide the Types panel",          scope: "session" },
+  "panel.disassembly":   { label: "Go to Disassembly",    category: "Panels", description: "Open and focus the Disassembly panel",    scope: "session" },
+  "panel.source":        { label: "Go to Source",         category: "Panels", description: "Open and focus the Source panel",         scope: "session" },
+  "panel.registers":     { label: "Go to Registers",      category: "Panels", description: "Open and focus the Registers panel",      scope: "session" },
+  "panel.modules":       { label: "Go to Modules",        category: "Panels", description: "Open and focus the Modules panel",        scope: "session" },
+  "panel.threads":       { label: "Go to Threads",        category: "Panels", description: "Open and focus the Threads panel",        scope: "session" },
+  "panel.callstack":     { label: "Go to Call Stack",     category: "Panels", description: "Open and focus the Call Stack panel",     scope: "session" },
+  "panel.symbols":       { label: "Go to Symbols",        category: "Panels", description: "Open and focus the Symbols panel",        scope: "session" },
+  "panel.types":         { label: "Go to Types",          category: "Panels", description: "Open and focus the Types panel",          scope: "session" },
   "panel.addMemory":     { label: "Add Memory Window",     category: "Panels", description: "Open a new Memory hex editor tab",      scope: "session" },
-  "panel.memoryRegions": { label: "Toggle Memory Regions", category: "Panels", description: "Show or hide the Memory Regions panel", scope: "session" },
-  "panel.breakpoints":   { label: "Toggle Breakpoints",    category: "Panels", description: "Show or hide the Breakpoints panel",    scope: "session" },
-  "panel.patches":       { label: "Toggle Patches",        category: "Panels", description: "Show or hide the Patches panel",        scope: "session" },
-  "panel.bookmarks":     { label: "Toggle Bookmarks",      category: "Panels", description: "Show or hide the Bookmarks panel",      scope: "session" },
-  "panel.memorySearch":  { label: "Toggle Memory Search",  category: "Panels", description: "Show or hide the Memory Search panel",  scope: "session" },
-  "panel.memoryScanner": { label: "Toggle Memory Scanner", category: "Panels", description: "Show or hide the Memory Scanner panel", scope: "session" },
-  "panel.pointerScan":   { label: "Toggle Pointer Scan",   category: "Panels", description: "Show or hide the Pointer Scan panel",   scope: "session" },
-  "panel.strings":       { label: "Toggle Strings",        category: "Panels", description: "Show or hide the Strings panel",        scope: "session" },
-  "panel.codeExplorer":  { label: "Toggle Code Explorer",  category: "Panels", description: "Show or hide the Code Explorer panel",  scope: "session" },
-  "panel.peViewer":      { label: "Toggle PE Viewer",      category: "Panels", description: "Show or hide the PE Viewer panel",      scope: "session" },
+  "panel.memoryRegions": { label: "Go to Memory Regions", category: "Panels", description: "Open and focus the Memory Regions panel", scope: "session" },
+  "panel.breakpoints":   { label: "Go to Breakpoints",    category: "Panels", description: "Open and focus the Breakpoints panel",    scope: "session" },
+  "panel.patches":       { label: "Go to Patches",        category: "Panels", description: "Open and focus the Patches panel",        scope: "session" },
+  "panel.bookmarks":     { label: "Go to Bookmarks",      category: "Panels", description: "Open and focus the Bookmarks panel",      scope: "session" },
+  "panel.memorySearch":  { label: "Go to Memory Search",  category: "Panels", description: "Open and focus the Memory Search panel",  scope: "session" },
+  "panel.memoryScanner": { label: "Go to Memory Scanner", category: "Panels", description: "Open and focus the Memory Scanner panel", scope: "session" },
+  "panel.pointerScan":   { label: "Go to Pointer Scan",   category: "Panels", description: "Open and focus the Pointer Scan panel",   scope: "session" },
+  "panel.strings":       { label: "Go to Strings",        category: "Panels", description: "Open and focus the Strings panel",        scope: "session" },
+  "panel.codeExplorer":  { label: "Go to Code Explorer",  category: "Panels", description: "Open and focus the Code Explorer panel",  scope: "session" },
+  "panel.peViewer":      { label: "Go to PE Viewer",      category: "Panels", description: "Open and focus the PE Viewer panel",      scope: "session" },
   "panel.closeTab":      { label: "Close Active Tab",      category: "Panels", description: "Close the currently focused dock tab",     scope: "session" },
 
   "palette.open":    { label: "Command Palette",  category: "Navigation", description: "Open the command palette",                 scope: "global" },

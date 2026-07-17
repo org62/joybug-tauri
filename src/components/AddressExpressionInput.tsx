@@ -9,6 +9,7 @@ import {
 } from "@/lib/hexUtils";
 import { toastError } from "@/lib/logger";
 import { cn } from "@/lib/utils";
+import { usePanelFocus } from "@/hooks/usePanelFocus";
 
 interface AddressExpressionInputProps {
   value: string;
@@ -27,6 +28,8 @@ interface AddressExpressionInputProps {
   /** Go-button content; defaults to "Go". */
   buttonLabel?: ReactNode;
   buttonTitle?: string;
+  /** Dock tab id — "Go to" that tab focuses this input. Omit outside a dock tab. */
+  focusTabId?: string;
 }
 
 /**
@@ -48,7 +51,9 @@ export function AddressExpressionInput({
   className,
   buttonLabel = "Go",
   buttonTitle = "Go to address",
+  focusTabId,
 }: AddressExpressionInputProps) {
+  const focusRef = usePanelFocus<HTMLInputElement>(focusTabId);
   // Advertise only what this input can actually resolve: register names need
   // a live register context, symbol names need a resolver (e.g. the PE viewer
   // has symbols but no registers).
@@ -75,6 +80,7 @@ export function AddressExpressionInput({
   return (
     <div className={cn("flex items-center gap-1", className)}>
       <Input
+        ref={focusRef}
         inputSize="xs"
         placeholder={effectivePlaceholder}
         value={value}

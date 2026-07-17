@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { useSessionContext } from '@/contexts/SessionContext';
 import { usePointerScan, PointerPathEntry } from '@/hooks/usePointerScan';
 import { useContextMenu } from '@/hooks/useContextMenu';
+import { usePanelFocus } from '@/hooks/usePanelFocus';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
@@ -28,6 +29,7 @@ function formatPath(p: PointerPathEntry): string {
 
 export const ContextPointerScanView = () => {
   const sessionData = useSessionContext();
+  const focusRef = usePanelFocus<HTMLInputElement>('pointer_scan');
   const canUse = sessionData.canUseMemoryOps;
   const sessionId = sessionData?.session?.id;
   const onNavigateToMemory = sessionData.onNavigateToMemory;
@@ -133,6 +135,7 @@ export const ContextPointerScanView = () => {
       <PanelToolbar stack>
         <div className="flex gap-1">
           <Input
+            ref={focusRef}
             type="text"
             inputSize="xs"
             placeholder="Target address (0x...)"

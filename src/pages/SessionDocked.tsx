@@ -3,7 +3,11 @@ import { useParams, useNavigate } from "react-router-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { disassemblyNavigation, memoryNavigation, sourceNavigation } from "@/lib/navigationStore";
+import { disassemblyNavigation, memoryNavigation, sourceNavigation, panelFocus, peviewerModuleNavigation } from "@/lib/navigationStore";
+import {
+  SESSION_TAB_DEFS, SESSION_TAB_CATEGORIES, SESSION_TAB_BY_ACTION, sessionTabDefFor,
+  type SessionTabId,
+} from "@/lib/sessionTabs";
 import { setMouseNavHandler } from "@/lib/mouseNav";
 import { parseAddress, type ViewMode } from "@/lib/hexUtils";
 import { ArrowLeft, AlertCircle } from "lucide-react";
@@ -44,8 +48,7 @@ import { useCommandPaletteContext } from "@/contexts/CommandPaletteContext";
 import type { PaletteCommand } from "@/contexts/CommandPaletteContext";
 import {
   Play, Square, Pause, ArrowDownToLine, CornerDownRight, ArrowUpFromLine, SkipForward,
-  Code, Cpu, Box, Layers, ListTree, Search, HardDrive, MapPin, FileCode,
-  Plus, RotateCcw, Navigation, ScanSearch, Puzzle, Crosshair, Bookmark as BookmarkIcon, Boxes, Type, Radar, Fingerprint,
+  Plus, RotateCcw, Navigation,
 } from "lucide-react";
 
 export default function SessionDocked() {
@@ -133,9 +136,33 @@ export default function SessionDocked() {
     await syncWindowStates(activeTabIds);
   };
 
-  // Simple toggle function - onTabsChanged will handle backend sync
+  // Toggle (open ⇄ close) — only the Windows menu checkboxes still mean this.
+  // onTabsChanged handles backend sync.
   const toggleTabWithBackendUpdate = React.useCallback((tabId: string) => {
     dockingRef.current?.toggleTab(tabId);
+  }, []);
+
+  // Quick navigation: activate the tab, opening it at its home if closed, and
+  // never closing it. Used by the palette and every panel keyboard chord.
+  // The focus request is only claimed by a view that registered its primary
+  // input via usePanelFocus(tabId); for other tabs it's inert.
+  const goToTab = React.useCallback((tabId: string) => {
+    dockingRef.current?.showTab(tabId);
+    panelFocus.request(tabId);
+  }, []);
+
+  // Where a tab lands when opened into a layout that lacks it: next to a tab
+  // sharing its home (so it rejoins the group wherever the user dragged it),
+  // else the home panel itself.
+  const placement = React.useCallback((tabId: string) => {
+    const def = sessionTabDefFor(tabId);
+    if (!def) return undefined;
+    return {
+      homePanelId: def.home,
+      siblingTabIds: SESSION_TAB_DEFS
+        .filter((d) => d.home === def.home && d.id !== def.id)
+        .map((d) => d.id),
+    };
   }, []);
 
   // Simple reset function - onTabsChanged will handle backend sync
@@ -190,19 +217,10 @@ export default function SessionDocked() {
     navigateToMemoryTab(address, "pointer");
   }, [navigateToMemoryTab]);
 
-  // Open PE Viewer tab (singleton) — if already open, focus it and dispatch module selection
+  // Open the PE Viewer tab (singleton) and select a module in it.
   const handleOpenModuleInfo = React.useCallback((moduleBase: string) => {
-    const activeTabs = dockingRef.current?.getActiveTabs() ?? [];
-    if (activeTabs.includes('peviewer')) {
-      dockingRef.current?.showTab('peviewer');
-      window.dispatchEvent(new CustomEvent('select-peviewer-module', { detail: moduleBase }));
-    } else {
-      dockingRef.current?.toggleTab('peviewer');
-      // Dispatch after a tick so the component mounts first
-      setTimeout(() => {
-        window.dispatchEvent(new CustomEvent('select-peviewer-module', { detail: moduleBase }));
-      }, 0);
-    }
+    dockingRef.current?.showTab('peviewer');
+    peviewerModuleNavigation.request(moduleBase);
   }, []);
 
   // Open the Access Trace panel (singleton) — focus it if already open.
@@ -255,6 +273,16 @@ export default function SessionDocked() {
       const action = reverseLookup.get(chord);
       if (!action) return;
 
+      // Panel chords mean "go there", never "close" — same as the palette. Ctrl+W
+      // (panel.closeTab) is the affordance for dismissing the tab you're on.
+      const tabDef = SESSION_TAB_BY_ACTION.get(action);
+      if (tabDef) {
+        event.preventDefault();
+        event.stopPropagation();
+        goToTab(tabDef.id);
+        return;
+      }
+
       switch (action) {
         // Debug stepping. The go key toggles execution: continue when paused,
         // break in while running, start when the session is stopped.
@@ -280,101 +308,10 @@ export default function SessionDocked() {
           event.stopPropagation();
           handleStepOut();
           break;
-        // Panel toggles
-        case "panel.disassembly":
-          event.preventDefault();
-          event.stopPropagation();
-          toggleTabWithBackendUpdate("disassembly");
-          break;
-        case "panel.source":
-          event.preventDefault();
-          event.stopPropagation();
-          toggleTabWithBackendUpdate("source");
-          break;
-        case "panel.registers":
-          event.preventDefault();
-          event.stopPropagation();
-          toggleTabWithBackendUpdate("registers");
-          break;
-        case "panel.modules":
-          event.preventDefault();
-          event.stopPropagation();
-          toggleTabWithBackendUpdate("modules");
-          break;
-        case "panel.threads":
-          event.preventDefault();
-          event.stopPropagation();
-          toggleTabWithBackendUpdate("threads");
-          break;
-        case "panel.callstack":
-          event.preventDefault();
-          event.stopPropagation();
-          toggleTabWithBackendUpdate("callstack");
-          break;
-        case "panel.symbols":
-          event.preventDefault();
-          event.stopPropagation();
-          toggleTabWithBackendUpdate("symbols");
-          break;
-        case "panel.types":
-          event.preventDefault();
-          event.stopPropagation();
-          toggleTabWithBackendUpdate("types");
-          break;
         case "panel.addMemory":
           event.preventDefault();
           event.stopPropagation();
           handleAddNewMemoryTab();
-          break;
-        case "panel.memoryRegions":
-          event.preventDefault();
-          event.stopPropagation();
-          toggleTabWithBackendUpdate("memory_regions");
-          break;
-        case "panel.breakpoints":
-          event.preventDefault();
-          event.stopPropagation();
-          toggleTabWithBackendUpdate("breakpoints");
-          break;
-        case "panel.patches":
-          event.preventDefault();
-          event.stopPropagation();
-          toggleTabWithBackendUpdate("patches");
-          break;
-        case "panel.bookmarks":
-          event.preventDefault();
-          event.stopPropagation();
-          toggleTabWithBackendUpdate("bookmarks");
-          break;
-        case "panel.memorySearch":
-          event.preventDefault();
-          event.stopPropagation();
-          toggleTabWithBackendUpdate("memory_search");
-          break;
-        case "panel.memoryScanner":
-          event.preventDefault();
-          event.stopPropagation();
-          toggleTabWithBackendUpdate("memory_scanner");
-          break;
-        case "panel.pointerScan":
-          event.preventDefault();
-          event.stopPropagation();
-          toggleTabWithBackendUpdate("pointer_scan");
-          break;
-        case "panel.strings":
-          event.preventDefault();
-          event.stopPropagation();
-          toggleTabWithBackendUpdate("strings");
-          break;
-        case "panel.codeExplorer":
-          event.preventDefault();
-          event.stopPropagation();
-          toggleTabWithBackendUpdate("code_explorer");
-          break;
-        case "panel.peViewer":
-          event.preventDefault();
-          event.stopPropagation();
-          toggleTabWithBackendUpdate("peviewer");
           break;
         case "panel.closeTab":
           event.preventDefault();
@@ -407,7 +344,7 @@ export default function SessionDocked() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [handleGo, handlePause, handleStart, canStep, canPause, canStart, handleStepIn, handleStepOver, handleStepOut, toggleTabWithBackendUpdate, handleCloseActiveTab, reverseLookup, setOpen, enterSubInput, handleNavigateToDisassembly, handleNavigateToMemory]);
+  }, [handleGo, handlePause, handleStart, canStep, canPause, canStart, handleStepIn, handleStepOver, handleStepOut, goToTab, handleAddNewMemoryTab, handleCloseActiveTab, reverseLookup, setOpen, enterSubInput, handleNavigateToDisassembly, handleNavigateToMemory]);
 
   const isPaused = displayStatus === 'Paused';
   // Memory/enumeration ops work over OOB whenever a process is available: paused,
@@ -495,200 +432,24 @@ export default function SessionDocked() {
         enabled: canStep,
         keywords: ["step", "out", "return"],
       },
-      // Panel toggles
-      {
-        id: "panel.disassembly",
-        label: "Toggle Disassembly",
-        group: "Windows",
-        icon: <Code className="size-4" />,
-        keybindingAction: "panel.disassembly",
-        onSelect: () => toggleTabWithBackendUpdate("disassembly"),
-        keepOpen: true,
-        keywords: ["disassembly", "asm", "code"],
-      },
-      {
-        id: "panel.source",
-        label: "Toggle Source",
-        group: "Windows",
-        icon: <FileCode className="size-4" />,
-        keybindingAction: "panel.source",
-        onSelect: () => toggleTabWithBackendUpdate("source"),
-        keepOpen: true,
-        keywords: ["source", "code", "c", "cpp", "line"],
-      },
-      {
-        id: "panel.registers",
-        label: "Toggle Registers",
-        group: "Windows",
-        icon: <Cpu className="size-4" />,
-        keybindingAction: "panel.registers",
-        onSelect: () => toggleTabWithBackendUpdate("registers"),
-        keepOpen: true,
-        keywords: ["registers", "regs"],
-      },
-      {
-        id: "panel.modules",
-        label: "Toggle Modules",
-        group: "Windows",
-        icon: <Box className="size-4" />,
-        keybindingAction: "panel.modules",
-        onSelect: () => toggleTabWithBackendUpdate("modules"),
-        keepOpen: true,
-        keywords: ["modules", "dll"],
-      },
-      {
-        id: "panel.threads",
-        label: "Toggle Threads",
-        group: "Windows",
-        icon: <Layers className="size-4" />,
-        keybindingAction: "panel.threads",
-        onSelect: () => toggleTabWithBackendUpdate("threads"),
-        keepOpen: true,
-        keywords: ["threads"],
-      },
-      {
-        id: "panel.callstack",
-        label: "Toggle Call Stack",
-        group: "Windows",
-        icon: <ListTree className="size-4" />,
-        keybindingAction: "panel.callstack",
-        onSelect: () => toggleTabWithBackendUpdate("callstack"),
-        keepOpen: true,
-        keywords: ["callstack", "stack", "frames"],
-      },
-      {
-        id: "panel.symbols",
-        label: "Toggle Symbols",
-        group: "Windows",
-        icon: <Search className="size-4" />,
-        keybindingAction: "panel.symbols",
-        onSelect: () => toggleTabWithBackendUpdate("symbols"),
-        keepOpen: true,
-        keywords: ["symbols", "functions"],
-      },
-      {
-        id: "panel.types",
-        label: "Toggle Types",
-        group: "Windows",
-        icon: <Boxes className="size-4" />,
-        keybindingAction: "panel.types",
-        onSelect: () => toggleTabWithBackendUpdate("types"),
-        keepOpen: true,
-        keywords: ["types", "struct", "teb", "peb", "kuser"],
-      },
-      {
-        id: "panel.memoryRegions",
-        label: "Toggle Memory Regions",
-        group: "Windows",
-        icon: <HardDrive className="size-4" />,
-        keybindingAction: "panel.memoryRegions",
-        onSelect: () => toggleTabWithBackendUpdate("memory_regions"),
-        keepOpen: true,
-        keywords: ["memory", "regions", "map"],
-      },
-      {
-        id: "panel.breakpoints",
-        label: "Toggle Breakpoints",
-        group: "Windows",
-        icon: <MapPin className="size-4" />,
-        keybindingAction: "panel.breakpoints",
-        onSelect: () => toggleTabWithBackendUpdate("breakpoints"),
-        keepOpen: true,
-        keywords: ["breakpoints", "bp"],
-      },
-      {
-        id: "panel.patches",
-        label: "Toggle Patches",
-        group: "Windows",
-        icon: <Puzzle className="size-4" />,
-        keybindingAction: "panel.patches",
-        onSelect: () => toggleTabWithBackendUpdate("patches"),
-        keepOpen: true,
-        keywords: ["patches", "assemble", "patch"],
-      },
-      {
-        id: "panel.bookmarks",
-        label: "Toggle Bookmarks",
-        group: "Windows",
-        icon: <BookmarkIcon className="size-4" />,
-        keybindingAction: "panel.bookmarks",
-        onSelect: () => toggleTabWithBackendUpdate("bookmarks"),
-        keepOpen: true,
-        keywords: ["bookmarks", "bookmark", "freeze", "lock", "cheat", "address"],
-      },
-      {
-        id: "panel.memorySearch",
-        label: "Toggle Memory Search",
-        group: "Windows",
-        icon: <Search className="size-4" />,
-        keybindingAction: "panel.memorySearch",
-        onSelect: () => toggleTabWithBackendUpdate("memory_search"),
-        keepOpen: true,
-        keywords: ["memory", "search", "find", "pattern"],
-      },
-      {
-        id: "panel.memoryScanner",
-        label: "Toggle Memory Scanner",
-        group: "Windows",
-        icon: <ScanSearch className="size-4" />,
-        keybindingAction: "panel.memoryScanner",
-        onSelect: () => toggleTabWithBackendUpdate("memory_scanner"),
-        keepOpen: true,
-        keywords: ["memory", "scanner", "scan", "cheat"],
-      },
-      {
-        id: "panel.pointerScan",
-        label: "Toggle Pointer Scan",
-        group: "Windows",
-        icon: <Crosshair className="size-4" />,
-        keybindingAction: "panel.pointerScan",
-        onSelect: () => toggleTabWithBackendUpdate("pointer_scan"),
-        keepOpen: true,
-        keywords: ["pointer", "scan", "path", "cheat", "static"],
-      },
-      {
-        id: "panel.strings",
-        label: "Toggle Strings",
-        group: "Windows",
-        icon: <Type className="size-4" />,
-        keybindingAction: "panel.strings",
-        onSelect: () => toggleTabWithBackendUpdate("strings"),
-        keepOpen: true,
-        keywords: ["strings", "ascii", "unicode", "utf16", "text"],
-      },
-      {
-        id: "panel.codeExplorer",
-        label: "Toggle Code Explorer",
-        group: "Windows",
-        icon: <Radar className="size-4" />,
-        keybindingAction: "panel.codeExplorer",
-        onSelect: () => toggleTabWithBackendUpdate("code_explorer"),
-        keepOpen: true,
-        keywords: ["code", "explorer", "coverage", "heatmap", "functions", "breakpoint"],
-      },
-      {
-        id: "panel.peViewer",
-        label: "Toggle PE Viewer",
-        group: "Windows",
-        icon: <FileCode className="size-4" />,
-        keybindingAction: "panel.peViewer",
-        onSelect: () => toggleTabWithBackendUpdate("peviewer"),
-        keepOpen: true,
-        keywords: ["pe", "portable", "executable", "viewer"],
-      },
-      {
-        id: "panel.accessTrace",
-        label: "Toggle Access Trace",
-        group: "Windows",
-        icon: <Fingerprint className="size-4" />,
-        onSelect: () => toggleTabWithBackendUpdate("access_trace"),
-        keepOpen: true,
-        keywords: ["access", "trace", "watchpoint", "reads", "writes", "hardware", "what accesses"],
-      },
+      // Window navigation — one "Go to X" per registered tab, emitted in
+      // category order so the palette's first-seen-order grouping yields the
+      // right section order. Never closes a tab; the Windows menu does that.
+      ...SESSION_TAB_CATEGORIES.flatMap((category) =>
+        SESSION_TAB_DEFS.filter((d) => d.category === category).map((d): PaletteCommand => ({
+          id: `panel.${d.id}`,
+          label: `Go to ${d.title}`,
+          group: `Windows · ${d.category}`,
+          icon: d.icon,
+          keybindingAction: d.action,
+          onSelect: () => goToTab(d.id),
+          keywords: d.keywords ? [...d.keywords] : undefined,
+        })),
+      ),
       {
         id: "panel.addMemory",
         label: "Add Memory Window",
-        group: "Windows",
+        group: "Windows · Memory",
         icon: <Plus className="size-4" />,
         keybindingAction: "panel.addMemory",
         onSelect: handleAddNewMemoryTab,
@@ -739,7 +500,7 @@ export default function SessionDocked() {
     handleStart, handleStop, handlePause,
     handleGo, handleGoPassException, handleStepIn, handleStepOver, handleStepOut,
     handleNavigateToDisassembly, handleNavigateToMemory,
-    toggleTabWithBackendUpdate, handleAddNewMemoryTab, handleResetLayout,
+    goToTab, handleAddNewMemoryTab, handleResetLayout,
     registerCommands,
   ]);
 
@@ -781,8 +542,10 @@ export default function SessionDocked() {
     onFindAccesses: handleFindAccesses,
   }), [session, displayStatus, canUseMemoryOps, modules, threads, symbolStatuses, symbolsRefreshKey, loadModules, loadThreads, loadModulePdb, retryModuleSymbols, searchSymbols, breakpointState, patchState, bookmarkState, watchpointState, handleNavigateToDisassembly, handleNavigateToMemory, handleNavigateToSource, handleFindAccesses]);
   
-  // Static tab content - components will update via context
-  const dynamicTabContent = useMemo(() => ({
+  // Static tab content - components will update via context.
+  // Typed against the registry, so adding a tab to SESSION_TAB_DEFS without
+  // wiring its content here is a compile error rather than a blank panel.
+  const dynamicTabContent: Record<SessionTabId, React.ReactElement> = useMemo(() => ({
     disassembly: <ContextAssemblyView />,
     source: <ContextSourceView />,
     registers: <ContextRegisterView />,
@@ -791,6 +554,7 @@ export default function SessionDocked() {
     callstack: <ContextCallStackView onNavigateToDisassembly={handleNavigateToDisassembly} onNavigateToMemoryPointer={handleNavigateToMemoryPointer} />,
     symbols: <ContextSymbolsView />,
     types: <ContextTypesView />,
+    memory: <ContextHexView memoryViewId="memory" />,
     memory_regions: <ContextMemoryRegionsView onNavigateToAddress={handleNavigateToMemory} />,
     breakpoints: <ContextBreakpointsView />,
     patches: <ContextPatchesView />,
@@ -815,128 +579,12 @@ export default function SessionDocked() {
 
   // Create docking configuration with dynamic content  
   const dockingConfig = useMemo(() => {
-    const sessionTabContents: { [key: string]: TabData } = {
-      disassembly: {
-        id: "disassembly",
-        title: "Disassembly",
-        content: dynamicTabContent.disassembly,
-        closable: true,
-      },
-      source: {
-        id: "source",
-        title: "Source",
-        content: dynamicTabContent.source,
-        closable: true,
-      },
-      registers: {
-        id: "registers",
-        title: "Registers",
-        content: dynamicTabContent.registers,
-        closable: true,
-      },
-      modules: {
-        id: "modules",
-        title: "Modules",
-        content: dynamicTabContent.modules,
-        closable: true,
-      },
-      threads: {
-        id: "threads",
-        title: "Threads",
-        content: dynamicTabContent.threads,
-        closable: true,
-      },
-      callstack: {
-        id: "callstack",
-        title: "Call Stack",
-        content: dynamicTabContent.callstack,
-        closable: true,
-      },
-      symbols: {
-        id: "symbols",
-        title: "Symbols",
-        content: dynamicTabContent.symbols,
-        closable: true,
-      },
-      types: {
-        id: "types",
-        title: "Types",
-        content: dynamicTabContent.types,
-        closable: true,
-      },
-      memory: {
-        id: "memory",
-        title: "Memory",
-        content: <ContextHexView memoryViewId="memory" />,
-        closable: true,
-      },
-      memory_regions: {
-        id: "memory_regions",
-        title: "Memory Regions",
-        content: dynamicTabContent.memory_regions,
-        closable: true,
-      },
-      breakpoints: {
-        id: "breakpoints",
-        title: "Breakpoints",
-        content: dynamicTabContent.breakpoints,
-        closable: true,
-      },
-      patches: {
-        id: "patches",
-        title: "Patches",
-        content: dynamicTabContent.patches,
-        closable: true,
-      },
-      bookmarks: {
-        id: "bookmarks",
-        title: "Bookmarks",
-        content: dynamicTabContent.bookmarks,
-        closable: true,
-      },
-      memory_search: {
-        id: "memory_search",
-        title: "Memory Search",
-        content: dynamicTabContent.memory_search,
-        closable: true,
-      },
-      memory_scanner: {
-        id: "memory_scanner",
-        title: "Memory Scanner",
-        content: dynamicTabContent.memory_scanner,
-        closable: true,
-      },
-      pointer_scan: {
-        id: "pointer_scan",
-        title: "Pointer Scan",
-        content: dynamicTabContent.pointer_scan,
-        closable: true,
-      },
-      strings: {
-        id: "strings",
-        title: "Strings",
-        content: dynamicTabContent.strings,
-        closable: true,
-      },
-      code_explorer: {
-        id: "code_explorer",
-        title: "Code Explorer",
-        content: dynamicTabContent.code_explorer,
-        closable: true,
-      },
-      peviewer: {
-        id: "peviewer",
-        title: "PE Viewer",
-        content: dynamicTabContent.peviewer,
-        closable: true,
-      },
-      access_trace: {
-        id: "access_trace",
-        title: "Access Trace",
-        content: dynamicTabContent.access_trace,
-        closable: true,
-      },
-    };
+    const sessionTabContents: { [key: string]: TabData } = Object.fromEntries(
+      SESSION_TAB_DEFS.map((d) => [
+        d.id,
+        { id: d.id, title: d.title, content: dynamicTabContent[d.id as SessionTabId], closable: true },
+      ]),
+    );
 
     return {
       storagePrefix: "session-debugger-dock", // Shared prefix for all sessions to preserve layout
@@ -944,8 +592,9 @@ export default function SessionDocked() {
       initialTabContents: sessionTabContents,
       tabContentMap: { ...DebuggerDockingConfig.tabContentMap, ...dynamicTabContent },
       tabContentFactory,
+      placement,
     };
-  }, [sessionId, dynamicTabContent, tabContentFactory]);
+  }, [sessionId, dynamicTabContent, tabContentFactory, placement]);
 
   const getStatusBadge = (status: SessionStatus) => {
     if (typeof status === "string") {

@@ -18,6 +18,7 @@ export default defineConfig({
     "routing.spec.ts",
     "pe-reader.spec.ts",
     "keyboard-shortcuts.spec.ts",
+    "windows-menu.spec.ts",
     "patches.spec.ts",
     "bookmarks.spec.ts",
     "disassembly.spec.ts",

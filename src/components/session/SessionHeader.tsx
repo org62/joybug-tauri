@@ -9,7 +9,8 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
 } from '@/components/ui/dropdown-menu';
-import { DockWindowsMenu, DockWindowsMenuTab } from '@/components/DockWindowsMenu';
+import { DockWindowsMenu, DockWindowsMenuGroup } from '@/components/DockWindowsMenu';
+import { SESSION_TAB_DEFS, SESSION_TAB_CATEGORIES } from '@/lib/sessionTabs';
 import { DebugSession, SessionStatus } from '@/contexts/SessionContext';
 import { useKeybindingContext } from '@/contexts/KeybindingContext';
 
@@ -72,27 +73,26 @@ export const SessionHeader: React.FC<SessionHeaderProps> = ({
   // Attach/Detach button becomes "Attach" here and "Detach" once attached.
   const isOpen = session.status === 'Open';
 
-  const windowTabs: DockWindowsMenuTab[] = [
-    { id: 'disassembly', label: 'Disassembly', shortcut: getKeybinding('panel.disassembly') },
-    { id: 'source', label: 'Source', shortcut: getKeybinding('panel.source') },
-    { id: 'registers', label: 'Registers', shortcut: getKeybinding('panel.registers') },
-    { id: 'modules', label: 'Modules', shortcut: getKeybinding('panel.modules') },
-    { id: 'threads', label: 'Threads', shortcut: getKeybinding('panel.threads') },
-    { id: 'callstack', label: 'Call Stack', shortcut: getKeybinding('panel.callstack') },
-    { id: 'symbols', label: 'Symbols', shortcut: getKeybinding('panel.symbols') },
-    { id: 'types', label: 'Types', shortcut: getKeybinding('panel.types') },
-    { id: 'memory_regions', label: 'Memory Regions', shortcut: getKeybinding('panel.memoryRegions') },
-    { id: 'breakpoints', label: 'Breakpoints', shortcut: getKeybinding('panel.breakpoints') },
-    { id: 'patches', label: 'Patches', shortcut: getKeybinding('panel.patches') },
-    { id: 'bookmarks', label: 'Bookmarks', shortcut: getKeybinding('panel.bookmarks') },
-    { id: 'memory_search', label: 'Memory Search', shortcut: getKeybinding('panel.memorySearch') },
-    { id: 'memory_scanner', label: 'Memory Scanner', shortcut: getKeybinding('panel.memoryScanner') },
-    { id: 'pointer_scan', label: 'Pointer Scan', shortcut: getKeybinding('panel.pointerScan') },
-    { id: 'strings', label: 'Strings', shortcut: getKeybinding('panel.strings') },
-    { id: 'code_explorer', label: 'Code Explorer', shortcut: getKeybinding('panel.codeExplorer') },
-    { id: 'peviewer', label: 'PE Viewer', shortcut: getKeybinding('panel.peViewer') },
-    { id: 'access_trace', label: 'Access Trace' },
-  ];
+  // One submenu per category — twenty windows are too many to scan flat.
+  // "Add Memory Window" lives inside the Memory submenu, next to the tabs it
+  // creates, rather than at the top level.
+  const windowGroups: DockWindowsMenuGroup[] = SESSION_TAB_CATEGORIES.map((category) => ({
+    label: category,
+    tabs: SESSION_TAB_DEFS
+      .filter((d) => d.category === category)
+      .map((d) => ({
+        id: d.id,
+        label: d.title,
+        shortcut: d.action ? getKeybinding(d.action) : undefined,
+      })),
+    children: category === "Memory" && addNewMemoryTab && (
+      <DropdownMenuItem onSelect={(e: Event) => { e.preventDefault(); addNewMemoryTab(); }}>
+        <Plus />
+        <span className="flex-1">Add Memory Window</span>
+        <span className="ml-auto text-xs text-muted-foreground">{getKeybinding("panel.addMemory")}</span>
+      </DropdownMenuItem>
+    ),
+  }));
 
   return (
     <div className="mb-3 flex items-center justify-between">
@@ -247,18 +247,10 @@ export const SessionHeader: React.FC<SessionHeaderProps> = ({
 
         <DockWindowsMenu
           dockingRef={dockingRef}
-          tabs={windowTabs}
+          groups={windowGroups}
           onToggleTab={toggleTab}
           onResetLayout={resetLayout}
-        >
-          {addNewMemoryTab && (
-            <DropdownMenuItem onSelect={(e: Event) => { e.preventDefault(); addNewMemoryTab(); }}>
-              <Plus />
-              <span className="flex-1">Add Memory Window</span>
-              <span className="ml-auto text-xs text-muted-foreground">{getKeybinding("panel.addMemory")}</span>
-            </DropdownMenuItem>
-          )}
-        </DockWindowsMenu>
+        />
       </div>
     </div>
   );

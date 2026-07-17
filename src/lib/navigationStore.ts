@@ -30,6 +30,13 @@ export class NavigationChannel<T = string> {
     return payload;
   }
 
+  /** Consume only if the pending payload matches. Lets many subscribers share one
+   *  channel — without the guard the first one to run would eat every payload. */
+  consumeIf(match: (payload: T) => boolean): T | null {
+    if (this._pending === null || !match(this._pending)) return null;
+    return this.consume();
+  }
+
   /** For useSyncExternalStore — subscribe to store changes. */
   subscribe = (onStoreChange: Listener): (() => void) => {
     this._listeners.add(onStoreChange);
@@ -51,3 +58,11 @@ export const memoryNavigation = new NavigationChannel<string | MemoryNavRequest>
 // Disassembly row click → source view scrolls/highlights the matching line
 // (passive sync; does not steal the active tab).
 export const sourceNavigation = new NavigationChannel();
+// "Go to X" → focus the primary input of tab X. Payload is the dock tab id
+// (including dynamic ones like "memory-2"), so every subscribed view shares this
+// one channel and claims the payload via consumeIf. See hooks/usePanelFocus.
+export const panelFocus = new NavigationChannel<string>();
+// Modules list "PE Viewer" click → the PE viewer tab selects that module
+// (payload is the module base address). A channel rather than a DOM event so a
+// freshly-opened tab consumes it on mount instead of racing its listener.
+export const peviewerModuleNavigation = new NavigationChannel<string>();

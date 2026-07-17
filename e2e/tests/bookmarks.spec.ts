@@ -1,7 +1,7 @@
 import { writeFileSync } from "fs";
 import path from "path";
 import { test, expect } from "../helpers/test-fixtures";
-import { createAndStartSession, cleanupSession, invoke } from "../helpers/session-helpers";
+import { createAndStartSession, cleanupSession, invoke, goToWindow } from "../helpers/session-helpers";
 import {
   waitForPaused,
   waitForStopped,
@@ -105,7 +105,7 @@ test.describe("Bookmarks", () => {
         valueType: "U32",
         name: "e2e-val",
       });
-      await page.getByText("Bookmarks", { exact: true }).first().click();
+      await goToWindow(page, "Bookmarks");
       const valueSpan = page.locator('span[title="Click to edit value"]').first();
       await expect(valueSpan).toBeVisible({ timeout: 10_000 });
       await expect(valueSpan).not.toHaveClass(/text-green-500/);

@@ -1,5 +1,5 @@
 import { test, expect } from "../helpers/test-fixtures";
-import { createAndStartSession, cleanupSession, fixtureExe, invoke } from "../helpers/session-helpers";
+import { createAndStartSession, cleanupSession, fixtureExe, invoke, goToWindow } from "../helpers/session-helpers";
 import {
   waitForPaused,
   configureMinimalStopSettings,
@@ -47,9 +47,14 @@ async function moduleBase(page: Page, sessionId: string, substr: string): Promis
   }, { id: sessionId, sub: substr });
 }
 
-/** Activate a dock tab by its header title. */
+/** Activate a dock tab by its header title, opening it if the layout lacks it. */
 async function activateTab(page: Page, title: string): Promise<void> {
-  await page.locator(".dock-tab", { hasText: title }).first().click();
+  const tab = page.locator(".dock-tab", { hasText: title }).first();
+  if (await tab.count() === 0) {
+    await goToWindow(page, title);
+    return;
+  }
+  await tab.click();
 }
 
 test.describe("Source View", () => {

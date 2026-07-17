@@ -3,6 +3,7 @@ import { useSessionContext, type Module } from '@/contexts/SessionContext';
 import { useCodeExplorer, CoverageFn } from '@/hooks/useCodeExplorer';
 import { useContextMenu } from '@/hooks/useContextMenu';
 import { useColumnWidths } from '@/hooks/useColumnWidths';
+import { usePanelFocus } from '@/hooks/usePanelFocus';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { VirtualizedList } from '@/components/ui/virtualized-list';
@@ -28,6 +29,8 @@ const EMPTY_MODULES: Module[] = [];
 
 export const ContextCodeExplorerView = () => {
   const sessionData = useSessionContext();
+  // Only rendered once a scan has results; the hook no-ops until then.
+  const focusRef = usePanelFocus<HTMLInputElement>('code_explorer');
   const canUse = sessionData.canUseMemoryOps;
   const sessionId = sessionData?.session?.id;
   const onNavigateToDisassembly = sessionData.onNavigateToDisassembly;
@@ -210,6 +213,7 @@ export const ContextCodeExplorerView = () => {
           <div className="flex gap-1 items-center">
             <Search className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
             <Input
+              ref={focusRef}
               type="text"
               placeholder="Filter by symbol"
               value={ce.filter}

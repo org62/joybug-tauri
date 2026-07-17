@@ -493,6 +493,7 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
             registers={registers}
             resolveSymbol={resolveSymbol}
             sessionId={sessionId}
+            memoryViewId={memoryViewId}
             viewMode={viewMode}
             setViewMode={setViewMode}
             pendingChanges={pendingChanges}
@@ -533,6 +534,7 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
           registers={registers}
           resolveSymbol={resolveSymbol}
           sessionId={sessionId}
+          memoryViewId={memoryViewId}
           viewMode={viewMode}
           setViewMode={setViewMode}
           pendingChanges={pendingChanges}
@@ -875,6 +877,8 @@ interface HexToolbarProps {
   registers?: RegisterContext;
   resolveSymbol?: SymbolResolver;
   sessionId?: string;
+  /** Dock tab id of this hex view, so "Go to Memory" focuses the right one. */
+  memoryViewId?: string;
   viewMode: ViewMode;
   setViewMode: (mode: ViewMode) => void;
   pendingChanges: Map<number, number>;
@@ -889,6 +893,7 @@ function HexToolbar({
   registers,
   resolveSymbol,
   sessionId,
+  memoryViewId,
   viewMode,
   setViewMode,
   pendingChanges,
@@ -905,6 +910,7 @@ function HexToolbar({
         registers={registers}
         resolveSymbol={resolveSymbol}
         sessionId={sessionId}
+        focusTabId={memoryViewId}
         buttonLabel={
           <>
             <ArrowRight />

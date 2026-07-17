@@ -47,6 +47,7 @@ export const ContextSymbolsView = () => {
       onSelect={onSelect}
       onRowContextMenu={(e, symbol) => openContextMenu(e, { va: symbol.va, is_function: symbol.is_function })}
       resetKey={sessionId}
+      focusTabId="symbols"
     >
       {contextMenu && (
         <ContextMenu x={contextMenu.x} y={contextMenu.y} onClose={closeContextMenu} className="min-w-[180px]">
