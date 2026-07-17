@@ -129,4 +129,6 @@ const DockingLayoutComponent = React.forwardRef<DockingLayoutRef, DockingLayoutP
 
 DockingLayoutComponent.displayName = "DockingLayout";
 
-export default DockingLayoutComponent; 
+// Memoized: hosts pass stable config/refs, so parent re-renders (e.g. toolbar
+// state changing per keystroke) shouldn't re-run the whole rc-dock tree.
+export default React.memo(DockingLayoutComponent);

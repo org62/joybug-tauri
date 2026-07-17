@@ -83,7 +83,7 @@ export function PatchesView({
       <span className="w-6 shrink-0 flex items-center justify-center">
         <Checkbox
           checked={selectedIds.has(patch.id)}
-          onChange={() => toggleSelect(patch.id)}
+          onCheckedChange={() => toggleSelect(patch.id)}
         />
       </span>
       <span
@@ -152,7 +152,7 @@ export function PatchesView({
                 <span className="w-6 shrink-0 flex items-center justify-center">
                   <Checkbox
                     checked={allSelected}
-                    onChange={toggleSelectAll}
+                    onCheckedChange={toggleSelectAll}
                   />
                 </span>
                 <span className="w-28 shrink-0">Address</span>

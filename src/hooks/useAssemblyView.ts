@@ -14,7 +14,9 @@ import { disassemblyNavigation } from '@/lib/navigationStore';
 // Instruction interface matching backend SerializableInstruction
 export interface Instruction {
   address: string;
-  symbol: string;
+  // Symbolized label; null when the address resolves to no module/symbol
+  // (the view falls back to rendering the address).
+  symbol: string | null;
   bytes: string;
   mnemonic: string;
   op_str: string;
@@ -104,6 +106,12 @@ export interface AssemblyViewActions {
   scrollToPC: () => void;
 }
 
+/// A non-session disassembly source (e.g. a PE file opened from disk). When
+/// provided, the hook disassembles through this callback instead of the
+/// session's `request_function_disassembly` command + events. Addresses are
+/// VAs (load base + RVA). PC-following, breakpoints, and patches do not apply.
+export type AsmDisassembleFn = (va: number, count: number) => Promise<Instruction[]>;
+
 export interface UseAssemblyViewOptions {
   sessionId: string | undefined;
   isPaused?: boolean;
@@ -113,10 +121,17 @@ export interface UseAssemblyViewOptions {
   /** Changes when a module's symbols finish loading in the background; triggers
    * a refresh so raw addresses upgrade to symbol names. */
   symbolsRefreshKey?: string;
+  /** Non-session disassembly source (PE file). */
+  disassemble?: AsmDisassembleFn;
+  /** VA to disassemble first when using a file source. */
+  initialAddress?: bigint;
 }
 
+// Instructions requested per file disassembly (no function bounds available).
+const FILE_DISASM_COUNT = 512;
+
 export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewState & AssemblyViewActions {
-  const { sessionId, isPaused, pcAddress: pcAddressProp, registers = {}, resolveSymbol, symbolsRefreshKey } = options;
+  const { sessionId, isPaused, pcAddress: pcAddressProp, registers = {}, resolveSymbol, symbolsRefreshKey, disassemble, initialAddress } = options;
 
   // State
   const [instructions, setInstructions] = useState<Instruction[]>([]);
@@ -152,7 +167,7 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
 
   // Load disassembly for an address
   const loadDisassembly = useCallback(async (address: bigint) => {
-    if (!sessionId) return;
+    if (!sessionId && !disassemble) return;
 
     // Skip duplicate request if already loading the same address
     if (lastRequestedAddress.current === address && requestInFlight.current) return;
@@ -161,6 +176,24 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
     requestInFlight.current = true;
     setIsLoading(true);
     setError(null);
+
+    // File data-source: disassemble inline (no function bounds).
+    if (disassemble) {
+      try {
+        const insns = await disassemble(Number(address), FILE_DISASM_COUNT);
+        setInstructions(insns);
+        setFunctionStart(null);
+        setFunctionEnd(null);
+        setFunctionName(null);
+        setCurrentAddress(address);
+        setError(null);
+      } catch (err) {
+        setError(formatTauriError(err));
+      }
+      requestInFlight.current = false;
+      setIsLoading(false);
+      return;
+    }
 
     try {
       await invoke('request_function_disassembly', {
@@ -179,7 +212,7 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
       requestInFlight.current = false;
       setIsLoading(false);
     }
-  }, [sessionId]);
+  }, [sessionId, disassemble]);
 
   // Go to address with history management
   // isAutoNavigation: true when called by the PC-following effect, false for user actions
@@ -284,9 +317,9 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
     refresh();
   }, [symbolsRefreshKey, refresh]);
 
-  // Listen for disassembly events
+  // Listen for disassembly events (session mode only; file mode resolves inline)
   useEffect(() => {
-    if (!sessionId) return;
+    if (!sessionId || disassemble) return;
 
     const unlistenSuccess = listen<FunctionDisassemblyResult>(
       'function-disassembly-updated',
@@ -357,7 +390,7 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
       unlistenOldSuccess.then(unlisten => unlisten());
       unlistenPatches.then(unlisten => unlisten());
     };
-  }, [sessionId]);
+  }, [sessionId, disassemble]);
 
   // External navigation (e.g., symbol click). MUST be declared before the
   // PC-following effect so it runs first on mount and sets userNavigatedAway.
@@ -407,8 +440,16 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
     // If PC didn't change, user can freely navigate without being pulled back
   }, [pcAddress, sessionId, currentAddress, navigationHistory.length, functionStart, functionEnd, goToAddressDirect]);
 
-  // Clear state when session ends or stops
+  // File mode: disassemble the initial offset once on mount.
   useEffect(() => {
+    if (!disassemble) return;
+    if (currentAddress !== null || instructions.length > 0) return;
+    goToAddressDirect(initialAddress ?? 0n, true);
+  }, [disassemble, initialAddress, currentAddress, instructions.length, goToAddressDirect]);
+
+  // Clear state when session ends or stops (session mode only)
+  useEffect(() => {
+    if (disassemble) return;
     if (!sessionId || isPaused === false) {
       setInstructions([]);
       setCurrentAddress(null);
@@ -424,7 +465,7 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
       requestInFlight.current = false;
       userNavigatedAway.current = false;
     }
-  }, [sessionId, isPaused]);
+  }, [sessionId, isPaused, disassemble]);
 
   return {
     // State

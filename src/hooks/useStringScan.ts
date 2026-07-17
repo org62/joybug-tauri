@@ -20,6 +20,13 @@ export type StringScanScope =
 
 export type StringEncodingFilter = 'both' | 'ascii' | 'utf16';
 
+/// Encoding choices for string-scan selectors (session Strings tab and PE viewer).
+export const ENCODING_OPTIONS: { value: StringEncodingFilter; label: string }[] = [
+  { value: 'both', label: 'ASCII+UTF-16' },
+  { value: 'ascii', label: 'ASCII' },
+  { value: 'utf16', label: 'UTF-16' },
+];
+
 /// Resolved parameters handed to handleScan. Null span bounds mean "the whole
 /// address space" (the backend substitutes 0..u64::MAX).
 export interface StringScanParams {
@@ -28,8 +35,37 @@ export interface StringScanParams {
   regionFilter: string;
 }
 
-const PAGE_SIZE = 200;
+export const STRING_SCAN_PAGE_SIZE = 200;
+const PAGE_SIZE = STRING_SCAN_PAGE_SIZE;
 const DEFAULT_MIN_LENGTH = '5';
+
+/// The scan state/actions the shared StringsPanel consumes. Implemented by
+/// `useStringScan` (session: server-side paging over a results file) and by
+/// `usePeStringScan` (PE viewer: client-side paging over in-memory hits).
+export interface StringScanController {
+  hasScanned: boolean;
+  minLength: string;
+  setMinLength: (v: string) => void;
+  encodings: StringEncodingFilter;
+  setEncodings: (v: StringEncodingFilter) => void;
+  contains: string;
+  setContains: (v: string) => void;
+  filter: string;
+  setFilter: (v: string) => void;
+  sortKey: StringSortKey;
+  sortAsc: boolean;
+  toggleSort: (key: StringSortKey) => void;
+  results: StringEntry[];
+  matchCount: number;
+  totalCount: number;
+  capped: boolean;
+  scanTimeUs: number;
+  isScanning: boolean;
+  error: string | null;
+  currentPage: number;
+  totalPages: number;
+  loadPage: (page: number) => void;
+}
 
 interface StringScanStartPayload {
   session_id: string;
@@ -235,7 +271,8 @@ export function useStringScan(sessionId: string | undefined, available: boolean)
 
   return {
     // State
-    resultsPath, scope, selectedModuleBase, rangeStart, rangeEnd, minLength, encodings, contains,
+    resultsPath, hasScanned: resultsPath !== null,
+    scope, selectedModuleBase, rangeStart, rangeEnd, minLength, encodings, contains,
     matchCount, scanTimeUs, capped, isScanning, error,
     filter, sortKey, sortAsc,
     results, totalCount, currentPage, totalPages,

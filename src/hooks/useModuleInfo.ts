@@ -11,6 +11,18 @@ export interface ImageDataDirectory {
   Size: number;
 }
 
+export interface DosHeader {
+  e_magic: number;
+  e_lfanew: number;
+  // Other DOS fields exist in the payload but aren't surfaced in the UI.
+}
+
+export interface RuntimeFunction {
+  BeginAddress: number;
+  EndAddress: number;
+  UnwindData: number;
+}
+
 export interface ImageFileHeader {
   Machine: number;
   NumberOfSections: number;
@@ -113,6 +125,9 @@ export interface ModuleExtraInfo {
   sections: ImageSectionHeader[];
   imports: ImportDescriptorInfo[];
   exports: ExportInfo | null;
+  // Present in the backend payload; optional here for backward compatibility.
+  dos_header?: DosHeader;
+  runtime_functions?: RuntimeFunction[] | null;
 }
 
 interface ModuleExtraInfoResult {

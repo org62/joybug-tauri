@@ -1,65 +1,23 @@
-import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
-import { useSessionContext, ModuleSymbolStatus } from '@/contexts/SessionContext';
+import { useCallback, useMemo } from 'react';
+import { useSessionContext, Symbol } from '@/contexts/SessionContext';
 import { useContextMenu } from '@/hooks/useContextMenu';
-import { invokeToggleBreakpoint, moduleBasename } from '@/lib/sessionHelpers';
-import { Input } from '@/components/ui/input';
-import { Badge } from '@/components/ui/badge';
-import { ScrollArea } from '@/components/ui/scroll-area';
-import { VirtualizedList } from '@/components/ui/virtualized-list';
-import { DockPanel, PanelToolbar } from '@/components/ui/panel';
+import { invokeToggleBreakpoint } from '@/lib/sessionHelpers';
 import { ContextMenu, ContextMenuItem } from '@/components/ui/context-menu';
-import { TruncatedSymbol } from '@/components/ui/truncated-symbol';
-import { Search, Code, Loader2 } from 'lucide-react';
-
-function SymbolFileBadge({ status }: { status: ModuleSymbolStatus }) {
-  switch (status.status) {
-    case 'loaded':
-      return (
-        <Badge variant="outline" size="xs">
-          {status.symbol_count ?? 0} syms
-        </Badge>
-      );
-    case 'loading':
-      return (
-        <Badge variant="outline" size="xs" title="Downloading symbols…">
-          <Loader2 className="h-3 w-3 animate-spin" />
-        </Badge>
-      );
-    case 'failed':
-      return (
-        <Badge variant="destructive" size="xs" title={status.error ?? undefined}>
-          no symbols
-        </Badge>
-      );
-    default:
-      return (
-        <Badge variant="outline" size="xs" className="text-muted-foreground">
-          not loaded
-        </Badge>
-      );
-  }
-}
+import { SymbolSearchView } from '@/components/SymbolSearchView';
 
 export const ContextSymbolsView = () => {
   const sessionData = useSessionContext();
-  const [searchTerm, setSearchTerm] = useState('');
-  const [symbols, setSymbols] = useState<any[]>([]);
-  const [isSearching, setIsSearching] = useState(false);
-  const [hasSearched, setHasSearched] = useState(false);
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isActive = sessionData.canUseMemoryOps;
   const sessionId = sessionData?.session?.id;
 
   const onNavigateToDisassembly = sessionData.onNavigateToDisassembly;
   const onNavigateToMemory = sessionData.onNavigateToMemory;
+  const searchSymbols = sessionData.searchSymbols;
 
   const { contextMenu, openContextMenu, closeContextMenu } = useContextMenu<{ va: string; is_function: boolean }>();
 
-  const sortedStatuses = useMemo(
-    () =>
-      [...(sessionData.symbolStatuses ?? [])].sort((a, b) =>
-        moduleBasename(a.module_path).localeCompare(moduleBasename(b.module_path)),
-      ),
+  const loadedCount = useMemo(
+    () => (sessionData.symbolStatuses ?? []).filter((s) => s.status === 'loaded').length,
     [sessionData.symbolStatuses],
   );
 
@@ -72,162 +30,24 @@ export const ContextSymbolsView = () => {
     }
   }, [sessionId]);
 
-  // Clear results when session ends
-  useEffect(() => {
-    if (!sessionId) {
-      setSymbols([]);
-      setHasSearched(false);
-      setIsSearching(false);
+  const onSelect = useCallback((symbol: Symbol) => {
+    if (symbol.is_function) {
+      onNavigateToDisassembly?.(symbol.va);
+    } else {
+      onNavigateToMemory?.(symbol.va);
     }
-  }, [sessionId]);
-
-  // Debounced search using searchSymbols from context
-  const handleSearchChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const value = e.target.value;
-    setSearchTerm(value);
-
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-
-    const trimmed = value.trim();
-    if (trimmed.length < 2) {
-      setSymbols([]);
-      setHasSearched(false);
-      setIsSearching(false);
-      return;
-    }
-
-    if (!sessionId || !isActive || !sessionData.searchSymbols) return;
-
-    setIsSearching(true);
-    debounceRef.current = setTimeout(async () => {
-      try {
-        const results = await sessionData.searchSymbols(trimmed, 1000);
-        setSymbols(results);
-        setHasSearched(true);
-      } catch (error) {
-        console.error('Symbol search failed:', error);
-        setSymbols([]);
-        setHasSearched(true);
-      }
-      setIsSearching(false);
-    }, 300);
-  }, [sessionId, isActive, sessionData.searchSymbols]);
-
-  // Cleanup debounce on unmount
-  useEffect(() => {
-    return () => {
-      if (debounceRef.current) clearTimeout(debounceRef.current);
-    };
-  }, []);
-
-  const renderContent = () => {
-    if (isSearching) {
-      return (
-        <div className="flex flex-col items-center justify-center h-full text-muted-foreground p-4">
-          <Loader2 className="h-8 w-8 mx-auto mb-4 animate-spin" />
-          <p className="text-sm">Searching symbols...</p>
-        </div>
-      );
-    }
-
-    if (!hasSearched) {
-      // No query yet: show the per-module symbol file list instead of a blank
-      // placeholder, so the panel tells you what's loaded at a glance.
-      if (isActive && sortedStatuses.length > 0) {
-        return (
-          <div>
-            {sortedStatuses.map((s) => (
-              <div key={s.base_address} className="px-2 py-1 border-b">
-                <div className="flex items-center gap-2 text-sm min-w-0">
-                  <span className="font-medium truncate">{moduleBasename(s.module_path)}</span>
-                  <SymbolFileBadge status={s} />
-                </div>
-                {s.pdb_path && (
-                  <p className="text-xs text-muted-foreground font-mono truncate" title={s.pdb_path}>
-                    {s.pdb_path}
-                  </p>
-                )}
-              </div>
-            ))}
-          </div>
-        );
-      }
-      return (
-        <div className="flex flex-col items-center justify-center h-full text-muted-foreground p-4">
-          <div className="text-center">
-            <Search className="h-12 w-12 mx-auto mb-4 opacity-50" />
-            <p className="text-base font-medium">Start typing to search symbols</p>
-            <p className="text-sm mt-1">Enter at least 2 characters to begin search</p>
-          </div>
-        </div>
-      );
-    }
-
-    if (symbols.length === 0) {
-      return (
-        <div className="flex flex-col items-center justify-center h-full text-muted-foreground p-4">
-          <div className="text-center">
-            <Code className="h-12 w-12 mx-auto mb-4 opacity-50" />
-            <p className="text-base font-medium">No symbols found</p>
-            <p className="text-sm mt-1">Try different search terms</p>
-          </div>
-        </div>
-      );
-    }
-
-    return (
-      <VirtualizedList
-        items={symbols}
-        rowHeight={32}
-        className="h-full"
-        getItemKey={(symbol, index) => `${symbol.module_name}-${symbol.name}-${index}`}
-        renderItem={(symbol) => (
-          <div
-            className="px-2 py-1 border-b hover:bg-gray-50 dark:hover:bg-gray-900 cursor-pointer h-full"
-            onClick={() => {
-              if (symbol.is_function) {
-                onNavigateToDisassembly?.(symbol.va);
-              } else {
-                onNavigateToMemory?.(symbol.va);
-              }
-            }}
-            onContextMenu={(e) => openContextMenu(e, { va: symbol.va, is_function: symbol.is_function })}
-          >
-            <div className="flex items-center gap-2 text-sm font-mono min-w-0 h-full">
-              <span className="text-muted-foreground shrink-0">{symbol.va}</span>
-              <TruncatedSymbol text={symbol.display_name} className="flex-1" />
-            </div>
-          </div>
-        )}
-      />
-    );
-  };
+  }, [onNavigateToDisassembly, onNavigateToMemory]);
 
   return (
-    <DockPanel>
-      <PanelToolbar stack>
-        <Input
-          type="text"
-          inputSize="xs"
-          placeholder={isActive ? "Search symbols..." : "Open, attach to, or run a process to search symbols"}
-          value={searchTerm}
-          onChange={handleSearchChange}
-          className="w-full"
-          disabled={!sessionId || !isActive}
-        />
-        {hasSearched && !isSearching && symbols.length > 0 && (
-          <p className="text-xs text-muted-foreground">{symbols.length} symbols found</p>
-        )}
-      </PanelToolbar>
-      <div className="flex-1 min-h-0">
-        {symbols.length > 0 && hasSearched && !isSearching ? renderContent() : (
-          <ScrollArea className="h-full">
-            {renderContent()}
-          </ScrollArea>
-        )}
-      </div>
-
-      {/* Context Menu */}
+    <SymbolSearchView<Symbol>
+      searchSymbols={searchSymbols}
+      enabled={!!sessionId && isActive}
+      placeholder={isActive ? "Search symbols..." : "Open, attach to, or run a process to search symbols"}
+      idleTitle={isActive ? `Symbols for ${loadedCount} module${loadedCount === 1 ? '' : 's'} are loaded` : undefined}
+      onSelect={onSelect}
+      onRowContextMenu={(e, symbol) => openContextMenu(e, { va: symbol.va, is_function: symbol.is_function })}
+      resetKey={sessionId}
+    >
       {contextMenu && (
         <ContextMenu x={contextMenu.x} y={contextMenu.y} onClose={closeContextMenu} className="min-w-[180px]">
           {onNavigateToDisassembly && (
@@ -245,6 +65,6 @@ export const ContextSymbolsView = () => {
           </ContextMenuItem>
         </ContextMenu>
       )}
-    </DockPanel>
+    </SymbolSearchView>
   );
 };

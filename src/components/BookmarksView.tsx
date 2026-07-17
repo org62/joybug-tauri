@@ -151,7 +151,7 @@ export function BookmarksView({
       <span className="w-6 shrink-0 flex items-center justify-center">
         <Checkbox
           checked={selectedIds.has(b.id)}
-          onChange={() => toggleSelect(b.id)}
+          onCheckedChange={() => toggleSelect(b.id)}
         />
       </span>
 
@@ -297,7 +297,7 @@ export function BookmarksView({
         renderHeader={() => (
           <>
             <span className="w-6 shrink-0 flex items-center justify-center">
-              <Checkbox checked={allSelected} onChange={toggleSelectAll} />
+              <Checkbox checked={allSelected} onCheckedChange={toggleSelectAll} />
             </span>
             <ResizableHeaderCell width={columnWidths.name} onResizeStart={(e) => handleColumnResizeStart("name", e)}>
               Name

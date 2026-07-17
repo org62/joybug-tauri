@@ -10,7 +10,7 @@ import { Label } from "./ui/label";
 import { Cpu, ArrowLeft, ArrowRight, RefreshCw, ChevronRight, Circle, CircleDot, Wrench, Copy, Bookmark, FileCode } from "lucide-react";
 import { sourceNavigation } from "@/lib/navigationStore";
 import { cn } from "@/lib/utils";
-import { useAssemblyView, Instruction } from "@/hooks/useAssemblyView";
+import { useAssemblyView, Instruction, AsmDisassembleFn } from "@/hooks/useAssemblyView";
 import { RegisterContext, SymbolResolver } from "@/lib/hexUtils";
 import { AddressExpressionInput } from "@/components/AddressExpressionInput";
 import { isBenignSessionError } from "@/lib/sessionHelpers";
@@ -43,9 +43,18 @@ interface AssemblyViewProps {
   symbolsRefreshKey?: string;
   /** Activate the Source tab and reveal an address's source line (context-menu action). */
   onNavigateToSource?: (address: string) => void;
+  /** Non-session disassembly source (PE file on disk). Addresses are VAs. */
+  disassemble?: AsmDisassembleFn;
+  /** VA to disassemble first when using a file source. */
+  initialAddress?: bigint;
+  /** Reformat an unsymbolized instruction address (VA) — PE viewer address mode. */
+  addressFormatter?: (va: bigint) => string;
+  /** Reinterpret a goto-box address before navigating (PE viewer: map an
+   * RVA/file-offset typed per the address mode to the VA this view needs). */
+  translateGotoInput?: (address: bigint) => bigint;
 }
 
-export function AssemblyView({ sessionId, isPaused, address, registers, resolveSymbol, breakpointAddresses, onToggleBreakpoint, onSetHardwareBreakpoint, onAssemblePatch, onAddBookmark, symbolsRefreshKey, onNavigateToSource }: AssemblyViewProps) {
+export function AssemblyView({ sessionId, isPaused, address, registers, resolveSymbol, breakpointAddresses, onToggleBreakpoint, onSetHardwareBreakpoint, onAssemblePatch, onAddBookmark, symbolsRefreshKey, onNavigateToSource, disassemble, initialAddress, addressFormatter, translateGotoInput }: AssemblyViewProps) {
   const [addressInput, setAddressInput] = useState("");
   // Inline assembly input state
   const [assembleTarget, setAssembleTarget] = useState<{ address: string; defaultText: string } | null>(null);
@@ -89,6 +98,8 @@ export function AssemblyView({ sessionId, isPaused, address, registers, resolveS
     registers,
     resolveSymbol,
     symbolsRefreshKey,
+    disassemble,
+    initialAddress,
   });
 
   // Handle jump target click
@@ -219,7 +230,7 @@ export function AssemblyView({ sessionId, isPaused, address, registers, resolveS
   // available") rather than a red error box (e.g. in non-invasive Open sessions
   // before an address is chosen).
   const benignUnavailable = error !== null && isBenignSessionError(error);
-  const showEmptyState = !sessionId || benignUnavailable || (address == null && instructions.length === 0 && !error && !isLoading);
+  const showEmptyState = (!sessionId && !disassemble) || benignUnavailable || (address == null && !disassemble && instructions.length === 0 && !error && !isLoading);
   const showErrorState = error !== null && !benignUnavailable;
   const showLoadingState = isLoading && instructions.length === 0 && !error;
   const showInstructions = instructions.length > 0;
@@ -232,11 +243,10 @@ export function AssemblyView({ sessionId, isPaused, address, registers, resolveS
         <AddressExpressionInput
           value={addressInput}
           onChange={setAddressInput}
-          onResolve={goToAddressDirect}
+          onResolve={(addr) => goToAddressDirect(translateGotoInput ? translateGotoInput(addr) : addr)}
           registers={registers}
           resolveSymbol={resolveSymbol}
           sessionId={sessionId}
-          placeholder="rip, symbol, rax+0x10..."
           inputClassName="w-48"
         />
 
@@ -395,6 +405,7 @@ export function AssemblyView({ sessionId, isPaused, address, registers, resolveS
                 isPatched={inst.is_patched ?? false}
                 showBytes={showBytes}
                 columnWidths={columnWidths}
+                addressFormatter={addressFormatter}
                 onClick={(addr) => {
                   setSelectedAddress(addr.toUpperCase());
                   // Passive source sync: if the Source tab is mounted it scrolls
@@ -439,8 +450,8 @@ export function AssemblyView({ sessionId, isPaused, address, registers, resolveS
         </PanelBody>
       )}
 
-      {/* Quick Emulation footer */}
-      <EmulationQuickView sessionId={sessionId} isPaused={isPaused} pcAddress={address} onNavigateToAddress={(addr) => goToAddressDirect(BigInt(addr))} />
+      {/* Quick Emulation footer — a session capability, so gate on the session */}
+      {sessionId && <EmulationQuickView sessionId={sessionId} isPaused={isPaused} pcAddress={address} onNavigateToAddress={(addr) => goToAddressDirect(BigInt(addr))} />}
 
       {/* Context Menu */}
       {contextMenu && (
@@ -520,10 +531,16 @@ interface InstructionRowProps {
   onJumpTargetClick: (target: string) => void;
   onJumpTargetHover: (target: string | null) => void;
   onContextMenu: (e: React.MouseEvent, address: string, mnemonic: string, opStr: string) => void;
+  addressFormatter?: (va: bigint) => string;
   style?: React.CSSProperties;
 }
 
-function InstructionRow({ instruction, isPC, isSelected, isHighlighted, isHoverTarget, hasBreakpoint, isPatched, showBytes, columnWidths, onClick, onJumpTargetClick, onJumpTargetHover, onContextMenu, style }: InstructionRowProps) {
+function InstructionRow({ instruction, isPC, isSelected, isHighlighted, isHoverTarget, hasBreakpoint, isPatched, showBytes, columnWidths, onClick, onJumpTargetClick, onJumpTargetHover, onContextMenu, addressFormatter, style }: InstructionRowProps) {
+  // Unsymbolized instructions fall back to the address, reformatted per the
+  // PE viewer's address mode (VA/RVA/file). Symbolized labels are mode-neutral.
+  const symbolText =
+    instruction.symbol ??
+    (addressFormatter ? addressFormatter(BigInt(instruction.address)) : instruction.address);
   const { mnemonic, op_str, is_jump, is_call, is_ret, jump_target } = instruction;
 
   // Render operands with clickable jump target
@@ -572,7 +589,7 @@ function InstructionRow({ instruction, isPC, isSelected, isHighlighted, isHoverT
           handle so columns align and truncated text never touches the next
           column */}
       <span className="shrink-0 mr-1.5 text-muted-foreground flex" style={{ width: columnWidths.symbol }}>
-        <TruncatedSymbol text={instruction.symbol} className="flex-1" />
+        <TruncatedSymbol text={symbolText} className="flex-1" />
       </span>
 
       {/* Bytes column (conditional) */}

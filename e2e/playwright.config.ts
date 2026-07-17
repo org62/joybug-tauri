@@ -16,6 +16,7 @@ export default defineConfig({
   // Run fast tests first to absorb Vite warmup penalty (~10s) on cheap tests
   testMatch: [
     "routing.spec.ts",
+    "pe-reader.spec.ts",
     "keyboard-shortcuts.spec.ts",
     "patches.spec.ts",
     "bookmarks.spec.ts",

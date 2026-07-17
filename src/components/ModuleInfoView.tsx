@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useLayoutEffect, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import { DockPanel, PanelToolbar, PanelBody } from '@/components/ui/panel';
 import { TruncatedSymbol } from '@/components/ui/truncated-symbol';
 import { Button } from '@/components/ui/button';
@@ -13,11 +13,18 @@ import { Module } from '@/contexts/SessionContext';
 import type {
   ModuleExtraInfo,
   ImageSectionHeader,
-  ExportKind,
+  ImportDescriptorInfo,
+  RuntimeFunction,
 } from '@/hooks/useModuleInfo';
-import { Loader2, FileWarning, FileSearch } from 'lucide-react';
-import { useVirtualizer } from '@tanstack/react-virtual';
+import { Loader2, FileWarning, FileSearch, ChevronDown, ChevronRight } from 'lucide-react';
+import { useInlineVirtualizer } from '@/hooks/useInlineVirtualizer';
 import { moduleBasename } from '@/lib/sessionHelpers';
+import {
+  DATA_DIRECTORY_NAMES, DLL_CHARACTERISTICS_FLAGS, MACHINE_VALUES, SUBSYSTEM_VALUES,
+  SECTION_CHARACTERISTICS_FLAGS, decodeFlags, decodeSectionName, decodeShortFlags,
+  enumLabel, flattenImports, formatTimestamp, getExportForwardTarget, getExportRva, hex, hexBig,
+  visibleImportRows,
+} from '@/lib/peDecode';
 
 interface ModuleInfoViewProps {
   modules: Module[];
@@ -31,97 +38,6 @@ interface ModuleInfoViewProps {
 }
 
 // --- Helper utilities ---
-
-function decodeSectionName(nameBytes: number[]): string {
-  const bytes = nameBytes.filter(b => b !== 0);
-  return String.fromCharCode(...bytes);
-}
-
-function decodeSectionFlags(characteristics: number): string {
-  const flags: string[] = [];
-  if (characteristics & 0x00000020) flags.push('Code');
-  if (characteristics & 0x00000040) flags.push('InitData');
-  if (characteristics & 0x00000080) flags.push('UninitData');
-  if (characteristics & 0x20000000) flags.push('X');
-  if (characteristics & 0x40000000) flags.push('R');
-  if (characteristics & 0x80000000) flags.push('W');
-  return flags.join(' | ');
-}
-
-function getMachineType(machine: number): string {
-  switch (machine) {
-    case 0x14c: return 'x86 (I386)';
-    case 0x8664: return 'x64 (AMD64)';
-    case 0xAA64: return 'ARM64';
-    case 0x1c0: return 'ARM';
-    case 0x1c4: return 'ARM Thumb-2';
-    default: return `Unknown (0x${machine.toString(16)})`;
-  }
-}
-
-function getSubsystem(subsystem: number): string {
-  switch (subsystem) {
-    case 1: return 'Native';
-    case 2: return 'Windows GUI';
-    case 3: return 'Windows CUI';
-    case 5: return 'OS/2 CUI';
-    case 7: return 'POSIX CUI';
-    case 9: return 'Windows CE GUI';
-    case 10: return 'EFI Application';
-    case 11: return 'EFI Boot Service Driver';
-    case 12: return 'EFI Runtime Driver';
-    case 13: return 'EFI ROM';
-    case 14: return 'Xbox';
-    default: return `Unknown (${subsystem})`;
-  }
-}
-
-function decodeDllCharacteristics(chars: number): string {
-  const flags: string[] = [];
-  if (chars & 0x0020) flags.push('HIGH_ENTROPY_VA');
-  if (chars & 0x0040) flags.push('DYNAMIC_BASE');
-  if (chars & 0x0080) flags.push('FORCE_INTEGRITY');
-  if (chars & 0x0100) flags.push('NX_COMPAT');
-  if (chars & 0x0200) flags.push('NO_ISOLATION');
-  if (chars & 0x0400) flags.push('NO_SEH');
-  if (chars & 0x0800) flags.push('NO_BIND');
-  if (chars & 0x1000) flags.push('APPCONTAINER');
-  if (chars & 0x2000) flags.push('WDM_DRIVER');
-  if (chars & 0x4000) flags.push('GUARD_CF');
-  if (chars & 0x8000) flags.push('TERMINAL_SERVER_AWARE');
-  return flags.join(', ');
-}
-
-function formatTimestamp(timestamp: number): string {
-  if (timestamp === 0) return '0';
-  const date = new Date(timestamp * 1000);
-  const year = date.getUTCFullYear();
-  // PE format exists since ~1993; dates outside a reasonable range are likely
-  // content hashes from reproducible/deterministic builds (e.g. MSVC /Brepro)
-  if (year < 1980 || year > new Date().getFullYear() + 1) {
-    return `0x${timestamp.toString(16).toUpperCase()}`;
-  }
-  return `${date.toISOString().replace('T', ' ').replace('.000Z', '')} (0x${timestamp.toString(16).toUpperCase()})`;
-}
-
-function getExportRva(kind: ExportKind): number | null {
-  if ('Symbol' in kind) return kind.Symbol.rva;
-  return null;
-}
-
-function getExportForwardTarget(kind: ExportKind): string | null {
-  if ('Forward' in kind) return kind.Forward.target;
-  return null;
-}
-
-function hex(value: number, width: number = 8): string {
-  return `0x${value.toString(16).toUpperCase().padStart(width, '0')}`;
-}
-
-function hexBig(value: number, width: number = 16): string {
-  // For values that could be > 32-bit, use BigInt formatting
-  return `0x${BigInt(value).toString(16).toUpperCase().padStart(width, '0')}`;
-}
 
 function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -181,16 +97,16 @@ const PEHeadersSection: React.FC<{
         <h4 className="font-medium text-xs text-muted-foreground mb-1">PE Headers</h4>
         <table className="w-full text-xs">
           <tbody>
-            <HeaderRow label="Machine" value={getMachineType(fh.Machine)} />
+            <HeaderRow label="Machine" value={enumLabel(MACHINE_VALUES, fh.Machine)} />
             <HeaderRow label="Timestamp" value={formatTimestamp(fh.TimeDateStamp)} />
-            <HeaderRow label="Subsystem" value={getSubsystem(oh.Subsystem)} />
+            <HeaderRow label="Subsystem" value={enumLabel(SUBSYSTEM_VALUES, oh.Subsystem)} />
             <HeaderRow label="Image Base" value={hexBig(oh.ImageBase)} />
             <HeaderRow label="Image Size" value={`${hex(oh.SizeOfImage)} (${formatSize(oh.SizeOfImage)})`} />
             <HeaderRow label="Code Size" value={`${hex(oh.SizeOfCode)} (${formatSize(oh.SizeOfCode)})`} />
             <HeaderRow label="Section Alignment" value={hex(oh.SectionAlignment)} />
             <HeaderRow label="File Alignment" value={hex(oh.FileAlignment)} />
             <HeaderRow label="Checksum" value={hex(oh.CheckSum)} />
-            <HeaderRow label="DLL Characteristics" value={decodeDllCharacteristics(oh.DllCharacteristics)} />
+            <HeaderRow label="DLL Characteristics" value={decodeFlags(DLL_CHARACTERISTICS_FLAGS, oh.DllCharacteristics)} />
             <HeaderRow label="Stack Reserve" value={hexBig(oh.SizeOfStackReserve)} />
             <HeaderRow label="Heap Reserve" value={hexBig(oh.SizeOfHeapReserve)} />
           </tbody>
@@ -241,7 +157,7 @@ const SectionsTable: React.FC<{
                 </td>
                 <td className="py-0.5 pr-2 font-mono">{hex(s.VirtualSize)}</td>
                 <td className="py-0.5 pr-2 font-mono">{hex(s.SizeOfRawData)}</td>
-                <td className="py-0.5 font-mono text-muted-foreground">{decodeSectionFlags(s.Characteristics)}</td>
+                <td className="py-0.5 font-mono text-muted-foreground">{decodeShortFlags(SECTION_CHARACTERISTICS_FLAGS, s.Characteristics)}</td>
               </tr>
             );
           })}
@@ -262,27 +178,8 @@ const ExportsTable: React.FC<{
   scrollContainerRef: React.RefObject<HTMLDivElement | null>;
   onNavigateToDisassembly?: (address: string) => void;
 }> = ({ exports, moduleBase, entryPointRva, scrollContainerRef, onNavigateToDisassembly }) => {
-  const listRef = useRef<HTMLDivElement>(null);
-  const [scrollMargin, setScrollMargin] = useState(0);
-
   const entries = exports?.entries ?? [];
-
-  // Measure distance from scroll container top to the virtualized list
-  useLayoutEffect(() => {
-    if (listRef.current && scrollContainerRef.current) {
-      const listTop = listRef.current.getBoundingClientRect().top;
-      const scrollTop = scrollContainerRef.current.getBoundingClientRect().top;
-      setScrollMargin(listTop - scrollTop + scrollContainerRef.current.scrollTop);
-    }
-  });
-
-  const virtualizer = useVirtualizer({
-    count: entries.length,
-    getScrollElement: () => scrollContainerRef.current,
-    estimateSize: () => EXPORT_ROW_HEIGHT,
-    overscan: 30,
-    scrollMargin,
-  });
+  const { listRef, virtualizer, rowStyle } = useInlineVirtualizer(scrollContainerRef, entries.length, EXPORT_ROW_HEIGHT);
 
   if (!exports) return null;
 
@@ -313,13 +210,7 @@ const ExportsTable: React.FC<{
             <div
               key={virtualRow.index}
               className={`flex text-xs border-b border-border/40 ${isEntryPoint ? 'bg-yellow-500/10' : ''}`}
-              style={{
-                position: 'absolute',
-                top: virtualRow.start - virtualizer.options.scrollMargin,
-                left: 0,
-                right: 0,
-                height: EXPORT_ROW_HEIGHT,
-              }}
+              style={rowStyle(virtualRow)}
             >
               <span className="py-0.5 pr-2 font-mono shrink-0" style={{ width: 50 }}>{entry.ordinal}</span>
               <span className="py-0.5 pr-2 font-mono shrink-0 flex" style={{ width: 200 }}>
@@ -335,6 +226,168 @@ const ExportsTable: React.FC<{
               <span className="py-0.5 font-mono text-muted-foreground flex-1 min-w-0 flex">
                 <TruncatedSymbol text={fwd ?? ''} className="flex-1" />
               </span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+};
+
+// --- Section: DOS Header + Data Directories ---
+
+const DataDirectoriesTable: React.FC<{
+  info: ModuleExtraInfo;
+  moduleBase: string;
+  onNavigateToMemory?: (address: string) => void;
+}> = ({ info, moduleBase, onNavigateToMemory }) => {
+  const dirs = info.nt_headers.OptionalHeader.DataDirectory;
+  const baseAddr = BigInt(moduleBase);
+  const nonEmpty = dirs
+    .map((d, i) => ({ d, i }))
+    .filter(({ d }) => d.VirtualAddress !== 0 || d.Size !== 0);
+
+  if (nonEmpty.length === 0) return null;
+
+  return (
+    <div>
+      <h4 className="font-medium text-xs text-muted-foreground mb-1">
+        Data Directories ({nonEmpty.length})
+      </h4>
+      <table className="w-full text-xs">
+        <thead>
+          <tr className="border-b text-muted-foreground">
+            <th className="text-left py-0.5 pr-2">Directory</th>
+            <th className="text-left py-0.5 pr-2">RVA</th>
+            <th className="text-left py-0.5">Size</th>
+          </tr>
+        </thead>
+        <tbody>
+          {nonEmpty.map(({ d, i }) => {
+            const va = `0x${(baseAddr + BigInt(d.VirtualAddress)).toString(16).toUpperCase()}`;
+            return (
+              <tr key={i} className="border-b border-border/40">
+                <td className="py-0.5 pr-2">{DATA_DIRECTORY_NAMES[i] ?? `#${i}`}</td>
+                <td className="py-0.5 pr-2">
+                  <AddressLink address={va} onClick={onNavigateToMemory} />
+                </td>
+                <td className="py-0.5 font-mono">{hex(d.Size)}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+};
+
+// --- Section: Imports ---
+
+const IMPORT_ROW_HEIGHT = 24;
+
+const ImportsTable: React.FC<{
+  imports: ImportDescriptorInfo[];
+  moduleBase: string;
+  scrollContainerRef: React.RefObject<HTMLDivElement | null>;
+  onNavigateToMemory?: (address: string) => void;
+}> = ({ imports, moduleBase, scrollContainerRef, onNavigateToMemory }) => {
+  const { rows: allRows, entryCount: totalSymbols } = useMemo(() => flattenImports(imports), [imports]);
+  // Individually foldable DLLs: collapsed ones keep their header row only.
+  const [collapsedDlls, setCollapsedDlls] = useState<Set<number>>(new Set());
+  const toggleDll = (i: number) =>
+    setCollapsedDlls((prev) => {
+      const next = new Set(prev);
+      if (next.has(i)) next.delete(i); else next.add(i);
+      return next;
+    });
+  const rows = useMemo(() => visibleImportRows(allRows, collapsedDlls), [allRows, collapsedDlls]);
+  const baseAddr = BigInt(moduleBase);
+  const { listRef, virtualizer, rowStyle } = useInlineVirtualizer(scrollContainerRef, rows.length, IMPORT_ROW_HEIGHT);
+
+  if (imports.length === 0) return null;
+
+  return (
+    <div>
+      <h4 className="font-medium text-xs text-muted-foreground mb-1">
+        Imports ({imports.length} DLL{imports.length !== 1 ? 's' : ''}, {totalSymbols} symbols)
+      </h4>
+      <div ref={listRef} className="relative" style={{ height: virtualizer.getTotalSize() }}>
+        {virtualizer.getVirtualItems().map((virtualRow) => {
+          const row = rows[virtualRow.index];
+          const style = rowStyle(virtualRow);
+          if (row.kind === 'dll') {
+            const open = !collapsedDlls.has(row.dllIndex);
+            return (
+              <div
+                key={virtualRow.index}
+                className="flex items-center gap-1 text-xs font-medium border-b bg-muted/30 hover:bg-muted/50 px-1 cursor-pointer select-none"
+                style={style}
+                onClick={() => toggleDll(row.dllIndex)}
+              >
+                {open ? <ChevronDown className="h-3.5 w-3.5 shrink-0" /> : <ChevronRight className="h-3.5 w-3.5 shrink-0" />}
+                <span className="font-mono">{row.dll}</span>
+                <span className="ml-1 text-muted-foreground">({row.count})</span>
+              </div>
+            );
+          }
+          const va = row.rva ? `0x${(baseAddr + BigInt(row.rva)).toString(16).toUpperCase()}` : null;
+          return (
+            <div key={virtualRow.index} className="flex text-xs border-b border-border/40 pl-3" style={style}>
+              <span className="py-0.5 pr-2 shrink-0" style={{ width: 160 }}>
+                {va ? <AddressLink address={va} onClick={onNavigateToMemory} /> : <span className="text-muted-foreground">—</span>}
+              </span>
+              <span className="py-0.5 font-mono flex-1 min-w-0 flex">
+                <TruncatedSymbol text={row.text} className="flex-1" />
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+};
+
+// --- Section: Runtime Functions (exception directory) ---
+
+const RUNTIME_ROW_HEIGHT = 22;
+
+const RuntimeFunctionsTable: React.FC<{
+  runtimeFunctions: RuntimeFunction[];
+  moduleBase: string;
+  scrollContainerRef: React.RefObject<HTMLDivElement | null>;
+  onNavigateToDisassembly?: (address: string) => void;
+}> = ({ runtimeFunctions, moduleBase, scrollContainerRef, onNavigateToDisassembly }) => {
+  const baseAddr = BigInt(moduleBase);
+  const { listRef, virtualizer, rowStyle } = useInlineVirtualizer(scrollContainerRef, runtimeFunctions.length, RUNTIME_ROW_HEIGHT);
+
+  if (runtimeFunctions.length === 0) return null;
+
+  return (
+    <div>
+      <h4 className="font-medium text-xs text-muted-foreground mb-1">
+        Runtime Functions ({runtimeFunctions.length})
+      </h4>
+      <div className="flex text-xs text-muted-foreground border-b">
+        <span className="py-0.5 pr-2 shrink-0" style={{ width: 160 }}>Begin</span>
+        <span className="py-0.5 pr-2 shrink-0" style={{ width: 160 }}>End</span>
+        <span className="py-0.5 flex-1">Unwind</span>
+      </div>
+      <div ref={listRef} className="relative" style={{ height: virtualizer.getTotalSize() }}>
+        {virtualizer.getVirtualItems().map((virtualRow) => {
+          const rf = runtimeFunctions[virtualRow.index];
+          const begin = `0x${(baseAddr + BigInt(rf.BeginAddress)).toString(16).toUpperCase()}`;
+          const end = `0x${(baseAddr + BigInt(rf.EndAddress)).toString(16).toUpperCase()}`;
+          return (
+            <div
+              key={virtualRow.index}
+              className="flex text-xs border-b border-border/40"
+              style={rowStyle(virtualRow)}
+            >
+              <span className="py-0.5 pr-2 shrink-0" style={{ width: 160 }}>
+                <AddressLink address={begin} onClick={onNavigateToDisassembly} />
+              </span>
+              <span className="py-0.5 pr-2 shrink-0 font-mono" style={{ width: 160 }}>{end}</span>
+              <span className="py-0.5 font-mono text-muted-foreground flex-1">{hex(rf.UnwindData)}</span>
             </div>
           );
         })}
@@ -422,6 +475,13 @@ export const ModuleInfoView: React.FC<ModuleInfoViewProps> = ({
                 onNavigateToMemory={onNavigateToMemory}
               />
               <SectionsTable sections={info.sections} moduleBase={selectedModuleBase!} onNavigateToMemory={onNavigateToMemory} />
+              <DataDirectoriesTable info={info} moduleBase={selectedModuleBase!} onNavigateToMemory={onNavigateToMemory} />
+              <ImportsTable
+                imports={info.imports}
+                moduleBase={selectedModuleBase!}
+                scrollContainerRef={viewportRef}
+                onNavigateToMemory={onNavigateToMemory}
+              />
               <ExportsTable
                 exports={info.exports}
                 moduleBase={selectedModuleBase!}
@@ -429,6 +489,14 @@ export const ModuleInfoView: React.FC<ModuleInfoViewProps> = ({
                 scrollContainerRef={viewportRef}
                 onNavigateToDisassembly={onNavigateToDisassembly}
               />
+              {info.runtime_functions && (
+                <RuntimeFunctionsTable
+                  runtimeFunctions={info.runtime_functions}
+                  moduleBase={selectedModuleBase!}
+                  scrollContainerRef={viewportRef}
+                  onNavigateToDisassembly={onNavigateToDisassembly}
+                />
+              )}
             </>
           )}
         </div>

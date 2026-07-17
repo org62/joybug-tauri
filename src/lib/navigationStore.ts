@@ -11,23 +11,23 @@
 
 type Listener = () => void;
 
-export class NavigationChannel {
-  private _pending: string | null = null;
+export class NavigationChannel<T = string> {
+  private _pending: T | null = null;
   private _version = 0;
   private _listeners = new Set<Listener>();
 
   /** Set a pending navigation target and notify subscribers. */
-  request(address: string) {
-    this._pending = address;
+  request(payload: T) {
+    this._pending = payload;
     this._version++;
     this._listeners.forEach(l => l());
   }
 
   /** Consume the pending navigation target (returns null if already consumed). */
-  consume(): string | null {
-    const addr = this._pending;
+  consume(): T | null {
+    const payload = this._pending;
     this._pending = null;
-    return addr;
+    return payload;
   }
 
   /** For useSyncExternalStore — subscribe to store changes. */
@@ -40,8 +40,14 @@ export class NavigationChannel {
   getSnapshot = (): number => this._version;
 }
 
+/** Memory/hex navigation with an optional byte range to select at the target. */
+export interface MemoryNavRequest {
+  address: string;
+  selectLength?: number;
+}
+
 export const disassemblyNavigation = new NavigationChannel();
-export const memoryNavigation = new NavigationChannel();
+export const memoryNavigation = new NavigationChannel<string | MemoryNavRequest>();
 // Disassembly row click → source view scrolls/highlights the matching line
 // (passive sync; does not steal the active tab).
 export const sourceNavigation = new NavigationChannel();

@@ -60,6 +60,7 @@ pub fn run() {
         .manage(SettingsState::new(load_settings_from_disk()))
         .manage(commands::OobPool::default())
         .manage(commands::SourceIndexCache::default())
+        .manage(commands::PeFilesState::default())
         .invoke_handler(tauri::generate_handler![
             commands::greet,
             commands::create_debug_session,
@@ -162,6 +163,17 @@ pub fn run() {
             commands::update_patch,
             commands::enable_patch_group,
             commands::get_patches,
+            commands::pe_open,
+            commands::pe_read_bytes,
+            commands::pe_write_bytes,
+            commands::pe_disassemble,
+            commands::pe_save,
+            commands::pe_close,
+            commands::pe_load_symbols,
+            commands::pe_search_symbols,
+            commands::pe_string_scan,
+            commands::pe_set_field,
+            commands::pe_field_span,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

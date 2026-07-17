@@ -7,10 +7,9 @@ import {
   DropdownMenu,
   DropdownMenuTrigger,
   DropdownMenuContent,
-  DropdownMenuCheckboxItem,
-  DropdownMenuSeparator,
   DropdownMenuItem,
 } from '@/components/ui/dropdown-menu';
+import { DockWindowsMenu, DockWindowsMenuTab } from '@/components/DockWindowsMenu';
 import { DebugSession, SessionStatus } from '@/contexts/SessionContext';
 import { useKeybindingContext } from '@/contexts/KeybindingContext';
 
@@ -72,6 +71,28 @@ export const SessionHeader: React.FC<SessionHeaderProps> = ({
   // Non-invasive Open session: no debug loop, so no stepping/pause. The single
   // Attach/Detach button becomes "Attach" here and "Detach" once attached.
   const isOpen = session.status === 'Open';
+
+  const windowTabs: DockWindowsMenuTab[] = [
+    { id: 'disassembly', label: 'Disassembly', shortcut: getKeybinding('panel.disassembly') },
+    { id: 'source', label: 'Source', shortcut: getKeybinding('panel.source') },
+    { id: 'registers', label: 'Registers', shortcut: getKeybinding('panel.registers') },
+    { id: 'modules', label: 'Modules', shortcut: getKeybinding('panel.modules') },
+    { id: 'threads', label: 'Threads', shortcut: getKeybinding('panel.threads') },
+    { id: 'callstack', label: 'Call Stack', shortcut: getKeybinding('panel.callstack') },
+    { id: 'symbols', label: 'Symbols', shortcut: getKeybinding('panel.symbols') },
+    { id: 'types', label: 'Types', shortcut: getKeybinding('panel.types') },
+    { id: 'memory_regions', label: 'Memory Regions', shortcut: getKeybinding('panel.memoryRegions') },
+    { id: 'breakpoints', label: 'Breakpoints', shortcut: getKeybinding('panel.breakpoints') },
+    { id: 'patches', label: 'Patches', shortcut: getKeybinding('panel.patches') },
+    { id: 'bookmarks', label: 'Bookmarks', shortcut: getKeybinding('panel.bookmarks') },
+    { id: 'memory_search', label: 'Memory Search', shortcut: getKeybinding('panel.memorySearch') },
+    { id: 'memory_scanner', label: 'Memory Scanner', shortcut: getKeybinding('panel.memoryScanner') },
+    { id: 'pointer_scan', label: 'Pointer Scan', shortcut: getKeybinding('panel.pointerScan') },
+    { id: 'strings', label: 'Strings', shortcut: getKeybinding('panel.strings') },
+    { id: 'code_explorer', label: 'Code Explorer', shortcut: getKeybinding('panel.codeExplorer') },
+    { id: 'peviewer', label: 'PE Viewer', shortcut: getKeybinding('panel.peViewer') },
+    { id: 'access_trace', label: 'Access Trace' },
+  ];
 
   return (
     <div className="mb-3 flex items-center justify-between">
@@ -224,164 +245,20 @@ export const SessionHeader: React.FC<SessionHeaderProps> = ({
         {/* Separator before the Windows menu */}
         <div className="w-px h-6 bg-border mx-1" />
 
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="outline" size="sm">Windows</Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="min-w-[220px]">
-            {(() => {
-              const activeTabs = dockingRef.current?.getActiveTabs?.() || [];
-              const active = new Set<string>(activeTabs);
-              return (
-                <>
-                  <DropdownMenuCheckboxItem
-                    checked={active.has('disassembly')}
-                    onCheckedChange={() => toggleTab('disassembly')}
-                  >
-                    <span className="flex-1">Disassembly</span>
-                    <span className="ml-auto text-xs text-muted-foreground">{getKeybinding("panel.disassembly")}</span>
-                  </DropdownMenuCheckboxItem>
-                  <DropdownMenuCheckboxItem
-                    checked={active.has('source')}
-                    onCheckedChange={() => toggleTab('source')}
-                  >
-                    <span className="flex-1">Source</span>
-                    <span className="ml-auto text-xs text-muted-foreground">{getKeybinding("panel.source")}</span>
-                  </DropdownMenuCheckboxItem>
-                  <DropdownMenuCheckboxItem
-                    checked={active.has('registers')}
-                    onCheckedChange={() => toggleTab('registers')}
-                  >
-                    <span className="flex-1">Registers</span>
-                    <span className="ml-auto text-xs text-muted-foreground">{getKeybinding("panel.registers")}</span>
-                  </DropdownMenuCheckboxItem>
-                  <DropdownMenuCheckboxItem
-                    checked={active.has('modules')}
-                    onCheckedChange={() => toggleTab('modules')}
-                  >
-                    <span className="flex-1">Modules</span>
-                    <span className="ml-auto text-xs text-muted-foreground">{getKeybinding("panel.modules")}</span>
-                  </DropdownMenuCheckboxItem>
-                  <DropdownMenuCheckboxItem
-                    checked={active.has('threads')}
-                    onCheckedChange={() => toggleTab('threads')}
-                  >
-                    <span className="flex-1">Threads</span>
-                    <span className="ml-auto text-xs text-muted-foreground">{getKeybinding("panel.threads")}</span>
-                  </DropdownMenuCheckboxItem>
-                  <DropdownMenuCheckboxItem
-                    checked={active.has('callstack')}
-                    onCheckedChange={() => toggleTab('callstack')}
-                  >
-                    <span className="flex-1">Call Stack</span>
-                    <span className="ml-auto text-xs text-muted-foreground">{getKeybinding("panel.callstack")}</span>
-                  </DropdownMenuCheckboxItem>
-                  <DropdownMenuCheckboxItem
-                    checked={active.has('symbols')}
-                    onCheckedChange={() => toggleTab('symbols')}
-                  >
-                    <span className="flex-1">Symbols</span>
-                    <span className="ml-auto text-xs text-muted-foreground">{getKeybinding("panel.symbols")}</span>
-                  </DropdownMenuCheckboxItem>
-                  <DropdownMenuCheckboxItem
-                    checked={active.has('types')}
-                    onCheckedChange={() => toggleTab('types')}
-                  >
-                    <span className="flex-1">Types</span>
-                    <span className="ml-auto text-xs text-muted-foreground">{getKeybinding("panel.types")}</span>
-                  </DropdownMenuCheckboxItem>
-                  <DropdownMenuCheckboxItem
-                    checked={active.has('memory_regions')}
-                    onCheckedChange={() => toggleTab('memory_regions')}
-                  >
-                    <span className="flex-1">Memory Regions</span>
-                    <span className="ml-auto text-xs text-muted-foreground">{getKeybinding("panel.memoryRegions")}</span>
-                  </DropdownMenuCheckboxItem>
-                  <DropdownMenuCheckboxItem
-                    checked={active.has('breakpoints')}
-                    onCheckedChange={() => toggleTab('breakpoints')}
-                  >
-                    <span className="flex-1">Breakpoints</span>
-                    <span className="ml-auto text-xs text-muted-foreground">{getKeybinding("panel.breakpoints")}</span>
-                  </DropdownMenuCheckboxItem>
-                  <DropdownMenuCheckboxItem
-                    checked={active.has('patches')}
-                    onCheckedChange={() => toggleTab('patches')}
-                  >
-                    <span className="flex-1">Patches</span>
-                    <span className="ml-auto text-xs text-muted-foreground">{getKeybinding("panel.patches")}</span>
-                  </DropdownMenuCheckboxItem>
-                  <DropdownMenuCheckboxItem
-                    checked={active.has('bookmarks')}
-                    onCheckedChange={() => toggleTab('bookmarks')}
-                  >
-                    <span className="flex-1">Bookmarks</span>
-                    <span className="ml-auto text-xs text-muted-foreground">{getKeybinding("panel.bookmarks")}</span>
-                  </DropdownMenuCheckboxItem>
-                  <DropdownMenuCheckboxItem
-                    checked={active.has('memory_search')}
-                    onCheckedChange={() => toggleTab('memory_search')}
-                  >
-                    <span className="flex-1">Memory Search</span>
-                    <span className="ml-auto text-xs text-muted-foreground">{getKeybinding("panel.memorySearch")}</span>
-                  </DropdownMenuCheckboxItem>
-                  <DropdownMenuCheckboxItem
-                    checked={active.has('memory_scanner')}
-                    onCheckedChange={() => toggleTab('memory_scanner')}
-                  >
-                    <span className="flex-1">Memory Scanner</span>
-                    <span className="ml-auto text-xs text-muted-foreground">{getKeybinding("panel.memoryScanner")}</span>
-                  </DropdownMenuCheckboxItem>
-                  <DropdownMenuCheckboxItem
-                    checked={active.has('pointer_scan')}
-                    onCheckedChange={() => toggleTab('pointer_scan')}
-                  >
-                    <span className="flex-1">Pointer Scan</span>
-                    <span className="ml-auto text-xs text-muted-foreground">{getKeybinding("panel.pointerScan")}</span>
-                  </DropdownMenuCheckboxItem>
-                  <DropdownMenuCheckboxItem
-                    checked={active.has('strings')}
-                    onCheckedChange={() => toggleTab('strings')}
-                  >
-                    <span className="flex-1">Strings</span>
-                    <span className="ml-auto text-xs text-muted-foreground">{getKeybinding("panel.strings")}</span>
-                  </DropdownMenuCheckboxItem>
-                  <DropdownMenuCheckboxItem
-                    checked={active.has('code_explorer')}
-                    onCheckedChange={() => toggleTab('code_explorer')}
-                  >
-                    <span className="flex-1">Code Explorer</span>
-                    <span className="ml-auto text-xs text-muted-foreground">{getKeybinding("panel.codeExplorer")}</span>
-                  </DropdownMenuCheckboxItem>
-                  <DropdownMenuCheckboxItem
-                    checked={active.has('peviewer')}
-                    onCheckedChange={() => toggleTab('peviewer')}
-                  >
-                    <span className="flex-1">PE Viewer</span>
-                    <span className="ml-auto text-xs text-muted-foreground">{getKeybinding("panel.peViewer")}</span>
-                  </DropdownMenuCheckboxItem>
-                  <DropdownMenuCheckboxItem
-                    checked={active.has('access_trace')}
-                    onCheckedChange={() => toggleTab('access_trace')}
-                  >
-                    <span className="flex-1">Access Trace</span>
-                  </DropdownMenuCheckboxItem>
-                  {addNewMemoryTab && (
-                    <DropdownMenuItem onSelect={(e: Event) => { e.preventDefault(); addNewMemoryTab(); }}>
-                      <Plus />
-                      <span className="flex-1">Add Memory Window</span>
-                      <span className="ml-auto text-xs text-muted-foreground">{getKeybinding("panel.addMemory")}</span>
-                    </DropdownMenuItem>
-                  )}
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem onSelect={(e: Event) => { e.preventDefault(); resetLayout(); }}>
-                    Reset Layout
-                  </DropdownMenuItem>
-                </>
-              );
-            })()}
-          </DropdownMenuContent>
-        </DropdownMenu>
+        <DockWindowsMenu
+          dockingRef={dockingRef}
+          tabs={windowTabs}
+          onToggleTab={toggleTab}
+          onResetLayout={resetLayout}
+        >
+          {addNewMemoryTab && (
+            <DropdownMenuItem onSelect={(e: Event) => { e.preventDefault(); addNewMemoryTab(); }}>
+              <Plus />
+              <span className="flex-1">Add Memory Window</span>
+              <span className="ml-auto text-xs text-muted-foreground">{getKeybinding("panel.addMemory")}</span>
+            </DropdownMenuItem>
+          )}
+        </DockWindowsMenu>
       </div>
     </div>
   );

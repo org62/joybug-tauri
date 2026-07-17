@@ -8,17 +8,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { toastError, toastSuccess } from "@/lib/logger";
-
-/** Clipboard write with success/error toasts; `label` names what was copied. */
-async function copyWithToast(text: string, label: string) {
-  try {
-    await navigator.clipboard.writeText(text);
-    toastSuccess(`${label} copied`);
-  } catch (e) {
-    toastError(`Failed to copy: ${e}`);
-  }
-}
+import { copyToClipboard } from "@/lib/clipboard";
 
 interface CopyTooltipContentProps {
   text: string;
@@ -52,7 +42,7 @@ function CopyTooltipContent({
           size="icon-xs"
           className="shrink-0"
           title={`Copy ${label.toLowerCase()}`}
-          onClick={() => copyWithToast(copyText ?? text, label)}
+          onClick={() => copyToClipboard(copyText ?? text, label)}
         >
           <Copy />
         </Button>
@@ -136,4 +126,4 @@ function TruncatedSymbol({
   );
 }
 
-export { MiddleTruncate, TruncatedSymbol, CopyTooltipContent, copyWithToast };
+export { MiddleTruncate, TruncatedSymbol, CopyTooltipContent };

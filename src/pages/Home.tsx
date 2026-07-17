@@ -35,6 +35,22 @@ export default function Home() {
           <Card className="hover:shadow-lg transition-shadow">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
+                📦 PE Viewer
+              </CardTitle>
+              <CardDescription>
+                Inspect and edit PE files without running them
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Link to="/pe">
+                <Button variant="outline" className="w-full">Open PE Viewer</Button>
+              </Link>
+            </CardContent>
+          </Card>
+
+          <Card className="hover:shadow-lg transition-shadow">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
                 📋 Logs
               </CardTitle>
               <CardDescription>
@@ -43,7 +59,7 @@ export default function Home() {
             </CardHeader>
             <CardContent>
               <Link to="/logs">
-                <Button className="w-full">View Logs</Button>
+                <Button variant="outline" className="w-full">View Logs</Button>
               </Link>
             </CardContent>
           </Card>
@@ -59,7 +75,7 @@ export default function Home() {
             </CardHeader>
             <CardContent>
               <Link to="/settings">
-                <Button className="w-full">Open Settings</Button>
+                <Button variant="outline" className="w-full">Open Settings</Button>
               </Link>
             </CardContent>
           </Card>
@@ -75,7 +91,7 @@ export default function Home() {
             </CardHeader>
             <CardContent>
               <Link to="/about">
-                <Button className="w-full">Learn More</Button>
+                <Button variant="outline" className="w-full">Learn More</Button>
               </Link>
             </CardContent>
           </Card>

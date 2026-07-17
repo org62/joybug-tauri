@@ -13,7 +13,7 @@ import { CommandPaletteContext, useCommandPaletteContext } from "@/contexts/Comm
 import { useCommandPalette } from "@/hooks/useCommandPalette";
 import { CommandPalette } from "@/components/CommandPalette";
 import { useDebugSettings, EVENT_ITEMS } from "@/hooks/useDebugSettings";
-import { Home as HomeIcon, Bug, ScrollText, Settings as SettingsIcon, Info, Sun, Moon, Keyboard, Bell, Zap, Plus, Eye } from "lucide-react";
+import { Home as HomeIcon, Bug, ScrollText, Settings as SettingsIcon, Info, Sun, Moon, Keyboard, Bell, Zap, Plus, Eye, FileSearch } from "lucide-react";
 
 // Lazy load pages for code splitting
 const Home = React.lazy(() => import("@/pages/Home"));
@@ -22,6 +22,7 @@ const SessionDocked = React.lazy(() => import("@/pages/SessionDocked"));
 const Logs = React.lazy(() => import("@/pages/Logs"));
 const Settings = React.lazy(() => import("@/pages/Settings"));
 const About = React.lazy(() => import("@/pages/About"));
+const PeReader = React.lazy(() => import("@/pages/PeReader"));
 
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -146,6 +147,14 @@ function AppContent() {
         keywords: ["debug", "session"],
       },
       {
+        id: "nav.pe",
+        label: "PE Viewer",
+        group: "Navigation",
+        icon: <FileSearch className="size-4" />,
+        onSelect: () => navigate("/pe"),
+        keywords: ["pe", "portable executable", "exe", "dll", "headers"],
+      },
+      {
         id: "nav.logs",
         label: "Logs",
         group: "Navigation",
@@ -249,6 +258,7 @@ function AppContent() {
           <Routes>
             <Route path="/" element={<Home />} />
             <Route path="/debugger" element={<Debugger />} />
+            <Route path="/pe" element={<PeReader />} />
             <Route path="/session/:sessionId" element={<SessionDocked />} />
             <Route path="/logs" element={<Logs />} />
             <Route path="/settings" element={<Settings />} />

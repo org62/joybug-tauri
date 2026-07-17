@@ -16,9 +16,9 @@ import { NavigationChannel } from '@/lib/navigationStore';
  * first, allowing the initialization effect to detect (via refs/state) that
  * navigation already happened.
  */
-export function useNavigationChannel(
-  channel: NavigationChannel,
-  onNavigate: (address: string) => void,
+export function useNavigationChannel<T = string>(
+  channel: NavigationChannel<T>,
+  onNavigate: (payload: T) => void,
 ) {
   const onNavigateRef = useRef(onNavigate);
   onNavigateRef.current = onNavigate;

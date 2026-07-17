@@ -10,7 +10,7 @@ import {
   SelectValue,
 } from "./ui/select";
 import { Binary, Save, X, ArrowRight, Copy, ClipboardPaste, Crosshair, Bookmark, Fingerprint } from "lucide-react";
-import { useHexEditor, ExtendStatus } from "@/hooks/useHexEditor";
+import { useHexEditor, ExtendStatus, HexDataSource } from "@/hooks/useHexEditor";
 import { isProcessAvailable } from "@/lib/sessionHelpers";
 import { CHANGED_VALUE_CLASS } from "@/lib/utils";
 import { useNavigationChannel } from "@/hooks/useNavigationChannel";
@@ -42,6 +42,15 @@ interface HexViewProps {
   onSetHardwareBreakpoint?: (address: string, hwType: string, hwSize: number) => void;
   onAddBookmark?: (address: string, valueType: string) => void;
   onFindAccesses?: (address: string, mode: "Write" | "ReadWrite", size: number) => void;
+  // Non-session byte source (e.g. a PE file on disk). When set, the view reads
+  // and writes through it instead of session memory commands.
+  dataSource?: HexDataSource;
+  // Overrides how absolute addresses (baseAddress + offset) render in the gutter
+  // and footer — used by the PE viewer to show VA / RVA / file-offset per mode.
+  addressFormatter?: (absoluteAddress: bigint) => string;
+  // Reinterprets a goto-box address before navigating (PE viewer: map a VA or
+  // an RVA typed per the address mode to the file offset this view needs).
+  translateGotoInput?: (address: bigint) => bigint;
 }
 
 const VIEWMODE_VALUE_TYPE: Record<ViewMode, string> = {
@@ -56,7 +65,8 @@ const EDGE_EXTEND_THRESHOLD = ROW_HEIGHT * 6;
 // rows: at most one full chunk's worth of rows.
 const MAX_WHEEL_REVEAL = (DEFAULT_CHUNK_SIZE / BYTES_PER_ROW) * ROW_HEIGHT;
 
-export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}, resolveSymbol, initialAddress, initialViewMode, onSetHardwareBreakpoint, onAddBookmark, onFindAccesses }: HexViewProps) {
+export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}, resolveSymbol, initialAddress, initialViewMode, onSetHardwareBreakpoint, onAddBookmark, onFindAccesses, dataSource, addressFormatter, translateGotoInput }: HexViewProps) {
+  const fmtAddr = addressFormatter ?? formatAddress;
   const {
     baseAddress,
     memoryData,
@@ -107,13 +117,15 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
     // Clipboard actions
     copySelection,
     pasteBytes,
-  } = useHexEditor({ sessionId, memoryViewId, sessionStatus, registers, resolveSymbol, initialAddress, initialViewMode });
+  } = useHexEditor({ sessionId, memoryViewId, sessionStatus, registers, resolveSymbol, initialAddress, initialViewMode, dataSource });
 
   const [addressInput, setAddressInput] = useState("");
   const hexViewContainerRef = useRef<HTMLDivElement>(null);
 
-  // External navigation (e.g., from symbol click or "Go to Memory")
-  useNavigationChannel(memoryNavigation, goToAddress);
+  // External navigation (e.g., from symbol click or "Go to Memory"); object
+  // payloads carry a byte range to select at the target (PE field spans).
+  useNavigationChannel(memoryNavigation, (payload) =>
+    typeof payload === "string" ? goToAddress(payload) : goToAddress(payload.address, payload.selectLength));
 
   // Context menu state
   const { contextMenu, openContextMenu, closeContextMenu } = useContextMenu();
@@ -336,7 +348,7 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
 
   // Handle goto address (expression already resolved by AddressExpressionInput)
   const handleAddressResolved = (address: bigint) => {
-    goToAddress(address);
+    goToAddress(translateGotoInput ? translateGotoInput(address) : address);
     setAddressInput("");
   };
 
@@ -451,8 +463,8 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
     }
   }, [baseAddress, viewGeneration, bytesPerRow, memoryData, viewTargetOffset]);
 
-  // Empty state
-  if (!sessionId) {
+  // Empty state — no byte source at all (no session and no file).
+  if (!sessionId && !dataSource) {
     return (
       <div className="flex flex-col items-center justify-center h-full text-muted-foreground p-4">
         <div className="text-center">
@@ -464,9 +476,10 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
     );
   }
 
-  // Check if session is active (can interact with memory). Includes the
-  // non-invasive Open session, which reads memory over OOB without a debug loop.
-  const isSessionActive = isProcessAvailable(sessionStatus);
+  // Check if the view can interact with bytes. A file data-source is always
+  // active; for a session this includes the non-invasive Open session, which
+  // reads memory over OOB without a debug loop.
+  const isSessionActive = dataSource ? true : isProcessAvailable(sessionStatus);
 
   if (memoryData.length === 0 && !isLoading && !error) {
     // If session is active, show toolbar so user can enter address
@@ -593,7 +606,7 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
               <div className="flex items-center hover:bg-muted/30 h-full px-2 select-none">
                 {/* Address column */}
                 <span className="w-36 shrink-0 text-muted-foreground text-xs">
-                  {formatAddress(rowAddress)}
+                  {fmtAddr(rowAddress)}
                 </span>
 
                 {/* Hex values column */}
@@ -729,6 +742,7 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
           topExhausted={topExhausted}
           bottomExhausted={bottomExhausted}
           extendStatus={extendStatus}
+          addressFormatter={fmtAddr}
         />
       </div>
 
@@ -745,7 +759,7 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
             onClick={async () => {
               if (selectionStart !== null) {
                 const address = baseAddress + BigInt(selectionStart);
-                await navigator.clipboard.writeText(formatAddress(address));
+                await navigator.clipboard.writeText(fmtAddr(address));
               }
             }}
             disabled={selectionStart === null}
@@ -891,7 +905,6 @@ function HexToolbar({
         registers={registers}
         resolveSymbol={resolveSymbol}
         sessionId={sessionId}
-        placeholder="rsp, rax+0x10, symbol..."
         buttonLabel={
           <>
             <ArrowRight />
@@ -959,6 +972,8 @@ interface HexStatusBarProps {
   topExhausted: boolean;
   bottomExhausted: boolean;
   extendStatus: ExtendStatus | null;
+  // Already defaulted by HexView — the parent passes its resolved fmtAddr.
+  addressFormatter: (absoluteAddress: bigint) => string;
 }
 
 function HexStatusBar({
@@ -971,6 +986,7 @@ function HexStatusBar({
   topExhausted,
   bottomExhausted,
   extendStatus,
+  addressFormatter: fmtAddr,
 }: HexStatusBarProps) {
   const endAddress = baseAddress + BigInt(memoryData.length);
 
@@ -987,7 +1003,7 @@ function HexStatusBar({
     <PanelFooter className="gap-4 text-xs text-muted-foreground">
       {/* Address range */}
       <span>
-        {formatAddress(baseAddress)} - {formatAddress(endAddress)}
+        {fmtAddr(baseAddress)} - {fmtAddr(endAddress)}
       </span>
 
       {/* Size */}
@@ -998,13 +1014,13 @@ function HexStatusBar({
         <span>
           {selectionCount === 1 ? (
             <>
-              Cursor: {formatAddress(baseAddress + BigInt(normalizedStart!))} (offset +0x
+              Cursor: {fmtAddr(baseAddress + BigInt(normalizedStart!))} (offset +0x
               {normalizedStart!.toString(16).toUpperCase()})
             </>
           ) : (
             <>
               Selected: {selectionCount} bytes at{" "}
-              {formatAddress(baseAddress + BigInt(normalizedStart!))}
+              {fmtAddr(baseAddress + BigInt(normalizedStart!))}
             </>
           )}
         </span>
@@ -1019,8 +1035,8 @@ function HexStatusBar({
         <span className="text-primary">
           {extendStatus.direction === 'up' ? '▲' : '▼'}{' '}
           {extendStatus.done
-            ? `fetched ${extendStatus.size} bytes at ${formatAddress(extendStatus.address)}`
-            : `fetching ${formatAddress(extendStatus.address)}…`}
+            ? `fetched ${extendStatus.size} bytes at ${fmtAddr(extendStatus.address)}`
+            : `fetching ${fmtAddr(extendStatus.address)}…`}
         </span>
       )}
 

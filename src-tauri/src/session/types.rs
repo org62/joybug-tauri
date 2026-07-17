@@ -195,7 +195,9 @@ pub struct MemorySearchError {
 #[derive(serde::Serialize)]
 pub struct SerializableInstruction {
     pub address: String,
-    pub symbol: String,
+    /// Symbolized label ("module!name+0xoff" or "module+0xoff"); None when the
+    /// address resolves to no module/symbol — the frontend falls back to the address.
+    pub symbol: Option<String>,
     pub bytes: String,
     pub mnemonic: String,
     pub op_str: String,

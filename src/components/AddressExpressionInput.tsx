@@ -42,13 +42,25 @@ export function AddressExpressionInput({
   registers,
   resolveSymbol,
   sessionId,
-  placeholder = "Address, symbol, rax+0x10...",
+  placeholder,
   disabled,
   inputClassName,
   className,
   buttonLabel = "Go",
   buttonTitle = "Go to address",
 }: AddressExpressionInputProps) {
+  // Advertise only what this input can actually resolve: register names need
+  // a live register context, symbol names need a resolver (e.g. the PE viewer
+  // has symbols but no registers).
+  const hasRegisters = !!registers && Object.keys(registers).length > 0;
+  const effectivePlaceholder =
+    placeholder ??
+    (hasRegisters
+      ? "Address, symbol, rax+0x10..."
+      : resolveSymbol
+        ? "Address or symbol..."
+        : "Address...");
+
   const submit = useCallback(async () => {
     const expression = value.trim();
     if (!expression) return;
@@ -64,7 +76,7 @@ export function AddressExpressionInput({
     <div className={cn("flex items-center gap-1", className)}>
       <Input
         inputSize="xs"
-        placeholder={placeholder}
+        placeholder={effectivePlaceholder}
         value={value}
         disabled={disabled}
         className={cn("font-mono", inputClassName)}

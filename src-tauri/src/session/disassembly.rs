@@ -24,12 +24,11 @@ pub(crate) fn serialize_instructions(
     instructions
         .iter()
         .map(|inst| {
-            let address_str = if let Some(ref sym) = inst.symbol_info {
-                format!("{}!{}+0x{:x}", sym.module_name, sym.symbol_name, sym.offset)
-            } else if let Some((mod_name, offset)) = find_module_for_address(modules, inst.address) {
-                format!("{}+0x{:x}", mod_name, offset)
+            let symbol = if let Some(ref sym) = inst.symbol_info {
+                Some(format!("{}!{}+0x{:x}", sym.module_name, sym.symbol_name, sym.offset))
             } else {
-                format!("{:#X}", inst.address)
+                find_module_for_address(modules, inst.address)
+                    .map(|(mod_name, offset)| format!("{}+0x{:x}", mod_name, offset))
             };
 
             let op_str = inst.symbolized_op_str.as_ref().unwrap_or(&inst.op_str);
@@ -40,7 +39,7 @@ pub(crate) fn serialize_instructions(
 
             SerializableInstruction {
                 address: format!("{:#X}", inst.address),
-                symbol: address_str,
+                symbol,
                 bytes: inst
                     .bytes
                     .iter()

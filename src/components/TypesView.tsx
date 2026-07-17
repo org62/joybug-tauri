@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { createPortal } from "react-dom";
 import { useTypes, type UseTypes } from "@/hooks/useTypes";
 import { useLiveRefresh } from "@/hooks/useLiveRefresh";
+import { usePopoverDismiss } from "@/hooks/usePopoverDismiss";
 import { cn, CHANGED_VALUE_CLASS } from "@/lib/utils";
 import type { RegisterContext, SymbolResolver } from "@/lib/hexUtils";
 import { AddressExpressionInput } from "@/components/AddressExpressionInput";
@@ -173,23 +174,8 @@ function InspectMode({
     });
   }, [showResults, results]);
 
-  useEffect(() => {
-    if (!showResults) return;
-    const onPointerDown = (e: MouseEvent) => {
-      if (anchorRef.current?.contains(e.target as Node)) return;
-      if (dropdownRef.current?.contains(e.target as Node)) return;
-      setShowResults(false);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setShowResults(false);
-    };
-    document.addEventListener("mousedown", onPointerDown);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onPointerDown);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [showResults]);
+  const closeResults = useCallback(() => setShowResults(false), []);
+  usePopoverDismiss(showResults, closeResults, anchorRef, dropdownRef);
 
   // One lifted refresh tick drives every mounted TypeNode's re-read, so all
   // nodes read in the same pass (coherent snapshot) instead of per-node timers.
@@ -313,7 +299,6 @@ function InspectMode({
           registers={registers}
           resolveSymbol={resolveSymbol}
           sessionId={sessionId}
-          placeholder="Address, symbol, rax+0x10..."
           disabled={!isActive}
           inputClassName="flex-1"
         />
@@ -773,7 +758,7 @@ function CustomMode({ ts, customTypes, onChanged }: CustomProps) {
                   <label className="flex items-center gap-1 shrink-0">
                     <Checkbox
                       checked={editing.is_union}
-                      onChange={(e) => setEditing({ ...editing, is_union: e.target.checked })}
+                      onCheckedChange={(checked) => setEditing({ ...editing, is_union: checked === true })}
                     />
                     union
                   </label>
