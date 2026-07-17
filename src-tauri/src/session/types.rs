@@ -32,6 +32,7 @@ pub enum UICommand {
     },
     SetRegister { register_name: String, value: u64 },
     ToggleBreakpoint { address: u64 },
+    SetBreakpoints { addresses: Vec<u64>, group: Option<String> },
     RemoveBreakpoint { breakpoint_id: String },
     RemoveBreakpoints { breakpoint_ids: Vec<String> },
     EnableBreakpoint { breakpoint_id: String, enabled: bool },

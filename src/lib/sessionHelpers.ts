@@ -133,6 +133,15 @@ export async function invokeToggleBreakpoint(sessionId: string, address: string)
 }
 
 /**
+ * Invoke the batched set_breakpoints Tauri command: sets a software breakpoint at each
+ * address (skipping addresses that already have one), tagging every new breakpoint with
+ * `group`.
+ */
+export async function invokeSetBreakpoints(sessionId: string, addresses: string[], group?: string): Promise<void> {
+  await invoke('set_breakpoints', { sessionId, addresses, group: group ?? null });
+}
+
+/**
  * Create a SymbolResolver that delegates to the session's searchSymbols
  * function via resolveSymbolByName, which understands "module!symbol" syntax
  * and prefers exact name matches over the first fuzzy hit.

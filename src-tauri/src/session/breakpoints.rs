@@ -102,6 +102,77 @@ pub(crate) fn emit_breakpoints_event(
     }
 }
 
+/// Arm a software breakpoint at `address` and push a new `BreakpointInfo` row (tagged
+/// with `group`) into session state. Does NOT emit or persist — callers batch that.
+/// The caller must ensure no breakpoint already exists at `address`.
+fn add_software_breakpoint(
+    session: &mut DebugSession,
+    app_handle_clone: &Option<AppHandle>,
+    pid: u32,
+    address: u64,
+    group: Option<String>,
+) {
+    let (module_name, module_offset) = {
+        let state = session.state.lock().unwrap();
+        let mut found = None;
+        for m in &state.modules {
+            let module_size = m.size.unwrap_or(0);
+            if address >= m.base && (module_size == 0 || address < m.base + module_size) {
+                let name = module_short_name(&m.name).to_lowercase();
+                found = Some((name, address - m.base));
+                break;
+            }
+        }
+        found.unwrap_or_else(|| ("unknown".to_string(), address))
+    };
+
+    let bp_id = uuid::Uuid::new_v4().to_string();
+    let mut is_active = false;
+
+    match session.set_breakpoint_at(pid, address, None, |_session, _pid, _tid, _addr| {
+        Ok(joybug2::protocol_io::BreakpointDecision::Keep)
+    }) {
+        Ok(()) => {
+            is_active = true;
+            info!("Set breakpoint at 0x{:X} ({}+0x{:X})", address, module_name, module_offset);
+        }
+        Err(e) => {
+            let msg = format!("Failed to set breakpoint at 0x{:X}: {}", address, e);
+            error!("{}", msg);
+            if let Some(ref handle) = app_handle_clone {
+                crate::ui_logger::log_error(handle, &msg, None);
+                crate::ui_logger::toast_error(handle, &msg);
+            }
+        }
+    }
+
+    let symbol = match session.resolve_address_to_symbol(pid, address) {
+        Ok((Some(m), Some(sym), Some(offset))) => {
+            Some(format_symbol(&m, &sym.name, offset))
+        }
+        _ => None,
+    };
+    let (source_file, source_line) = resolve_source_line(session, pid, address);
+
+    let mut state = session.state.lock().unwrap();
+    state.breakpoints.push(crate::state::BreakpointInfo {
+        id: bp_id,
+        address,
+        module_name,
+        module_offset,
+        name: None,
+        group,
+        symbol,
+        enabled: true,
+        is_active,
+        bp_kind: "software".to_string(),
+        hw_type: None,
+        hw_size: None,
+        source_file,
+        source_line,
+    });
+}
+
 /// Processes a toggle breakpoint request
 pub(crate) fn process_toggle_breakpoint(
     session: &mut DebugSession,
@@ -131,67 +202,35 @@ pub(crate) fn process_toggle_breakpoint(
         }
         info!("Removed breakpoint at 0x{:X}", address);
     } else {
-        let (module_name, module_offset) = {
-            let state = session.state.lock().unwrap();
-            let mut found = None;
-            for m in &state.modules {
-                let module_size = m.size.unwrap_or(0);
-                if address >= m.base && (module_size == 0 || address < m.base + module_size) {
-                    let name = module_short_name(&m.name).to_lowercase();
-                    found = Some((name, address - m.base));
-                    break;
-                }
-            }
-            found.unwrap_or_else(|| ("unknown".to_string(), address))
-        };
+        add_software_breakpoint(session, app_handle_clone, pid, address, None);
+    }
 
-        let bp_id = uuid::Uuid::new_v4().to_string();
-        let mut is_active = false;
+    emit_breakpoints_event(session, app_handle_clone);
+    persist_breakpoints(&session.state);
+}
 
-        match session.set_breakpoint_at(pid, address, None, |_session, _pid, _tid, _addr| {
-            Ok(joybug2::protocol_io::BreakpointDecision::Keep)
-        }) {
-            Ok(()) => {
-                is_active = true;
-                info!("Set breakpoint at 0x{:X} ({}+0x{:X})", address, module_name, module_offset);
-            }
-            Err(e) => {
-                let msg = format!("Failed to set breakpoint at 0x{:X}: {}", address, e);
-                error!("{}", msg);
-                if let Some(ref handle) = app_handle_clone {
-                    crate::ui_logger::log_error(handle, &msg, None);
-                    crate::ui_logger::toast_error(handle, &msg);
-                }
-            }
+/// Processes a batch set-breakpoints request: arm a software breakpoint at each address,
+/// tagging every new row with `group`. Addresses that already have a breakpoint are
+/// skipped (idempotent). Emits + persists once at the end.
+pub(crate) fn process_set_breakpoints(
+    session: &mut DebugSession,
+    app_handle_clone: &Option<AppHandle>,
+    pid: u32,
+    addresses: &[u64],
+    group: Option<String>,
+) {
+    // Snapshot the addresses that already have a breakpoint once, up front. Inserting each
+    // armed address as we go also skips duplicates within this batch, so the loop stays O(N)
+    // instead of re-scanning (and re-locking) the growing list per address.
+    let mut seen: std::collections::HashSet<u64> = {
+        let state = session.state.lock().unwrap();
+        state.breakpoints.iter().map(|bp| bp.address).collect()
+    };
+    for &address in addresses {
+        if !seen.insert(address) {
+            continue;
         }
-
-        let symbol = match session.resolve_address_to_symbol(pid, address) {
-            Ok((Some(m), Some(sym), Some(offset))) => {
-                Some(format_symbol(&m, &sym.name, offset))
-            }
-            _ => None,
-        };
-        let (source_file, source_line) = resolve_source_line(session, pid, address);
-
-        {
-            let mut state = session.state.lock().unwrap();
-            state.breakpoints.push(crate::state::BreakpointInfo {
-                id: bp_id,
-                address,
-                module_name,
-                module_offset,
-                name: None,
-                group: None,
-                symbol,
-                enabled: true,
-                is_active,
-                bp_kind: "software".to_string(),
-                hw_type: None,
-                hw_size: None,
-                source_file,
-                source_line,
-            });
-        }
+        add_software_breakpoint(session, app_handle_clone, pid, address, group.clone());
     }
 
     emit_breakpoints_event(session, app_handle_clone);

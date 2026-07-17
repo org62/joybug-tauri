@@ -1,6 +1,8 @@
-import { useState, useCallback, useRef, useEffect, ReactNode } from 'react';
+import { useState, useCallback, useRef, useEffect, useMemo, ReactNode } from 'react';
 import { Search, Code, Loader2 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { DockPanel, PanelToolbar } from '@/components/ui/panel';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { VirtualizedList } from '@/components/ui/virtualized-list';
@@ -39,6 +41,17 @@ interface SymbolSearchViewProps<T extends SymbolSearchItem> {
   resetKey?: unknown;
   /** Dock tab id — "Go to" that tab focuses the search input. Omit outside a dock tab. */
   focusTabId?: string;
+  /**
+   * Enables multi-select: a checkbox per row, a Select All / Clear strip, and shift-click
+   * range selection. Single-click on a row still fires `onSelect` (navigation). Host
+   * supplies the bulk action(s) via `renderBulkBar`.
+   */
+  selectable?: boolean;
+  /**
+   * Rendered in the selection strip (right side) when `selectable`. Receives the currently
+   * selected items, the trimmed search term (for naming), and a `clear` callback.
+   */
+  renderBulkBar?: (selected: T[], ctx: { term: string; clear: () => void }) => ReactNode;
   /** Extra content rendered inside the panel (e.g. a context menu). */
   children?: ReactNode;
 }
@@ -50,7 +63,7 @@ interface SymbolSearchViewProps<T extends SymbolSearchItem> {
  */
 export function SymbolSearchView<T extends SymbolSearchItem>({
   searchSymbols, enabled, placeholder, idleTitle, idleSubtitle, formatAddress,
-  onSelect, onRowContextMenu, resetKey, focusTabId, children,
+  onSelect, onRowContextMenu, resetKey, focusTabId, selectable, renderBulkBar, children,
 }: SymbolSearchViewProps<T>) {
   const focusRef = usePanelFocus<HTMLInputElement>(focusTabId);
   const [term, setTerm] = useState('');
@@ -58,6 +71,16 @@ export function SymbolSearchView<T extends SymbolSearchItem>({
   const [searching, setSearching] = useState(false);
   const [searched, setSearched] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Selection state (indices into the stable `symbols` array). `anchorRef` is the last
+  // toggled index, used as the pivot for shift-click range selection.
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const anchorRef = useRef<number | null>(null);
+
+  const clearSelection = useCallback(() => {
+    setSelected(new Set());
+    anchorRef.current = null;
+  }, []);
 
   useEffect(() => () => { if (debounceRef.current) clearTimeout(debounceRef.current); }, []);
 
@@ -69,6 +92,36 @@ export function SymbolSearchView<T extends SymbolSearchItem>({
     setSearched(false);
     setSearching(false);
   }, [resetKey]);
+
+  // A new result set (including the reset above clearing it) invalidates the index-based selection.
+  useEffect(() => { clearSelection(); }, [symbols, clearSelection]);
+
+  const toggleSelect = useCallback((index: number, shift: boolean) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      const anchor = anchorRef.current;
+      if (shift && anchor !== null) {
+        const [lo, hi] = anchor <= index ? [anchor, index] : [index, anchor];
+        for (let i = lo; i <= hi; i++) next.add(i);
+      } else if (next.has(index)) {
+        next.delete(index);
+      } else {
+        next.add(index);
+      }
+      return next;
+    });
+    if (!shift) anchorRef.current = index;
+  }, []);
+
+  const selectAll = useCallback(() => {
+    setSelected(new Set(symbols.map((_, i) => i)));
+    anchorRef.current = null;
+  }, [symbols]);
+
+  const selectedItems = useMemo(
+    () => Array.from(selected).sort((a, b) => a - b).map((i) => symbols[i]).filter(Boolean),
+    [selected, symbols],
+  );
 
   const onChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;
@@ -130,8 +183,21 @@ export function SymbolSearchView<T extends SymbolSearchItem>({
           onChange={onChange}
           disabled={!enabled}
         />
-        {showList && (
+        {showList && !selectable && (
           <p className="text-xs text-muted-foreground">{symbols.length} symbols found</p>
+        )}
+        {showList && selectable && (
+          <div className="flex items-center gap-1.5">
+            <Button size="xs" variant="ghost" onClick={selectAll}>Select All</Button>
+            {selected.size > 0 && (
+              <Button size="xs" variant="ghost" onClick={clearSelection}>Clear</Button>
+            )}
+            <span className="text-xs text-muted-foreground">
+              {selected.size > 0 ? `${selected.size} selected` : `${symbols.length} found`}
+            </span>
+            <span className="flex-1" />
+            {renderBulkBar?.(selectedItems, { term: term.trim(), clear: clearSelection })}
+          </div>
         )}
       </PanelToolbar>
       <div className="flex-1 min-h-0">
@@ -141,13 +207,21 @@ export function SymbolSearchView<T extends SymbolSearchItem>({
             rowHeight={ROW_HEIGHT}
             className="h-full"
             getItemKey={(s, i) => `${s.module_name}-${s.name}-${i}`}
-            renderItem={(s) => (
+            renderItem={(s, i) => (
               <div
                 className="px-2 py-1 border-b hover:bg-muted/40 cursor-pointer h-full"
                 onClick={() => onSelect(s)}
                 onContextMenu={onRowContextMenu ? (e) => onRowContextMenu(e, s) : undefined}
               >
                 <div className="flex items-center gap-2 text-sm font-mono min-w-0 h-full">
+                  {selectable && (
+                    <span
+                      className="flex items-center shrink-0"
+                      onClick={(e) => { e.stopPropagation(); toggleSelect(i, e.shiftKey); }}
+                    >
+                      <Checkbox checked={selected.has(i)} tabIndex={-1} className="pointer-events-none" />
+                    </span>
+                  )}
                   <span className="text-muted-foreground shrink-0">{formatAddress ? formatAddress(s) : s.va}</span>
                   <TruncatedSymbol text={s.display_name} className="flex-1" />
                 </div>

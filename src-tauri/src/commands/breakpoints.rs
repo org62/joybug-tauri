@@ -2,8 +2,8 @@ use crate::error::Result;
 use crate::session::UICommand;
 use crate::session::breakpoints::{
     process_enable_breakpoint, process_enable_breakpoint_group,
-    process_remove_breakpoint, process_remove_breakpoints, process_set_hardware_breakpoint,
-    process_toggle_breakpoint, process_update_breakpoint,
+    process_remove_breakpoint, process_remove_breakpoints, process_set_breakpoints,
+    process_set_hardware_breakpoint, process_toggle_breakpoint, process_update_breakpoint,
 };
 use crate::state::SessionStatesMap;
 use tauri::State;
@@ -29,6 +29,35 @@ pub fn toggle_breakpoint(
                 process_toggle_breakpoint(oob, &Some(app_handle), pid, address);
             })?;
             info!("OOB toggle breakpoint for session {} at 0x{:X}", session_id, address);
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn set_breakpoints(
+    session_id: String,
+    addresses: Vec<String>,
+    group: Option<String>,
+    session_states: State<'_, SessionStatesMap>,
+    oob_pool: State<'_, super::OobPool>,
+    app_handle: tauri::AppHandle,
+) -> Result<()> {
+    let addresses: Vec<u64> = addresses
+        .iter()
+        .map(|a| super::parse_hex_u64(a, "address"))
+        .collect::<Result<Vec<u64>>>()?;
+
+    let session_arc = super::get_session_arc(&session_id, &session_states)?;
+    match super::try_send_paused_command(&session_arc, UICommand::SetBreakpoints { addresses: addresses.clone(), group: group.clone() }) {
+        Ok(()) => {
+            info!("Set breakpoints request sent for session {}, {} addresses", session_id, addresses.len());
+        }
+        Err(_) => {
+            super::with_oob_client(&session_arc, &session_id, &oob_pool, |oob, pid| {
+                process_set_breakpoints(oob, &Some(app_handle), pid, &addresses, group.clone());
+            })?;
+            info!("OOB set breakpoints for session {}, {} addresses", session_id, addresses.len());
         }
     }
     Ok(())

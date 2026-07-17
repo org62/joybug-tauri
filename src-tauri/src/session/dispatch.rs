@@ -428,6 +428,10 @@ fn process_command(
             process_toggle_breakpoint(session, app_handle_clone, event.pid(), address);
             CommandResult::Continue
         }
+        UICommand::SetBreakpoints { ref addresses, ref group } => {
+            process_set_breakpoints(session, app_handle_clone, event.pid(), addresses, group.clone());
+            CommandResult::Continue
+        }
         UICommand::RemoveBreakpoint { ref breakpoint_id } => {
             process_remove_breakpoint(session, app_handle_clone, event.pid(), breakpoint_id);
             CommandResult::Continue

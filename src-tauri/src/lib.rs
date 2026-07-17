@@ -117,6 +117,7 @@ pub fn run() {
             commands::get_debug_settings,
             commands::update_debug_settings,
             commands::toggle_breakpoint,
+            commands::set_breakpoints,
             commands::remove_breakpoint,
             commands::remove_breakpoints,
             commands::enable_breakpoint,

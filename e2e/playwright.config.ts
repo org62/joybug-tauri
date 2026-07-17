@@ -23,6 +23,7 @@ export default defineConfig({
     "bookmarks.spec.ts",
     "disassembly.spec.ts",
     "symbol-status.spec.ts",
+    "symbol-breakpoints.spec.ts",
     "types.spec.ts",
     "registers.spec.ts",
     "session-lifecycle.spec.ts",

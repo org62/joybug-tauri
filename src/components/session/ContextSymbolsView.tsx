@@ -1,7 +1,8 @@
 import { useCallback, useMemo } from 'react';
 import { useSessionContext, Symbol } from '@/contexts/SessionContext';
 import { useContextMenu } from '@/hooks/useContextMenu';
-import { invokeToggleBreakpoint } from '@/lib/sessionHelpers';
+import { invokeToggleBreakpoint, invokeSetBreakpoints } from '@/lib/sessionHelpers';
+import { Button } from '@/components/ui/button';
 import { ContextMenu, ContextMenuItem } from '@/components/ui/context-menu';
 import { SymbolSearchView } from '@/components/SymbolSearchView';
 
@@ -38,6 +39,19 @@ export const ContextSymbolsView = () => {
     }
   }, [onNavigateToDisassembly, onNavigateToMemory]);
 
+  const setBreakpointsForSymbols = useCallback(async (symbols: Symbol[], term: string, clear: () => void) => {
+    if (!sessionId || symbols.length === 0) return;
+    try {
+      // Group by the search term so the breakpoints can be enabled/removed as a unit;
+      // fall back to a generic name if the term is empty (unlikely — search needs 2+ chars).
+      const group = term || 'Symbols';
+      await invokeSetBreakpoints(sessionId, symbols.map((s) => s.va), group);
+      clear();
+    } catch (e) {
+      console.error('Failed to set breakpoints:', e);
+    }
+  }, [sessionId]);
+
   return (
     <SymbolSearchView<Symbol>
       searchSymbols={searchSymbols}
@@ -48,6 +62,16 @@ export const ContextSymbolsView = () => {
       onRowContextMenu={(e, symbol) => openContextMenu(e, { va: symbol.va, is_function: symbol.is_function })}
       resetKey={sessionId}
       focusTabId="symbols"
+      selectable
+      renderBulkBar={(selectedSymbols, { term, clear }) => (
+        <Button
+          size="xs"
+          disabled={selectedSymbols.length === 0}
+          onClick={() => setBreakpointsForSymbols(selectedSymbols, term, clear)}
+        >
+          Set Breakpoints{selectedSymbols.length > 0 ? ` (${selectedSymbols.length})` : ''}
+        </Button>
+      )}
     >
       {contextMenu && (
         <ContextMenu x={contextMenu.x} y={contextMenu.y} onClose={closeContextMenu} className="min-w-[180px]">
