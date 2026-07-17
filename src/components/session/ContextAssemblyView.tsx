@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import { useSessionContext } from '@/contexts/SessionContext';
 import { AssemblyView } from '@/components/AssemblyView';
-import { contextToRegisters, createSymbolResolver } from '@/lib/sessionHelpers';
+import { contextToRegisters, createSymbolResolver, isProcessAvailable } from '@/lib/sessionHelpers';
 
 export const ContextAssemblyView = () => {
   const sessionData = useSessionContext();
@@ -44,6 +44,7 @@ export const ContextAssemblyView = () => {
     <AssemblyView
       sessionId={sessionId}
       isPaused={isPaused}
+      canLoad={isProcessAvailable(displayStatus)}
       address={address}
       registers={registers}
       resolveSymbol={resolveSymbol}

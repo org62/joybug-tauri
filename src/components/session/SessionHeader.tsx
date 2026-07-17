@@ -9,6 +9,7 @@ import {
   DropdownMenuTrigger,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuShortcut,
 } from '@/components/ui/dropdown-menu';
 import { DockWindowsMenu, DockWindowsMenuGroup } from '@/components/DockWindowsMenu';
 import { SESSION_TAB_DEFS, SESSION_TAB_CATEGORIES } from '@/lib/sessionTabs';
@@ -29,6 +30,7 @@ export interface SessionHeaderProps {
   handleDetach: () => void;
   handleAttach: () => void;
   canStep: boolean;
+  canPassException: boolean;
   canStop: boolean;
   canStart: boolean;
   canPause: boolean;
@@ -79,6 +81,7 @@ export const SessionHeader: React.FC<SessionHeaderProps> = ({
   handleDetach,
   handleAttach,
   canStep,
+  canPassException,
   canStop,
   canStart,
   canPause,
@@ -191,13 +194,15 @@ export const SessionHeader: React.FC<SessionHeaderProps> = ({
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="start">
                   <DropdownMenuItem onSelect={handleGo}>
-                    Go (Handle Exception)
+                    <span className="flex-1">Go (Handle Exception)</span>
+                    <DropdownMenuShortcut>{getKeybinding("debug.go")}</DropdownMenuShortcut>
                   </DropdownMenuItem>
                   <DropdownMenuItem
                     onSelect={handleGoPassException}
-                    disabled={session.current_event?.event_type !== "Exception"}
+                    disabled={!canPassException}
                   >
-                    Go (Pass Exception)
+                    <span className="flex-1">Go (Pass Exception)</span>
+                    <DropdownMenuShortcut>{getKeybinding("debug.goPassException")}</DropdownMenuShortcut>
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>

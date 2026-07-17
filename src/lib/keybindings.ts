@@ -2,6 +2,7 @@
 export type ActionId =
   // Debug stepping
   | "debug.go"
+  | "debug.goPassException"
   | "debug.stepIn"
   | "debug.stepOver"
   | "debug.stepOut"
@@ -53,6 +54,7 @@ export interface ActionMeta {
 
 export const ACTION_REGISTRY: Record<ActionId, ActionMeta> = {
   "debug.go":        { label: "Go / Break",       category: "Debug",    description: "Continue when paused, break in while running, start when stopped", scope: "session" },
+  "debug.goPassException": { label: "Go (Pass Exception)", category: "Debug", description: "Continue and pass the current exception to the debuggee's handler", scope: "session" },
   "debug.stepIn":    { label: "Step Into",         category: "Debug",    description: "Step into the next instruction or function",  scope: "session" },
   "debug.stepOver":  { label: "Step Over",         category: "Debug",    description: "Step over the next instruction",              scope: "session" },
   "debug.stepOut":   { label: "Step Out",          category: "Debug",    description: "Step out of the current function",            scope: "session" },
@@ -133,6 +135,7 @@ const SHARED_BINDINGS: Record<string, ChordString> = {
 export const KEYBINDING_PRESETS: Record<PresetName, Record<ActionId, ChordString>> = {
   windbg: {
     "debug.go":       "f5",
+    "debug.goPassException": "shift+f5",
     "debug.stepIn":   "f11",
     "debug.stepOver": "f10",
     "debug.stepOut":  "shift+f11",
@@ -141,6 +144,7 @@ export const KEYBINDING_PRESETS: Record<PresetName, Record<ActionId, ChordString
   } as Record<ActionId, ChordString>,
   x64dbg: {
     "debug.go":       "f9",
+    "debug.goPassException": "shift+f9",
     "debug.stepIn":   "f7",
     "debug.stepOver": "f8",
     "debug.stepOut":  "ctrl+f9",

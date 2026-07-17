@@ -88,6 +88,14 @@ test.describe("Disassembly View", () => {
         expect(text).not.toMatch(/ntdll.*!/);
       }).toPass({ timeout: 5_000 });
 
+      // Regression: the refresh button must not be stuck spinning after stop
+      // (the PC-follow effect used to re-request disassembly against the dead
+      // session and the backend swallowed it without an event, so isLoading
+      // never cleared).
+      const refreshButtons = page.getByRole("button", { name: "Refresh" });
+      await expect(refreshButtons.first()).toBeVisible({ timeout: 5_000 });
+      await expect(refreshButtons.locator(".animate-spin")).toHaveCount(0, { timeout: 5_000 });
+
       await cleanupSession(page, sessionId);
     } finally {
       await restoreDefaultSettings(page);

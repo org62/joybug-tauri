@@ -265,6 +265,9 @@ export default function SessionDocked() {
   const { reverseLookup } = useKeybindingContext();
   const { registerCommands, setOpen, enterSubInput } = useCommandPaletteContext();
 
+  // Pass-exception only makes sense while paused on an exception event.
+  const canPassException = canStep && session?.current_event?.event_type === "Exception";
+
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       const chord = keyboardEventToChord(event);
@@ -292,6 +295,11 @@ export default function SessionDocked() {
           if (canStep) handleGo();
           else if (canPause) handlePause();
           else if (canStart) handleStart();
+          break;
+        case "debug.goPassException":
+          event.preventDefault();
+          event.stopPropagation();
+          if (canPassException) handleGoPassException();
           break;
         case "debug.stepIn":
           event.preventDefault();
@@ -344,7 +352,7 @@ export default function SessionDocked() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [handleGo, handlePause, handleStart, canStep, canPause, canStart, handleStepIn, handleStepOver, handleStepOut, goToTab, handleAddNewMemoryTab, handleCloseActiveTab, reverseLookup, setOpen, enterSubInput, handleNavigateToDisassembly, handleNavigateToMemory]);
+  }, [handleGo, handleGoPassException, handlePause, handleStart, canStep, canPassException, canPause, canStart, handleStepIn, handleStepOver, handleStepOut, goToTab, handleAddNewMemoryTab, handleCloseActiveTab, reverseLookup, setOpen, enterSubInput, handleNavigateToDisassembly, handleNavigateToMemory]);
 
   const isPaused = displayStatus === 'Paused';
   // Memory/enumeration ops work over OOB whenever a process is available: paused,
@@ -398,8 +406,9 @@ export default function SessionDocked() {
         label: "Go (Pass Exception)",
         group: "Debug",
         icon: <SkipForward className="size-4" />,
+        keybindingAction: "debug.goPassException",
         onSelect: handleGoPassException,
-        enabled: canStep && session?.current_event?.event_type === "Exception",
+        enabled: canPassException,
         keywords: ["continue", "pass", "exception", "forward"],
       },
       {
@@ -669,6 +678,7 @@ export default function SessionDocked() {
           handlePause={handlePause}
           handleDetach={handleDetach}
           canStep={canStep}
+          canPassException={canPassException}
           canStop={canStop}
           canStart={canStart}
           canPause={canPause}

@@ -51,7 +51,9 @@ export function formatTauriError(err: unknown): string {
  * `InvalidSessionState` message wording (see src-tauri `Error` variants).
  */
 export function isBenignSessionError(message: string): boolean {
-  return /no active process|must be paused|session not/i.test(message);
+  // `invalid ?session ?state` matches both the Display text ("Invalid session
+  // state: ...") and the serialized variant name ("InvalidSessionState").
+  return /no active process|must be paused|session not|invalid ?session ?state/i.test(message);
 }
 
 /** Basename of a module path ("C:\\Windows\\System32\\ntdll.dll" -> "ntdll.dll"). */

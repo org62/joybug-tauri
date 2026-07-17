@@ -7,7 +7,7 @@ import {
   RegisterContext,
   SymbolResolver,
 } from '@/lib/hexUtils';
-import { formatTauriError } from '@/lib/sessionHelpers';
+import { formatTauriError, isBenignSessionError } from '@/lib/sessionHelpers';
 import { useNavigationChannel } from '@/hooks/useNavigationChannel';
 import { disassemblyNavigation } from '@/lib/navigationStore';
 
@@ -26,11 +26,6 @@ export interface Instruction {
   jump_target: string | null;
   is_patched?: boolean;
 }
-
-// Expected when the session is running or mid-teardown — not a user-facing
-// failure; the view clears itself on session end.
-const isBenignStateError = (msg: string) =>
-  msg.includes('InvalidSessionState') || msg.includes('must be paused');
 
 // Event payloads from Tauri
 interface FunctionDisassemblyResult {
@@ -115,6 +110,12 @@ export type AsmDisassembleFn = (va: number, count: number) => Promise<Instructio
 export interface UseAssemblyViewOptions {
   sessionId: string | undefined;
   isPaused?: boolean;
+  /** False when no target can serve requests (session stopped/exited). Blocks
+   * new disassembly requests so the view doesn't spin against a dead session.
+   * Request-avoidance only — the correctness guarantee is the backend emitting
+   * a terminal (success or error) event for every request it does receive.
+   * Defaults to true; irrelevant in file mode. */
+  canLoad?: boolean;
   pcAddress?: number; // Current PC from debug event
   registers?: RegisterContext;
   resolveSymbol?: SymbolResolver;
@@ -131,7 +132,7 @@ export interface UseAssemblyViewOptions {
 const FILE_DISASM_COUNT = 512;
 
 export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewState & AssemblyViewActions {
-  const { sessionId, isPaused, pcAddress: pcAddressProp, registers = {}, resolveSymbol, symbolsRefreshKey, disassemble, initialAddress } = options;
+  const { sessionId, isPaused, canLoad = true, pcAddress: pcAddressProp, registers = {}, resolveSymbol, symbolsRefreshKey, disassemble, initialAddress } = options;
 
   // State
   const [instructions, setInstructions] = useState<Instruction[]>([]);
@@ -168,6 +169,9 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
   // Load disassembly for an address
   const loadDisassembly = useCallback(async (address: bigint) => {
     if (!sessionId && !disassemble) return;
+    // Session mode with no live target (stopped/exited): nothing can serve the
+    // request — don't enter the loading state at all.
+    if (!disassemble && !canLoad) return;
 
     // Skip duplicate request if already loading the same address
     if (lastRequestedAddress.current === address && requestInFlight.current) return;
@@ -204,7 +208,9 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
       setCurrentAddress(address);
     } catch (err) {
       const errorMessage = formatTauriError(err);
-      if (!isBenignStateError(errorMessage)) {
+      // Benign = session running or mid-teardown — not a user-facing failure;
+      // the view clears itself on session end.
+      if (!isBenignSessionError(errorMessage)) {
         console.error('Failed to request function disassembly:', err);
         setError(errorMessage);
         toastError(`Failed to request disassembly: ${errorMessage}`, sessionId);
@@ -212,7 +218,7 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
       requestInFlight.current = false;
       setIsLoading(false);
     }
-  }, [sessionId, disassemble]);
+  }, [sessionId, disassemble, canLoad]);
 
   // Go to address with history management
   // isAutoNavigation: true when called by the PC-following effect, false for user actions
@@ -341,7 +347,7 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
       (event) => {
         if (event.payload.session_id === sessionId) {
           const msg = event.payload.error || '';
-          if (!isBenignStateError(msg)) {
+          if (!isBenignSessionError(msg)) {
             setError(msg);
             toastError(`Disassembly failed: ${msg}`, sessionId);
           }
@@ -401,7 +407,7 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
   // Auto-load when PC changes (stepping)
   // When user steps, ALWAYS follow PC regardless of where they were looking
   useEffect(() => {
-    if (pcAddress === null || !sessionId) return;
+    if (pcAddress === null || !sessionId || !canLoad) return;
 
     // Detect if PC actually changed (i.e., user stepped)
     const pcActuallyChanged = lastAutoPcAddress.current === null || pcAddress !== lastAutoPcAddress.current;
@@ -438,7 +444,7 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
       // First time seeing PC (mount) — skip if user already navigated (e.g., symbol click)
     }
     // If PC didn't change, user can freely navigate without being pulled back
-  }, [pcAddress, sessionId, currentAddress, navigationHistory.length, functionStart, functionEnd, goToAddressDirect]);
+  }, [pcAddress, sessionId, canLoad, currentAddress, navigationHistory.length, functionStart, functionEnd, goToAddressDirect]);
 
   // File mode: disassemble the initial offset once on mount.
   useEffect(() => {

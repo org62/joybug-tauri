@@ -32,6 +32,8 @@ const ASSEMBLY_ROW_HEIGHT = 24;
 interface AssemblyViewProps {
   sessionId?: string;
   isPaused?: boolean;
+  /** False when no target can serve disassembly requests (session stopped). */
+  canLoad?: boolean;
   address?: number;
   registers?: RegisterContext;
   resolveSymbol?: SymbolResolver;
@@ -54,7 +56,7 @@ interface AssemblyViewProps {
   translateGotoInput?: (address: bigint) => bigint;
 }
 
-export function AssemblyView({ sessionId, isPaused, address, registers, resolveSymbol, breakpointAddresses, onToggleBreakpoint, onSetHardwareBreakpoint, onAssemblePatch, onAddBookmark, symbolsRefreshKey, onNavigateToSource, disassemble, initialAddress, addressFormatter, translateGotoInput }: AssemblyViewProps) {
+export function AssemblyView({ sessionId, isPaused, canLoad, address, registers, resolveSymbol, breakpointAddresses, onToggleBreakpoint, onSetHardwareBreakpoint, onAssemblePatch, onAddBookmark, symbolsRefreshKey, onNavigateToSource, disassemble, initialAddress, addressFormatter, translateGotoInput }: AssemblyViewProps) {
   const [addressInput, setAddressInput] = useState("");
   // Inline assembly input state
   const [assembleTarget, setAssembleTarget] = useState<{ address: string; defaultText: string } | null>(null);
@@ -94,6 +96,7 @@ export function AssemblyView({ sessionId, isPaused, address, registers, resolveS
   } = useAssemblyView({
     sessionId,
     isPaused,
+    canLoad,
     pcAddress: address,
     registers,
     resolveSymbol,
