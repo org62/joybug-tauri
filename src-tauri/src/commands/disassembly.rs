@@ -1,5 +1,5 @@
 use crate::error::Result;
-use crate::session::disassembly::{applied_patch_ranges, serialize_instructions};
+use crate::session::disassembly::{applied_patch_ranges, serialize_instructions, DisassemblyBackwardError, DisassemblyBackwardResult};
 use crate::session::types::SerializableInstruction;
 use crate::session::UICommand;
 use crate::state::SessionStatesMap;
@@ -113,6 +113,50 @@ pub fn request_function_disassembly(
                     struct FunctionDisassemblyError { session_id: String, address: u64, error: String }
                     let _ = app_handle.emit("function-disassembly-error", &FunctionDisassemblyError {
                         session_id: session_id.clone(), address, error: e.to_string(),
+                    });
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn request_disassembly_backward(
+    session_id: String,
+    target: u64,
+    count: usize,
+    session_states: State<'_, SessionStatesMap>,
+    oob_pool: State<'_, super::OobPool>,
+    app_handle: tauri::AppHandle,
+) -> Result<()> {
+    debug!("Backward disassembly request for session {} at 0x{:X} (count {})", session_id, target, count);
+    let session_arc = super::get_session_arc(&session_id, &session_states)?;
+    let arch = super::get_session_arch(&session_arc);
+
+    match super::try_send_paused_command(&session_arc, UICommand::DisassembleBackward { arch, target, count: count as u32 }) {
+        Ok(()) => {
+            info!("Backward disassembly request sent for session {} at 0x{:X}", session_id, target);
+        }
+        Err(_) => {
+            let (modules, patched_ranges) = {
+                let state = session_arc.lock().unwrap();
+                (state.modules.clone(), applied_patch_ranges(&state))
+            };
+            let disasm = super::with_oob_client(&session_arc, &session_id, &oob_pool, |oob, pid| oob.disassemble_backward(pid, target, count, arch));
+            // A session that stopped between request and dispatch can't serve this.
+            // Still emit the (benign-filtered) error event so the view's loading state releases.
+            match super::flatten_oob(disasm) {
+                Ok(instructions) => {
+                    let serializable = serialize_instructions(&instructions, &modules, &patched_ranges);
+                    let result = DisassemblyBackwardResult { session_id: session_id.clone(), target, instructions: serializable };
+                    let _ = app_handle.emit("disassembly-backward-updated", &result);
+                    info!("OOB backward disassembly for session {} at 0x{:X}", session_id, target);
+                }
+                Err(e) => {
+                    error!("OOB backward disassembly failed: {}", e);
+                    let _ = app_handle.emit("disassembly-backward-error", &DisassemblyBackwardError {
+                        session_id: session_id.clone(), target, error: e.to_string(),
                     });
                 }
             }

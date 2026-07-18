@@ -23,6 +23,7 @@ fn dedup_commands(commands: Vec<UICommand>) -> Vec<UICommand> {
     // Track which idempotent command types we've seen (scanning from the end)
     let mut seen_fn_disasm: Option<u64> = None;
     let mut seen_disasm: Option<u64> = None;
+    let mut seen_disasm_backward: Option<(u64, u32)> = None;
     let mut seen_callstack = false;
     let mut seen_deref_batch = false;
     let mut seen_resolve_thread_symbols = false;
@@ -60,6 +61,16 @@ fn dedup_commands(commands: Vec<UICommand>) -> Vec<UICommand> {
                     debug!("Dedup: dropping duplicate Disassembly for 0x{:X}", address);
                 } else {
                     seen_disasm = Some(*address);
+                }
+            }
+            // Key on (target, count): rapid scroll enqueues many backward requests
+            // with *different* targets — only drop exact-duplicate (target,count) pairs.
+            UICommand::DisassembleBackward { target, count, .. } => {
+                if seen_disasm_backward == Some((*target, *count)) {
+                    keep[i] = false;
+                    debug!("Dedup: dropping duplicate DisassembleBackward for 0x{:X}", target);
+                } else {
+                    seen_disasm_backward = Some((*target, *count));
                 }
             }
             UICommand::GetCallStack => {
@@ -374,6 +385,10 @@ fn process_command(
         }
         UICommand::DisassembleFunction { arch, address, max_instructions } => {
             process_function_disassembly_request(session, app_handle_clone, event, arch, address, max_instructions);
+            CommandResult::Continue
+        }
+        UICommand::DisassembleBackward { arch, target, count } => {
+            process_disassembly_backward_request(session, app_handle_clone, event, arch, target, count);
             CommandResult::Continue
         }
         UICommand::GetCallStack => {

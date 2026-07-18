@@ -16,6 +16,7 @@ pub enum UICommand {
     Detach,
     Disassembly{ arch: joybug2::interfaces::Architecture, address: u64, count: u32 },
     DisassembleFunction{ arch: joybug2::interfaces::Architecture, address: u64, max_instructions: u32 },
+    DisassembleBackward{ arch: joybug2::interfaces::Architecture, target: u64, count: u32 },
     GetCallStack,
     SearchSymbols{ pattern: String, limit: u32 },
     ReadMemory{ address: u64, size: usize },

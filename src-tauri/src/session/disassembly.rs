@@ -135,6 +135,63 @@ pub(crate) fn process_disassembly_request(
     }
 }
 
+/// Payloads for the backward-disassembly events, shared with the OOB fallback
+/// emitter in `commands::disassembly` so the wire shape is defined once.
+#[derive(serde::Serialize)]
+pub(crate) struct DisassemblyBackwardResult {
+    pub session_id: String,
+    pub target: u64,
+    pub instructions: Vec<SerializableInstruction>,
+}
+
+#[derive(serde::Serialize)]
+pub(crate) struct DisassemblyBackwardError {
+    pub session_id: String,
+    pub target: u64,
+    pub error: String,
+}
+
+/// Processes a backward disassembly request (instructions ending before `target`)
+/// and emits results to the frontend on the distinct `disassembly-backward-updated`
+/// event (the forward events have full-replace semantics on the frontend).
+pub(crate) fn process_disassembly_backward_request(
+    session: &mut DebugSession,
+    app_handle_clone: &Option<AppHandle>,
+    event: &joybug2::protocol_io::DebugEvent,
+    arch: joybug2::interfaces::Architecture,
+    target: u64,
+    count: u32,
+) {
+    let pid = event.pid();
+    debug!("📤 Processing backward disassembly request: pid={}, target=0x{:X}, count={}", pid, target, count);
+    let modules = get_modules_snapshot(session);
+    let (patched_ranges, session_id) = {
+        let state = session.state.lock().unwrap();
+        (applied_patch_ranges(&state), state.id.clone())
+    };
+
+    match session.disassemble_backward(pid, target, count as usize, arch) {
+        Ok(instructions) => {
+            let serializable_instructions = serialize_instructions(&instructions, &modules, &patched_ranges);
+            if let Some(ref handle) = app_handle_clone {
+                let result = DisassemblyBackwardResult { session_id, target, instructions: serializable_instructions };
+                if let Err(e) = handle.emit("disassembly-backward-updated", &result) {
+                    error!("Failed to emit disassembly-backward-updated event: {}", e);
+                }
+            }
+        }
+        Err(e) => {
+            error!("Failed to disassemble backward: {}", e);
+            if let Some(ref handle) = app_handle_clone {
+                let error_result = DisassemblyBackwardError { session_id, target, error: e.to_string() };
+                if let Err(emit_err) = handle.emit("disassembly-backward-error", &error_result) {
+                    error!("Failed to emit disassembly-backward-error event: {}", emit_err);
+                }
+            }
+        }
+    }
+}
+
 /// Processes a function disassembly request with bounds detection and emits results to the frontend
 pub(crate) fn process_function_disassembly_request(
     session: &mut DebugSession,

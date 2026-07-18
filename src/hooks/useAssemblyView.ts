@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { toastError } from '@/lib/logger';
 import {
+  parseAddress,
   parseAddressExpression,
   RegisterContext,
   SymbolResolver,
@@ -88,6 +89,14 @@ export interface AssemblyViewState {
   canGoForward: boolean;
   // Address to highlight temporarily (after navigation)
   jumpTargetAddress: bigint | null;
+  /** Bumps only on a full replace (goto / PC-follow / function load), never on a
+   *  scroll extension. The view gates its PC-follow/jump auto-scroll on this so
+   *  prepend/append don't re-fire it. */
+  loadGeneration: number;
+  /** Signals a just-completed prepend of `count` rows at the top (a fresh object
+   *  per prepend, so an effect keyed on it re-fires even for equal counts). The
+   *  view compensates the scroll offset so the viewport stays visually stable. */
+  prependSignal: { count: number };
 }
 
 /** Navigation options: `auto` marks PC-follow navigation (no history entry, no
@@ -110,6 +119,11 @@ export interface AssemblyViewActions {
   refresh: () => void;
   toggleBytesColumn: () => void;
   scrollToPC: () => void;
+  /** Fetch & prepend earlier instructions (scroll-up). No-op in file mode, while a
+   *  request is in flight, or once the top of mapped code is reached. */
+  loadMoreAbove: () => void;
+  /** Fetch & append later instructions (scroll-down). Same guards as loadMoreAbove. */
+  loadMoreBelow: () => void;
 }
 
 /// A non-session disassembly source (e.g. a PE file opened from disk). When
@@ -146,6 +160,32 @@ export interface UseAssemblyViewOptions {
 // Instructions requested per file disassembly (no function bounds available).
 const FILE_DISASM_COUNT = 512;
 
+// Instructions fetched per scroll-driven extension (prepend above / append below).
+const EXTEND_CHUNK = 64;
+// Hard cap on total loaded rows so infinite scrolling can't grow the array unbounded.
+const MAX_LOADED_INSTRUCTIONS = 20000;
+
+// Event payload for backward (prepend) disassembly.
+interface DisassemblyBackwardResult {
+  session_id: string;
+  target: number;
+  instructions: Instruction[];
+}
+
+// Rows from `incoming` strictly outside `prev`'s loaded range on the given edge.
+// `prev` is address-sorted, so the strict boundary comparison alone is a complete
+// dedup (an address beyond the boundary row cannot already be loaded).
+function freshBeyondEdge(prev: Instruction[], incoming: Instruction[], edge: 'above' | 'below'): Instruction[] {
+  const boundary = prev.length
+    ? parseAddress(edge === 'above' ? prev[0].address : prev[prev.length - 1].address)
+    : null;
+  if (boundary === null) return incoming;
+  return incoming.filter((i) => {
+    const addr = parseAddress(i.address);
+    return addr !== null && (edge === 'above' ? addr < boundary : addr > boundary);
+  });
+}
+
 // Instruction addresses are backend-formatted hex strings ("0x7ff..."); compare
 // against a bigint via the normalized uppercase form.
 function isAddressInView(instructions: Instruction[], addr: bigint): boolean {
@@ -168,10 +208,29 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
   // Address to highlight temporarily after navigation (for jump targets)
   const [jumpTargetAddress, setJumpTargetAddress] = useState<bigint | null>(null);
 
+  // Infinite-scroll extension. `loadGeneration` bumps ONLY on a full replace
+  // (goto / PC-follow / function load), never on prepend/append — the component
+  // gates its PC-follow/jump auto-scroll on it so extensions don't yank the view.
+  // `prependSignal` tells the component how many rows were just prepended so it can
+  // compensate the scroll offset (keep the viewport visually stable).
+  const [loadGeneration, setLoadGeneration] = useState(0);
+  const [prependSignal, setPrependSignal] = useState<{ count: number }>({ count: 0 });
+
   // Refs
   const lastRequestedAddress = useRef<bigint | null>(null);
   const requestInFlight = useRef(false);
   const scrollToPCRef = useRef<(() => void) | null>(null);
+  // Mirror of `instructions` for use inside event listeners (avoids stale closures
+  // and keeps the setInstructions updater pure).
+  const instructionsRef = useRef<Instruction[]>([]);
+  // Single-in-flight guards + latched end-of-range flags for scroll extension.
+  const loadAboveInFlight = useRef(false);
+  const loadBelowInFlight = useRef(false);
+  const reachedTop = useRef(false);
+  const reachedBottom = useRef(false);
+  // Address echoed by a pending forward append request (disambiguates the shared
+  // `disassembly-updated` event between append and any legacy full-replace use).
+  const pendingAppendTarget = useRef<bigint | null>(null);
   // Track the last PC we auto-navigated to, to detect when PC actually changes (stepping)
   const lastAutoPcAddress = useRef<bigint | null>(null);
   // Track if user manually navigated away from PC
@@ -179,6 +238,19 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
 
   // Derived PC address
   const pcAddress = pcAddressProp != null ? BigInt(pcAddressProp) : null;
+
+  // Keep the listener-visible mirror in sync.
+  useEffect(() => { instructionsRef.current = instructions; }, [instructions]);
+
+  // Reset scroll-extension bookkeeping. Called on every full replace (new anchor):
+  // a fresh anchor can scroll both ways again, and any in-flight extension is stale.
+  const resetExtension = useCallback(() => {
+    loadAboveInFlight.current = false;
+    loadBelowInFlight.current = false;
+    reachedTop.current = false;
+    reachedBottom.current = false;
+    pendingAppendTarget.current = null;
+  }, []);
 
   // Unified history: re-render on store changes, read availability from the store.
   useSyncExternalStore(navHistory.subscribe, navHistory.getSnapshot);
@@ -208,12 +280,15 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
     requestInFlight.current = true;
     setIsLoading(true);
     setError(null);
+    // New anchor: reset scroll-extension state (a replace supersedes any extension).
+    resetExtension();
 
     // File data-source: disassemble inline (no function bounds).
     if (disassemble) {
       try {
         const insns = await disassemble(Number(address), FILE_DISASM_COUNT);
         setInstructions(insns);
+        setLoadGeneration((g) => g + 1);
         setFunctionStart(null);
         setFunctionEnd(null);
         setFunctionName(null);
@@ -246,7 +321,50 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
       requestInFlight.current = false;
       setIsLoading(false);
     }
-  }, [sessionId, disassemble, canLoad]);
+  }, [sessionId, disassemble, canLoad, resetExtension]);
+
+  // Prepend earlier instructions (scroll-up). Requests backward disassembly of the
+  // rows immediately before the current top; the `disassembly-backward-updated`
+  // listener dedups and prepends. Single-in-flight + latched top-reached guard.
+  const loadMoreAbove = useCallback(() => {
+    if (disassemble || !sessionId || !canLoad) return;
+    if (loadAboveInFlight.current || reachedTop.current) return;
+    const cur = instructionsRef.current;
+    if (cur.length === 0 || cur.length >= MAX_LOADED_INSTRUCTIONS) return;
+    const topAddr = parseAddress(cur[0].address);
+    if (topAddr === null) return;
+    if (topAddr === 0n) { reachedTop.current = true; return; }
+    loadAboveInFlight.current = true;
+    invoke('request_disassembly_backward', {
+      sessionId,
+      target: Number(topAddr),
+      count: EXTEND_CHUNK,
+    }).catch(() => { loadAboveInFlight.current = false; });
+  }, [disassemble, sessionId, canLoad]);
+
+  // Append later instructions (scroll-down). Forward-disassembles from the current
+  // bottom row (no alignment needed); the shared `disassembly-updated` listener
+  // appends the rows past the bottom. Single-in-flight + latched bottom-reached guard.
+  const loadMoreBelow = useCallback(() => {
+    if (disassemble || !sessionId || !canLoad) return;
+    if (loadBelowInFlight.current || reachedBottom.current) return;
+    const cur = instructionsRef.current;
+    if (cur.length === 0 || cur.length >= MAX_LOADED_INSTRUCTIONS) return;
+    const bottomStart = parseAddress(cur[cur.length - 1].address);
+    if (bottomStart === null) return;
+    loadBelowInFlight.current = true;
+    pendingAppendTarget.current = bottomStart;
+    // Start at the last row so its known-good boundary anchors the forward decode;
+    // dedup drops everything up to and including it, keeping only new rows below.
+    invoke('request_disassembly', {
+      sessionId,
+      address: Number(bottomStart),
+      count: EXTEND_CHUNK,
+    }).catch(() => {
+      loadBelowInFlight.current = false;
+      pendingAppendTarget.current = null;
+    });
+  }, [disassemble, sessionId, canLoad]);
 
   // Go to address with history management
   const goToAddressDirect = useCallback((address: bigint, opts?: GoToOptions) => {
@@ -347,6 +465,8 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
       (event) => {
         if (event.payload.session_id === sessionId) {
           setInstructions(event.payload.instructions);
+          setLoadGeneration((g) => g + 1);
+          resetExtension();
           setFunctionStart(event.payload.function_start ? BigInt(event.payload.function_start) : null);
           setFunctionEnd(event.payload.function_end ? BigInt(event.payload.function_end) : null);
           setFunctionName(event.payload.function_name);
@@ -354,6 +474,31 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
           setIsLoading(false);
           setError(null);
         }
+      }
+    );
+
+    // Backward (prepend) disassembly result: dedup and prepend earlier rows, then
+    // signal the component to compensate the scroll offset so the viewport stays put.
+    const unlistenBackward = listen<DisassemblyBackwardResult>(
+      'disassembly-backward-updated',
+      (event) => {
+        if (event.payload.session_id !== sessionId) return;
+        loadAboveInFlight.current = false;
+        const prev = instructionsRef.current;
+        const fresh = freshBeyondEdge(prev, event.payload.instructions, 'above');
+        if (fresh.length === 0) { reachedTop.current = true; return; }
+        setPrependSignal({ count: fresh.length });
+        setInstructions([...fresh, ...prev]);
+      }
+    );
+
+    const unlistenBackwardError = listen<{ session_id: string; target: number; error: string }>(
+      'disassembly-backward-error',
+      (event) => {
+        if (event.payload.session_id !== sessionId) return;
+        loadAboveInFlight.current = false;
+        // Undecodable / unmapped window above — latch so we don't respin every scroll.
+        reachedTop.current = true;
       }
     );
 
@@ -372,19 +517,38 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
       }
     );
 
-    // Also listen for the old event for backwards compatibility
+    // Forward disassembly result. Doubles as the scroll-down APPEND channel: when a
+    // `loadMoreBelow` is pending and this echoes its requested address, dedup+append
+    // the new rows below (no function-bounds reset, no loadGeneration bump). Otherwise
+    // it's a legacy full replace.
     const unlistenOldSuccess = listen<{session_id: string, address: number, instructions: Instruction[]}>(
       'disassembly-updated',
       (event) => {
-        if (event.payload.session_id === sessionId) {
-          setInstructions(event.payload.instructions);
-          setFunctionStart(null);
-          setFunctionEnd(null);
-          setFunctionName(null);
-          requestInFlight.current = false;
-          setIsLoading(false);
-          setError(null);
+        if (event.payload.session_id !== sessionId) return;
+        const pending = pendingAppendTarget.current;
+        let echoed: bigint | null = null;
+        try { echoed = BigInt(event.payload.address); } catch { echoed = null; }
+        const isAppend = pending !== null && echoed !== null && echoed === pending;
+
+        if (isAppend) {
+          loadBelowInFlight.current = false;
+          pendingAppendTarget.current = null;
+          const prev = instructionsRef.current;
+          const fresh = freshBeyondEdge(prev, event.payload.instructions, 'below');
+          if (fresh.length === 0) { reachedBottom.current = true; return; }
+          setInstructions([...prev, ...fresh]);
+          return;
         }
+
+        setInstructions(event.payload.instructions);
+        setLoadGeneration((g) => g + 1);
+        resetExtension();
+        setFunctionStart(null);
+        setFunctionEnd(null);
+        setFunctionName(null);
+        requestInFlight.current = false;
+        setIsLoading(false);
+        setError(null);
       }
     );
 
@@ -407,11 +571,13 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
 
     return () => {
       unlistenSuccess.then(unlisten => unlisten());
+      unlistenBackward.then(unlisten => unlisten());
+      unlistenBackwardError.then(unlisten => unlisten());
       unlistenError.then(unlisten => unlisten());
       unlistenOldSuccess.then(unlisten => unlisten());
       unlistenPatches.then(unlisten => unlisten());
     };
-  }, [sessionId, disassemble]);
+  }, [sessionId, disassemble, resetExtension]);
 
   // External navigation (e.g., symbol click). MUST be declared before the
   // PC-following effect so it runs first on mount and sets userNavigatedAway.
@@ -508,8 +674,9 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
       lastRequestedAddress.current = null;
       requestInFlight.current = false;
       userNavigatedAway.current = false;
+      resetExtension();
     }
-  }, [sessionId, isPaused, disassemble]);
+  }, [sessionId, isPaused, disassemble, resetExtension]);
 
   return {
     // State
@@ -525,6 +692,9 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
     canGoBack,
     canGoForward,
     jumpTargetAddress,
+    // Infinite-scroll extension
+    loadGeneration,
+    prependSignal,
     // Actions
     goToAddress,
     goToAddressDirect,
@@ -532,5 +702,7 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
     refresh,
     toggleBytesColumn,
     scrollToPC,
+    loadMoreAbove,
+    loadMoreBelow,
   };
 }

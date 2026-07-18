@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback, useMemo } from "react";
+import { useState, useRef, useEffect, useLayoutEffect, useCallback } from "react";
 import { VirtualizedList } from "./ui/virtualized-list";
 import { DockPanel, PanelToolbar, PanelBody } from "@/components/ui/panel";
 import { ContextMenu, ContextMenuItem } from "@/components/ui/context-menu";
@@ -90,10 +90,14 @@ export function AssemblyView({ sessionId, isPaused, canLoad, address, registers,
     canGoBack,
     canGoForward,
     jumpTargetAddress,
+    loadGeneration,
+    prependSignal,
     goToAddressDirect,
     followJump,
     refresh,
     toggleBytesColumn,
+    loadMoreAbove,
+    loadMoreBelow,
   } = useAssemblyView({
     sessionId,
     isPaused,
@@ -128,42 +132,87 @@ export function AssemblyView({ sessionId, isPaused, canLoad, address, registers,
     }
   }, []);
 
-  // Build address-to-index lookup for virtualizer scrolling
-  const addressIndexMap = useMemo(() => {
-    const map = new Map<string, number>();
-    for (let i = 0; i < instructions.length; i++) {
-      map.set(instructions[i].address.toUpperCase(), i);
-    }
-    return map;
-  }, [instructions]);
+  // Latest rows for the auto-scroll effects, WITHOUT them depending on
+  // `instructions` — a scroll extension (prepend/append) grows that array but
+  // must NOT re-fire PC-follow/jump scrolling; those effects gate on
+  // `loadGeneration` (bumped only on a full replace) instead. Synced in a layout
+  // effect so every passive effect sees the fresh rows regardless of
+  // declaration order.
+  const instructionsForScrollRef = useRef(instructions);
+  useLayoutEffect(() => { instructionsForScrollRef.current = instructions; }, [instructions]);
 
-  // Scroll to PC when pcAddress changes or when instructions load
-  // But only if there's no jump target (user navigation takes priority)
-  useEffect(() => {
-    if (jumpTargetAddress === null && pcAddress !== null && instructions.length > 0) {
-      const pcKey = `0X${pcAddress.toString(16).toUpperCase()}`;
-      const index = addressIndexMap.get(pcKey);
-      if (index !== undefined) {
-        virtualizerRef.current?.scrollToIndex(index, { align: 'center' });
-      }
+  const scrollToInstruction = useCallback((addr: bigint) => {
+    const key = `0X${addr.toString(16).toUpperCase()}`;
+    const index = instructionsForScrollRef.current.findIndex((i) => i.address.toUpperCase() === key);
+    if (index >= 0) {
+      virtualizerRef.current?.scrollToIndex(index, { align: 'center' });
     }
-  }, [pcAddress, instructions, jumpTargetAddress, addressIndexMap]);
+  }, []);
 
-  // Scroll to and highlight jump target when navigating
+  // Scroll to PC on a fresh load / PC change (never on a scroll extension).
+  // Only if there's no jump target (user navigation takes priority).
   useEffect(() => {
-    if (jumpTargetAddress !== null && instructions.length > 0) {
-      const targetKey = `0X${jumpTargetAddress.toString(16).toUpperCase()}`;
-      const index = addressIndexMap.get(targetKey);
-      if (index !== undefined) {
-        virtualizerRef.current?.scrollToIndex(index, { align: 'center' });
-      }
+    if (jumpTargetAddress === null && pcAddress !== null) {
+      scrollToInstruction(pcAddress);
+    }
+  }, [pcAddress, jumpTargetAddress, loadGeneration, scrollToInstruction]);
+
+  // Scroll to and highlight jump target when navigating (fresh load or in-view jump).
+  useEffect(() => {
+    if (jumpTargetAddress !== null) {
+      scrollToInstruction(jumpTargetAddress);
       setHighlightedAddress(jumpTargetAddress);
       const timer = setTimeout(() => {
         setHighlightedAddress(null);
       }, 1000);
       return () => clearTimeout(timer);
     }
-  }, [jumpTargetAddress, instructions, addressIndexMap]);
+  }, [jumpTargetAddress, loadGeneration, scrollToInstruction]);
+
+  // After a prepend, content grew by `count` rows above the viewport. Bump the
+  // scroll element's offset by the same amount, synchronously (pre-paint), so the
+  // rows the user was looking at stay put — no visible jump. Direct scrollTop
+  // adjustment sidesteps the virtualizer's pending-scroll logic.
+  useLayoutEffect(() => {
+    if (prependSignal.count === 0) return;
+    const el = virtualizerRef.current?.scrollElement;
+    if (el) el.scrollTop += prependSignal.count * ASSEMBLY_ROW_HEIGHT;
+  }, [prependSignal]);
+
+  // Shared edge check for the scroll and wheel handlers. `only` restricts the
+  // check to one edge (the wheel direction), so an up-wheel on content that fits
+  // the viewport doesn't also pull in rows below. The hook's single-in-flight +
+  // end-of-range guards keep this from spamming requests, and the prepend
+  // scroll-compensation moves the viewport off the top edge so it won't
+  // immediately re-trigger.
+  const maybeExtendAtEdges = useCallback((el: HTMLElement, only?: 'above' | 'below') => {
+    const threshold = ASSEMBLY_ROW_HEIGHT * 8;
+    if (only !== 'below' && el.scrollTop <= threshold) loadMoreAbove();
+    if (only !== 'above' && el.scrollHeight - (el.scrollTop + el.clientHeight) <= threshold) loadMoreBelow();
+  }, [loadMoreAbove, loadMoreBelow]);
+
+  // Extend the loaded range as the user scrolls to either edge.
+  const handleViewportScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
+    maybeExtendAtEdges(e.currentTarget);
+  }, [maybeExtendAtEdges]);
+
+  // Wheel-driven extension. The scroll handler above only fires when the content
+  // overflows the viewport; when the whole loaded range fits (e.g. a short function,
+  // or the user landed at `func+9` with nothing above), there's no scrollbar and
+  // wheeling produces no scroll event. A native wheel listener still fires, so an
+  // up-wheel at the top / down-wheel at the bottom pulls in more — this is what
+  // makes scroll-up work at all when there's nothing yet above the anchor.
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      if (e.deltaY === 0) return;
+      const sc = virtualizerRef.current?.scrollElement;
+      if (sc) maybeExtendAtEdges(sc, e.deltaY < 0 ? 'above' : 'below');
+    };
+    el.addEventListener('wheel', onWheel, { passive: true });
+    return () => el.removeEventListener('wheel', onWheel);
+  }, [maybeExtendAtEdges]);
 
   // Keyboard shortcuts — chord-based lookup via keybinding context
   const { reverseLookup, getKeybinding } = useKeybindingContext();
@@ -361,6 +410,7 @@ export function AssemblyView({ sessionId, isPaused, canLoad, address, registers,
           overscan={30}
           className="flex-1 min-h-0"
           virtualizerRef={virtualizerRef}
+          onViewportScroll={handleViewportScroll}
           renderItem={(inst) => {
             const instAddrUpper = inst.address.toUpperCase();
             const isPC = pcAddress !== null && instAddrUpper === `0X${pcAddress.toString(16).toUpperCase()}`;
