@@ -5,21 +5,19 @@ import {
   cleanupSession,
   goToWindow,
   runPaletteCommand,
-  invoke,
 } from "../helpers/session-helpers";
 import {
   waitForPaused,
   waitForDisassemblyLoaded,
   configureMinimalStopSettings,
   restoreDefaultSettings,
+  stepAndWaitForNewPc,
 } from "../helpers/wait-helpers";
+import { ASM_PANEL, ASM_ROW } from "../helpers/selectors";
 
 // Unified back/forward navigation history: one chronological stack covering
 // both disassembly address navigation and dock tab switches. Back always
 // undoes the most recent user navigation action, whichever kind it was.
-
-const ASM_PANEL = '[data-testid="assembly-panel"]';
-const ASM_ROW = `${ASM_PANEL} [data-testid="asm-row"]`;
 
 async function firstRowText(page: Page): Promise<string> {
   return page.locator(ASM_ROW).first().innerText();
@@ -153,22 +151,10 @@ test.describe("Unified navigation history", () => {
       // Fresh session: initial PC load is not a user action — history empty.
       await expect(backButton(page)).toBeDisabled();
 
-      const pcAddress = async () =>
-        (await invoke(page, "get_debug_session", { sessionId }))
-          ?.current_event?.address ?? null;
-
       // Step-in 4 times; each PC move should append one history entry.
       const STEPS = 4;
-      let prevPc = await pcAddress();
       for (let i = 0; i < STEPS; i++) {
-        await invoke(page, "step_in_debug_session", { sessionId });
-        const before = prevPc;
-        await expect(async () => {
-          const pc = await pcAddress();
-          expect(pc).not.toBe(before);
-          expect(pc).not.toBeNull();
-          prevPc = pc;
-        }).toPass({ timeout: 10_000, intervals: [50, 100] });
+        await stepAndWaitForNewPc(page, sessionId, "step_in_debug_session");
       }
 
       // The step trail is in history: exactly STEPS back presses available.

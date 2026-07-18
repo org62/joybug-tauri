@@ -10,6 +10,7 @@ import {
   restoreDefaultSettings,
   continueSession,
 } from "../helpers/wait-helpers";
+import { ASM_ROW } from "../helpers/selectors";
 
 const PATCHES_FILE = process.env.JOYBUG_E2E_DATA_DIR
   ? path.join(process.env.JOYBUG_E2E_DATA_DIR, "patches.json")
@@ -481,7 +482,7 @@ test.describe("Assembly Patching", () => {
 
       // Right-click on the first visible instruction row
       // The instruction rows are rendered inside the virtualized list
-      const firstRow = page.locator('[data-testid="assembly-panel"] [data-testid="asm-row"]').first();
+      const firstRow = page.locator(ASM_ROW).first();
       await firstRow.click({ button: "right" });
 
       // Context menu should appear with "Assemble..." option
@@ -596,7 +597,7 @@ test.describe("Assembly Patching", () => {
       await waitForDisassemblyLoaded(page);
 
       // Right-click → Assemble...
-      const firstRow = page.locator('[data-testid="assembly-panel"] [data-testid="asm-row"]').first();
+      const firstRow = page.locator(ASM_ROW).first();
       await firstRow.click({ button: "right" });
       await page.getByRole("menuitem", { name: "Assemble..." }).click();
 

@@ -3,6 +3,7 @@ import { useSessionContext } from '@/contexts/SessionContext';
 import { AssemblyView } from '@/components/AssemblyView';
 import { contextToRegisters, createSymbolResolver, isProcessAvailable } from '@/lib/sessionHelpers';
 import { sessionNavHistory } from '@/lib/navHistory';
+import { useQuickEmulation } from '@/hooks/useQuickEmulation';
 
 export const ContextAssemblyView = () => {
   const sessionData = useSessionContext();
@@ -24,6 +25,10 @@ export const ContextAssemblyView = () => {
 
   const isPaused = displayStatus === 'Paused';
   const sessionId = sessionData?.session?.id;
+
+  // Quick emulation is a session capability, so the hook lives in this wrapper —
+  // the shared AssemblyView (also hosted by the PE viewer) just receives the state.
+  const emulation = useQuickEmulation(sessionId, isPaused, address);
 
   const { breakpoints, toggleBreakpoint, setHardwareBreakpoint } = sessionData.breakpointState;
   const { assemblePatch } = sessionData.patchState;
@@ -50,6 +55,7 @@ export const ContextAssemblyView = () => {
       registers={registers}
       resolveSymbol={resolveSymbol}
       breakpointAddresses={breakpointAddresses}
+      emulation={emulation}
       onToggleBreakpoint={toggleBreakpoint}
       onSetHardwareBreakpoint={setHardwareBreakpoint}
       onAssemblePatch={assemblePatch}

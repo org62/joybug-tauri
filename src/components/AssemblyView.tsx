@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useLayoutEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useLayoutEffect, useCallback, memo } from "react";
 import { VirtualizedList } from "./ui/virtualized-list";
 import { DockPanel, PanelToolbar, PanelBody } from "@/components/ui/panel";
 import { ContextMenu, ContextMenuItem } from "@/components/ui/context-menu";
@@ -7,7 +7,7 @@ import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Switch } from "./ui/switch";
 import { Label } from "./ui/label";
-import { Cpu, ArrowLeft, ArrowRight, RefreshCw, ChevronRight, Circle, CircleDot, Wrench, Copy, Bookmark, FileCode } from "lucide-react";
+import { Cpu, ArrowLeft, ArrowRight, RefreshCw, ChevronRight, Circle, CircleDot, Wrench, Copy, Bookmark, FileCode, LocateFixed } from "lucide-react";
 import { sourceNavigation } from "@/lib/navigationStore";
 import { cn } from "@/lib/utils";
 import { useAssemblyView, Instruction, AsmDisassembleFn } from "@/hooks/useAssemblyView";
@@ -18,6 +18,7 @@ import { isBenignSessionError } from "@/lib/sessionHelpers";
 import { useContextMenu } from "@/hooks/useContextMenu";
 import { useColumnWidths } from "@/hooks/useColumnWidths";
 import { EmulationQuickView } from "./EmulationQuickView";
+import { QuickEmulationState } from "@/hooks/useQuickEmulation";
 import { Virtualizer } from "@tanstack/react-virtual";
 import { useKeybindingContext } from "@/contexts/KeybindingContext";
 import { keyboardEventToChord } from "@/lib/keybindings";
@@ -39,6 +40,9 @@ interface AssemblyViewProps {
   registers?: RegisterContext;
   resolveSymbol?: SymbolResolver;
   breakpointAddresses?: Set<string>;
+  /** Quick-emulation state (session hosts only) — enables the footer and
+   * executed-row highlighting. The PE viewer passes nothing. */
+  emulation?: QuickEmulationState;
   onToggleBreakpoint?: (address: string) => void;
   onSetHardwareBreakpoint?: (address: string, hwType: string, hwSize: number) => void;
   onAssemblePatch?: (address: string, assemblyText: string, nopPad?: boolean) => Promise<string | null>;
@@ -59,7 +63,7 @@ interface AssemblyViewProps {
   navHistory: NavHistoryStore;
 }
 
-export function AssemblyView({ sessionId, isPaused, canLoad, address, registers, resolveSymbol, breakpointAddresses, onToggleBreakpoint, onSetHardwareBreakpoint, onAssemblePatch, onAddBookmark, symbolsRefreshKey, onNavigateToSource, disassemble, initialAddress, addressFormatter, translateGotoInput, navHistory }: AssemblyViewProps) {
+export function AssemblyView({ sessionId, isPaused, canLoad, address, registers, resolveSymbol, breakpointAddresses, emulation, onToggleBreakpoint, onSetHardwareBreakpoint, onAssemblePatch, onAddBookmark, symbolsRefreshKey, onNavigateToSource, disassemble, initialAddress, addressFormatter, translateGotoInput, navHistory }: AssemblyViewProps) {
   const [addressInput, setAddressInput] = useState("");
   // Inline assembly input state
   const [assembleTarget, setAssembleTarget] = useState<{ address: string; defaultText: string } | null>(null);
@@ -80,6 +84,8 @@ export function AssemblyView({ sessionId, isPaused, canLoad, address, registers,
   const { columnWidths, handleColumnResizeStart } = useColumnWidths<keyof ColumnWidths>(COLUMN_WIDTHS_KEY, DEFAULT_COLUMN_WIDTHS);
   // Context menu for right-click
   const { contextMenu, openContextMenu, closeContextMenu } = useContextMenu<{ address: string; mnemonic: string; op_str: string }>();
+  // Addresses executed by the quick emulator (session hosts only).
+  const executedAddresses = emulation?.executedAddresses ?? null;
 
   const {
     instructions,
@@ -96,6 +102,7 @@ export function AssemblyView({ sessionId, isPaused, canLoad, address, registers,
     followJump,
     refresh,
     toggleBytesColumn,
+    goToPC,
     loadMoreAbove,
     loadMoreBelow,
   } = useAssemblyView({
@@ -118,6 +125,23 @@ export function AssemblyView({ sessionId, isPaused, canLoad, address, registers,
       console.error("Invalid jump target:", jumpTarget);
     }
   }, [followJump]);
+
+  const handleNavigateToEmulationAddress = useCallback((addr: string) => {
+    goToAddressDirect(BigInt(addr));
+  }, [goToAddressDirect]);
+
+  // Stable row handlers so the memoized InstructionRow can bail out of
+  // unrelated parent re-renders (emulation results, hover state, scrolling).
+  const handleRowClick = useCallback((addr: string) => {
+    setSelectedAddress(addr.toUpperCase());
+    // Passive source sync: if the Source tab is mounted it scrolls
+    // to the matching line; it does not steal the active tab.
+    sourceNavigation.request(addr);
+  }, []);
+
+  const handleRowContextMenu = useCallback((e: React.MouseEvent, addr: string, mnemonic: string, opStr: string) => {
+    openContextMenu(e, { address: addr, mnemonic, op_str: opStr });
+  }, [openContextMenu]);
 
   // Handle hover on jump target link
   const handleJumpTargetHover = useCallback((jumpTarget: string | null) => {
@@ -149,6 +173,13 @@ export function AssemblyView({ sessionId, isPaused, canLoad, address, registers,
     }
   }, []);
 
+  // Go-to-PC button: hand control back to PC-follow, then re-center the PC row
+  // if it's already loaded (a reload re-centers via the PC scroll effect).
+  const handleGoToPC = useCallback(() => {
+    goToPC();
+    if (pcAddress !== null) scrollToInstruction(pcAddress);
+  }, [goToPC, pcAddress, scrollToInstruction]);
+
   // Scroll to PC on a fresh load / PC change (never on a scroll extension).
   // Only if there's no jump target (user navigation takes priority).
   useEffect(() => {
@@ -169,15 +200,34 @@ export function AssemblyView({ sessionId, isPaused, canLoad, address, registers,
     }
   }, [jumpTargetAddress, loadGeneration, scrollToInstruction]);
 
+  // Edge extension and prepend handling key off user intent. A full replace
+  // moves scrollTop synthetically — the browser clamps it when content shrinks
+  // (big function → small one on step-in) and the PC/jump centering calls
+  // scrollToIndex — and those scroll events must not auto-extend the fresh
+  // view. Latch on a real gesture (wheel, pointer down for scrollbar drags);
+  // reset on every full replace, synchronously so the clamp event can't sneak
+  // in first.
+  const userGestureSinceLoadRef = useRef(false);
+  useLayoutEffect(() => { userGestureSinceLoadRef.current = false; }, [loadGeneration]);
+
   // After a prepend, content grew by `count` rows above the viewport. Bump the
   // scroll element's offset by the same amount, synchronously (pre-paint), so the
   // rows the user was looking at stay put — no visible jump. Direct scrollTop
   // adjustment sidesteps the virtualizer's pending-scroll logic.
+  // A prepend BEFORE any user gesture is the load's context prefetch — there,
+  // re-center the navigation anchor (jump target or PC) instead, so the
+  // freshly loaded context surrounds it rather than pushing it off-center.
+  const handledPrependRef = useRef(prependSignal);
   useLayoutEffect(() => {
-    if (prependSignal.count === 0) return;
+    if (prependSignal === handledPrependRef.current) return;
+    handledPrependRef.current = prependSignal;
     const el = virtualizerRef.current?.scrollElement;
     if (el) el.scrollTop += prependSignal.count * ASSEMBLY_ROW_HEIGHT;
-  }, [prependSignal]);
+    if (!userGestureSinceLoadRef.current) {
+      const anchor = jumpTargetAddress ?? pcAddress;
+      if (anchor !== null) scrollToInstruction(anchor);
+    }
+  }, [prependSignal, jumpTargetAddress, pcAddress, scrollToInstruction]);
 
   // Shared edge check for the scroll and wheel handlers. `only` restricts the
   // check to one edge (the wheel direction), so an up-wheel on content that fits
@@ -193,6 +243,7 @@ export function AssemblyView({ sessionId, isPaused, canLoad, address, registers,
 
   // Extend the loaded range as the user scrolls to either edge.
   const handleViewportScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
+    if (!userGestureSinceLoadRef.current) return;
     maybeExtendAtEdges(e.currentTarget);
   }, [maybeExtendAtEdges]);
 
@@ -205,13 +256,19 @@ export function AssemblyView({ sessionId, isPaused, canLoad, address, registers,
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
+    const markGesture = () => { userGestureSinceLoadRef.current = true; };
     const onWheel = (e: WheelEvent) => {
       if (e.deltaY === 0) return;
+      markGesture();
       const sc = virtualizerRef.current?.scrollElement;
       if (sc) maybeExtendAtEdges(sc, e.deltaY < 0 ? 'above' : 'below');
     };
     el.addEventListener('wheel', onWheel, { passive: true });
-    return () => el.removeEventListener('wheel', onWheel);
+    el.addEventListener('pointerdown', markGesture);
+    return () => {
+      el.removeEventListener('wheel', onWheel);
+      el.removeEventListener('pointerdown', markGesture);
+    };
   }, [maybeExtendAtEdges]);
 
   // Keyboard shortcuts — chord-based lookup via keybinding context
@@ -294,6 +351,19 @@ export function AssemblyView({ sessionId, isPaused, canLoad, address, registers,
             <ArrowRight />
           </Button>
         </div>
+
+        {/* Go to current PC (session mode only — file mode has no PC) */}
+        {!disassemble && (
+          <Button
+            variant="outline"
+            size="icon-xs"
+            onClick={handleGoToPC}
+            disabled={pcAddress === null}
+            title="Go to PC (RIP)"
+          >
+            <LocateFixed />
+          </Button>
+        )}
 
         {/* Refresh */}
         <Button
@@ -417,11 +487,13 @@ export function AssemblyView({ sessionId, isPaused, canLoad, address, registers,
             const isHighlighted = highlightedAddress !== null && instAddrUpper === `0X${highlightedAddress.toString(16).toUpperCase()}`;
             const isHoverTarget = hoveredJumpTarget !== null && instAddrUpper === `0X${hoveredJumpTarget.toString(16).toUpperCase()}`;
             const hasBreakpoint = breakpointAddresses?.has(instAddrUpper) ?? false;
+            const isExecuted = executedAddresses?.has(instAddrUpper) ?? false;
 
             return (
               <InstructionRow
                 instruction={inst}
                 isPC={isPC}
+                isExecuted={isExecuted}
                 isSelected={selectedAddress === instAddrUpper}
                 isHighlighted={isHighlighted}
                 isHoverTarget={isHoverTarget}
@@ -430,16 +502,10 @@ export function AssemblyView({ sessionId, isPaused, canLoad, address, registers,
                 showBytes={showBytes}
                 columnWidths={columnWidths}
                 addressFormatter={addressFormatter}
-                onClick={(addr) => {
-                  setSelectedAddress(addr.toUpperCase());
-                  // Passive source sync: if the Source tab is mounted it scrolls
-                  // to the matching line; it does not steal the active tab.
-                  sourceNavigation.request(addr);
-                }}
+                onClick={handleRowClick}
                 onJumpTargetClick={handleJumpTargetClick}
                 onJumpTargetHover={handleJumpTargetHover}
-                onContextMenu={(e, addr, mnemonic, opStr) => openContextMenu(e, { address: addr, mnemonic, op_str: opStr })}
-                style={{ height: ASSEMBLY_ROW_HEIGHT }}
+                onContextMenu={handleRowContextMenu}
               />
             );
           }}
@@ -474,8 +540,8 @@ export function AssemblyView({ sessionId, isPaused, canLoad, address, registers,
         </PanelBody>
       )}
 
-      {/* Quick Emulation footer — a session capability, so gate on the session */}
-      {sessionId && <EmulationQuickView sessionId={sessionId} isPaused={isPaused} pcAddress={address} onNavigateToAddress={(addr) => goToAddressDirect(BigInt(addr))} />}
+      {/* Quick Emulation footer — session hosts pass `emulation`; the PE viewer doesn't */}
+      {emulation && <EmulationQuickView emulation={emulation} onNavigateToAddress={handleNavigateToEmulationAddress} />}
 
       {/* Context Menu */}
       {contextMenu && (
@@ -544,6 +610,7 @@ export function AssemblyView({ sessionId, isPaused, canLoad, address, registers,
 interface InstructionRowProps {
   instruction: Instruction;
   isPC: boolean;
+  isExecuted: boolean;
   isSelected: boolean;
   isHighlighted: boolean;
   isHoverTarget: boolean;
@@ -556,10 +623,20 @@ interface InstructionRowProps {
   onJumpTargetHover: (target: string | null) => void;
   onContextMenu: (e: React.MouseEvent, address: string, mnemonic: string, opStr: string) => void;
   addressFormatter?: (va: bigint) => string;
-  style?: React.CSSProperties;
 }
 
-function InstructionRow({ instruction, isPC, isSelected, isHighlighted, isHoverTarget, hasBreakpoint, isPatched, showBytes, columnWidths, onClick, onJumpTargetClick, onJumpTargetHover, onContextMenu, addressFormatter, style }: InstructionRowProps) {
+// Row background per highlight state. Precedence is the order of the ladder in
+// InstructionRow — a new state slots in as one line there plus one entry here.
+type RowHighlight = "selected" | "hover-target" | "pc" | "patched" | "executed";
+const ROW_HIGHLIGHT_BG: Record<RowHighlight, string> = {
+  selected: "bg-accent/50",
+  "hover-target": "bg-blue-100 dark:bg-blue-900/40",
+  pc: "bg-yellow-100 dark:bg-yellow-900/40",
+  patched: "bg-purple-100 dark:bg-purple-900/30",
+  executed: "bg-green-100 dark:bg-green-900/30",
+};
+
+const InstructionRow = memo(function InstructionRow({ instruction, isPC, isExecuted, isSelected, isHighlighted, isHoverTarget, hasBreakpoint, isPatched, showBytes, columnWidths, onClick, onJumpTargetClick, onJumpTargetHover, onContextMenu, addressFormatter }: InstructionRowProps) {
   // Unsymbolized instructions fall back to the address, reformatted per the
   // PE viewer's address mode (VA/RVA/file). Symbolized labels are mode-neutral.
   const symbolText =
@@ -585,18 +662,26 @@ function InstructionRow({ instruction, isPC, isSelected, isHighlighted, isHoverT
     return <span>{op_str}</span>;
   };
 
+  // First match wins; data-highlight exposes the winner so e2e tests assert
+  // state instead of Tailwind classes.
+  const highlight: RowHighlight | undefined =
+    isSelected ? "selected"
+    : isHoverTarget ? "hover-target"
+    : isPC ? "pc"
+    : isPatched ? "patched"
+    : isExecuted ? "executed"
+    : undefined;
+
   return (
     <div
       data-testid="asm-row"
+      data-highlight={highlight}
       className={cn(
         "flex items-center hover:bg-muted/30 px-2 cursor-default",
-        isSelected && "bg-accent/50",
-        isPC && !isSelected && "bg-yellow-100 dark:bg-yellow-900/40",
-        isPatched && !isPC && !isSelected && "bg-purple-100 dark:bg-purple-900/30",
-        isHighlighted && "animate-highlight-fade",
-        isHoverTarget && !isSelected && "bg-blue-100 dark:bg-blue-900/40"
+        highlight && ROW_HIGHLIGHT_BG[highlight],
+        isHighlighted && "animate-highlight-fade"
       )}
-      style={style}
+      style={{ height: ASSEMBLY_ROW_HEIGHT }}
       onClick={() => onClick(instruction.address)}
       onContextMenu={(e) => onContextMenu(e, instruction.address, instruction.mnemonic, instruction.op_str)}
     >
@@ -644,4 +729,4 @@ function InstructionRow({ instruction, isPC, isSelected, isHighlighted, isHoverT
       </span>
     </div>
   );
-}
+});

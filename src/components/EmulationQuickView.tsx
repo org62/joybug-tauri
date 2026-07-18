@@ -1,17 +1,15 @@
-import { useState, useRef, useEffect, useMemo, useCallback } from "react";
+import { useState, useRef, useEffect, useMemo, useCallback, memo } from "react";
 import { ChevronDown, ChevronRight, Loader2 } from "lucide-react";
 import { ScrollArea } from "./ui/scroll-area";
 import { VirtualizedList } from "./ui/virtualized-list";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { cn } from "@/lib/utils";
-import { useQuickEmulation, QuickEmulationResult } from "@/hooks/useQuickEmulation";
+import { QuickEmulationState, QuickEmulationResult } from "@/hooks/useQuickEmulation";
 import { parseTenetTrace } from "@/lib/tenetParser";
 
 interface EmulationQuickViewProps {
-  sessionId?: string;
-  isPaused?: boolean;
-  pcAddress?: number;
+  emulation: QuickEmulationState;
   onNavigateToAddress?: (hexAddress: string) => void;
 }
 
@@ -19,18 +17,9 @@ function formatTimingUs(us: number): string {
   return `${(us / 1000).toFixed(1)}ms`;
 }
 
-const COLLAPSED_KEY = "assembly-quick-emulation-collapsed";
 const HEIGHT_KEY = "assembly-quick-emulation-height";
 const DEFAULT_HEIGHT = 180;
 const MIN_HEIGHT = 60;
-
-function getInitialCollapsed(): boolean {
-  try {
-    return localStorage.getItem(COLLAPSED_KEY) === "true";
-  } catch {
-    return false;
-  }
-}
 
 function getInitialHeight(): number {
   try {
@@ -152,8 +141,7 @@ function VirtualizedTraceLines({
   );
 }
 
-export function EmulationQuickView({ sessionId, isPaused, pcAddress, onNavigateToAddress }: EmulationQuickViewProps) {
-  const [collapsed, setCollapsed] = useState(getInitialCollapsed);
+export const EmulationQuickView = memo(function EmulationQuickView({ emulation, onNavigateToAddress }: EmulationQuickViewProps) {
   const [height, setHeight] = useState(getInitialHeight);
   const rootRef = useRef<HTMLDivElement>(null);
 
@@ -194,7 +182,9 @@ export function EmulationQuickView({ sessionId, isPaused, pcAddress, onNavigateT
     toggleTraceMode,
     maxInstructions,
     setMaxInstructions,
-  } = useQuickEmulation(sessionId, isPaused, collapsed, pcAddress);
+    collapsed,
+    toggleCollapsed,
+  } = emulation;
 
   // Hover tooltip state (trace rows)
   const [visibleTooltipRow, setVisibleTooltipRow] = useState<number | null>(null);
@@ -278,14 +268,6 @@ export function EmulationQuickView({ sessionId, isPaused, pcAddress, onNavigateT
     statsHoveredRef.current = false;
     dismissStatsPopover();
   }, [dismissStatsPopover]);
-
-  const toggleCollapsed = () => {
-    setCollapsed(prev => {
-      const next = !prev;
-      try { localStorage.setItem(COLLAPSED_KEY, String(next)); } catch {}
-      return next;
-    });
-  };
 
   const syscall = parseSummaryRow(syscallResult, "syscall");
   const module = parseSummaryRow(moduleResult, "module");
@@ -595,4 +577,4 @@ export function EmulationQuickView({ sessionId, isPaused, pcAddress, onNavigateT
       })()}
     </div>
   );
-}
+});

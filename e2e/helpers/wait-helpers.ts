@@ -1,4 +1,5 @@
 import { Page, expect } from "@playwright/test";
+import { invoke } from "./session-helpers";
 
 /**
  * Wait until the backend reports the session in the given status, polling
@@ -184,6 +185,38 @@ export async function continueSession(
       sessionId: id,
     });
   }, sessionId);
+}
+
+/** Current PC (current_event.address) as reported by the backend. */
+export async function getPcAddress(
+  page: Page,
+  sessionId: string,
+): Promise<number | null> {
+  const s = await invoke(page, "get_debug_session", { sessionId });
+  return s?.current_event?.address ?? null;
+}
+
+/**
+ * Invoke a stepping command and poll until the session pauses at a new PC.
+ * Returns the new PC.
+ */
+export async function stepAndWaitForNewPc(
+  page: Page,
+  sessionId: string,
+  cmd: string,
+): Promise<number> {
+  const before = await getPcAddress(page, sessionId);
+  await invoke(page, cmd, { sessionId });
+  let pc: number | null = null;
+  await expect(async () => {
+    const s = await invoke(page, "get_debug_session", { sessionId });
+    const addr = s?.current_event?.address ?? null;
+    expect(s?.status).toBe("Paused");
+    expect(addr).not.toBeNull();
+    expect(addr).not.toBe(before);
+    pc = addr;
+  }).toPass({ timeout: 15_000, intervals: [50, 100] });
+  return pc!;
 }
 
 /**
