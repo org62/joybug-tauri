@@ -18,6 +18,10 @@ export interface DockingConfig {
   onTabsChanged?: (activeTabIds: string[]) => void;
   /** Resolve where a tab belongs. Omit to always append to the first panel. */
   placement?: (tabId: string) => TabPlacement | undefined;
+  /** Fired when the user switches the active tab within a panel (the departing
+   *  tab id). Not fired for switches driven by showTab(..., { recordHistory:
+   *  false }) or for tab closes — hosts use this to record navigation history. */
+  onTabSwitch?: (fromTabId: string) => void;
 }
 
 export interface DockingOperations {
@@ -25,11 +29,11 @@ export interface DockingOperations {
   addTypedTab: (type: string, contentFactory: (tabId: string) => React.ReactElement) => string;
   resetLayout: () => void;
   toggleTab: (tabId: string) => void;
-  showTab: (tabId: string) => void;
+  showTab: (tabId: string, opts?: { recordHistory?: boolean }) => void;
   closeActiveTab: () => void;
   setFocusedPanelByElement: (element: HTMLElement) => void;
-  goBackTab: () => boolean;
-  goForwardTab: () => boolean;
+  /** Active tab of the panel containing `tabId` (null if the tab is gone). */
+  activeTabOf: (tabId: string) => string | null;
   onLayoutChange: (
     newLayout: LayoutBase
   ) => void;
@@ -218,15 +222,15 @@ export function useDocking(config: DockingConfig): DockingState & DockingOperati
     })()
   );
 
-  // Tab-activation history for mouse back/forward navigation. Derived from the set of active
-  // tabs (one per panel) diffed on every layout change: a switch within a panel shows up as one
-  // tab leaving the active set and one entering it — the departing tab goes on the back stack.
-  // Each entry is a tab id that goBack/goForward re-activate via showTab(). navTargetRef marks a
-  // switch caused by our own back/forward navigation so the diff doesn't re-record it.
-  const backStackRef = React.useRef<string[]>([]);
-  const forwardStackRef = React.useRef<string[]>([]);
+  // Tab-activation detection for navigation history. The set of active tabs (one per panel) is
+  // diffed on every layout change: a switch within a panel shows up as one tab leaving the set
+  // and one entering it — the departing tab is reported through onTabSwitch. navTargetRef marks
+  // a switch caused by history restoration (showTab with recordHistory: false) so the diff
+  // doesn't re-record it.
   const activeTabSetRef = React.useRef<Set<string>>(collectActiveTabIds(layout.dockbox));
   const navTargetRef = React.useRef<string | null>(null);
+  const onTabSwitchRef = React.useRef(config.onTabSwitch);
+  onTabSwitchRef.current = config.onTabSwitch;
 
   React.useEffect(() => {
     const serializableTabs: { [key: string]: Partial<TabData> } = {};
@@ -455,13 +459,20 @@ export function useDocking(config: DockingConfig): DockingState & DockingOperati
     });
   }, [LAYOUT_STORAGE_KEY, onTabsChanged, placement]);
 
-  const showTab = React.useCallback((tabId: string) => {
+  const showTab = React.useCallback((tabId: string, opts?: { recordHistory?: boolean }) => {
     setLayout((currentLayout) => {
       const { exists, isActive } = findTabState(currentLayout.dockbox, tabId);
 
       // If tab already exists and is active, no layout change needed
       if (exists && isActive) {
         return currentLayout;
+      }
+
+      // History restoration: mark the activation so the tab-switch diff effect
+      // doesn't re-record it. Only set when a change actually happens — a stale
+      // marker would swallow the next organic switch to this tab.
+      if (opts?.recordHistory === false) {
+        navTargetRef.current = tabId;
       }
 
       const newLayout = JSON.parse(
@@ -576,10 +587,10 @@ export function useDocking(config: DockingConfig): DockingState & DockingOperati
     });
   }, [LAYOUT_STORAGE_KEY, onTabsChanged]);
 
-  // Record tab-activation history by diffing the active-tab set on every layout change. A switch
-  // within a panel appears as exactly one tab leaving the set and one entering; the departing tab
-  // goes on the back stack — unless the switch was driven by our own back/forward navigation
-  // (navTargetRef) or the departing tab was closed (not switched away from).
+  // Detect tab switches by diffing the active-tab set on every layout change. A switch within a
+  // panel appears as exactly one tab leaving the set and one entering; the departing tab is
+  // reported to onTabSwitch — unless the switch was driven by history restoration (navTargetRef)
+  // or the departing tab was closed (not switched away from).
   React.useEffect(() => {
     const newSet = collectActiveTabIds(layout.dockbox);
     const prevSet = activeTabSetRef.current;
@@ -587,48 +598,29 @@ export function useDocking(config: DockingConfig): DockingState & DockingOperati
     const gained = [...newSet].filter(id => !prevSet.has(id));
     activeTabSetRef.current = newSet;
 
+    // The marker only applies to the layout change our own showTab produced —
+    // whatever this change is, it must not leak into a later one.
+    const restoreTarget = navTargetRef.current;
+    navTargetRef.current = null;
+
     // Only a clean 1↔1 swap is an unambiguous single-panel tab switch.
     if (lost.length !== 1 || gained.length !== 1) return;
     const switchedFrom = lost[0];
     const switchedTo = gained[0];
 
-    // A switch we initiated via goBack/goForward — consume the marker, don't record.
-    if (navTargetRef.current === switchedTo) {
-      navTargetRef.current = null;
-      return;
-    }
+    // A switch we initiated via history restoration — don't record.
+    if (restoreTarget === switchedTo) return;
 
     // If the departing tab no longer exists anywhere, it was closed (not switched away from) —
     // don't record it, otherwise "back" would reopen a just-closed tab.
     if (!findPanelContaining(layout.dockbox, switchedFrom)) return;
 
-    backStackRef.current.push(switchedFrom);
-    forwardStackRef.current = [];
+    onTabSwitchRef.current?.(switchedFrom);
   }, [layout]);
 
-  // Replay the tab-activation history for the mouse back/forward buttons. Returns true when a
-  // navigation happened (so the caller can block the native page navigation), false when the
-  // stack is empty (letting the press fall through to router navigation). The tab we leave is
-  // pushed onto the opposite stack, and navTargetRef tells the history effect to skip the
-  // resulting layout change.
-  const navigateHistory = React.useCallback((from: string[], to: string[]): boolean => {
-    if (from.length === 0) return false;
-    const target = from.pop()!;
-    const current = activeTabOfPanelWith(layout.dockbox, target);
-    if (current && current !== target) to.push(current);
-    navTargetRef.current = target;
-    showTab(target);
-    return true;
-  }, [layout, showTab]);
-
-  const goBackTab = React.useCallback(
-    (): boolean => navigateHistory(backStackRef.current, forwardStackRef.current),
-    [navigateHistory]
-  );
-
-  const goForwardTab = React.useCallback(
-    (): boolean => navigateHistory(forwardStackRef.current, backStackRef.current),
-    [navigateHistory]
+  const activeTabOf = React.useCallback(
+    (tabId: string): string | null => activeTabOfPanelWith(layout.dockbox, tabId),
+    [layout]
   );
 
   return {
@@ -643,7 +635,6 @@ export function useDocking(config: DockingConfig): DockingState & DockingOperati
     onLayoutChange,
     setFocusedPanelByElement,
     closeActiveTab,
-    goBackTab,
-    goForwardTab,
+    activeTabOf,
   };
 }

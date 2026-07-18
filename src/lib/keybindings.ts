@@ -89,8 +89,8 @@ export const ACTION_REGISTRY: Record<ActionId, ActionMeta> = {
   "nav.logs":        { label: "Go to Logs",      category: "Navigation", description: "Navigate to the Logs page",               scope: "global" },
   "nav.toggleTheme": { label: "Toggle Theme",    category: "Navigation", description: "Switch between light and dark theme",      scope: "global" },
 
-  "assembly.goBack":            { label: "Go Back",            category: "Assembly", description: "Navigate back in disassembly history",    scope: "assembly" },
-  "assembly.goForward":         { label: "Go Forward",         category: "Assembly", description: "Navigate forward in disassembly history", scope: "assembly" },
+  "assembly.goBack":            { label: "Go Back",            category: "Assembly", description: "Navigate back in history (addresses and windows)",    scope: "assembly" },
+  "assembly.goForward":         { label: "Go Forward",         category: "Assembly", description: "Navigate forward in history (addresses and windows)", scope: "assembly" },
   "assembly.toggleBreakpoint":  { label: "Toggle Breakpoint",  category: "Debug", description: "Toggle breakpoint on selected line",      scope: "assembly" },
 };
 

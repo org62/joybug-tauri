@@ -8,7 +8,8 @@ import {
   SESSION_TAB_DEFS, SESSION_TAB_CATEGORIES, SESSION_TAB_BY_ACTION, sessionTabDefFor,
   type SessionTabId,
 } from "@/lib/sessionTabs";
-import { setMouseNavHandler } from "@/lib/mouseNav";
+import { sessionNavHistory } from "@/lib/navHistory";
+import { useNavHistoryDock } from "@/hooks/useNavHistoryDock";
 import { parseAddress, type ViewMode } from "@/lib/hexUtils";
 import { ArrowLeft, AlertCircle } from "lucide-react";
 import DockingLayout, { DockingLayoutRef } from "@/components/DockingLayout";
@@ -184,6 +185,7 @@ export default function SessionDocked() {
 
   // Navigate to disassembly at a specific address (from symbol click)
   const handleNavigateToDisassembly = React.useCallback((address: string) => {
+    sessionNavHistory.recordJumpToDisasm();
     dockingRef.current?.showTab('disassembly');
     disassemblyNavigation.request(address);
   }, []);
@@ -249,17 +251,15 @@ export default function SessionDocked() {
     }
   }, [sessionId, isDockingReady]); // Check after each layout update
 
-  // Mouse back/forward buttons navigate dock tab history. Returns true when a tab switch
-  // happened so main.tsx blocks the native page navigation; false (empty history) lets the
-  // press fall through to router navigation. Unregisters on unmount, so leaving the session
-  // for a real page (e.g. /logs) restores normal back/forward page navigation.
+  // Unified navigation history: controller, tab-switch recording, mouse buttons.
+  const { onTabSwitch } = useNavHistoryDock(sessionNavHistory, dockingRef);
+
+  // History belongs to one debug session — a different session's addresses and
+  // tab trail would be stale.
   useEffect(() => {
-    return setMouseNavHandler((dir) =>
-      dir === 'back'
-        ? !!dockingRef.current?.goBackTab()
-        : !!dockingRef.current?.goForwardTab()
-    );
-  }, []);
+    sessionNavHistory.clear();
+    return () => sessionNavHistory.clear();
+  }, [sessionId]);
 
   // Hotkey handlers — chord-based lookup via keybinding context
   const { reverseLookup } = useKeybindingContext();
@@ -325,6 +325,18 @@ export default function SessionDocked() {
           event.preventDefault();
           event.stopPropagation();
           handleCloseActiveTab();
+          break;
+        // Unified back/forward — one chronological history of user navigation
+        // actions (disassembly follows and tab switches alike).
+        case "assembly.goBack":
+          event.preventDefault();
+          event.stopPropagation();
+          sessionNavHistory.goBack();
+          break;
+        case "assembly.goForward":
+          event.preventDefault();
+          event.stopPropagation();
+          sessionNavHistory.goForward();
           break;
         // Navigate actions
         case "navigate.goToDisassembly":
@@ -698,6 +710,7 @@ export default function SessionDocked() {
             {...dockingConfig}
             className="absolute inset-0"
             onTabsChanged={handleTabsChanged}
+            onTabSwitch={onTabSwitch}
           />
         </div>
       </div>

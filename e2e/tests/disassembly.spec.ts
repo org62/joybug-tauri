@@ -2,6 +2,7 @@ import { test, expect } from "../helpers/test-fixtures";
 import { createAndStartSession, cleanupSession } from "../helpers/session-helpers";
 import {
   waitForPaused,
+  waitForDisassemblyLoaded,
   waitForStopped,
   configureMinimalStopSettings,
   restoreDefaultSettings,
@@ -68,13 +69,7 @@ test.describe("Disassembly View", () => {
       await waitForPaused(page, sessionId);
 
       // Verify disassembly is showing instructions
-      await expect(async () => {
-        const text = await page.evaluate(() => document.body.innerText);
-        const hasAsm = ["mov", "push", "sub", "call", "int", "lea"].some(
-          (m) => text.includes(m),
-        );
-        expect(hasAsm).toBe(true);
-      }).toPass({ timeout: 15_000 });
+      await waitForDisassemblyLoaded(page);
 
       // Continue — process exits, session stops
       await continueSession(page, sessionId);

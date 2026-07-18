@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect, useRef, useSyncExternalStore } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { toastError } from '@/lib/logger';
@@ -10,6 +10,7 @@ import {
 import { formatTauriError, isBenignSessionError } from '@/lib/sessionHelpers';
 import { useNavigationChannel } from '@/hooks/useNavigationChannel';
 import { disassemblyNavigation } from '@/lib/navigationStore';
+import { NavHistoryStore } from '@/lib/navHistory';
 
 // Instruction interface matching backend SerializableInstruction
 export interface Instruction {
@@ -49,7 +50,6 @@ interface AssemblyViewSettings {
 }
 
 const SETTINGS_KEY = 'assembly-view-settings';
-const MAX_HISTORY_SIZE = 50;
 // Fallback limit when function bounds aren't available
 // The backend will use actual function bounds when possible
 const DEFAULT_MAX_INSTRUCTIONS = 2000;
@@ -90,12 +90,23 @@ export interface AssemblyViewState {
   jumpTargetAddress: bigint | null;
 }
 
+/** Navigation options: `auto` marks PC-follow navigation (no history entry, no
+ *  jump-target highlight); `record: false` skips the history entry for
+ *  navigations whose departure is recorded elsewhere (cross-window jumps);
+ *  `departedAddress` records the exact row the user navigated from (jump-target
+ *  clicks) instead of the view's anchor address. */
+export interface GoToOptions {
+  auto?: boolean;
+  record?: boolean;
+  departedAddress?: bigint;
+}
+
 export interface AssemblyViewActions {
-  goToAddress: (expression: string) => Promise<void>;
-  goToAddressDirect: (address: bigint) => void;
-  scrollToAddressInView: (address: bigint) => void;
-  goBack: () => void;
-  goForward: () => void;
+  goToAddress: (expression: string, opts?: GoToOptions) => Promise<void>;
+  goToAddressDirect: (address: bigint, opts?: GoToOptions) => void;
+  /** Follow a jump/call target from a source row (records the departed row;
+   *  in-view targets scroll without reloading). */
+  followJump: (target: bigint, source: bigint) => void;
   refresh: () => void;
   toggleBytesColumn: () => void;
   scrollToPC: () => void;
@@ -126,13 +137,24 @@ export interface UseAssemblyViewOptions {
   disassemble?: AsmDisassembleFn;
   /** VA to disassemble first when using a file source. */
   initialAddress?: bigint;
+  /** Unified back/forward history for this view's dock scope. The hook pushes
+   *  departed addresses on user navigation and consumes the store's
+   *  disasmRestore channel. */
+  navHistory: NavHistoryStore;
 }
 
 // Instructions requested per file disassembly (no function bounds available).
 const FILE_DISASM_COUNT = 512;
 
+// Instruction addresses are backend-formatted hex strings ("0x7ff..."); compare
+// against a bigint via the normalized uppercase form.
+function isAddressInView(instructions: Instruction[], addr: bigint): boolean {
+  const key = `0X${addr.toString(16).toUpperCase()}`;
+  return instructions.some((inst) => inst.address.toUpperCase() === key);
+}
+
 export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewState & AssemblyViewActions {
-  const { sessionId, isPaused, canLoad = true, pcAddress: pcAddressProp, registers = {}, resolveSymbol, symbolsRefreshKey, disassemble, initialAddress } = options;
+  const { sessionId, isPaused, canLoad = true, pcAddress: pcAddressProp, registers = {}, resolveSymbol, symbolsRefreshKey, disassemble, initialAddress, navHistory } = options;
 
   // State
   const [instructions, setInstructions] = useState<Instruction[]>([]);
@@ -146,10 +168,6 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
   // Address to highlight temporarily after navigation (for jump targets)
   const [jumpTargetAddress, setJumpTargetAddress] = useState<bigint | null>(null);
 
-  // Navigation history
-  const [navigationHistory, setNavigationHistory] = useState<bigint[]>([]);
-  const [historyIndex, setHistoryIndex] = useState(-1);
-
   // Refs
   const lastRequestedAddress = useRef<bigint | null>(null);
   const requestInFlight = useRef(false);
@@ -162,9 +180,19 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
   // Derived PC address
   const pcAddress = pcAddressProp != null ? BigInt(pcAddressProp) : null;
 
-  // Computed
-  const canGoBack = historyIndex > 0;
-  const canGoForward = historyIndex < navigationHistory.length - 1;
+  // Unified history: re-render on store changes, read availability from the store.
+  useSyncExternalStore(navHistory.subscribe, navHistory.getSnapshot);
+  const canGoBack = navHistory.canGoBack;
+  const canGoForward = navHistory.canGoForward;
+
+  // Keep the store's live disassembly address in sync so tab switches away
+  // from this view can snapshot the departed location. While following PC
+  // (the user hasn't navigated away), the PC row is the user's position —
+  // more precise than the view's anchor address.
+  useEffect(() => {
+    navHistory.currentDisasmAddress =
+      !userNavigatedAway.current && pcAddress !== null ? pcAddress : currentAddress;
+  }, [navHistory, currentAddress, pcAddress]);
 
   // Load disassembly for an address
   const loadDisassembly = useCallback(async (address: bigint) => {
@@ -221,8 +249,8 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
   }, [sessionId, disassemble, canLoad]);
 
   // Go to address with history management
-  // isAutoNavigation: true when called by the PC-following effect, false for user actions
-  const goToAddressDirect = useCallback((address: bigint, isAutoNavigation = false) => {
+  const goToAddressDirect = useCallback((address: bigint, opts?: GoToOptions) => {
+    const isAutoNavigation = opts?.auto ?? false;
     // Mark that user navigated away from PC (unless this is auto-navigation)
     if (!isAutoNavigation) {
       userNavigatedAway.current = true;
@@ -233,30 +261,37 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
       setJumpTargetAddress(null);
     }
 
-    // Add to history
-    setNavigationHistory(prev => {
-      // Truncate forward history if we're not at the end
-      const truncated = prev.slice(0, historyIndex + 1);
-      // Add new address
-      const updated = [...truncated, address];
-      // Limit size
-      if (updated.length > MAX_HISTORY_SIZE) {
-        return updated.slice(-MAX_HISTORY_SIZE);
-      }
-      return updated;
-    });
-    setHistoryIndex(prev => Math.min(prev + 1, MAX_HISTORY_SIZE - 1));
+    // Record the departed address. PC auto-follow isn't a navigation the user
+    // can "undo", and cross-window jumps (record: false) already record their
+    // departure point at the dock level. The store's currentDisasmAddress is
+    // row-accurate after in-view jump clicks, so prefer it over the anchor
+    // (the sync effect above keeps it fed from the view's position).
+    const record = opts?.record ?? !isAutoNavigation;
+    const departed = opts?.departedAddress ?? navHistory.currentDisasmAddress;
+    if (record && departed !== null && departed !== address) {
+      navHistory.push({ tabId: navHistory.disasmTabId, disasmAddress: departed });
+    }
 
     loadDisassembly(address);
-  }, [historyIndex, loadDisassembly]);
+  }, [navHistory, loadDisassembly]);
 
-  // Scroll to address already in view (no history, no reload)
-  const scrollToAddressInView = useCallback((address: bigint) => {
-    setJumpTargetAddress(address);
-  }, []);
+  // Follow a jump/call target from a source row. Records the departed row so
+  // "back" retraces every follow — including in-view targets, which only
+  // scroll (no reload) but still enter history, with the store's live position
+  // becoming the target so later snapshots (tab switches, forward) are
+  // row-accurate.
+  const followJump = useCallback((target: bigint, source: bigint) => {
+    if (isAddressInView(instructions, target)) {
+      navHistory.push({ tabId: navHistory.disasmTabId, disasmAddress: source });
+      navHistory.currentDisasmAddress = target;
+      setJumpTargetAddress(target);
+    } else {
+      goToAddressDirect(target, { departedAddress: source });
+    }
+  }, [instructions, navHistory, goToAddressDirect]);
 
   // Go to address with expression parsing
-  const goToAddress = useCallback(async (expression: string) => {
+  const goToAddress = useCallback(async (expression: string, opts?: GoToOptions) => {
     if (!expression.trim()) return;
 
     const result = await parseAddressExpression(expression, registers, resolveSymbol);
@@ -265,28 +300,8 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
       return;
     }
 
-    goToAddressDirect(result.address);
+    goToAddressDirect(result.address, opts);
   }, [registers, resolveSymbol, goToAddressDirect, sessionId]);
-
-  // Navigate back
-  const goBack = useCallback(() => {
-    if (!canGoBack) return;
-    const newIndex = historyIndex - 1;
-    const targetAddress = navigationHistory[newIndex];
-    setHistoryIndex(newIndex);
-    setJumpTargetAddress(targetAddress);
-    loadDisassembly(targetAddress);
-  }, [canGoBack, historyIndex, navigationHistory, loadDisassembly]);
-
-  // Navigate forward
-  const goForward = useCallback(() => {
-    if (!canGoForward) return;
-    const newIndex = historyIndex + 1;
-    const targetAddress = navigationHistory[newIndex];
-    setHistoryIndex(newIndex);
-    setJumpTargetAddress(targetAddress);
-    loadDisassembly(targetAddress);
-  }, [canGoForward, historyIndex, navigationHistory, loadDisassembly]);
 
   // Refresh current view
   const refresh = useCallback(() => {
@@ -400,8 +415,21 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
 
   // External navigation (e.g., symbol click). MUST be declared before the
   // PC-following effect so it runs first on mount and sets userNavigatedAway.
+  // record: false — the cross-window jump records the departed location at the
+  // dock level (tab switch, or an explicit push when no switch occurs).
   useNavigationChannel(disassemblyNavigation, (addr) => {
-    goToAddress(addr);
+    goToAddress(addr, { record: false });
+  });
+
+  // History restoration (unified back/forward). A channel, not a callback,
+  // because the tab activation that precedes it may remount this view. No
+  // history push — restoring is replay, not a new navigation. An address
+  // already on screen (in-view follow entries) just scrolls, no reload.
+  useNavigationChannel(navHistory.disasmRestore, (addr) => {
+    userNavigatedAway.current = true;
+    setJumpTargetAddress(addr);
+    navHistory.currentDisasmAddress = addr;
+    if (!isAddressInView(instructions, addr)) loadDisassembly(addr);
   });
 
   // Auto-load when PC changes (stepping)
@@ -412,21 +440,33 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
     // Detect if PC actually changed (i.e., user stepped)
     const pcActuallyChanged = lastAutoPcAddress.current === null || pcAddress !== lastAutoPcAddress.current;
 
-    // Initial load - no address set yet or no navigation history
+    // Initial load - no address set yet
     // Skip if user already navigated (e.g., pending symbol navigation consumed in same render)
-    if ((currentAddress === null || navigationHistory.length === 0) && !userNavigatedAway.current) {
+    if (currentAddress === null && !userNavigatedAway.current) {
       lastAutoPcAddress.current = pcAddress;
-      goToAddressDirect(pcAddress, true);
+      goToAddressDirect(pcAddress, { auto: true });
       return;
     }
 
     // If PC actually changed (user stepped), always follow PC
     if (pcActuallyChanged) {
       const isRealStep = lastAutoPcAddress.current !== null;
+      const prevPc = lastAutoPcAddress.current;
       lastAutoPcAddress.current = pcAddress;
 
       // Real step (PC moved to a new address) — always follow PC
       if (isRealStep) {
+        // A step is a user action: record the departed location so back
+        // retraces the step trail like any other navigation. If the user had
+        // navigated away, the departed location is where they were looking
+        // (store snapshot); otherwise it's the previous PC row.
+        const departed = userNavigatedAway.current
+          ? navHistory.currentDisasmAddress ?? prevPc
+          : prevPc;
+        if (departed !== null && departed !== pcAddress) {
+          navHistory.push({ tabId: navHistory.disasmTabId, disasmAddress: departed });
+        }
+
         userNavigatedAway.current = false;
         // Clear any previous jump target so PC scroll effect can work
         setJumpTargetAddress(null);
@@ -437,20 +477,20 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
 
         if (pcOutsideFunction) {
           // PC moved to different function - load it
-          goToAddressDirect(pcAddress, true);
+          goToAddressDirect(pcAddress, { auto: true });
         }
         // If PC is still in current function, scroll effect will handle scrolling to it
       }
       // First time seeing PC (mount) — skip if user already navigated (e.g., symbol click)
     }
     // If PC didn't change, user can freely navigate without being pulled back
-  }, [pcAddress, sessionId, canLoad, currentAddress, navigationHistory.length, functionStart, functionEnd, goToAddressDirect]);
+  }, [pcAddress, sessionId, canLoad, currentAddress, functionStart, functionEnd, goToAddressDirect, navHistory]);
 
   // File mode: disassemble the initial offset once on mount.
   useEffect(() => {
     if (!disassemble) return;
     if (currentAddress !== null || instructions.length > 0) return;
-    goToAddressDirect(initialAddress ?? 0n, true);
+    goToAddressDirect(initialAddress ?? 0n, { auto: true });
   }, [disassemble, initialAddress, currentAddress, instructions.length, goToAddressDirect]);
 
   // Clear state when session ends or stops (session mode only)
@@ -464,8 +504,6 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
       setFunctionName(null);
       setError(null);
       setIsLoading(false);
-      setNavigationHistory([]);
-      setHistoryIndex(-1);
       lastAutoPcAddress.current = null;
       lastRequestedAddress.current = null;
       requestInFlight.current = false;
@@ -490,9 +528,7 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
     // Actions
     goToAddress,
     goToAddressDirect,
-    scrollToAddressInView,
-    goBack,
-    goForward,
+    followJump,
     refresh,
     toggleBytesColumn,
     scrollToPC,

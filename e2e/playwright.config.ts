@@ -22,6 +22,7 @@ export default defineConfig({
     "patches.spec.ts",
     "bookmarks.spec.ts",
     "disassembly.spec.ts",
+    "navigation-history.spec.ts",
     "symbol-status.spec.ts",
     "symbol-breakpoints.spec.ts",
     "types.spec.ts",

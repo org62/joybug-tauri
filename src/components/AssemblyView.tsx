@@ -11,6 +11,7 @@ import { Cpu, ArrowLeft, ArrowRight, RefreshCw, ChevronRight, Circle, CircleDot,
 import { sourceNavigation } from "@/lib/navigationStore";
 import { cn } from "@/lib/utils";
 import { useAssemblyView, Instruction, AsmDisassembleFn } from "@/hooks/useAssemblyView";
+import { NavHistoryStore } from "@/lib/navHistory";
 import { RegisterContext, SymbolResolver } from "@/lib/hexUtils";
 import { AddressExpressionInput } from "@/components/AddressExpressionInput";
 import { isBenignSessionError } from "@/lib/sessionHelpers";
@@ -54,9 +55,11 @@ interface AssemblyViewProps {
   /** Reinterpret a goto-box address before navigating (PE viewer: map an
    * RVA/file-offset typed per the address mode to the VA this view needs). */
   translateGotoInput?: (address: bigint) => bigint;
+  /** Unified back/forward history for this view's dock scope. */
+  navHistory: NavHistoryStore;
 }
 
-export function AssemblyView({ sessionId, isPaused, canLoad, address, registers, resolveSymbol, breakpointAddresses, onToggleBreakpoint, onSetHardwareBreakpoint, onAssemblePatch, onAddBookmark, symbolsRefreshKey, onNavigateToSource, disassemble, initialAddress, addressFormatter, translateGotoInput }: AssemblyViewProps) {
+export function AssemblyView({ sessionId, isPaused, canLoad, address, registers, resolveSymbol, breakpointAddresses, onToggleBreakpoint, onSetHardwareBreakpoint, onAssemblePatch, onAddBookmark, symbolsRefreshKey, onNavigateToSource, disassemble, initialAddress, addressFormatter, translateGotoInput, navHistory }: AssemblyViewProps) {
   const [addressInput, setAddressInput] = useState("");
   // Inline assembly input state
   const [assembleTarget, setAssembleTarget] = useState<{ address: string; defaultText: string } | null>(null);
@@ -88,9 +91,7 @@ export function AssemblyView({ sessionId, isPaused, canLoad, address, registers,
     canGoForward,
     jumpTargetAddress,
     goToAddressDirect,
-    scrollToAddressInView,
-    goBack,
-    goForward,
+    followJump,
     refresh,
     toggleBytesColumn,
   } = useAssemblyView({
@@ -103,28 +104,16 @@ export function AssemblyView({ sessionId, isPaused, canLoad, address, registers,
     symbolsRefreshKey,
     disassemble,
     initialAddress,
+    navHistory,
   });
 
-  // Handle jump target click
-  const handleJumpTargetClick = useCallback((jumpTarget: string) => {
+  const handleJumpTargetClick = useCallback((jumpTarget: string, sourceAddress: string) => {
     try {
-      const addr = BigInt(jumpTarget);
-      const addrUpper = `0X${addr.toString(16).toUpperCase()}`;
-
-      // Check if target is already in current instructions (same view)
-      const isInView = instructions.some(inst => inst.address.toUpperCase() === addrUpper);
-
-      if (isInView) {
-        // Just scroll to it, no history entry needed
-        scrollToAddressInView(addr);
-      } else {
-        // Navigate to new function/location
-        goToAddressDirect(addr);
-      }
-    } catch (e) {
+      followJump(BigInt(jumpTarget), BigInt(sourceAddress));
+    } catch {
       console.error("Invalid jump target:", jumpTarget);
     }
-  }, [instructions, scrollToAddressInView, goToAddressDirect]);
+  }, [followJump]);
 
   // Handle hover on jump target link
   const handleJumpTargetHover = useCallback((jumpTarget: string | null) => {
@@ -185,12 +174,15 @@ export function AssemblyView({ sessionId, isPaused, canLoad, address, registers,
       if (!chord) return;
 
       const action = reverseLookup.get(chord);
-      if (action === "assembly.goBack") {
+      // Back/forward chords are handled here only in file mode (PE reader). In
+      // session mode SessionDocked owns them, so back works even when this
+      // view's tab is closed — handling both would double-navigate.
+      if (action === "assembly.goBack" && disassemble) {
         e.preventDefault();
-        goBack();
-      } else if (action === "assembly.goForward") {
+        navHistory.goBack();
+      } else if (action === "assembly.goForward" && disassemble) {
         e.preventDefault();
-        goForward();
+        navHistory.goForward();
       } else if (action === "assembly.toggleBreakpoint") {
         e.preventDefault();
         const addr = selectedAddress ?? (pcAddress !== null ? `0X${pcAddress.toString(16).toUpperCase()}` : null);
@@ -205,28 +197,7 @@ export function AssemblyView({ sessionId, isPaused, canLoad, address, registers,
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [goBack, goForward, reverseLookup, selectedAddress, pcAddress, onToggleBreakpoint, onAssemblePatch, assembleTarget, instructions]);
-
-  // Mouse back/forward button navigation (buttons 3 & 4)
-  useEffect(() => {
-    const container = containerRef.current;
-    if (!container) return;
-
-    const handleMouseDown = (e: MouseEvent) => {
-      if (e.button === 3) {
-        e.preventDefault();
-        e.stopPropagation();
-        goBack();
-      } else if (e.button === 4) {
-        e.preventDefault();
-        e.stopPropagation();
-        goForward();
-      }
-    };
-
-    container.addEventListener("mousedown", handleMouseDown);
-    return () => container.removeEventListener("mousedown", handleMouseDown);
-  }, [goBack, goForward]);
+  }, [navHistory, disassemble, reverseLookup, selectedAddress, pcAddress, onToggleBreakpoint, onAssemblePatch, assembleTarget, instructions]);
 
   // Determine content to show. A "no active process" / "must be paused" condition
   // isn't a real error — treat it as the neutral empty state ("No disassembly
@@ -239,7 +210,7 @@ export function AssemblyView({ sessionId, isPaused, canLoad, address, registers,
   const showInstructions = instructions.length > 0;
 
   return (
-    <DockPanel ref={containerRef} data-capture-mouse-nav>
+    <DockPanel ref={containerRef} data-testid="assembly-panel">
       {/* Toolbar */}
       <PanelToolbar>
         {/* Go-to address input */}
@@ -258,7 +229,7 @@ export function AssemblyView({ sessionId, isPaused, canLoad, address, registers,
           <Button
             variant="outline"
             size="icon-xs"
-            onClick={goBack}
+            onClick={() => navHistory.goBack()}
             disabled={!canGoBack}
             title={`Go back (${getKeybinding("assembly.goBack")})`}
           >
@@ -267,7 +238,7 @@ export function AssemblyView({ sessionId, isPaused, canLoad, address, registers,
           <Button
             variant="outline"
             size="icon-xs"
-            onClick={goForward}
+            onClick={() => navHistory.goForward()}
             disabled={!canGoForward}
             title={`Go forward (${getKeybinding("assembly.goForward")})`}
           >
@@ -531,7 +502,7 @@ interface InstructionRowProps {
   showBytes: boolean;
   columnWidths: ColumnWidths;
   onClick: (address: string) => void;
-  onJumpTargetClick: (target: string) => void;
+  onJumpTargetClick: (target: string, sourceAddress: string) => void;
   onJumpTargetHover: (target: string | null) => void;
   onContextMenu: (e: React.MouseEvent, address: string, mnemonic: string, opStr: string) => void;
   addressFormatter?: (va: bigint) => string;
@@ -552,7 +523,7 @@ function InstructionRow({ instruction, isPC, isSelected, isHighlighted, isHoverT
       return (
         <span
           className="text-blue-400 cursor-pointer hover:underline hover:text-blue-300"
-          onClick={() => onJumpTargetClick(jump_target)}
+          onClick={() => onJumpTargetClick(jump_target, instruction.address)}
           onMouseEnter={() => onJumpTargetHover(jump_target)}
           onMouseLeave={() => onJumpTargetHover(null)}
           title={`Jump to ${jump_target}`}
@@ -566,6 +537,7 @@ function InstructionRow({ instruction, isPC, isSelected, isHighlighted, isHoverT
 
   return (
     <div
+      data-testid="asm-row"
       className={cn(
         "flex items-center hover:bg-muted/30 px-2 cursor-default",
         isSelected && "bg-accent/50",

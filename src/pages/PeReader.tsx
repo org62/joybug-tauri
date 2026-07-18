@@ -28,6 +28,8 @@ import { SymbolResolver } from "@/lib/hexUtils";
 import { PeMapping, AddrMode, ADDR_MODE_LABELS, buildMapping, formatOffset, formatVa, rvaToVa, tripleFromInput } from "@/lib/peAddress";
 import { applyFieldEdit } from "@/lib/peDecode";
 import { memoryNavigation, disassemblyNavigation } from "@/lib/navigationStore";
+import { NavHistoryStore } from "@/lib/navHistory";
+import { useNavHistoryDock } from "@/hooks/useNavHistoryDock";
 import { moduleBasename } from "@/lib/sessionHelpers";
 import { toastError, toastSuccess } from "@/lib/logger";
 import { formatTauriError } from "@/lib/sessionHelpers";
@@ -67,6 +69,8 @@ interface PeReaderContextValue {
   onGoToDisasm: (va: bigint) => void;
   /** Select the raw bytes of the given header fields in the hex view. */
   onSelectField: (...fields: string[]) => void;
+  /** Unified back/forward history for this PE reader's dock (per open file). */
+  navHistory: NavHistoryStore;
 }
 
 const PeReaderContext = createContext<PeReaderContextValue | null>(null);
@@ -126,7 +130,7 @@ const PeHexTab: React.FC = () => {
 };
 
 const PeDisasmTab: React.FC = () => {
-  const { summary, disassemble, initialAddress, mapping, mode, symbolsRefreshKey, resolveSymbol } = usePeReader();
+  const { summary, disassemble, initialAddress, mapping, mode, symbolsRefreshKey, resolveSymbol, navHistory } = usePeReader();
   if (!summary || !disassemble || !mapping) return <NoFilePlaceholder />;
   return (
     <AssemblyView
@@ -137,6 +141,7 @@ const PeDisasmTab: React.FC = () => {
       resolveSymbol={resolveSymbol}
       addressFormatter={(va) => formatVa(mapping, va, mode)}
       translateGotoInput={(addr) => tripleFromInput(mapping, addr, mode).va}
+      navHistory={navHistory}
     />
   );
 };
@@ -350,14 +355,22 @@ export default function PeReader() {
     return (va, count) => invoke<Instruction[]>("pe_disassemble", { path, va: Number(va), count });
   }, [path]);
 
+  // Unified back/forward history, reset per opened file (addresses from a
+  // previously opened PE would be meaningless).
+  const navHistory = useMemo(() => new NavHistoryStore("pe-disassembly"), [summary?.path]);
+
+  // Controller, tab-switch recording, mouse buttons.
+  const { onTabSwitch } = useNavHistoryDock(navHistory, dockingRef);
+
   // Jump to a coordinate in a tab: hex is file-offset addressed, disassembly is
   // VA addressed. `addr` is already in that tab's coordinate space.
   const goTo = useCallback((tab: string, addr: bigint) => {
+    if (tab === navHistory.disasmTabId) navHistory.recordJumpToDisasm();
     dockingRef.current?.showTab(tab);
     const s = `0x${addr.toString(16)}`;
     if (tab === "pe-hex") memoryNavigation.request(s);
     else disassemblyNavigation.request(s);
-  }, []);
+  }, [navHistory]);
 
   const onGoToHex = useCallback((offset: number) => goTo("pe-hex", BigInt(offset)), [goTo]);
   const onGoToDisasm = useCallback((va: bigint) => goTo("pe-disassembly", va), [goTo]);
@@ -408,7 +421,8 @@ export default function PeReader() {
     onGoToHex,
     onGoToDisasm,
     onSelectField,
-  }), [summary, mapping, mode, hexDataSource, disassemble, symbolsRefreshKey, setField, searchSymbols, resolveSymbol, stringScan, onGoToHex, onGoToDisasm, onSelectField]);
+    navHistory,
+  }), [summary, mapping, mode, hexDataSource, disassemble, symbolsRefreshKey, setField, searchSymbols, resolveSymbol, stringScan, onGoToHex, onGoToDisasm, onSelectField, navHistory]);
 
   return (
     <Page scroll={false} container={false}>
@@ -457,7 +471,7 @@ export default function PeReader() {
         {/* Docked views */}
         <div className="relative flex-1 min-h-0">
           <PeReaderContext.Provider value={ctxValue}>
-            <DockingLayout ref={dockingRef} {...PE_DOCK_CONFIG} className="absolute inset-0" />
+            <DockingLayout ref={dockingRef} {...PE_DOCK_CONFIG} onTabSwitch={onTabSwitch} className="absolute inset-0" />
           </PeReaderContext.Provider>
         </div>
       </div>

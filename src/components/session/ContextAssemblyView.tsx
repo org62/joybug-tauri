@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { useSessionContext } from '@/contexts/SessionContext';
 import { AssemblyView } from '@/components/AssemblyView';
 import { contextToRegisters, createSymbolResolver, isProcessAvailable } from '@/lib/sessionHelpers';
+import { sessionNavHistory } from '@/lib/navHistory';
 
 export const ContextAssemblyView = () => {
   const sessionData = useSessionContext();
@@ -55,6 +56,7 @@ export const ContextAssemblyView = () => {
       onAddBookmark={(addr, asmText) => addBookmark({ kind: 'code', address: addr, asmText })}
       symbolsRefreshKey={sessionData.symbolsRefreshKey}
       onNavigateToSource={sessionData.onNavigateToSource}
+      navHistory={sessionNavHistory}
     />
   );
 };

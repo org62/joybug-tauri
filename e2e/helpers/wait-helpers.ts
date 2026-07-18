@@ -104,6 +104,26 @@ export async function waitForStopped(
 }
 
 /**
+ * Poll until disassembly instructions are rendered (common x64 mnemonics
+ * appear). `scopeSelector` narrows the scan (e.g. to the assembly panel);
+ * without it the whole page body is scanned.
+ */
+export async function waitForDisassemblyLoaded(
+  page: Page,
+  scopeSelector?: string,
+): Promise<void> {
+  await expect(async () => {
+    const text = scopeSelector
+      ? await page.locator(scopeSelector).innerText()
+      : await page.evaluate(() => document.body.innerText);
+    const hasAsm = ["mov", "push", "sub", "call", "int", "lea"].some((m) =>
+      text.includes(m),
+    );
+    expect(hasAsm).toBe(true);
+  }).toPass({ timeout: 15_000, intervals: [100, 250] });
+}
+
+/**
  * Configure debug settings to only stop on InitialBreakpoint.
  * This makes sessions reach a stable pause quickly by auto-continuing
  * all other events (DLL loads, thread creates, process create, etc.).

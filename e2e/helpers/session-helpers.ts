@@ -114,26 +114,33 @@ export async function createSession(
 }
 
 /**
+ * Open the command palette and run a command by its exact label. Matches the
+ * label span, not the option's accessible name: the latter also contains the
+ * shortcut ("Go to Symbols Ctrl+S"), and a plain substring match would make
+ * "Memory" ambiguous with "Memory Search"/"Memory Regions".
+ */
+export async function runPaletteCommand(page: Page, label: string): Promise<void> {
+  await page.keyboard.press("Control+k");
+  const search = page.getByPlaceholder("Type a command or search...");
+  await search.waitFor({ state: "visible" });
+  await search.fill(label);
+  await page
+    .getByRole("option")
+    .filter({ has: page.locator(`span:text-is("${label}")`) })
+    .first()
+    .click();
+}
+
+/**
  * Open a dock window via the command palette's "Go to X", activating it if it's
  * already open. Most windows are closed in the default layout, so any test that
  * needs one must ask for it first. Prefer this over clicking the Windows menu:
  * it doesn't care which submenu the window lives in.
  */
 export async function goToWindow(page: Page, title: string): Promise<void> {
-  await page.keyboard.press("Control+k");
-  const search = page.getByPlaceholder("Type a command or search...");
-  await search.waitFor({ state: "visible" });
-  await search.fill(title);
-  // Match the label span, not the option's accessible name: the latter also
-  // contains the shortcut ("Go to Symbols Ctrl+S"), and a plain substring match
-  // would make "Memory" ambiguous with "Memory Search"/"Memory Regions".
-  await page
-    .getByRole("option")
-    .filter({ has: page.locator(`span:text-is("Go to ${title}")`) })
-    .first()
-    .click();
-  // Exact-text match for the same reason: "Memory" must not be satisfied by an
-  // open "Memory Search"/"Memory Regions" tab.
+  await runPaletteCommand(page, `Go to ${title}`);
+  // Exact-text match (same ambiguity as above): "Memory" must not be satisfied
+  // by an open "Memory Search"/"Memory Regions" tab.
   await expect(page.locator(".dock-tab", { hasText: new RegExp(`^${title}$`) }).first()).toBeVisible();
 }
 

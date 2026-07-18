@@ -4,6 +4,7 @@ import { test, expect } from "../helpers/test-fixtures";
 import { createAndStartSession, cleanupSession, openWindowsSubmenu } from "../helpers/session-helpers";
 import {
   waitForPaused,
+  waitForDisassemblyLoaded,
   waitForStopped,
   configureMinimalStopSettings,
   restoreDefaultSettings,
@@ -398,13 +399,7 @@ test.describe("Assembly Patching", () => {
       await waitForPaused(page, sessionId);
 
       // Wait for disassembly to load
-      await expect(async () => {
-        const text = await page.evaluate(() => document.body.innerText);
-        const hasAsm = ["mov", "push", "sub", "call", "int", "lea"].some(
-          (m) => text.includes(m),
-        );
-        expect(hasAsm).toBe(true);
-      }).toPass({ timeout: 15_000 });
+      await waitForDisassemblyLoaded(page);
 
       const address = await getCurrentAddress(page, sessionId);
 
@@ -482,17 +477,11 @@ test.describe("Assembly Patching", () => {
       await waitForPaused(page, sessionId);
 
       // Wait for disassembly to load
-      await expect(async () => {
-        const text = await page.evaluate(() => document.body.innerText);
-        const hasAsm = ["mov", "push", "sub", "call", "int", "lea"].some(
-          (m) => text.includes(m),
-        );
-        expect(hasAsm).toBe(true);
-      }).toPass({ timeout: 15_000 });
+      await waitForDisassemblyLoaded(page);
 
       // Right-click on the first visible instruction row
       // The instruction rows are rendered inside the virtualized list
-      const firstRow = page.locator('[data-capture-mouse-nav] .flex.items-center.hover\\:bg-muted\\/30').first();
+      const firstRow = page.locator('[data-testid="assembly-panel"] [data-testid="asm-row"]').first();
       await firstRow.click({ button: "right" });
 
       // Context menu should appear with "Assemble..." option
@@ -604,16 +593,10 @@ test.describe("Assembly Patching", () => {
       await waitForPaused(page, sessionId);
 
       // Wait for disassembly
-      await expect(async () => {
-        const text = await page.evaluate(() => document.body.innerText);
-        const hasAsm = ["mov", "push", "sub", "call", "int", "lea"].some(
-          (m) => text.includes(m),
-        );
-        expect(hasAsm).toBe(true);
-      }).toPass({ timeout: 15_000 });
+      await waitForDisassemblyLoaded(page);
 
       // Right-click → Assemble...
-      const firstRow = page.locator('[data-capture-mouse-nav] .flex.items-center.hover\\:bg-muted\\/30').first();
+      const firstRow = page.locator('[data-testid="assembly-panel"] [data-testid="asm-row"]').first();
       await firstRow.click({ button: "right" });
       await page.getByRole("menuitem", { name: "Assemble..." }).click();
 
