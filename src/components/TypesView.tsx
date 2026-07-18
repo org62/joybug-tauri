@@ -1,6 +1,8 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import { useTypes, type UseTypes } from "@/hooks/useTypes";
+import { useNavigationChannel } from "@/hooks/useNavigationChannel";
+import { typesNavigation } from "@/lib/navigationStore";
 import { useLiveRefresh } from "@/hooks/useLiveRefresh";
 import { usePopoverDismiss } from "@/hooks/usePopoverDismiss";
 import { usePanelFocus } from "@/hooks/usePanelFocus";
@@ -67,6 +69,13 @@ export const TypesView = ({
 
   const [mode, setMode] = useState<Mode>("inspect");
   const [customTypes, setCustomTypes] = useState<CustomTypeDef[]>([]);
+  // Cross-tab "open _TEB at this address" navigation (e.g. from the Threads view):
+  // flip to inspect mode without consuming — the payload stays pending in the
+  // channel until the (possibly just-mounted) InspectMode consumes it.
+  const navVersion = useSyncExternalStore(typesNavigation.subscribe, typesNavigation.getSnapshot);
+  useEffect(() => {
+    setMode("inspect");
+  }, [navVersion]);
 
   const reloadCustom = useCallback(async () => {
     try {
@@ -254,6 +263,14 @@ function InspectMode({
     },
     [ts, loadType],
   );
+
+  // Fulfil an external navigation request (e.g. Threads → "TEB: 0x…"): overlay the
+  // requested type on the requested address. The channel buffers the payload
+  // across the custom→inspect remount, so a fresh mount consumes it here; a
+  // request against an inactive session is dropped, never replayed later.
+  useNavigationChannel(typesNavigation, (req) => {
+    if (isActive) loadType(req.typeName, undefined, req.address);
+  });
 
   return (
     <>

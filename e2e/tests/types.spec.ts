@@ -1,3 +1,4 @@
+import type { Page } from "@playwright/test";
 import { test, expect } from "../helpers/test-fixtures";
 import { createAndStartSession, cleanupSession, invoke, goToWindow } from "../helpers/session-helpers";
 import {
@@ -34,6 +35,25 @@ interface CustomTypeDef {
   is_union: boolean;
 }
 
+/** Poll get_session_type until `name` resolves with a real member list (implies
+ *  the module's symbols + type stream are parsed; cold PDB download can be slow). */
+async function waitForTypeResolved(
+  page: Page,
+  sessionId: string,
+  name: string,
+): Promise<TypeLayout> {
+  let layout: TypeLayout | null = null;
+  await expect(async () => {
+    layout = (await invoke(page, "get_session_type", {
+      sessionId,
+      name,
+      moduleBase: null,
+    })) as TypeLayout | null;
+    expect(layout?.members?.length ?? 0).toBeGreaterThan(10);
+  }).toPass({ timeout: 90_000, intervals: [500, 1000] });
+  return layout!;
+}
+
 test.describe("Type System", () => {
   test("reads PDB struct layouts from ntdll and overlays live values", async ({
     tauriPage: page,
@@ -46,22 +66,13 @@ test.describe("Type System", () => {
       const sessionId = await createAndStartSession(page, "Type System");
       await waitForPaused(page, sessionId);
 
-      // Types come from ntdll's PDB; wait until _KUSER_SHARED_DATA resolves
-      // (implies ntdll symbols + type stream are parsed).
-      let kuser: TypeLayout | null = null;
-      await expect(async () => {
-        kuser = (await invoke(page, "get_session_type", {
-          sessionId,
-          name: "_KUSER_SHARED_DATA",
-          moduleBase: null,
-        })) as TypeLayout | null;
-        expect(kuser?.members?.length ?? 0).toBeGreaterThan(10);
-      }).toPass({ timeout: 90_000, intervals: [500, 1000] });
+      // Types come from ntdll's PDB.
+      const kuser = await waitForTypeResolved(page, sessionId, "_KUSER_SHARED_DATA");
 
       // _KUSER_SHARED_DATA is a fixed-size struct with a known NtSystemRoot member.
-      expect(kuser!.kind).toBe("struct");
-      expect(kuser!.size).toBe(1848);
-      expect(kuser!.members.some((m) => m.name === "NtSystemRoot")).toBeTruthy();
+      expect(kuser.kind).toBe("struct");
+      expect(kuser.size).toBe(1848);
+      expect(kuser.members.some((m) => m.name === "NtSystemRoot")).toBeTruthy();
 
       // _PEB: BeingDebugged is an unsigned char at offset 2, and no member should
       // render as an opaque "t#NN" (primitive + function-pointer resolution).
@@ -130,6 +141,60 @@ test.describe("Type System", () => {
         const changedCount = await page.locator("span[data-member-value][data-changed]").count();
         expect(changedCount).toBeGreaterThan(0);
       }).toPass({ timeout: 10_000, intervals: [100, 250] });
+
+      await cleanupSession(page, sessionId);
+    } finally {
+      await restoreDefaultSettings(page);
+    }
+  });
+
+  test("per-thread TEB link overlays _TEB on that thread's TEB base", async ({
+    tauriPage: page,
+  }) => {
+    // Cold ntdll PDB download can be slow (needed for _TEB resolution).
+    test.setTimeout(120_000);
+    await configureMinimalStopSettings(page);
+
+    try {
+      const sessionId = await createAndStartSession(page, "Thread TEB");
+      await waitForPaused(page, sessionId);
+
+      const tebType = await waitForTypeResolved(page, sessionId, "_TEB");
+      expect(tebType.members.some((m) => m.name === "ThreadLocalStoragePointer")).toBeTruthy();
+
+      // Backend: each thread reports a TEB base (non-null for the live thread).
+      const tebs = (await invoke(page, "get_session_thread_tebs", {
+        sessionId,
+      })) as { tid: number; teb: string | null }[];
+      expect(tebs.length).toBeGreaterThan(0);
+      const withTeb = tebs.find((t) => t.teb);
+      expect(withTeb?.teb).toMatch(/^0x[0-9A-Fa-f]+$/);
+      const tebAddr = withTeb!.teb!;
+
+      // UI: the Threads window renders a clickable "TEB: 0x…" line per thread.
+      await goToWindow(page, "Threads");
+      const tebLine = page.locator("p", { hasText: /^TEB:/ }).first();
+      await expect(tebLine).toBeVisible({ timeout: 15_000 });
+
+      // Clicking it opens the Types tab with _TEB overlaid on that TEB base.
+      await tebLine.locator(".cursor-pointer").first().click();
+      await expect(page.getByText("_TEB", { exact: true }).first()).toBeVisible({
+        timeout: 15_000,
+      });
+      await expect(
+        page.getByText("ThreadLocalStoragePointer", { exact: false }).first(),
+      ).toBeVisible({ timeout: 15_000 });
+
+      // The overlay address input is set to the clicked thread's TEB base.
+      await expect
+        .poll(
+          () =>
+            page.locator("input").evaluateAll((els) =>
+              (els as HTMLInputElement[]).map((e) => e.value),
+            ),
+          { timeout: 10_000, intervals: [100, 250] },
+        )
+        .toContain(tebAddr);
 
       await cleanupSession(page, sessionId);
     } finally {

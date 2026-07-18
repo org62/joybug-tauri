@@ -87,6 +87,7 @@ pub fn run() {
             commands::clear_logs,
             commands::get_session_modules,
             commands::get_session_threads,
+            commands::get_session_thread_tebs,
             commands::search_session_symbols,
             commands::get_session_symbol_status,
             commands::load_module_pdb,

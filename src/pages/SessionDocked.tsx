@@ -3,7 +3,7 @@ import { useParams, useNavigate } from "react-router-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { disassemblyNavigation, memoryNavigation, sourceNavigation, panelFocus, peviewerModuleNavigation } from "@/lib/navigationStore";
+import { disassemblyNavigation, memoryNavigation, sourceNavigation, panelFocus, peviewerModuleNavigation, typesNavigation } from "@/lib/navigationStore";
 import {
   SESSION_TAB_DEFS, SESSION_TAB_CATEGORIES, SESSION_TAB_BY_ACTION, sessionTabDefFor,
   type SessionTabId,
@@ -228,6 +228,12 @@ export default function SessionDocked() {
   // Open the Access Trace panel (singleton) — focus it if already open.
   const handleOpenAccessTrace = React.useCallback(() => {
     dockingRef.current?.showTab('access_trace');
+  }, []);
+
+  // Open the Types tab with a named type overlaid on an address (e.g. a thread's TEB).
+  const handleNavigateToType = React.useCallback((typeName: string, address: string) => {
+    dockingRef.current?.showTab('types');
+    typesNavigation.request({ typeName, address });
   }, []);
 
   // Initial state detection - sync when docking becomes ready
@@ -560,8 +566,9 @@ export default function SessionDocked() {
     onNavigateToDisassembly: handleNavigateToDisassembly,
     onNavigateToMemory: handleNavigateToMemory,
     onNavigateToSource: handleNavigateToSource,
+    onNavigateToType: handleNavigateToType,
     onFindAccesses: handleFindAccesses,
-  }), [session, displayStatus, canUseMemoryOps, modules, threads, symbolStatuses, symbolsRefreshKey, loadModules, loadThreads, loadModulePdb, retryModuleSymbols, searchSymbols, breakpointState, patchState, bookmarkState, watchpointState, handleNavigateToDisassembly, handleNavigateToMemory, handleNavigateToSource, handleFindAccesses]);
+  }), [session, displayStatus, canUseMemoryOps, modules, threads, symbolStatuses, symbolsRefreshKey, loadModules, loadThreads, loadModulePdb, retryModuleSymbols, searchSymbols, breakpointState, patchState, bookmarkState, watchpointState, handleNavigateToDisassembly, handleNavigateToMemory, handleNavigateToSource, handleNavigateToType, handleFindAccesses]);
   
   // Static tab content - components will update via context.
   // Typed against the registry, so adding a tab to SESSION_TAB_DEFS without

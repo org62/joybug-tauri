@@ -66,3 +66,12 @@ export const panelFocus = new NavigationChannel<string>();
 // (payload is the module base address). A channel rather than a DOM event so a
 // freshly-opened tab consumes it on mount instead of racing its listener.
 export const peviewerModuleNavigation = new NavigationChannel<string>();
+
+/** Open the Types tab with a named type overlaid on an address (e.g. a thread's
+ *  TEB → `{ typeName: "_TEB", address }`). The channel's version bump re-fires the
+ *  load even when the same type+address is requested twice. */
+export interface TypeNavRequest {
+  typeName: string;
+  address: string;
+}
+export const typesNavigation = new NavigationChannel<TypeNavRequest>();

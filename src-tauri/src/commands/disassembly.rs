@@ -3,7 +3,7 @@ use crate::session::disassembly::{applied_patch_ranges, serialize_instructions};
 use crate::session::types::SerializableInstruction;
 use crate::session::UICommand;
 use crate::state::SessionStatesMap;
-use super::types::{ModuleData, ThreadData};
+use super::types::{ModuleData, ThreadData, ThreadTebData};
 use tauri::{Emitter, State};
 use tracing::{debug, error, info};
 
@@ -165,6 +165,37 @@ pub fn get_session_threads(
     let threads = super::with_oob_client(&session_arc, &session_id, &oob_pool, |oob, pid| oob.list_threads(pid).unwrap_or_default())
         .unwrap_or_default();
     Ok(threads.iter().map(to_data).collect())
+}
+
+/// Per-thread TEB base addresses — anchors for overlaying `_TEB` on a specific thread.
+/// Runs over OOB (like `get_session_teb_peb`), so it works while Paused, Running, or
+/// non-invasively Open. Threads whose TEB can't be read (e.g. terminated) yield `teb: None`.
+#[tauri::command]
+pub fn get_session_thread_tebs(
+    session_id: String,
+    session_states: State<'_, SessionStatesMap>,
+    oob_pool: State<'_, super::OobPool>,
+) -> Result<Vec<ThreadTebData>> {
+    let session_arc = super::get_session_arc(&session_id, &session_states)?;
+    let tids: Vec<u32> = { session_arc.lock().unwrap().threads.iter().map(|t| t.tid).collect() };
+    super::with_oob_client(&session_arc, &session_id, &oob_pool, move |client, pid| {
+        // Non-invasive Open sessions never populate the cached thread list —
+        // same OOB fallback as get_session_threads.
+        let tids = if tids.is_empty() {
+            client
+                .list_threads(pid)
+                .map(|ts| ts.iter().map(|t| t.tid).collect())
+                .unwrap_or_default()
+        } else {
+            tids
+        };
+        tids.into_iter()
+            .map(|tid| ThreadTebData {
+                tid,
+                teb: client.get_teb_address(pid, tid).ok().map(|a| format!("0x{:X}", a)),
+            })
+            .collect()
+    })
 }
 
 #[tauri::command]

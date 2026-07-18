@@ -168,6 +168,9 @@ export interface SessionContextData {
   onNavigateToMemory?: (address: string) => void;
   /** Activate the Source tab and reveal the given address's source line. */
   onNavigateToSource?: (address: string) => void;
+  /** Open the Types tab with a named type overlaid on an address (e.g. a thread's
+   *  TEB → `("_TEB", tebAddress)`). */
+  onNavigateToType?: (typeName: string, address: string) => void;
   /** Start a hardware access trace ("find what reads/writes this address"): arm a
    * watchpoint of the given mode/size and open the Access Trace panel. */
   onFindAccesses?: (address: string, mode: "Write" | "ReadWrite", size: number) => void;

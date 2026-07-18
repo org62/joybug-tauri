@@ -23,9 +23,10 @@ interface ContextThreadsViewProps {
   onNavigateToMemoryPointer?: (address: string) => void;
 }
 
-// Fixed row height (px) for the virtualized thread list. Rows are uniform (2 lines
-// of truncated text), so a fixed height avoids per-row getBoundingClientRect measurement.
-const THREAD_ROW_HEIGHT = 50;
+// Fixed row height (px) for the virtualized thread list. Rows are uniform (3 lines
+// of truncated text: title/status, Start, TEB), so a fixed height avoids per-row
+// getBoundingClientRect measurement.
+const THREAD_ROW_HEIGHT = 68;
 
 export const ContextThreadsView = ({ onNavigateToDisassembly, onNavigateToMemoryPointer }: ContextThreadsViewProps) => {
   const sessionData = useSessionContext();
@@ -38,6 +39,7 @@ export const ContextThreadsView = ({ onNavigateToDisassembly, onNavigateToMemory
   // Context-level navigation (reuses existing memory tab, like symbols view)
   const onNavigateToDisassemblyCtx = sessionData.onNavigateToDisassembly;
   const onNavigateToMemoryCtx = sessionData.onNavigateToMemory;
+  const onNavigateToTypeCtx = sessionData.onNavigateToType;
 
   // Hover popover state
   const [hoveredThreadId, setHoveredThreadId] = useState<number | null>(null);
@@ -56,6 +58,12 @@ export const ContextThreadsView = ({ onNavigateToDisassembly, onNavigateToMemory
 
   // Thread symbol resolution
   const [threadSymbols, setThreadSymbols] = useState<Map<number, ThreadSymbolInfo>>(new Map());
+
+  // Per-thread TEB base addresses (tid → hex), fetched over OOB when threads load.
+  const [threadTebs, setThreadTebs] = useState<Map<number, string>>(new Map());
+  // Tids already asked for (including those that yielded no TEB), so a thread-set
+  // change with no new threads (e.g. a thread exit) doesn't refetch everything.
+  const queriedTebTidsRef = useRef<Set<number>>(new Set());
 
   // Keep refs in sync with state
   const setLoadingThread = useCallback((tid: number | null) => {
@@ -90,6 +98,30 @@ export const ContextThreadsView = ({ onNavigateToDisassembly, onNavigateToMemory
       console.error('Failed to request thread symbol resolution:', err);
     });
   }, [sessionId, displayStatus, sessionData?.threads]);
+
+  // Fetch per-thread TEB addresses over OOB (works Paused/Running/Open). TEB bases
+  // are stable for a thread's lifetime, so fetch only when an unseen tid appears.
+  useEffect(() => {
+    if (!sessionId || !canUse || !sessionData?.threads?.length) return;
+    if (sessionData.threads.every((t) => queriedTebTidsRef.current.has(t.id))) return;
+    let cancelled = false;
+    invoke<Array<{ tid: number; teb: string | null }>>('get_session_thread_tebs', { sessionId })
+      .then((entries) => {
+        if (cancelled) return;
+        for (const e of entries) queriedTebTidsRef.current.add(e.tid);
+        setThreadTebs((prev) => {
+          const map = new Map(prev);
+          for (const e of entries) {
+            if (e.teb) map.set(e.tid, e.teb);
+          }
+          return map;
+        });
+      })
+      .catch((err) => {
+        console.error('Failed to fetch thread TEB addresses:', err);
+      });
+    return () => { cancelled = true; };
+  }, [sessionId, canUse, sessionData?.threads]);
 
   // Listen for thread symbol resolution results
   useEffect(() => {
@@ -161,6 +193,8 @@ export const ContextThreadsView = ({ onNavigateToDisassembly, onNavigateToMemory
       setLoadingThread(null);
       setCallstackError(null);
       setThreadSymbols(new Map());
+      setThreadTebs(new Map());
+      queriedTebTidsRef.current = new Set();
       popoverHoveredRef.current = false;
       if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
       if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
@@ -314,6 +348,7 @@ export const ContextThreadsView = ({ onNavigateToDisassembly, onNavigateToMemory
             const clickColor = isFunction
               ? 'hover:text-blue-600 dark:hover:text-blue-400'
               : 'hover:text-green-600 dark:hover:text-green-400';
+            const tebAddress = threadTebs.get(thread.id);
 
             return (
               <div
@@ -341,6 +376,16 @@ export const ContextThreadsView = ({ onNavigateToDisassembly, onNavigateToMemory
                       onClick={(e) => { e.stopPropagation(); handleStartAddressClick(thread.start_address, isFunction); }}
                     />
                   </p>
+                  {tebAddress && (
+                    <p className="text-xs text-muted-foreground flex items-center gap-1 min-w-0">
+                      <span className="shrink-0">TEB:</span>
+                      <TruncatedSymbol
+                        text={tebAddress}
+                        className="font-mono cursor-pointer hover:underline hover:text-purple-600 dark:hover:text-purple-400"
+                        onClick={(e) => { e.stopPropagation(); onNavigateToTypeCtx?.('_TEB', tebAddress); }}
+                      />
+                    </p>
+                  )}
                 </div>
               </div>
             );

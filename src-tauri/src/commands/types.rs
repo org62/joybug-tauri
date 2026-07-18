@@ -16,6 +16,13 @@ pub struct ThreadData {
 }
 
 #[derive(serde::Serialize)]
+pub struct ThreadTebData {
+    pub tid: u32,
+    /// TEB base (hex), or `None` for threads whose TEB couldn't be read (e.g. terminated).
+    pub teb: Option<String>,
+}
+
+#[derive(serde::Serialize)]
 pub struct ModuleSymbolStatusData {
     pub module_path: String,
     pub base_address: String,
