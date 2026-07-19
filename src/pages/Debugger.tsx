@@ -29,7 +29,8 @@ import {
   updateSessionInStorage, 
   removeSessionFromStorage,
   sessionToConfig,
-  syncSessionsToStorage 
+  syncSessionsToStorage,
+  touchSessionInStorage,
 } from "@/lib/sessionStorage";
 
 import { DebugSession, SessionStatus } from "@/contexts/SessionContext";
@@ -325,8 +326,17 @@ export default function Debugger() {
     }
   };
 
+  // Bumped whenever a session's last_used_at changes so the MRU sort re-runs.
+  const [lastUsedTick, setLastUsedTick] = useState(0);
+
+  const touchSession = (sessionId: string) => {
+    touchSessionInStorage(sessionId);
+    setLastUsedTick((t) => t + 1);
+  };
+
   const startAndNavigate = async (sessionId: string) => {
     await invoke("start_debug_session", { sessionId });
+    touchSession(sessionId);
     toast.success("Debug session started");
     navigate(`/session/${sessionId}`);
   };
@@ -421,6 +431,7 @@ export default function Debugger() {
   };
 
   const handleViewSession = (sessionId: string) => {
+    touchSession(sessionId);
     navigate(`/session/${sessionId}`);
   };
 
@@ -486,6 +497,18 @@ export default function Debugger() {
       setAttachingPid(null);
     }
   };
+
+  // Most-recently-used first; sessions never started/viewed fall back to
+  // creation time. last_used_at lives in localStorage (see sessionStorage.ts).
+  const sortedSessions = useMemo(() => {
+    const lastUsedById = new Map<string, string>();
+    for (const config of loadSessionsFromStorage()) {
+      if (config.last_used_at) lastUsedById.set(config.id, config.last_used_at);
+    }
+    const sortKey = (s: DebugSession) =>
+      new Date(lastUsedById.get(s.id) ?? s.created_at).getTime();
+    return [...sessions].sort((a, b) => sortKey(b) - sortKey(a));
+  }, [sessions, lastUsedTick]);
 
   const filteredProcesses = useMemo(() => {
     const q = processFilter.trim().toLowerCase();
@@ -764,9 +787,7 @@ export default function Debugger() {
           </Card>
         ) : (
           <div className="grid gap-4">
-            {sessions
-              .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
-              .map((session) => (
+            {sortedSessions.map((session) => (
               <Card key={session.id} className="hover:shadow-md transition-shadow">
                 <CardHeader>
                   <div className="flex items-center justify-between">

@@ -6,9 +6,16 @@ export interface SessionConfig {
   working_directory?: string | null;
   is_local_run: boolean;
   created_at: string;
+  last_used_at?: string | null;
 }
 
 const SESSIONS_KEY = 'joybug-debug-sessions';
+
+// Sessions are re-created with fresh IDs on every app restart, so cross-restart
+// matching is by content, mirroring restoreSessionsFromStorage.
+function contentKey(s: Pick<SessionConfig, 'name' | 'launch_command' | 'is_local_run'>): string {
+  return `${s.name}\0${s.launch_command}\0${s.is_local_run}`;
+}
 
 export function saveSessionsToStorage(sessions: SessionConfig[]) {
   localStorage.setItem(SESSIONS_KEY, JSON.stringify(sessions));
@@ -36,7 +43,20 @@ export function updateSessionInStorage(updatedSession: SessionConfig) {
   const sessions = loadSessionsFromStorage();
   const index = sessions.findIndex(s => s.id === updatedSession.id);
   if (index !== -1) {
-    sessions[index] = updatedSession;
+    sessions[index] = {
+      ...updatedSession,
+      last_used_at: updatedSession.last_used_at ?? sessions[index].last_used_at,
+    };
+    saveSessionsToStorage(sessions);
+  }
+}
+
+// Record that a session was just started/viewed, for most-recently-used ordering.
+export function touchSessionInStorage(sessionId: string) {
+  const sessions = loadSessionsFromStorage();
+  const session = sessions.find(s => s.id === sessionId);
+  if (session) {
+    session.last_used_at = new Date().toISOString();
     saveSessionsToStorage(sessions);
   }
 }
@@ -60,7 +80,16 @@ export function sessionToConfig(session: any): SessionConfig {
   };
 }
 
-// Sync storage with current sessions (replaces entire storage)
+// Sync storage with current sessions (replaces entire storage). Carries
+// last_used_at over from the previous storage — by ID within a run, by content
+// across restarts (IDs change).
 export function syncSessionsToStorage(sessions: SessionConfig[]) {
-  saveSessionsToStorage(sessions);
+  const existing = loadSessionsFromStorage();
+  const byId = new Map(existing.map(s => [s.id, s]));
+  const byContent = new Map(existing.map(s => [contentKey(s), s]));
+  const merged = sessions.map(s => {
+    const prev = byId.get(s.id) ?? byContent.get(contentKey(s));
+    return prev?.last_used_at ? { ...s, last_used_at: s.last_used_at ?? prev.last_used_at } : s;
+  });
+  saveSessionsToStorage(merged);
 } 
