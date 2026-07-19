@@ -7,7 +7,7 @@ import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Switch } from "./ui/switch";
 import { Label } from "./ui/label";
-import { Cpu, ArrowLeft, ArrowRight, RefreshCw, ChevronRight, Circle, CircleDot, Wrench, Copy, Bookmark, FileCode, LocateFixed } from "lucide-react";
+import { Cpu, ArrowLeft, ArrowRight, RefreshCw, ChevronRight, Circle, CircleDot, Wrench, Copy, Bookmark, FileCode, LocateFixed, Zap } from "lucide-react";
 import { sourceNavigation } from "@/lib/navigationStore";
 import { cn } from "@/lib/utils";
 import { useAssemblyView, Instruction, AsmDisassembleFn } from "@/hooks/useAssemblyView";
@@ -44,6 +44,7 @@ interface AssemblyViewProps {
    * executed-row highlighting. The PE viewer passes nothing. */
   emulation?: QuickEmulationState;
   onToggleBreakpoint?: (address: string) => void;
+  onToggleSingleShotBreakpoint?: (address: string) => void;
   onSetHardwareBreakpoint?: (address: string, hwType: string, hwSize: number) => void;
   onAssemblePatch?: (address: string, assemblyText: string, nopPad?: boolean) => Promise<string | null>;
   onAddBookmark?: (address: string, asmText: string) => void;
@@ -63,7 +64,7 @@ interface AssemblyViewProps {
   navHistory: NavHistoryStore;
 }
 
-export function AssemblyView({ sessionId, isPaused, canLoad, address, registers, resolveSymbol, breakpointAddresses, emulation, onToggleBreakpoint, onSetHardwareBreakpoint, onAssemblePatch, onAddBookmark, symbolsRefreshKey, onNavigateToSource, disassemble, initialAddress, addressFormatter, translateGotoInput, navHistory }: AssemblyViewProps) {
+export function AssemblyView({ sessionId, isPaused, canLoad, address, registers, resolveSymbol, breakpointAddresses, emulation, onToggleBreakpoint, onToggleSingleShotBreakpoint, onSetHardwareBreakpoint, onAssemblePatch, onAddBookmark, symbolsRefreshKey, onNavigateToSource, disassemble, initialAddress, addressFormatter, translateGotoInput, navHistory }: AssemblyViewProps) {
   const [addressInput, setAddressInput] = useState("");
   // Inline assembly input state
   const [assembleTarget, setAssembleTarget] = useState<{ address: string; defaultText: string } | null>(null);
@@ -552,6 +553,14 @@ export function AssemblyView({ sessionId, isPaused, canLoad, address, registers,
               onClick={() => onToggleBreakpoint(contextMenu.data.address)}
             >
               {breakpointAddresses?.has(contextMenu.data.address.toUpperCase()) ? "Remove Breakpoint" : "Toggle Breakpoint"}
+            </ContextMenuItem>
+          )}
+          {onToggleSingleShotBreakpoint && !breakpointAddresses?.has(contextMenu.data.address.toUpperCase()) && (
+            <ContextMenuItem
+              icon={<Zap className="text-red-500" />}
+              onClick={() => onToggleSingleShotBreakpoint(contextMenu.data.address)}
+            >
+              Add Single-Shot Breakpoint
             </ContextMenuItem>
           )}
           {onSetHardwareBreakpoint && (

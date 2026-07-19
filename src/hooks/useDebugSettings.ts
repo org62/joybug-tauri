@@ -24,6 +24,10 @@ export interface DebugSettings {
   stop_on_initial_breakpoint: boolean;
   stop_on_process_create: boolean;
   stop_on_debug_output: boolean;
+  break_on_user_module_entry: boolean;
+  break_on_system_module_entry: boolean;
+  break_on_user_tls_callbacks: boolean;
+  break_on_system_tls_callbacks: boolean;
   exception_rules: ExceptionRule[];
   debugger_hiding: DebuggerHidingSettings;
   scan_thread_count: number; // 0 = all CPU cores
@@ -50,6 +54,10 @@ export const EVENT_ITEMS: EventSettingItem[] = [
   { key: "stop_on_dll_unload", id: "event.dllUnload", label: "DLL Unload", keywords: ["event", "dll", "module", "unload", "exception"] },
   { key: "stop_on_initial_breakpoint", id: "event.initialBreakpoint", label: "Initial Breakpoint", keywords: ["event", "breakpoint", "initial", "launch", "attach", "exception"] },
   { key: "stop_on_debug_output", id: "event.debugOutput", label: "Debug Output (OutputDebugString)", keywords: ["event", "output", "debug", "string", "print"] },
+  { key: "break_on_user_module_entry", id: "event.moduleEntryUser", label: "Module Entry (user modules)", keywords: ["event", "module", "entry", "point", "dllmain", "oep", "break", "breakpoint", "user", "single-shot"] },
+  { key: "break_on_system_module_entry", id: "event.moduleEntrySystem", label: "Module Entry (system32)", keywords: ["event", "module", "entry", "point", "dllmain", "oep", "break", "breakpoint", "system", "system32", "syswow64", "single-shot"] },
+  { key: "break_on_user_tls_callbacks", id: "event.tlsCallbacksUser", label: "TLS Callbacks (user modules)", keywords: ["event", "tls", "callback", "break", "breakpoint", "user", "single-shot"] },
+  { key: "break_on_system_tls_callbacks", id: "event.tlsCallbacksSystem", label: "TLS Callbacks (system32)", keywords: ["event", "tls", "callback", "break", "breakpoint", "system", "system32", "syswow64", "single-shot"] },
 ];
 
 const DEFAULT_HIDING: DebuggerHidingSettings = {
@@ -69,6 +77,10 @@ const DEFAULTS: DebugSettings = {
   stop_on_initial_breakpoint: true,
   stop_on_process_create: true,
   stop_on_debug_output: false,
+  break_on_user_module_entry: false,
+  break_on_system_module_entry: false,
+  break_on_user_tls_callbacks: false,
+  break_on_system_tls_callbacks: false,
   exception_rules: [],
   debugger_hiding: DEFAULT_HIDING,
   scan_thread_count: 0,

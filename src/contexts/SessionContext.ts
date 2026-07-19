@@ -23,6 +23,7 @@ export interface RawBreakpoint {
   hw_size: number | null;     // 1, 2, 4, 8
   source_file: string | null;
   source_line: number | null;
+  single_shot?: boolean;      // one-shot: auto-removed after first hit
 }
 
 export interface RawPatch {

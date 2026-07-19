@@ -221,6 +221,11 @@ export function BreakpointsView({
               {bp.tracing ? "tracing…" : "stopped"}
             </Badge>
           )}
+          {bp.single_shot && (
+            <Badge size="xs" className="bg-red-500/15 text-red-600 dark:text-red-400 text-[10px] shrink-0" title="One-shot breakpoint — auto-removed after the first hit">
+              1-shot
+            </Badge>
+          )}
           {sourceLabel && (
             <Badge size="xs" className="bg-blue-500/15 text-blue-600 dark:text-blue-400 text-[10px] shrink-0" title={`${bp.source_file}:${bp.source_line ?? "?"}`}>
               {sourceLabel}

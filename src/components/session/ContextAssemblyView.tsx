@@ -57,6 +57,7 @@ export const ContextAssemblyView = () => {
       breakpointAddresses={breakpointAddresses}
       emulation={emulation}
       onToggleBreakpoint={toggleBreakpoint}
+      onToggleSingleShotBreakpoint={(address) => toggleBreakpoint(address, true)}
       onSetHardwareBreakpoint={setHardwareBreakpoint}
       onAssemblePatch={assemblePatch}
       onAddBookmark={(addr, asmText) => addBookmark({ kind: 'code', address: addr, asmText })}

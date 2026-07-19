@@ -439,12 +439,16 @@ fn process_command(
             process_set_register(session, app_handle_clone, event, register_name, value);
             CommandResult::Continue
         }
-        UICommand::ToggleBreakpoint { address } => {
-            process_toggle_breakpoint(session, app_handle_clone, event.pid(), address);
+        UICommand::ToggleBreakpoint { address, single_shot } => {
+            process_toggle_breakpoint(session, app_handle_clone, event.pid(), address, single_shot);
             CommandResult::Continue
         }
-        UICommand::SetBreakpoints { ref addresses, ref group } => {
-            process_set_breakpoints(session, app_handle_clone, event.pid(), addresses, group.clone());
+        UICommand::SetBreakpoints { ref addresses, ref group, single_shot } => {
+            process_set_breakpoints(session, app_handle_clone, event.pid(), addresses, group.clone(), single_shot);
+            CommandResult::Continue
+        }
+        UICommand::SyncAutoBreakpoints => {
+            process_sync_auto_breakpoints(session, app_handle_clone, event.pid());
             CommandResult::Continue
         }
         UICommand::RemoveBreakpoint { ref breakpoint_id } => {

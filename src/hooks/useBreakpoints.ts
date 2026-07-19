@@ -22,6 +22,7 @@ export interface Breakpoint {
   tracing: boolean;           // derived: an active watchpoint is armed & collecting
   source_file: string | null; // resolved source file (display only)
   source_line: number | null; // resolved source line (display only)
+  single_shot: boolean;       // one-shot: auto-removed after first hit
 }
 
 interface BreakpointsUpdatedPayload {
@@ -46,6 +47,7 @@ function convertBreakpoints(raw: RawBreakpoint[]): Breakpoint[] {
     tracing: (bp.bp_kind ?? "software") === "watchpoint" && bp.is_active,
     source_file: bp.source_file ?? null,
     source_line: bp.source_line ?? null,
+    single_shot: bp.single_shot ?? false,
   }));
 }
 
@@ -84,10 +86,10 @@ export function useBreakpoints(sessionId?: string, isPaused?: boolean, sessionBr
     };
   }, [sessionId]);
 
-  const toggleBreakpoint = useCallback(async (address: string) => {
+  const toggleBreakpoint = useCallback(async (address: string, singleShot = false) => {
     if (!sessionId) return;
     try {
-      await invokeToggleBreakpoint(sessionId, address);
+      await invokeToggleBreakpoint(sessionId, address, singleShot);
     } catch (e) {
       console.error('Failed to toggle breakpoint:', e);
     }

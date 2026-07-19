@@ -129,18 +129,21 @@ export function contextToRegisters(context: SerializableThreadContext | undefine
   return registers;
 }
 
-/** Invoke the toggle_breakpoint Tauri command for the given session and address. */
-export async function invokeToggleBreakpoint(sessionId: string, address: string): Promise<void> {
-  await invoke('toggle_breakpoint', { sessionId, address });
+/**
+ * Invoke the toggle_breakpoint Tauri command for the given session and address. When
+ * `singleShot` is true, a newly added breakpoint is one-shot (auto-removed on first hit).
+ */
+export async function invokeToggleBreakpoint(sessionId: string, address: string, singleShot?: boolean): Promise<void> {
+  await invoke('toggle_breakpoint', { sessionId, address, singleShot: singleShot ?? false });
 }
 
 /**
  * Invoke the batched set_breakpoints Tauri command: sets a software breakpoint at each
  * address (skipping addresses that already have one), tagging every new breakpoint with
- * `group`.
+ * `group`. When `singleShot` is true the breakpoints are one-shot (auto-removed on first hit).
  */
-export async function invokeSetBreakpoints(sessionId: string, addresses: string[], group?: string): Promise<void> {
-  await invoke('set_breakpoints', { sessionId, addresses, group: group ?? null });
+export async function invokeSetBreakpoints(sessionId: string, addresses: string[], group?: string, singleShot?: boolean): Promise<void> {
+  await invoke('set_breakpoints', { sessionId, addresses, group: group ?? null, singleShot: singleShot ?? false });
 }
 
 /**

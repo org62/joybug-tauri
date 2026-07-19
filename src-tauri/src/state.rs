@@ -24,6 +24,15 @@ pub struct BreakpointInfo {
     pub source_file: Option<String>, // resolved source file (display only)
     #[serde(default)]
     pub source_line: Option<u32>,    // resolved source line (display only)
+    /// Auto-planted (module entry / TLS callback) breakpoint driven by a settings
+    /// toggle. Not persisted to disk — regenerated per run on module load.
+    #[serde(default)]
+    pub auto: bool,
+    /// One-shot breakpoint: armed via `set_single_shot_breakpoint_at`; the server
+    /// auto-removes it on first hit (we drop the row when the hit event arrives).
+    /// Session-only — never persisted to disk.
+    #[serde(default)]
+    pub single_shot: bool,
 }
 
 fn default_bp_kind() -> String {

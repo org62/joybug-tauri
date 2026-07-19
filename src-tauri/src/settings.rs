@@ -77,6 +77,18 @@ pub struct DebugSettings {
     pub stop_on_process_create: bool,
     #[serde(default)]
     pub stop_on_debug_output: bool,
+    /// Plant a single-shot breakpoint at each loaded user module's entry point (DllMain/OEP).
+    #[serde(default)]
+    pub break_on_user_module_entry: bool,
+    /// Plant a single-shot breakpoint at each loaded system (System32/SysWOW64) module's entry point.
+    #[serde(default)]
+    pub break_on_system_module_entry: bool,
+    /// Plant single-shot breakpoints at each loaded user module's TLS callbacks.
+    #[serde(default)]
+    pub break_on_user_tls_callbacks: bool,
+    /// Plant single-shot breakpoints at each loaded system (System32/SysWOW64) module's TLS callbacks.
+    #[serde(default)]
+    pub break_on_system_tls_callbacks: bool,
     #[serde(default)]
     pub keybindings: KeybindingSettings,
     #[serde(default)]
@@ -110,6 +122,10 @@ impl Default for DebugSettings {
             stop_on_initial_breakpoint: true,
             stop_on_process_create: true,
             stop_on_debug_output: false,
+            break_on_user_module_entry: false,
+            break_on_system_module_entry: false,
+            break_on_user_tls_callbacks: false,
+            break_on_system_tls_callbacks: false,
             keybindings: KeybindingSettings::default(),
             exception_rules: Vec::new(),
             debugger_hiding: DebuggerHidingSettings::default(),

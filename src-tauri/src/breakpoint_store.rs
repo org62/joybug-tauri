@@ -28,6 +28,8 @@ pub fn load_breakpoints(launch_command: &str) -> Vec<BreakpointInfo> {
                 // stays valid until re-resolved on module load.
                 source_file: bp.source_file.clone(),
                 source_line: bp.source_line,
+                auto: false,
+                single_shot: false,
             })
             .collect(),
         None => Vec::new(),
@@ -38,10 +40,14 @@ pub fn save_breakpoints(launch_command: &str, breakpoints: &[BreakpointInfo]) {
     // Read existing file to preserve other targets' breakpoints
     let mut map: HashMap<String, Vec<BreakpointInfo>> = crate::data_dir::load_json(BREAKPOINTS_FILE);
 
-    if breakpoints.is_empty() {
+    // Auto-planted rows (module entry / TLS callbacks) are regenerated from settings
+    // on each run, and single-shot rows are session-only — never persist either.
+    let persistable: Vec<BreakpointInfo> = breakpoints.iter().filter(|b| !b.auto && !b.single_shot).cloned().collect();
+
+    if persistable.is_empty() {
         map.remove(launch_command);
     } else {
-        map.insert(launch_command.to_string(), breakpoints.to_vec());
+        map.insert(launch_command.to_string(), persistable);
     }
 
     crate::data_dir::save_json(BREAKPOINTS_FILE, &map);

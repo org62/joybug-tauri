@@ -6,35 +6,46 @@ use tauri::{AppHandle, Emitter, Manager};
 use tracing::{debug, error, info};
 
 use super::bookmarks::reapply_bookmarks_for_module;
-use super::breakpoints::{deactivate_breakpoints_for_module, emit_breakpoints_event, reapply_breakpoints_for_module};
+use super::breakpoints::{apply_auto_module_breakpoints, deactivate_breakpoints_for_module, emit_breakpoints_event, reapply_breakpoints_for_module};
 use super::patches::{deactivate_patches_for_module, emit_patches_event, reapply_patches_for_module};
 use super::dispatch::handle_ui_commands;
 use super::helpers::{module_short_name, update_session_from_event};
 use super::types::DebugSession;
 
+/// Reapply patches, breakpoints, bookmarks, and settings-driven auto breakpoints for a
+/// freshly loaded module. Patches must be applied BEFORE breakpoints so that patches read
+/// real binary bytes (not 0xCC) and breakpoints store patched bytes as originals.
+/// `state` must NOT be locked when calling this.
+fn reapply_for_loaded_module(
+    session: &mut DebugSession,
+    app_handle_clone: &Option<AppHandle>,
+    pid: u32,
+    name: &str,
+    base: u64,
+) {
+    let short = module_short_name(name);
+    reapply_patches_for_module(session, pid, &short, base);
+    reapply_breakpoints_for_module(session, pid, &short, base);
+    reapply_bookmarks_for_module(session, pid, &short);
+    apply_auto_module_breakpoints(session, app_handle_clone, pid, base);
+}
+
 /// Reapply or deactivate breakpoints and patches in response to module load/unload events.
 /// `state` must NOT be locked when calling this.
 fn handle_event_breakpoints(
     session: &mut DebugSession,
+    app_handle_clone: &Option<AppHandle>,
     event: &joybug2::protocol_io::DebugEvent,
     unloaded_module_name: &Option<String>,
 ) {
     match event {
         joybug2::protocol_io::DebugEvent::DllLoaded { dll_name, base_of_dll, .. } => {
             let name = dll_name.as_deref().unwrap_or("<unknown>");
-            let short = module_short_name(name);
-            // Patches must be applied BEFORE breakpoints so that patches read real
-            // binary bytes (not 0xCC) and breakpoints store patched bytes as originals.
-            reapply_patches_for_module(session, event.pid(), &short, *base_of_dll);
-            reapply_breakpoints_for_module(session, event.pid(), &short, *base_of_dll);
-            reapply_bookmarks_for_module(session, event.pid(), &short);
+            reapply_for_loaded_module(session, app_handle_clone, event.pid(), name, *base_of_dll);
         }
         joybug2::protocol_io::DebugEvent::ProcessCreated { image_file_name, base_of_image, .. } => {
             let name = image_file_name.as_deref().unwrap_or("main.exe");
-            let short = module_short_name(name);
-            reapply_patches_for_module(session, event.pid(), &short, *base_of_image);
-            reapply_breakpoints_for_module(session, event.pid(), &short, *base_of_image);
-            reapply_bookmarks_for_module(session, event.pid(), &short);
+            reapply_for_loaded_module(session, app_handle_clone, event.pid(), name, *base_of_image);
         }
         joybug2::protocol_io::DebugEvent::DllUnloaded { .. } => {
             if let Some(ref name) = unloaded_module_name {
@@ -297,7 +308,26 @@ pub fn run_debug_session(
                     | joybug2::protocol_io::DebugEvent::DllLoaded { .. }
                     | joybug2::protocol_io::DebugEvent::DllUnloaded { .. }
             ) {
-                crate::ui_logger::toast_info(handle, &format!("{}", event));
+                // For breakpoint hits, name the group + module (entry/TLS) or the user's
+                // label instead of the raw "Breakpoint(pid=…, address=0x…)" tuple.
+                let msg = match event {
+                    joybug2::protocol_io::DebugEvent::Breakpoint { address, .. }
+                    | joybug2::protocol_io::DebugEvent::SingleShotBreakpoint { address, .. }
+                    | joybug2::protocol_io::DebugEvent::HardwareBreakpoint { address, .. } => {
+                        super::breakpoints::breakpoint_hit_message(session, *address)
+                            .unwrap_or_else(|| format!("{}", event))
+                    }
+                    _ => format!("{}", event),
+                };
+                crate::ui_logger::toast_info(handle, &msg);
+            }
+
+            // A single-shot breakpoint is auto-removed server-side on its one hit; drop
+            // its UI row too so the list stays in sync (whether we pause or continue).
+            if let joybug2::protocol_io::DebugEvent::SingleShotBreakpoint { address, .. } = event {
+                if super::breakpoints::remove_single_shot_row_on_hit(session, *address) {
+                    emit_breakpoints_event(session, &app_handle_clone);
+                }
             }
 
             // Drive an in-progress source-line step: keep single-stepping without
@@ -418,7 +448,7 @@ pub fn run_debug_session(
                         state.status = SessionStatusUI::Running;
                     }
 
-                    handle_event_breakpoints(session, event, &unloaded_module_name);
+                    handle_event_breakpoints(session, &app_handle_clone, event, &unloaded_module_name);
 
                     let session_id = session.state.lock().unwrap().id.clone();
                     emit_dll_events(handle, &session_id, event, unloaded_module_name);
@@ -466,26 +496,10 @@ pub fn run_debug_session(
                     update_session_from_event(&mut state, event);
                 }
 
-                // Reapply patches then breakpoints for newly loaded modules.
-                // Patches first so they read real binary bytes; breakpoints then store
-                // patched bytes as originals. (DllUnloaded already handled above with state locked)
-                match event {
-                    joybug2::protocol_io::DebugEvent::DllLoaded { dll_name, base_of_dll, .. } => {
-                        let name = dll_name.as_deref().unwrap_or("<unknown>");
-                        let short = module_short_name(name);
-                        reapply_patches_for_module(session, event.pid(), &short, *base_of_dll);
-                        reapply_breakpoints_for_module(session, event.pid(), &short, *base_of_dll);
-                        reapply_bookmarks_for_module(session, event.pid(), &short);
-                    }
-                    joybug2::protocol_io::DebugEvent::ProcessCreated { image_file_name, base_of_image, .. } => {
-                        let name = image_file_name.as_deref().unwrap_or("main.exe");
-                        let short = module_short_name(name);
-                        reapply_patches_for_module(session, event.pid(), &short, *base_of_image);
-                        reapply_breakpoints_for_module(session, event.pid(), &short, *base_of_image);
-                        reapply_bookmarks_for_module(session, event.pid(), &short);
-                    }
-                    _ => {}
-                }
+                // Reapply patches then breakpoints for newly loaded modules. Passing
+                // `&None` makes the DllUnloaded arm a no-op — deactivation already
+                // happened above with the state locked.
+                handle_event_breakpoints(session, &app_handle_clone, event, &None);
 
                 let session_id = session.state.lock().unwrap().id.clone();
                 emit_dll_events(handle, &session_id, event, unloaded_module_name);

@@ -103,6 +103,14 @@ pub(crate) fn module_short_name(full_path: &str) -> String {
         .unwrap_or_else(|| full_path.to_string())
 }
 
+/// True when a module's full path lives under the Windows system directories
+/// (`\Windows\System32\` or `\Windows\SysWOW64\`) — used to split settings-driven
+/// auto breakpoints into "user" vs "system" module scopes.
+pub(crate) fn is_system_module_path(full_path: &str) -> bool {
+    let p = full_path.to_ascii_lowercase().replace('/', "\\");
+    p.contains(r"\windows\system32\") || p.contains(r"\windows\syswow64\")
+}
+
 /// Finds a module by a user-supplied identifier: case-insensitive full path or
 /// short file name (e.g. "ntdll.dll"). The one resolution rule for commands
 /// that take a module name from the frontend.

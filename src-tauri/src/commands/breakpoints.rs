@@ -13,22 +13,24 @@ use tracing::info;
 pub fn toggle_breakpoint(
     session_id: String,
     address: String,
+    single_shot: Option<bool>,
     session_states: State<'_, SessionStatesMap>,
     oob_pool: State<'_, super::OobPool>,
     app_handle: tauri::AppHandle,
 ) -> Result<()> {
     let address = super::parse_hex_u64(&address, "address")?;
+    let single_shot = single_shot.unwrap_or(false);
 
     let session_arc = super::get_session_arc(&session_id, &session_states)?;
-    match super::try_send_paused_command(&session_arc, UICommand::ToggleBreakpoint { address }) {
+    match super::try_send_paused_command(&session_arc, UICommand::ToggleBreakpoint { address, single_shot }) {
         Ok(()) => {
-            info!("Toggle breakpoint request sent for session {} at 0x{:X}", session_id, address);
+            info!("Toggle breakpoint request sent for session {} at 0x{:X} (single_shot={})", session_id, address, single_shot);
         }
         Err(_) => {
             super::with_oob_client(&session_arc, &session_id, &oob_pool, |oob, pid| {
-                process_toggle_breakpoint(oob, &Some(app_handle), pid, address);
+                process_toggle_breakpoint(oob, &Some(app_handle), pid, address, single_shot);
             })?;
-            info!("OOB toggle breakpoint for session {} at 0x{:X}", session_id, address);
+            info!("OOB toggle breakpoint for session {} at 0x{:X} (single_shot={})", session_id, address, single_shot);
         }
     }
     Ok(())
@@ -39,6 +41,7 @@ pub fn set_breakpoints(
     session_id: String,
     addresses: Vec<String>,
     group: Option<String>,
+    single_shot: bool,
     session_states: State<'_, SessionStatesMap>,
     oob_pool: State<'_, super::OobPool>,
     app_handle: tauri::AppHandle,
@@ -49,13 +52,13 @@ pub fn set_breakpoints(
         .collect::<Result<Vec<u64>>>()?;
 
     let session_arc = super::get_session_arc(&session_id, &session_states)?;
-    match super::try_send_paused_command(&session_arc, UICommand::SetBreakpoints { addresses: addresses.clone(), group: group.clone() }) {
+    match super::try_send_paused_command(&session_arc, UICommand::SetBreakpoints { addresses: addresses.clone(), group: group.clone(), single_shot }) {
         Ok(()) => {
             info!("Set breakpoints request sent for session {}, {} addresses", session_id, addresses.len());
         }
         Err(_) => {
             super::with_oob_client(&session_arc, &session_id, &oob_pool, |oob, pid| {
-                process_set_breakpoints(oob, &Some(app_handle), pid, &addresses, group.clone());
+                process_set_breakpoints(oob, &Some(app_handle), pid, &addresses, group.clone(), single_shot);
             })?;
             info!("OOB set breakpoints for session {}, {} addresses", session_id, addresses.len());
         }

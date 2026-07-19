@@ -39,13 +39,13 @@ export const ContextSymbolsView = () => {
     }
   }, [onNavigateToDisassembly, onNavigateToMemory]);
 
-  const setBreakpointsForSymbols = useCallback(async (symbols: Symbol[], term: string, clear: () => void) => {
+  const setBreakpointsForSymbols = useCallback(async (symbols: Symbol[], term: string, clear: () => void, singleShot: boolean) => {
     if (!sessionId || symbols.length === 0) return;
     try {
       // Group by the search term so the breakpoints can be enabled/removed as a unit;
       // fall back to a generic name if the term is empty (unlikely — search needs 2+ chars).
       const group = term || 'Symbols';
-      await invokeSetBreakpoints(sessionId, symbols.map((s) => s.va), group);
+      await invokeSetBreakpoints(sessionId, symbols.map((s) => s.va), group, singleShot);
       clear();
     } catch (e) {
       console.error('Failed to set breakpoints:', e);
@@ -64,13 +64,23 @@ export const ContextSymbolsView = () => {
       focusTabId="symbols"
       selectable
       renderBulkBar={(selectedSymbols, { term, clear }) => (
-        <Button
-          size="xs"
-          disabled={selectedSymbols.length === 0}
-          onClick={() => setBreakpointsForSymbols(selectedSymbols, term, clear)}
-        >
-          Set Breakpoints{selectedSymbols.length > 0 ? ` (${selectedSymbols.length})` : ''}
-        </Button>
+        <div className="flex items-center gap-1.5">
+          <Button
+            size="xs"
+            disabled={selectedSymbols.length === 0}
+            onClick={() => setBreakpointsForSymbols(selectedSymbols, term, clear, false)}
+          >
+            Set Breakpoints{selectedSymbols.length > 0 ? ` (${selectedSymbols.length})` : ''}
+          </Button>
+          <Button
+            size="xs"
+            variant="outline"
+            disabled={selectedSymbols.length === 0}
+            onClick={() => setBreakpointsForSymbols(selectedSymbols, term, clear, true)}
+          >
+            Set Single-Shot{selectedSymbols.length > 0 ? ` (${selectedSymbols.length})` : ''}
+          </Button>
+        </div>
       )}
     >
       {contextMenu && (
