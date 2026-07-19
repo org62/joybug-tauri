@@ -1,7 +1,7 @@
 use tauri::{AppHandle, Emitter};
 use tracing::{debug, error};
 
-use super::helpers::{find_module_for_address, get_modules_snapshot};
+use super::helpers::{effective_op_str, find_module_for_address, get_modules_snapshot, module_offset_label};
 use super::types::{DebugSession, SerializableInstruction};
 use crate::state::SessionStateUI;
 
@@ -28,10 +28,10 @@ pub(crate) fn serialize_instructions(
                 Some(format!("{}!{}+0x{:x}", sym.module_name, sym.symbol_name, sym.offset))
             } else {
                 find_module_for_address(modules, inst.address)
-                    .map(|(mod_name, offset)| format!("{}+0x{:x}", mod_name, offset))
+                    .map(|(mod_name, offset)| module_offset_label(&mod_name, offset))
             };
 
-            let op_str = inst.symbolized_op_str.as_ref().unwrap_or(&inst.op_str);
+            let op_str = effective_op_str(inst, modules);
 
             let is_patched = patched_ranges
                 .iter()
@@ -47,7 +47,7 @@ pub(crate) fn serialize_instructions(
                     .collect::<Vec<String>>()
                     .join(" "),
                 mnemonic: inst.mnemonic.clone(),
-                op_str: op_str.clone(),
+                op_str,
                 is_jump: inst.is_jump,
                 is_call: inst.is_call,
                 is_ret: inst.is_ret,

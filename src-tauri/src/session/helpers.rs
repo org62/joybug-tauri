@@ -95,6 +95,54 @@ pub(crate) fn format_symbol(module: &str, name: &str, offset: u64) -> String {
     format!("{}!{}+0x{:x}", module, name, offset)
 }
 
+/// Formats the bare `module+0x<offset>` label. The frontend parses these back
+/// (`resolveModuleName` in `src/lib/symbolUtils.ts`) so pasted labels navigate
+/// — keep the two formats in sync.
+pub(crate) fn module_offset_label(module: &str, offset: u64) -> String {
+    format!("{}+0x{:x}", module, offset)
+}
+
+/// Final operand text for an instruction: joybug2's symbolized form when
+/// present, with a `module+0x<offset>` fallback spliced in for any operand
+/// address joybug2 left unsymbolized (no symbol loaded for the target), so
+/// call/jump targets stay readable in no-symbols mode. Mirrors joybug2's
+/// replacement rules: direct hex match first, then the rip-relative
+/// `[rip ± 0xNNNN]` pattern where the absolute address never appears in the
+/// operand text.
+pub(crate) fn effective_op_str(
+    inst: &joybug2::interfaces::Instruction,
+    modules: &[joybug2::protocol_io::ModuleInfo],
+) -> String {
+    let mut result = inst.symbolized_op_str.as_ref().unwrap_or(&inst.op_str).clone();
+    if inst.addresses_to_symbolize.is_empty() || modules.is_empty() {
+        return result;
+    }
+    for &addr in &inst.addresses_to_symbolize {
+        // Containment checks before the module scan: when joybug2 already
+        // symbolized the operand (the common case) nothing below can match.
+        let hex_lower = format!("0x{:x}", addr);
+        let hex_upper = format!("0x{:X}", addr);
+        let disp = addr.wrapping_sub(inst.address + inst.size as u64) as i64;
+        let rip_pattern = if disp >= 0 {
+            format!("[rip + 0x{:x}]", disp)
+        } else {
+            format!("[rip - 0x{:x}]", disp.unsigned_abs())
+        };
+        let direct = result.contains(&hex_lower) || result.contains(&hex_upper);
+        if !direct && !result.contains(&rip_pattern) {
+            continue;
+        }
+        let Some((mod_name, offset)) = find_module_for_address(modules, addr) else { continue };
+        let label = module_offset_label(&mod_name, offset);
+        if direct {
+            result = result.replace(&hex_lower, &label).replace(&hex_upper, &label);
+        } else {
+            result = result.replace(&rip_pattern, &format!("[{}]", label));
+        }
+    }
+    result
+}
+
 /// Extracts just the filename from a full module path (e.g. "C:\Windows\ntdll.dll" -> "ntdll.dll").
 pub(crate) fn module_short_name(full_path: &str) -> String {
     std::path::Path::new(full_path)

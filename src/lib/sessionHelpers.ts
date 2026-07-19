@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { RegisterContext, SymbolResolver } from '@/lib/hexUtils';
-import { resolveSymbol as resolveSymbolByName, SearchSymbolsFn } from '@/lib/symbolUtils';
+import { resolveSymbol as resolveSymbolByName, SearchSymbolsFn, ModuleRef } from '@/lib/symbolUtils';
 import { SerializableThreadContext } from '@/components/RegisterView';
 import type { SessionStatus } from '@/contexts/SessionContext';
 
@@ -56,11 +56,7 @@ export function isBenignSessionError(message: string): boolean {
   return /no active process|must be paused|session not|invalid ?session ?state/i.test(message);
 }
 
-/** Basename of a module path ("C:\\Windows\\System32\\ntdll.dll" -> "ntdll.dll"). */
-export function moduleBasename(path: string): string {
-  const parts = path.split(/[\\/]/);
-  return parts[parts.length - 1] || path;
-}
+export { moduleBasename } from '@/lib/symbolUtils';
 
 /** Convert a thread context snapshot to a flat register name -> value map for address expression parsing. */
 export function contextToRegisters(context: SerializableThreadContext | undefined): RegisterContext {
@@ -149,15 +145,18 @@ export async function invokeSetBreakpoints(sessionId: string, addresses: string[
 /**
  * Create a SymbolResolver that delegates to the session's searchSymbols
  * function via resolveSymbolByName, which understands "module!symbol" syntax
- * and prefers exact name matches over the first fuzzy hit.
+ * and prefers exact name matches over the first fuzzy hit. When `modules` is
+ * provided, bare module names ("orig", "ntdll.dll") resolve to the module base
+ * so `module+0x...` expressions land in the right module.
  */
 export function createSymbolResolver(
   searchSymbols: SearchSymbolsFn | undefined,
+  modules?: ModuleRef[],
 ): SymbolResolver {
   return async (name: string): Promise<bigint | null> => {
     if (!searchSymbols) return null;
     try {
-      const result = await resolveSymbolByName(searchSymbols, name);
+      const result = await resolveSymbolByName(searchSymbols, name, modules);
       return result?.address ?? null;
     } catch (e) {
       console.error('Symbol resolution failed:', e);

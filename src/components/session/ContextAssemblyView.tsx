@@ -1,9 +1,10 @@
 import { useMemo } from 'react';
 import { useSessionContext } from '@/contexts/SessionContext';
 import { AssemblyView } from '@/components/AssemblyView';
-import { contextToRegisters, createSymbolResolver, isProcessAvailable } from '@/lib/sessionHelpers';
+import { contextToRegisters, isProcessAvailable } from '@/lib/sessionHelpers';
 import { sessionNavHistory } from '@/lib/navHistory';
 import { useQuickEmulation } from '@/hooks/useQuickEmulation';
+import { useSymbolResolver } from '@/hooks/useSymbolResolver';
 
 export const ContextAssemblyView = () => {
   const sessionData = useSessionContext();
@@ -18,10 +19,7 @@ export const ContextAssemblyView = () => {
     return contextToRegisters(currentEvent?.context);
   }, [currentEvent?.context]);
 
-  const resolveSymbol = useMemo(
-    () => createSymbolResolver(sessionData?.searchSymbols),
-    [sessionData?.searchSymbols],
-  );
+  const resolveSymbol = useSymbolResolver();
 
   const isPaused = displayStatus === 'Paused';
   const sessionId = sessionData?.session?.id;

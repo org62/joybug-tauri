@@ -1,7 +1,8 @@
 import { useMemo } from 'react';
 import { useSessionContext } from '@/contexts/SessionContext';
 import { BreakpointsView } from '@/components/BreakpointsView';
-import { contextToRegisters, createSymbolResolver } from '@/lib/sessionHelpers';
+import { contextToRegisters } from '@/lib/sessionHelpers';
+import { useSymbolResolver } from '@/hooks/useSymbolResolver';
 
 export function ContextBreakpointsView() {
   const sessionData = useSessionContext();
@@ -21,10 +22,7 @@ export function ContextBreakpointsView() {
     return contextToRegisters(currentEvent?.context);
   }, [currentEvent?.context]);
 
-  const resolveSymbol = useMemo(
-    () => createSymbolResolver(sessionData?.searchSymbols),
-    [sessionData?.searchSymbols],
-  );
+  const resolveSymbol = useSymbolResolver();
 
   return (
     <BreakpointsView

@@ -1,7 +1,7 @@
 use tauri::{AppHandle, Emitter};
 use tracing::{debug, error};
 
-use super::helpers::{find_module_for_address, format_symbol, get_modules_snapshot};
+use super::helpers::{effective_op_str, find_module_for_address, format_symbol, get_modules_snapshot, module_offset_label};
 use super::types::{DebugSession, EmulationInstructionInfo, EmulationResultPayload, MemorySnapshotEntry};
 
 /// Extracts PC addresses from Tenet trace text (first key=value on each line is always the PC)
@@ -33,11 +33,11 @@ fn disassemble_addresses(
                 let symbol = if let Some(ref sym) = inst.symbol_info {
                     Some(format_symbol(&sym.module_name, &sym.symbol_name, sym.offset))
                 } else if let Some((mod_name, offset)) = find_module_for_address(&modules, inst.address) {
-                    Some(format!("{}+0x{:x}", mod_name, offset))
+                    Some(module_offset_label(&mod_name, offset))
                 } else {
                     None
                 };
-                let op_str = inst.symbolized_op_str.as_ref().unwrap_or(&inst.op_str).clone();
+                let op_str = effective_op_str(inst, &modules);
                 info.push(EmulationInstructionInfo {
                     address: format!("0x{:X}", inst.address),
                     symbol,
@@ -70,7 +70,7 @@ fn symbolize_address_in_stop_reason(
     }
     let modules = get_modules_snapshot(session);
     if let Some((mod_name, mod_offset)) = find_module_for_address(&modules, addr) {
-        let label = format!("{}+0x{:x}", mod_name, mod_offset);
+        let label = module_offset_label(&mod_name, mod_offset);
         return Some(format!("{}{}{}", &stop_reason[..after_prefix], label, &stop_reason[end..]));
     }
     None

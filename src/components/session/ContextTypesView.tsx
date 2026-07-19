@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import { useSessionContext } from "@/contexts/SessionContext";
-import { contextToRegisters, createSymbolResolver, isTargetLive } from "@/lib/sessionHelpers";
+import { contextToRegisters, isTargetLive } from "@/lib/sessionHelpers";
+import { useSymbolResolver } from "@/hooks/useSymbolResolver";
 import { TypesView } from "@/components/TypesView";
 
 export const ContextTypesView = () => {
@@ -11,10 +12,7 @@ export const ContextTypesView = () => {
     () => contextToRegisters(sessionData?.session?.current_event?.context),
     [sessionData?.session?.current_event?.context],
   );
-  const resolveSymbol = useMemo(
-    () => createSymbolResolver(sessionData?.searchSymbols),
-    [sessionData?.searchSymbols],
-  );
+  const resolveSymbol = useSymbolResolver();
 
   return (
     <TypesView

@@ -2,7 +2,8 @@ import { useMemo } from 'react';
 import { useSessionContext } from '@/contexts/SessionContext';
 import { HexView } from '@/components/HexView';
 import { ViewMode } from '@/lib/hexUtils';
-import { contextToRegisters, createSymbolResolver } from '@/lib/sessionHelpers';
+import { contextToRegisters } from '@/lib/sessionHelpers';
+import { useSymbolResolver } from '@/hooks/useSymbolResolver';
 
 interface ContextHexViewProps {
   memoryViewId?: string;
@@ -17,11 +18,7 @@ export const ContextHexView = ({ memoryViewId, initialAddress, initialViewMode }
   // Extract registers from thread context
   const registers = useMemo(() => contextToRegisters(context), [context]);
 
-  // Create symbol resolver that uses searchSymbols
-  const resolveSymbolFn = useMemo(
-    () => createSymbolResolver(sessionData?.searchSymbols),
-    [sessionData?.searchSymbols],
-  );
+  const resolveSymbolFn = useSymbolResolver();
 
   // Get session status as string
   const sessionStatus = sessionData?.session?.status;
