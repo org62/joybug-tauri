@@ -1,5 +1,6 @@
 import { ReactNode, useCallback } from "react";
-import { Input } from "@/components/ui/input";
+import { HistoryInput } from "@/components/ui/history-input";
+import { pushInputHistory } from "@/lib/inputHistory";
 import { Button } from "@/components/ui/button";
 import {
   parseAddressExpression,
@@ -30,6 +31,8 @@ interface AddressExpressionInputProps {
   buttonTitle?: string;
   /** Dock tab id — "Go to" that tab focuses this input. Omit outside a dock tab. */
   focusTabId?: string;
+  /** Enables ArrowUp/Down recall of past expressions under this identity. */
+  historyKey: string;
 }
 
 /**
@@ -52,6 +55,7 @@ export function AddressExpressionInput({
   buttonLabel = "Go",
   buttonTitle = "Go to address",
   focusTabId,
+  historyKey,
 }: AddressExpressionInputProps) {
   const focusRef = usePanelFocus<HTMLInputElement>(focusTabId);
   // Advertise only what this input can actually resolve: register names need
@@ -74,20 +78,24 @@ export function AddressExpressionInput({
       toastError(result.error || "Invalid address expression", sessionId);
       return;
     }
+    pushInputHistory(historyKey, expression);
     onResolve(result.address);
-  }, [value, registers, resolveSymbol, sessionId, onResolve]);
+  }, [value, registers, resolveSymbol, sessionId, onResolve, historyKey]);
 
   return (
     <div className={cn("flex items-center gap-1", className)}>
-      <Input
+      <HistoryInput
         ref={focusRef}
+        historyKey={historyKey}
         inputSize="xs"
         placeholder={effectivePlaceholder}
         value={value}
         disabled={disabled}
         className={cn("font-mono", inputClassName)}
         onChange={(e) => onChange(sanitizeAddressInput(e.target.value))}
-        onKeyDown={(e) => e.key === "Enter" && submit()}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") submit();
+        }}
       />
       <Button variant="outline" size="xs" onClick={submit} disabled={disabled} title={buttonTitle}>
         {buttonLabel}

@@ -9,7 +9,8 @@ import { cn, CHANGED_VALUE_CLASS } from '@/lib/utils';
 import { useLiveRefresh } from '@/hooks/useLiveRefresh';
 import { useContextMenu } from '@/hooks/useContextMenu';
 import { usePanelFocus } from '@/hooks/usePanelFocus';
-import { Input } from '@/components/ui/input';
+import { HistoryInput } from '@/components/ui/history-input';
+import { pushInputHistory } from '@/lib/inputHistory';
 import { Button } from '@/components/ui/button';
 import { DockPanel, PanelToolbar } from '@/components/ui/panel';
 import { ContextMenu, ContextMenuItem } from '@/components/ui/context-menu';
@@ -256,6 +257,7 @@ export const ContextMemorySearchView = () => {
       pattern = Array.from(stringToAsciiBytes(trimmed));
     }
 
+    pushInputHistory(`memsearch-${searchMode}`, trimmed);
     setIsSearching(true);
     setError(null);
     setHasSearched(false);
@@ -362,7 +364,8 @@ export const ContextMemorySearchView = () => {
     <DockPanel>
       <PanelToolbar stack>
         <div className="flex gap-1">
-          <Input
+          <HistoryInput
+            historyKey={`memsearch-${searchMode}`}
             ref={focusRef}
             type="text"
             inputSize="xs"

@@ -5,6 +5,8 @@ import { listen } from "@tauri-apps/api/event";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { HistoryInput } from "@/components/ui/history-input";
+import { pushInputHistory } from "@/lib/inputHistory";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import {
@@ -240,6 +242,14 @@ export default function Debugger() {
     setIsSessionDialogOpen(true);
   };
 
+  // Record the launch-form values for ArrowUp/Down recall next time the dialog
+  // is used; called only after the backend accepts them.
+  const pushLaunchFormHistory = () => {
+    pushInputHistory("launch-command", formLaunchCommand);
+    pushInputHistory("launch-cwd", formWorkingDirectory);
+    if (!formLocalRun) pushInputHistory("server-url", formServerUrl);
+  };
+
   const handleCreateSession = async () => {
     const sessionName = formName.trim() || DEFAULT_SESSION_NAME;
 
@@ -266,6 +276,7 @@ export default function Debugger() {
         created_at: new Date().toISOString(),
       });
 
+      pushLaunchFormHistory();
       toast.success("Debug session created successfully");
       setIsSessionDialogOpen(false);
 
@@ -315,6 +326,7 @@ export default function Debugger() {
         created_at: sessionToEdit.created_at,
       });
 
+      pushLaunchFormHistory();
       toast.success("Debug session updated successfully");
       setIsSessionDialogOpen(false);
       setSessionToEdit(null);
@@ -460,6 +472,7 @@ export default function Debugger() {
 
   const handleAttachToProcess = async (proc: ProcessInfo) => {
     const remoteUrl = attachServerUrl.trim();
+    pushInputHistory("server-url", remoteUrl);
     setAttachingPid(proc.pid);
     try {
       // Re-attach an existing stopped session, or create a fresh one.
@@ -633,7 +646,8 @@ export default function Debugger() {
                 {!formLocalRun && (
                   <div className="space-y-2">
                     <Label htmlFor="serverUrl">Debug Server URL</Label>
-                    <Input
+                    <HistoryInput
+                      historyKey="server-url"
                       id="serverUrl"
                       value={formServerUrl}
                       onChange={(e) => setFormServerUrl(e.target.value)}
@@ -644,7 +658,8 @@ export default function Debugger() {
                 <div className="space-y-2">
                   <Label htmlFor="launchCommand">Launch Command</Label>
                   <div className="flex gap-2">
-                    <Input
+                    <HistoryInput
+                      historyKey="launch-command"
                       id="launchCommand"
                       value={formLaunchCommand}
                       onChange={(e) => setFormLaunchCommand(e.target.value)}
@@ -660,7 +675,8 @@ export default function Debugger() {
                 <div className="space-y-2">
                   <Label htmlFor="workingDirectory">Working Directory (optional)</Label>
                   <div className="flex gap-2">
-                    <Input
+                    <HistoryInput
+                      historyKey="launch-cwd"
                       id="workingDirectory"
                       value={formWorkingDirectory}
                       onChange={(e) => setFormWorkingDirectory(e.target.value)}
@@ -715,7 +731,8 @@ export default function Debugger() {
                 <div className="space-y-2">
                   <Label htmlFor="attachServerUrl">Debug Server URL (optional)</Label>
                   <div className="flex gap-2">
-                    <Input
+                    <HistoryInput
+                      historyKey="server-url"
                       id="attachServerUrl"
                       value={attachServerUrl}
                       onChange={(e) => setAttachServerUrl(e.target.value)}

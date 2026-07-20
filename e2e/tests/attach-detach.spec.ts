@@ -58,10 +58,11 @@ test.describe("Attach / Detach", () => {
       }, sessionId);
       expect(attachPid).toBe(pid);
 
-      // Detach via the header button and confirm the session ends.
-      const detachBtn = page.getByRole("button", { name: "Detach", exact: true });
-      await expect(detachBtn).toBeEnabled();
-      await detachBtn.click();
+      // Detach via the Stop split-button dropdown and confirm the session ends.
+      await page.getByRole("button", { name: "Stop options" }).click();
+      const detachItem = page.getByRole("menuitem", { name: /Detach/ });
+      await expect(detachItem).toBeEnabled();
+      await detachItem.click();
       await waitForStopped(page, sessionId);
 
       // The whole point of detach: the target keeps running afterwards.

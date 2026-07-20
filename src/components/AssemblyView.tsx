@@ -4,7 +4,8 @@ import { DockPanel, PanelToolbar, PanelBody } from "@/components/ui/panel";
 import { ContextMenu, ContextMenuItem } from "@/components/ui/context-menu";
 import { TruncatedSymbol } from "@/components/ui/truncated-symbol";
 import { Button } from "./ui/button";
-import { Input } from "./ui/input";
+import { HistoryInput } from "./ui/history-input";
+import { pushInputHistory } from "@/lib/inputHistory";
 import { Switch } from "./ui/switch";
 import { Label } from "./ui/label";
 import { Cpu, ArrowLeft, ArrowRight, RefreshCw, ChevronRight, Circle, CircleDot, Wrench, Copy, Bookmark, FileCode, LocateFixed, Zap } from "lucide-react";
@@ -329,6 +330,7 @@ export function AssemblyView({ sessionId, isPaused, canLoad, address, registers,
           resolveSymbol={resolveSymbol}
           sessionId={sessionId}
           inputClassName="w-48"
+          historyKey="disasm-goto"
         />
 
         {/* Navigation back/forward */}
@@ -399,7 +401,8 @@ export function AssemblyView({ sessionId, isPaused, canLoad, address, registers,
             <span className="text-xs font-mono text-muted-foreground shrink-0">
               Assemble @ {assembleTarget.address}:
             </span>
-            <Input
+            <HistoryInput
+              historyKey="assemble-instr"
               ref={assembleInputRef}
               defaultValue={assembleTarget.defaultText}
               placeholder="e.g. nop, mov eax, 1"
@@ -416,6 +419,7 @@ export function AssemblyView({ sessionId, isPaused, canLoad, address, registers,
                       setAssembleError(err);
                       return;
                     }
+                    pushInputHistory("assemble-instr", text);
                   }
                   setAssembleError(null);
                   setAssembleTarget(null);

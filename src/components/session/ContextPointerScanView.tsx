@@ -4,6 +4,8 @@ import { usePointerScan, PointerPathEntry } from '@/hooks/usePointerScan';
 import { useContextMenu } from '@/hooks/useContextMenu';
 import { usePanelFocus } from '@/hooks/usePanelFocus';
 import { Input } from '@/components/ui/input';
+import { HistoryInput } from '@/components/ui/history-input';
+import { pushInputHistory } from '@/lib/inputHistory';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import { VirtualizedList } from '@/components/ui/virtualized-list';
@@ -67,10 +69,19 @@ export const ContextPointerScanView = () => {
     ? 'Modules: All'
     : `Modules: ${selected.size} selected`;
 
+  // Single scan entry point (Enter and the Scan button) so submitted values are
+  // recorded for history recall.
+  const runScan = () => {
+    pushInputHistory('ptrscan-target', scan.targetAddress);
+    pushInputHistory('ptrscan-maxoffset', scan.maxOffset);
+    pushInputHistory('ptrscan-maxdepth', scan.maxDepth);
+    scan.handleScan();
+  };
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter') {
       e.preventDefault();
-      scan.handleScan();
+      runScan();
     }
   };
 
@@ -134,7 +145,8 @@ export const ContextPointerScanView = () => {
       {/* Toolbar (fixed; only the results below scroll) */}
       <PanelToolbar stack>
         <div className="flex gap-1">
-          <Input
+          <HistoryInput
+            historyKey="ptrscan-target"
             ref={focusRef}
             type="text"
             inputSize="xs"
@@ -149,7 +161,8 @@ export const ContextPointerScanView = () => {
         <div className="flex gap-1 items-center">
           <div className="flex items-center gap-1">
             <span className="text-xs text-muted-foreground">Max offset</span>
-            <Input
+            <HistoryInput
+              historyKey="ptrscan-maxoffset"
               type="text"
               inputSize="xs"
               value={scan.maxOffset}
@@ -161,7 +174,8 @@ export const ContextPointerScanView = () => {
           </div>
           <div className="flex items-center gap-1">
             <span className="text-xs text-muted-foreground">Max depth</span>
-            <Input
+            <HistoryInput
+              historyKey="ptrscan-maxdepth"
               type="text"
               inputSize="xs"
               value={scan.maxDepth}
@@ -217,7 +231,7 @@ export const ContextPointerScanView = () => {
         <div className="flex gap-1 items-center">
           <Button
             size="xs"
-            onClick={scan.handleScan}
+            onClick={runScan}
             disabled={!canUse || scan.isScanning || !scan.targetAddress.trim()}
           >
             Scan

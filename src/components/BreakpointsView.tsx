@@ -280,6 +280,7 @@ export function BreakpointsView({
               inputClassName="flex-1"
               buttonLabel={<Plus />}
               buttonTitle="Add breakpoint"
+              historyKey="bp-address"
             />
           </PanelToolbar>
         )}

@@ -911,6 +911,7 @@ function HexToolbar({
         resolveSymbol={resolveSymbol}
         sessionId={sessionId}
         focusTabId={memoryViewId}
+        historyKey="hex-goto"
         buttonLabel={
           <>
             <ArrowRight />

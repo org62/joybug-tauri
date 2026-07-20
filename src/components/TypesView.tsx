@@ -4,7 +4,11 @@ import { useTypes, type UseTypes } from "@/hooks/useTypes";
 import { useNavigationChannel } from "@/hooks/useNavigationChannel";
 import { typesNavigation } from "@/lib/navigationStore";
 import { useLiveRefresh } from "@/hooks/useLiveRefresh";
-import { usePopoverDismiss } from "@/hooks/usePopoverDismiss";
+import {
+  usePopoverDismiss,
+  computeAnchoredDropdownRect,
+  type AnchoredDropdownRect,
+} from "@/hooks/usePopoverDismiss";
 import { usePanelFocus } from "@/hooks/usePanelFocus";
 import { cn, CHANGED_VALUE_CLASS } from "@/lib/utils";
 import type { RegisterContext, SymbolResolver } from "@/lib/hexUtils";
@@ -170,25 +174,14 @@ function InspectMode({
   // and height-clamped to the viewport.
   const anchorRef = useRef<HTMLDivElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
-  const [dropdownRect, setDropdownRect] = useState<{
-    left: number;
-    top: number;
-    width: number;
-    maxHeight: number;
-  } | null>(null);
+  const [dropdownRect, setDropdownRect] = useState<AnchoredDropdownRect | null>(null);
 
   useLayoutEffect(() => {
     if (!showResults || results.length === 0 || !anchorRef.current) {
       setDropdownRect(null);
       return;
     }
-    const r = anchorRef.current.getBoundingClientRect();
-    setDropdownRect({
-      left: r.left,
-      top: r.bottom + 4,
-      width: r.width,
-      maxHeight: Math.max(96, Math.min(256, window.innerHeight - r.bottom - 12)),
-    });
+    setDropdownRect(computeAnchoredDropdownRect(anchorRef.current));
   }, [showResults, results]);
 
   const closeResults = useCallback(() => setShowResults(false), []);
@@ -327,6 +320,7 @@ function InspectMode({
           sessionId={sessionId}
           disabled={!isActive}
           inputClassName="flex-1"
+          historyKey="types-address"
         />
         <div className="flex flex-wrap items-center gap-1">
           <Button

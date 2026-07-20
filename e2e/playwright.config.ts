@@ -22,6 +22,7 @@ export default defineConfig({
     "patches.spec.ts",
     "bookmarks.spec.ts",
     "disassembly.spec.ts",
+    "input-history.spec.ts",
     "pc-follow.spec.ts",
     "emulation-highlight.spec.ts",
     "navigation-history.spec.ts",

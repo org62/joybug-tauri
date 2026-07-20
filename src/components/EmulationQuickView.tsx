@@ -3,7 +3,8 @@ import { ChevronDown, ChevronRight, Loader2 } from "lucide-react";
 import { ScrollArea } from "./ui/scroll-area";
 import { VirtualizedList } from "./ui/virtualized-list";
 import { Button } from "./ui/button";
-import { Input } from "./ui/input";
+import { HistoryInput } from "./ui/history-input";
+import { pushInputHistory } from "@/lib/inputHistory";
 import { cn } from "@/lib/utils";
 import { QuickEmulationState, QuickEmulationResult } from "@/hooks/useQuickEmulation";
 import { parseTenetTrace } from "@/lib/tenetParser";
@@ -479,7 +480,8 @@ export const EmulationQuickView = memo(function EmulationQuickView({ emulation, 
               )}
               <span className="ml-auto flex items-center gap-1">
                 limit
-                <Input
+                <HistoryInput
+                  historyKey="emu-instr-limit"
                   key={maxInstructions}
                   type="text"
                   inputSize="inline"
@@ -490,7 +492,10 @@ export const EmulationQuickView = memo(function EmulationQuickView({ emulation, 
                   onKeyDown={(e) => {
                     if (e.key === "Enter") {
                       const val = parseInt((e.target as HTMLInputElement).value.replace(/,/g, ""), 10);
-                      if (!isNaN(val) && val > 0) setMaxInstructions(val);
+                      if (!isNaN(val) && val > 0) {
+                        pushInputHistory("emu-instr-limit", val.toLocaleString());
+                        setMaxInstructions(val);
+                      }
                       (e.target as HTMLInputElement).blur();
                     }
                   }}

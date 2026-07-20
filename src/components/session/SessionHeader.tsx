@@ -2,7 +2,7 @@ import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { ArrowLeft, Square, Play, MoveRight, CornerDownRight, CornerUpLeft, Pause, Plus, ChevronDown, Unplug, Loader2, AlertTriangle } from 'lucide-react';
+import { ArrowLeft, Square, Play, MoveRight, CornerDownRight, CornerUpLeft, Pause, Plus, ChevronDown, Unplug, Loader2, AlertTriangle, Search } from 'lucide-react';
 import { exceptionName, formatExceptionCode, EXCEPTION_SINGLE_STEP } from '@/lib/exceptionNames';
 import {
   DropdownMenu,
@@ -15,6 +15,7 @@ import { DockWindowsMenu, DockWindowsMenuGroup } from '@/components/DockWindowsM
 import { SESSION_TAB_DEFS, SESSION_TAB_CATEGORIES } from '@/lib/sessionTabs';
 import { DebugEventInfo, DebugSession, SessionStatus } from '@/contexts/SessionContext';
 import { useKeybindingContext } from '@/contexts/KeybindingContext';
+import { useCommandPaletteContext } from '@/contexts/CommandPaletteContext';
 
 export interface SessionHeaderProps {
   session: DebugSession;
@@ -95,6 +96,7 @@ export const SessionHeader: React.FC<SessionHeaderProps> = ({
 }) => {
   const navigate = useNavigate();
   const { getKeybinding } = useKeybindingContext();
+  const { setOpen: setPaletteOpen } = useCommandPaletteContext();
 
   // Non-invasive Open session: no debug loop, so no stepping/pause. The single
   // Attach/Detach button becomes "Attach" here and "Detach" once attached.
@@ -142,6 +144,23 @@ export const SessionHeader: React.FC<SessionHeaderProps> = ({
       </div>
 
       <div className="flex items-center gap-2">
+        {/* Quiet discoverability hint: everything in the app is reachable from
+            the command palette, but users don't find the shortcut on their own. */}
+        <Button
+          variant="ghost"
+          size="sm"
+          className="text-muted-foreground hover:text-foreground"
+          onClick={() => setPaletteOpen(true)}
+          title={`Command palette — jump to any window, action, or address (${getKeybinding("palette.open")})`}
+          aria-label="Open command palette"
+        >
+          <Search className="h-3.5 w-3.5 mr-1.5" />
+          <kbd className="rounded border px-1 py-0.5 text-[10px] font-mono">
+            {getKeybinding("palette.open")}
+          </kbd>
+        </Button>
+        <div className="w-px h-6 bg-border mx-1" />
+
         {canStart && (
           <Button
             onClick={handleStart}
@@ -243,33 +262,67 @@ export const SessionHeader: React.FC<SessionHeaderProps> = ({
         {/* Separator between debug/step controls and session-lifecycle actions */}
         {!canStart && !isOpen && <div className="w-px h-6 bg-border mx-1" />}
 
-        {!canStart && (
+        {!canStart && isOpen && (
           <Button
-            onClick={isOpen ? handleAttach : handleDetach}
-            disabled={(!isOpen && !canDetach) || busyAction !== null}
+            onClick={handleAttach}
+            disabled={busyAction !== null}
             size="sm"
             variant="outline"
-            title={isOpen
-              ? "Attach the debugger to this process to enable breakpoints and stepping"
-              : "Detach from the target and leave it running (available while paused)"}
+            title="Attach the debugger to this process to enable breakpoints and stepping"
           >
             <Unplug className="h-4 w-4 mr-2" />
-            {isOpen
-              ? (busyAction === "attach" ? "Attaching..." : "Attach")
-              : (busyAction === "detach" ? "Detaching..." : "Detach")}
+            {busyAction === "attach" ? "Attaching..." : "Attach"}
           </Button>
         )}
 
+        {/* Stop with Detach folded into a split dropdown, mirroring the Go
+            (Handle/Pass Exception) split button. */}
         {!canStart && (
-          <Button
-            onClick={handleStop}
-            disabled={!canStop || busyAction === "stop"}
-            size="sm"
-            variant="destructive"
-          >
-            <Square className="h-4 w-4 mr-2" />
-            {busyAction === "stop" ? "Stopping..." : "Stop"}
-          </Button>
+          <div className="inline-flex">
+            <Button
+              onClick={handleStop}
+              disabled={!canStop || busyAction === "stop"}
+              size="sm"
+              variant="destructive"
+              className={isOpen ? undefined : "rounded-r-none"}
+            >
+              <Square className="h-4 w-4 mr-2" />
+              {busyAction === "stop"
+                ? "Stopping..."
+                : busyAction === "detach"
+                  ? "Detaching..."
+                  : "Stop"}
+            </Button>
+            {!isOpen && (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    disabled={busyAction !== null || (!canStop && !canDetach)}
+                    size="sm"
+                    variant="destructive"
+                    className="rounded-l-none border-l border-l-white/20 px-1"
+                    aria-label="Stop options"
+                  >
+                    <ChevronDown className="h-3 w-3" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem onSelect={handleStop} disabled={!canStop}>
+                    <Square className="h-4 w-4" />
+                    Stop Session
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onSelect={handleDetach}
+                    disabled={!canDetach}
+                    title="Detach from the target and leave it running (available while paused)"
+                  >
+                    <Unplug className="h-4 w-4" />
+                    Detach (leave running)
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
+          </div>
         )}
 
         {/* Separator before the Windows menu */}

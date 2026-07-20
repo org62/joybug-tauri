@@ -7,7 +7,8 @@ import {
   DialogFooter,
   DialogDescription,
 } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
+import { HistoryInput } from "@/components/ui/history-input";
+import { pushInputHistory } from "@/lib/inputHistory";
 import { Button } from "@/components/ui/button";
 import { Loader2 } from "lucide-react";
 import {
@@ -160,10 +161,11 @@ export function RegisterEditDialog({
 
   const handleCommit = useCallback(() => {
     if (!preview) return;
+    pushInputHistory("register-value", input);
     const hex = preview.replace(/^0x/i, "");
     onCommit(registerField, hex);
     onOpenChange(false);
-  }, [preview, registerField, onCommit, onOpenChange]);
+  }, [preview, input, registerField, onCommit, onOpenChange]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -187,7 +189,8 @@ export function RegisterEditDialog({
         </DialogHeader>
 
         <div className="flex flex-col gap-2">
-          <Input
+          <HistoryInput
+            historyKey="register-value"
             ref={inputRef}
             className="font-mono text-sm"
             value={input}

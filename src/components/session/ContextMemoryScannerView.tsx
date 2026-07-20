@@ -4,7 +4,8 @@ import { cn, CHANGED_VALUE_CLASS } from '@/lib/utils';
 import { useMemoryScanner, FIRST_SCAN_COMPARE_TYPES, NEXT_SCAN_COMPARE_TYPES, needsValue, needsSecondValue, ScanValueType, ScanCompareType } from '@/hooks/useMemoryScanner';
 import { useContextMenu } from '@/hooks/useContextMenu';
 import { usePanelFocus } from '@/hooks/usePanelFocus';
-import { Input } from '@/components/ui/input';
+import { HistoryInput } from '@/components/ui/history-input';
+import { pushInputHistory } from '@/lib/inputHistory';
 import { Button } from '@/components/ui/button';
 import { DockPanel, PanelToolbar } from '@/components/ui/panel';
 import { PaginationFooter } from '@/components/ui/pagination-footer';
@@ -63,14 +64,23 @@ export const ContextMemoryScannerView = () => {
     ? 'auto (from decimals typed)'
     : scanner.isFirstScan ? 'auto (1e-6)' : 'auto (inherited from first scan)';
 
+  // Single scan entry point (Enter and both scan buttons) so submitted values
+  // are recorded for history recall; push ignores blanks.
+  const runScan = () => {
+    pushInputHistory('memscan-value', scanner.value);
+    pushInputHistory('memscan-value2', scanner.value2);
+    pushInputHistory('memscan-tolerance', scanner.floatTolerance);
+    if (scanner.isFirstScan) {
+      scanner.handleFirstScan();
+    } else {
+      scanner.handleNextScan();
+    }
+  };
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter') {
       e.preventDefault();
-      if (scanner.isFirstScan) {
-        scanner.handleFirstScan();
-      } else {
-        scanner.handleNextScan();
-      }
+      runScan();
     }
   };
 
@@ -203,7 +213,8 @@ export const ContextMemoryScannerView = () => {
             </SelectContent>
           </Select>
           {showValue && (
-            <Input
+            <HistoryInput
+              historyKey="memscan-value"
               ref={focusRef}
               type="text"
               inputSize="xs"
@@ -216,7 +227,8 @@ export const ContextMemoryScannerView = () => {
             />
           )}
           {showValue2 && (
-            <Input
+            <HistoryInput
+              historyKey="memscan-value2"
               type="text"
               inputSize="xs"
               placeholder="Max"
@@ -249,7 +261,8 @@ export const ContextMemoryScannerView = () => {
                 </TooltipContent>
               </Tooltip>
             </TooltipProvider>
-            <Input
+            <HistoryInput
+              historyKey="memscan-tolerance"
               type="text"
               inputSize="xs"
               placeholder={tolerancePlaceholder}
@@ -264,23 +277,13 @@ export const ContextMemoryScannerView = () => {
 
         {/* Action buttons */}
         <div className="flex gap-1 items-center">
-          {scanner.isFirstScan ? (
-            <Button
-              size="xs"
-              onClick={scanner.handleFirstScan}
-              disabled={!canUse || scanner.isScanning || (showValue && !scanner.value.trim())}
-            >
-              First Scan
-            </Button>
-          ) : (
-            <Button
-              size="xs"
-              onClick={scanner.handleNextScan}
-              disabled={!canUse || scanner.isScanning || (showValue && !scanner.value.trim())}
-            >
-              Next Scan
-            </Button>
-          )}
+          <Button
+            size="xs"
+            onClick={runScan}
+            disabled={!canUse || scanner.isScanning || (showValue && !scanner.value.trim())}
+          >
+            {scanner.isFirstScan ? 'First Scan' : 'Next Scan'}
+          </Button>
           <Button
             size="xs"
             variant="outline"
