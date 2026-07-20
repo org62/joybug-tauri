@@ -32,6 +32,8 @@ import { NavHistoryStore } from "@/lib/navHistory";
 import { useNavHistoryDock } from "@/hooks/useNavHistoryDock";
 import { moduleBasename } from "@/lib/sessionHelpers";
 import { toastError, toastSuccess } from "@/lib/logger";
+import { useFileDrop, pickDroppedFile } from "@/hooks/useFileDrop";
+import { FileDropOverlay } from "@/components/FileDropOverlay";
 import { formatTauriError } from "@/lib/sessionHelpers";
 
 interface PeFileSummary {
@@ -254,6 +256,19 @@ export default function PeReader() {
       setBusy(false);
     }
   }, [path]);
+
+  // Drag-drop a PE file onto the page to open it. Extension filter is a UX
+  // nicety for obvious non-PE files; the backend stays the authority for
+  // malformed/32-bit files via loadPath's error handling.
+  const handleFileDrop = (paths: string[]) => {
+    if (busy) return;
+    const dropped = pickDroppedFile(paths, {
+      pattern: /\.(exe|dll|sys|efi|ocx|cpl|scr)$/i,
+      rejectMessage: "Not a PE file (.exe, .dll, .sys, ...)",
+    });
+    if (dropped) loadPath(dropped);
+  };
+  const { isDragOver } = useFileDrop({ onDrop: handleFileDrop, enabled: !openDialog });
 
   // Download/parse symbols for the open file (allows a symbol-server download),
   // then re-symbolize the disassembly.
@@ -481,6 +496,8 @@ export default function PeReader() {
         onOpenChange={setOpenDialog}
         onConfirm={(p, base, pdb) => loadPath(p, base, pdb)}
       />
+
+      <FileDropOverlay active={isDragOver} message="Drop a PE file to inspect" />
     </Page>
   );
 }

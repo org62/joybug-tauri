@@ -36,7 +36,9 @@ import {
 } from "@/lib/sessionStorage";
 
 import { DebugSession, SessionStatus } from "@/contexts/SessionContext";
-import { isProcessAvailable } from "@/lib/sessionHelpers";
+import { isProcessAvailable, formatTauriError, moduleBasename, buildLaunchCommand } from "@/lib/sessionHelpers";
+import { useFileDrop, pickDroppedFile } from "@/hooks/useFileDrop";
+import { FileDropOverlay } from "@/components/FileDropOverlay";
 
 const DEFAULT_SESSION_NAME = "Unnamed Session";
 
@@ -199,7 +201,7 @@ export default function Debugger() {
         ],
       });
       if (selected) {
-        setFormLaunchCommand(selected);
+        setFormLaunchCommand(buildLaunchCommand(selected));
       }
     } catch (error) {
       console.error("Failed to open file dialog:", error);
@@ -250,30 +252,47 @@ export default function Debugger() {
     if (!formLocalRun) pushInputHistory("server-url", formServerUrl);
   };
 
+  // Backend create + storage persistence, shared by the dialog and the
+  // drag-drop path. Returns the new session id.
+  const createSessionRecord = async (cfg: {
+    name: string;
+    serverUrl: string;
+    launchCommand: string;
+    workingDirectory: string | null;
+    isLocalRun: boolean;
+  }): Promise<string> => {
+    const sessionId = await invoke<string>("create_debug_session", {
+      name: cfg.name,
+      serverUrl: cfg.serverUrl,
+      launchCommand: cfg.launchCommand,
+      workingDirectory: cfg.workingDirectory,
+      isLocalRun: cfg.isLocalRun,
+      attachPid: null,
+    });
+
+    addSessionToStorage({
+      id: sessionId,
+      name: cfg.name,
+      server_url: cfg.serverUrl,
+      launch_command: cfg.launchCommand,
+      working_directory: cfg.workingDirectory,
+      is_local_run: cfg.isLocalRun,
+      created_at: new Date().toISOString(),
+    });
+
+    return sessionId;
+  };
+
   const handleCreateSession = async () => {
     const sessionName = formName.trim() || DEFAULT_SESSION_NAME;
 
     try {
-      const workingDirectory = formWorkingDirectory.trim() || null;
-
-      const sessionId = await invoke<string>("create_debug_session", {
+      const sessionId = await createSessionRecord({
         name: sessionName,
         serverUrl: formLocalRun ? "" : formServerUrl,
         launchCommand: formLaunchCommand,
-        workingDirectory,
+        workingDirectory: formWorkingDirectory.trim() || null,
         isLocalRun: formLocalRun,
-        attachPid: null,
-      });
-
-      // Save session config to storage
-      addSessionToStorage({
-        id: sessionId,
-        name: sessionName,
-        server_url: formLocalRun ? "" : formServerUrl,
-        launch_command: formLaunchCommand,
-        working_directory: workingDirectory,
-        is_local_run: formLocalRun,
-        created_at: new Date().toISOString(),
       });
 
       pushLaunchFormHistory();
@@ -352,6 +371,39 @@ export default function Debugger() {
     toast.success("Debug session started");
     navigate(`/session/${sessionId}`);
   };
+
+  // Drag-drop an .exe onto the page: create a local-run session (embedded
+  // debug server) for it, start it, and jump into the session view.
+  const handleFileDrop = async (paths: string[]) => {
+    const dropped = pickDroppedFile(paths, {
+      pattern: /\.exe$/i,
+      rejectMessage: "Only .exe files can be launched — use the PE Viewer for other PE files",
+    });
+    if (!dropped) return;
+
+    const name = moduleBasename(dropped).replace(/\.exe$/i, "");
+    const sepIdx = Math.max(dropped.lastIndexOf("\\"), dropped.lastIndexOf("/"));
+    const workingDirectory = sepIdx > 0 ? dropped.slice(0, sepIdx) : null;
+
+    try {
+      const sessionId = await createSessionRecord({
+        name,
+        serverUrl: "",
+        launchCommand: buildLaunchCommand(dropped),
+        workingDirectory,
+        isLocalRun: true,
+      });
+      await startAndNavigate(sessionId);
+    } catch (error) {
+      console.error("Failed to launch dropped executable:", error);
+      toast.error(formatTauriError(error));
+    }
+  };
+
+  const { isDragOver } = useFileDrop({
+    onDrop: handleFileDrop,
+    enabled: !isSessionDialogOpen && !isAttachDialogOpen,
+  });
 
   const updateAttachPid = async (session: DebugSession, pid: number) => {
     await invoke("update_debug_session", {
@@ -894,6 +946,8 @@ export default function Debugger() {
           </div>
         )}
       </div>
+
+      <FileDropOverlay active={isDragOver} message="Drop an executable to debug" />
     </Page>
   );
 }

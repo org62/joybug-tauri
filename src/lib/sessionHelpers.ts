@@ -58,6 +58,15 @@ export function isBenignSessionError(message: string): boolean {
 
 export { moduleBasename } from '@/lib/symbolUtils';
 
+/**
+ * Turn an executable path into a launch command the backend can parse as a
+ * command line: a path containing spaces must be quoted. Every producer of
+ * `launch_command` (file picker, drag-drop) must go through this.
+ */
+export function buildLaunchCommand(exePath: string): string {
+  return exePath.includes(' ') ? `"${exePath}"` : exePath;
+}
+
 /** Convert a thread context snapshot to a flat register name -> value map for address expression parsing. */
 export function contextToRegisters(context: SerializableThreadContext | undefined): RegisterContext {
   if (!context) return {};
