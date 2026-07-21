@@ -37,7 +37,7 @@ fn disassemble_addresses(
                 } else {
                     None
                 };
-                let op_str = effective_op_str(inst, &modules);
+                let op_str = effective_op_str(inst);
                 info.push(EmulationInstructionInfo {
                     address: format!("0x{:X}", inst.address),
                     symbol,

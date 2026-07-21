@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useTheme } from "next-themes";
 import {
   Select,
@@ -9,6 +9,7 @@ import {
 } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
 import { useDebugSettings } from "@/hooks/useDebugSettings";
+import { applyZoom, getStoredZoom, ZOOM_CHANGED_EVENT, ZOOM_STEPS } from "@/lib/uiZoom";
 
 interface SettingItem {
   key: string;
@@ -18,6 +19,7 @@ interface SettingItem {
 
 const SETTING_ITEMS: SettingItem[] = [
   { key: "theme", label: "Theme", keywords: ["dark", "light", "system", "appearance", "color"] },
+  { key: "uiScale", label: "UI scale", keywords: ["zoom", "scale", "ui", "enlarge", "bigger", "size", "font", "magnify", "text", "large", "small"] },
   { key: "scanThreads", label: "Memory scan threads (0 = all cores)", keywords: ["scan", "thread", "threads", "memory", "performance", "cores", "parallel", "cpu"] },
 ];
 
@@ -30,6 +32,15 @@ export function SettingsGeneral({ searchQuery }: SettingsGeneralProps) {
   const { theme, setTheme } = useTheme();
   const { settings, setScanThreadCount } = useDebugSettings();
   const [scanThreadsDraft, setScanThreadsDraft] = useState<string | null>(null);
+  const [uiScale, setUiScale] = useState(() => getStoredZoom());
+
+  // Track zoom changes made elsewhere (Ctrl/Cmd +/-/0 hotkeys) while this
+  // panel is open, so the dropdown never shows a stale factor.
+  useEffect(() => {
+    const onZoomChanged = (e: Event) => setUiScale((e as CustomEvent<number>).detail);
+    window.addEventListener(ZOOM_CHANGED_EVENT, onZoomChanged);
+    return () => window.removeEventListener(ZOOM_CHANGED_EVENT, onZoomChanged);
+  }, []);
 
   const matchesSearch = (item: SettingItem): boolean => {
     if (!searchQuery) return true;
@@ -64,6 +75,24 @@ export function SettingsGeneral({ searchQuery }: SettingsGeneralProps) {
                   <SelectItem value="light">Light</SelectItem>
                   <SelectItem value="dark">Dark</SelectItem>
                   <SelectItem value="system">System</SelectItem>
+                </SelectContent>
+              </Select>
+            )}
+            {item.key === "uiScale" && (
+              <Select
+                value={String(uiScale)}
+                // applyZoom fires ZOOM_CHANGED_EVENT, which updates uiScale.
+                onValueChange={(v) => applyZoom(parseFloat(v))}
+              >
+                <SelectTrigger size="xs" className="w-[130px]">
+                  <SelectValue placeholder="Scale" />
+                </SelectTrigger>
+                <SelectContent>
+                  {ZOOM_STEPS.map((z) => (
+                    <SelectItem key={z} value={String(z)}>
+                      {Math.round(z * 100)}%{z === 1 ? " (default)" : ""}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             )}

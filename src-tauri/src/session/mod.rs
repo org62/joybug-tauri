@@ -5,6 +5,7 @@ mod dispatch;
 pub(crate) mod disassembly;
 mod emulation;
 pub(crate) mod helpers;
+pub(crate) mod image_cache;
 pub(crate) mod memory;
 pub(crate) mod pointer_scan;
 pub(crate) mod string_scan;
@@ -12,7 +13,7 @@ pub(crate) mod patches;
 mod registers;
 mod runner;
 pub(crate) mod source;
-mod symbols;
+pub(crate) mod symbols;
 pub mod types;
 
 pub use types::UICommand;

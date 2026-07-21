@@ -1,17 +1,18 @@
-import { useState, useRef, useEffect, useLayoutEffect, useCallback, memo } from "react";
+import { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo, memo } from "react";
 import { VirtualizedList } from "./ui/virtualized-list";
 import { DockPanel, PanelToolbar, PanelBody } from "@/components/ui/panel";
 import { ContextMenu, ContextMenuItem } from "@/components/ui/context-menu";
+import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { TruncatedSymbol } from "@/components/ui/truncated-symbol";
 import { Button } from "./ui/button";
 import { HistoryInput } from "./ui/history-input";
 import { pushInputHistory } from "@/lib/inputHistory";
 import { Switch } from "./ui/switch";
 import { Label } from "./ui/label";
-import { Cpu, ArrowLeft, ArrowRight, RefreshCw, ChevronRight, Circle, CircleDot, Wrench, Copy, Bookmark, FileCode, LocateFixed, Zap } from "lucide-react";
+import { Cpu, ArrowLeft, ArrowRight, RefreshCw, ChevronRight, Circle, CircleDot, Wrench, Copy, Bookmark, FileCode, LocateFixed, Zap, Undo2 } from "lucide-react";
 import { sourceNavigation } from "@/lib/navigationStore";
 import { cn } from "@/lib/utils";
-import { useAssemblyView, Instruction, AsmDisassembleFn } from "@/hooks/useAssemblyView";
+import { useAssemblyView, buildAsmRows, Instruction, AsmDisassembleFn } from "@/hooks/useAssemblyView";
 import { NavHistoryStore } from "@/lib/navHistory";
 import { RegisterContext, SymbolResolver } from "@/lib/hexUtils";
 import { AddressExpressionInput } from "@/components/AddressExpressionInput";
@@ -48,6 +49,10 @@ interface AssemblyViewProps {
   onToggleSingleShotBreakpoint?: (address: string) => void;
   onSetHardwareBreakpoint?: (address: string, hwType: string, hwSize: number) => void;
   onAssemblePatch?: (address: string, assemblyText: string, nopPad?: boolean) => Promise<string | null>;
+  /** Restore the original bytes at a patched address. The backend undoes a
+   * tracked UI patch when one covers the address, else raw-restores from the
+   * on-disk image. */
+  onRestoreImageBytes?: (address: string) => void;
   onAddBookmark?: (address: string, asmText: string) => void;
   symbolsRefreshKey?: string;
   /** Activate the Source tab and reveal an address's source line (context-menu action). */
@@ -65,7 +70,7 @@ interface AssemblyViewProps {
   navHistory: NavHistoryStore;
 }
 
-export function AssemblyView({ sessionId, isPaused, canLoad, address, registers, resolveSymbol, breakpointAddresses, emulation, onToggleBreakpoint, onToggleSingleShotBreakpoint, onSetHardwareBreakpoint, onAssemblePatch, onAddBookmark, symbolsRefreshKey, onNavigateToSource, disassemble, initialAddress, addressFormatter, translateGotoInput, navHistory }: AssemblyViewProps) {
+export function AssemblyView({ sessionId, isPaused, canLoad, address, registers, resolveSymbol, breakpointAddresses, emulation, onToggleBreakpoint, onToggleSingleShotBreakpoint, onSetHardwareBreakpoint, onAssemblePatch, onRestoreImageBytes, onAddBookmark, symbolsRefreshKey, onNavigateToSource, disassemble, initialAddress, addressFormatter, translateGotoInput, navHistory }: AssemblyViewProps) {
   const [addressInput, setAddressInput] = useState("");
   // Inline assembly input state
   const [assembleTarget, setAssembleTarget] = useState<{ address: string; defaultText: string } | null>(null);
@@ -85,7 +90,7 @@ export function AssemblyView({ sessionId, isPaused, canLoad, address, registers,
   // Resizable column widths
   const { columnWidths, handleColumnResizeStart } = useColumnWidths<keyof ColumnWidths>(COLUMN_WIDTHS_KEY, DEFAULT_COLUMN_WIDTHS);
   // Context menu for right-click
-  const { contextMenu, openContextMenu, closeContextMenu } = useContextMenu<{ address: string; mnemonic: string; op_str: string }>();
+  const { contextMenu, openContextMenu, closeContextMenu } = useContextMenu<{ address: string; mnemonic: string; op_str: string; is_patched: boolean }>();
   // Addresses executed by the quick emulator (session hosts only).
   const executedAddresses = emulation?.executedAddresses ?? null;
 
@@ -95,6 +100,7 @@ export function AssemblyView({ sessionId, isPaused, canLoad, address, registers,
     isLoading,
     error,
     showBytes,
+    compareImage,
     canGoBack,
     canGoForward,
     jumpTargetAddress,
@@ -104,6 +110,7 @@ export function AssemblyView({ sessionId, isPaused, canLoad, address, registers,
     followJump,
     refresh,
     toggleBytesColumn,
+    toggleImageCompare,
     goToPC,
     loadMoreAbove,
     loadMoreBelow,
@@ -119,6 +126,9 @@ export function AssemblyView({ sessionId, isPaused, canLoad, address, registers,
     initialAddress,
     navHistory,
   });
+
+  // Display rows: instructions plus a label row above each exact-symbol hit.
+  const rows = useMemo(() => buildAsmRows(instructions), [instructions]);
 
   const handleJumpTargetClick = useCallback((jumpTarget: string, sourceAddress: string) => {
     try {
@@ -141,8 +151,8 @@ export function AssemblyView({ sessionId, isPaused, canLoad, address, registers,
     sourceNavigation.request(addr);
   }, []);
 
-  const handleRowContextMenu = useCallback((e: React.MouseEvent, addr: string, mnemonic: string, opStr: string) => {
-    openContextMenu(e, { address: addr, mnemonic, op_str: opStr });
+  const handleRowContextMenu = useCallback((e: React.MouseEvent, addr: string, mnemonic: string, opStr: string, isPatched: boolean) => {
+    openContextMenu(e, { address: addr, mnemonic, op_str: opStr, is_patched: isPatched });
   }, [openContextMenu]);
 
   // Handle hover on jump target link
@@ -159,17 +169,21 @@ export function AssemblyView({ sessionId, isPaused, canLoad, address, registers,
   }, []);
 
   // Latest rows for the auto-scroll effects, WITHOUT them depending on
-  // `instructions` — a scroll extension (prepend/append) grows that array but
+  // `rows` — a scroll extension (prepend/append) grows that array but
   // must NOT re-fire PC-follow/jump scrolling; those effects gate on
   // `loadGeneration` (bumped only on a full replace) instead. Synced in a layout
   // effect so every passive effect sees the fresh rows regardless of
   // declaration order.
-  const instructionsForScrollRef = useRef(instructions);
-  useLayoutEffect(() => { instructionsForScrollRef.current = instructions; }, [instructions]);
+  const rowsForScrollRef = useRef(rows);
+  useLayoutEffect(() => { rowsForScrollRef.current = rows; }, [rows]);
 
   const scrollToInstruction = useCallback((addr: bigint) => {
     const key = `0X${addr.toString(16).toUpperCase()}`;
-    const index = instructionsForScrollRef.current.findIndex((i) => i.address.toUpperCase() === key);
+    // Target the instruction row, not its label — centering the instruction
+    // keeps the label visible one row above.
+    const index = rowsForScrollRef.current.findIndex(
+      (r) => r.kind === 'insn' && r.insn.address.toUpperCase() === key
+    );
     if (index >= 0) {
       virtualizerRef.current?.scrollToIndex(index, { align: 'center' });
     }
@@ -382,6 +396,19 @@ export function AssemblyView({ sessionId, isPaused, canLoad, address, registers,
         {/* Spacer */}
         <div className="flex-1" />
 
+        {/* Patch comparison toggle (session mode only — file mode has no live image to diff) */}
+        {!disassemble && (
+          <div className="flex items-center gap-2" title="Highlight code that differs from the on-disk image (patches/hooks)">
+            <Label htmlFor="compare-image" className="text-xs">Patches</Label>
+            <Switch
+              id="compare-image"
+              size="xs"
+              checked={compareImage}
+              onCheckedChange={toggleImageCompare}
+            />
+          </div>
+        )}
+
         {/* Bytes column toggle */}
         <div className="flex items-center gap-2">
           <Label htmlFor="show-bytes" className="text-xs">Bytes</Label>
@@ -463,7 +490,7 @@ export function AssemblyView({ sessionId, isPaused, canLoad, address, registers,
         <div className="shrink-0 flex items-center px-2 py-0.5 border-b border-border font-mono text-xs text-foreground/60 select-none">
           <span className="w-4 shrink-0" />
           <span className="w-4 shrink-0" />
-          <span className="shrink-0 truncate" style={{ width: columnWidths.symbol }}>Symbol</span>
+          <span className="shrink-0 truncate" style={{ width: columnWidths.symbol }}>Address</span>
           <div className="w-1 shrink-0 self-stretch cursor-col-resize hover:bg-blue-500/30 active:bg-blue-500/50 mx-px" onMouseDown={(e) => handleColumnResizeStart("symbol", e)} />
           {showBytes && (
             <>
@@ -480,13 +507,17 @@ export function AssemblyView({ sessionId, isPaused, canLoad, address, registers,
       {/* Main content area */}
       {showInstructions ? (
         <VirtualizedList
-          items={instructions}
+          items={rows}
           rowHeight={ASSEMBLY_ROW_HEIGHT}
           overscan={30}
           className="flex-1 min-h-0"
           virtualizerRef={virtualizerRef}
           onViewportScroll={handleViewportScroll}
-          renderItem={(inst) => {
+          renderItem={(row) => {
+            if (row.kind === 'label') {
+              return <LabelRow symbol={row.symbol} address={row.address} />;
+            }
+            const inst = row.insn;
             const instAddrUpper = inst.address.toUpperCase();
             const isPC = pcAddress !== null && instAddrUpper === `0X${pcAddress.toString(16).toUpperCase()}`;
             const isHighlighted = highlightedAddress !== null && instAddrUpper === `0X${highlightedAddress.toString(16).toUpperCase()}`;
@@ -586,6 +617,14 @@ export function AssemblyView({ sessionId, isPaused, canLoad, address, registers,
               Assemble...
             </ContextMenuItem>
           )}
+          {contextMenu.data.is_patched && onRestoreImageBytes && (
+            <ContextMenuItem
+              icon={<Undo2 className="text-purple-500" />}
+              onClick={() => onRestoreImageBytes(contextMenu.data.address)}
+            >
+              Restore Original Bytes
+            </ContextMenuItem>
+          )}
           {onAddBookmark && (
             <ContextMenuItem
               icon={<Bookmark className="text-blue-400" />}
@@ -619,6 +658,25 @@ export function AssemblyView({ sessionId, isPaused, canLoad, address, registers,
   );
 }
 
+// Symbol label row — inserted above an instruction sitting exactly at a symbol
+// (offset 0). Purely presentational: no selection, breakpoint gutter, or
+// context menu; same fixed height as instruction rows so scroll math stays
+// uniform.
+const LabelRow = memo(function LabelRow({ symbol, address }: { symbol: string; address: string }) {
+  return (
+    <div
+      data-testid="asm-label-row"
+      className="flex items-center px-2 cursor-default"
+      style={{ height: ASSEMBLY_ROW_HEIGHT }}
+      title={address}
+    >
+      <span className="w-4 shrink-0" />
+      <span className="w-4 shrink-0" />
+      <TruncatedSymbol text={symbol} className="flex-1 font-semibold text-foreground/90" />
+    </div>
+  );
+});
+
 // Instruction row component
 interface InstructionRowProps {
   instruction: Instruction;
@@ -634,7 +692,7 @@ interface InstructionRowProps {
   onClick: (address: string) => void;
   onJumpTargetClick: (target: string, sourceAddress: string) => void;
   onJumpTargetHover: (target: string | null) => void;
-  onContextMenu: (e: React.MouseEvent, address: string, mnemonic: string, opStr: string) => void;
+  onContextMenu: (e: React.MouseEvent, address: string, mnemonic: string, opStr: string, isPatched: boolean) => void;
   addressFormatter?: (va: bigint) => string;
 }
 
@@ -650,12 +708,11 @@ const ROW_HIGHLIGHT_BG: Record<RowHighlight, string> = {
 };
 
 const InstructionRow = memo(function InstructionRow({ instruction, isPC, isExecuted, isSelected, isHighlighted, isHoverTarget, hasBreakpoint, isPatched, showBytes, columnWidths, onClick, onJumpTargetClick, onJumpTargetHover, onContextMenu, addressFormatter }: InstructionRowProps) {
-  // Unsymbolized instructions fall back to the address, reformatted per the
-  // PE viewer's address mode (VA/RVA/file). Symbolized labels are mode-neutral.
-  const symbolText =
-    instruction.symbol ??
-    (addressFormatter ? addressFormatter(BigInt(instruction.address)) : instruction.address);
-  const { mnemonic, op_str, is_jump, is_call, is_ret, jump_target } = instruction;
+  // The first column always shows the address, reformatted per the PE viewer's
+  // address mode (VA/RVA/file). Symbols render as label rows above, not here.
+  const addressText =
+    addressFormatter ? addressFormatter(BigInt(instruction.address)) : instruction.address;
+  const { mnemonic, op_str, is_jump, is_call, is_ret, jump_target, is_invalid } = instruction;
 
   // Render operands with clickable jump target
   const renderOperands = () => {
@@ -685,10 +742,11 @@ const InstructionRow = memo(function InstructionRow({ instruction, isPC, isExecu
     : isExecuted ? "executed"
     : undefined;
 
-  return (
+  const body = (
     <div
       data-testid="asm-row"
       data-highlight={highlight}
+      data-invalid={is_invalid ? "" : undefined}
       className={cn(
         "flex items-center hover:bg-muted/30 px-2 cursor-default",
         highlight && ROW_HIGHLIGHT_BG[highlight],
@@ -696,7 +754,7 @@ const InstructionRow = memo(function InstructionRow({ instruction, isPC, isExecu
       )}
       style={{ height: ASSEMBLY_ROW_HEIGHT }}
       onClick={() => onClick(instruction.address)}
-      onContextMenu={(e) => onContextMenu(e, instruction.address, instruction.mnemonic, instruction.op_str)}
+      onContextMenu={(e) => onContextMenu(e, instruction.address, instruction.mnemonic, instruction.op_str, isPatched)}
     >
       {/* PC indicator */}
       <span className="w-4 shrink-0 text-yellow-600 dark:text-yellow-400">
@@ -708,11 +766,11 @@ const InstructionRow = memo(function InstructionRow({ instruction, isPC, isExecu
         {hasBreakpoint && <Circle className="h-2.5 w-2.5 fill-red-500 text-red-500" />}
       </span>
 
-      {/* Address/Symbol column — mr-1.5 mirrors the header's 6px resize
+      {/* Address column — mr-1.5 mirrors the header's 6px resize
           handle so columns align and truncated text never touches the next
           column */}
       <span className="shrink-0 mr-1.5 text-muted-foreground flex" style={{ width: columnWidths.symbol }}>
-        <TruncatedSymbol text={symbolText} className="flex-1" />
+        <TruncatedSymbol text={addressText} className="flex-1" />
       </span>
 
       {/* Bytes column (conditional) */}
@@ -726,10 +784,11 @@ const InstructionRow = memo(function InstructionRow({ instruction, isPC, isExecu
       <span
         className={cn(
           "shrink-0 mr-1.5",
-          is_call && "text-green-500",
-          is_jump && !is_call && "text-blue-500",
-          is_ret && "text-red-500",
-          !is_call && !is_jump && !is_ret && "text-blue-400"
+          is_invalid ? "text-red-500 font-semibold"
+            : is_call ? "text-green-500"
+            : is_jump ? "text-blue-500"
+            : is_ret ? "text-red-500"
+            : "text-blue-400"
         )}
         style={{ width: columnWidths.mnemonic }}
       >
@@ -737,9 +796,29 @@ const InstructionRow = memo(function InstructionRow({ instruction, isPC, isExecu
       </span>
 
       {/* Operands */}
-      <span className="flex-1 truncate">
+      <span className={cn("flex-1 truncate", is_invalid && "text-red-400/80")}>
         {renderOperands()}
       </span>
     </div>
   );
+
+  // Only patched rows that carry an original decode get a tooltip — the common
+  // (unpatched) path renders the bare row so thousands of virtualized rows
+  // don't each mount a Radix Tooltip. Provider is global (App.tsx).
+  if (isPatched && instruction.original_disasm) {
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>{body}</TooltipTrigger>
+        <TooltipContent side="top" align="start" className="max-w-md">
+          <div className="text-xs font-medium mb-0.5">Original (on disk)</div>
+          <div className="font-mono text-xs">{instruction.original_disasm}</div>
+          {instruction.original_bytes && (
+            <div className="font-mono text-[10px] text-muted-foreground mt-0.5">{instruction.original_bytes}</div>
+          )}
+        </TooltipContent>
+      </Tooltip>
+    );
+  }
+
+  return body;
 });

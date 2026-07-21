@@ -14,9 +14,9 @@ pub enum UICommand {
     StepIntoLine,
     Stop,
     Detach,
-    Disassembly{ arch: joybug2::interfaces::Architecture, address: u64, count: u32 },
-    DisassembleFunction{ arch: joybug2::interfaces::Architecture, address: u64, max_instructions: u32 },
-    DisassembleBackward{ arch: joybug2::interfaces::Architecture, target: u64, count: u32 },
+    Disassembly{ arch: joybug2::interfaces::Architecture, address: u64, count: u32, compare_image: bool },
+    DisassembleFunction{ arch: joybug2::interfaces::Architecture, address: u64, max_instructions: u32, compare_image: bool },
+    DisassembleBackward{ arch: joybug2::interfaces::Architecture, target: u64, count: u32, compare_image: bool },
     GetCallStack,
     SearchSymbols{ pattern: String, limit: u32 },
     ReadMemory{ address: u64, size: usize },
@@ -56,6 +56,9 @@ pub enum UICommand {
     EnablePatch { patch_id: String, enabled: bool },
     UpdatePatch { patch_id: String, group: Option<String> },
     EnablePatchGroup { group: String, enabled: bool },
+    /// Restore original on-disk image bytes for the modified run containing
+    /// `address` (used when the diff wasn't created by a tracked UI patch).
+    RestoreImageBytes { address: u64 },
     AddBookmark {
         kind: String,
         address: u64,
@@ -198,9 +201,11 @@ pub struct MemorySearchError {
 #[derive(serde::Serialize)]
 pub struct SerializableInstruction {
     pub address: String,
-    /// Symbolized label ("module!name+0xoff" or "module+0xoff"); None when the
-    /// address resolves to no module/symbol — the frontend falls back to the address.
-    pub symbol: Option<String>,
+    /// Every symbol starting exactly at this address, formatted "module!name".
+    /// Usually 0 or 1, but aliases (e.g. NtClose/ZwClose) share an address — the
+    /// frontend renders one label row per entry. Empty when not at a symbol start;
+    /// the first column always shows the address.
+    pub symbols: Vec<String>,
     pub bytes: String,
     pub mnemonic: String,
     pub op_str: String,
@@ -208,10 +213,21 @@ pub struct SerializableInstruction {
     pub is_call: bool,
     pub is_ret: bool,
     pub jump_target: Option<String>,
-    #[serde(default)]
     pub is_patched: bool,
+    /// When the in-memory bytes differ from the original on-disk image, the
+    /// space-separated hex of the original image bytes covering this row.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub original_bytes: Option<String>,
+    /// Disassembly of the original image bytes at this address (may span more
+    /// than one instruction if the patch changed instruction boundaries),
+    /// joined with "; ". Shown on hover over a patched row.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub original_disasm: Option<String>,
     pub source_file: Option<String>,
     pub source_line: Option<u32>,
+    /// True for a synthetic `db 0xXX` row emitted where a byte couldn't be
+    /// decoded — the frontend renders these in an error style.
+    pub is_invalid: bool,
 }
 
 #[derive(serde::Serialize, Clone, Debug)]

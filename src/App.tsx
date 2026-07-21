@@ -12,6 +12,7 @@ import { keyboardEventToChord } from "@/lib/keybindings";
 import { CommandPaletteContext, useCommandPaletteContext } from "@/contexts/CommandPaletteContext";
 import { useCommandPalette } from "@/hooks/useCommandPalette";
 import { CommandPalette } from "@/components/CommandPalette";
+import { applyZoom, getStoredZoom, nudgeZoom } from "@/lib/uiZoom";
 import { useDebugSettings, EVENT_ITEMS } from "@/hooks/useDebugSettings";
 import { Home as HomeIcon, Bug, ScrollText, Settings as SettingsIcon, Info, Sun, Moon, Keyboard, Bell, Zap, Plus, Eye, FileSearch } from "lucide-react";
 
@@ -34,6 +35,20 @@ function AppContent() {
   const { resolvedTheme, setTheme } = useTheme();
   const { reverseLookup } = useKeybindingContext();
   const { toggle, registerCommands } = useCommandPaletteContext();
+
+  // Apply the saved UI scale on startup, and handle zoom hotkeys
+  // (Ctrl/Cmd +/-/0) — persisted via uiZoom so the choice survives restarts.
+  useEffect(() => {
+    applyZoom(getStoredZoom());
+    const onZoomKey = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
+      if (e.key === "=" || e.key === "+") { e.preventDefault(); nudgeZoom(1); }
+      else if (e.key === "-" || e.key === "_") { e.preventDefault(); nudgeZoom(-1); }
+      else if (e.key === "0") { e.preventDefault(); nudgeZoom(0); }
+    };
+    window.addEventListener("keydown", onZoomKey);
+    return () => window.removeEventListener("keydown", onZoomKey);
+  }, []);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {

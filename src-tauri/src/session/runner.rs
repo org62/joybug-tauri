@@ -10,11 +10,15 @@ use super::breakpoints::{apply_auto_module_breakpoints, deactivate_breakpoints_f
 use super::patches::{deactivate_patches_for_module, emit_patches_event, reapply_patches_for_module};
 use super::dispatch::handle_ui_commands;
 use super::helpers::{module_short_name, update_session_from_event};
+use super::symbols::reapply_symbols_for_module;
 use super::types::DebugSession;
 
-/// Reapply patches, breakpoints, bookmarks, and settings-driven auto breakpoints for a
-/// freshly loaded module. Patches must be applied BEFORE breakpoints so that patches read
-/// real binary bytes (not 0xCC) and breakpoints store patched bytes as originals.
+/// Reapply a manual PDB, patches, breakpoints, bookmarks, and settings-driven auto
+/// breakpoints for a freshly loaded module. Patches must come BEFORE breakpoints so
+/// patches read real binary bytes (not 0xCC) and breakpoints store patched bytes as
+/// originals. A persisted manual PDB is kicked off first but loads asynchronously
+/// (off the debug loop); breakpoints re-resolve their source lines here without it
+/// and again when the async load lands (see `reapply_symbols_for_module`).
 /// `state` must NOT be locked when calling this.
 fn reapply_for_loaded_module(
     session: &mut DebugSession,
@@ -24,6 +28,7 @@ fn reapply_for_loaded_module(
     base: u64,
 ) {
     let short = module_short_name(name);
+    reapply_symbols_for_module(session, app_handle_clone, pid, &short, base);
     reapply_patches_for_module(session, pid, &short, base);
     reapply_breakpoints_for_module(session, pid, &short, base);
     reapply_bookmarks_for_module(session, pid, &short);

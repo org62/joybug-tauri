@@ -145,6 +145,19 @@ export function usePatches(sessionId?: string, isPaused?: boolean, sessionPatche
     }
   }, [sessionId]);
 
+  // Restore the original bytes at a patched address. The backend undoes a
+  // tracked UI patch when one covers the address, else raw-restores from the
+  // on-disk image (external hook, self-modifying code). It emits
+  // patches-updated, which refreshes the assembly view.
+  const restoreImageBytes = useCallback(async (address: string) => {
+    if (!sessionId) return;
+    try {
+      await invoke('restore_image_bytes', { sessionId, address });
+    } catch (e) {
+      console.error('Failed to restore image bytes:', e);
+    }
+  }, [sessionId]);
+
   return useMemo(() => ({
     patches,
     assemblePatch,
@@ -153,7 +166,8 @@ export function usePatches(sessionId?: string, isPaused?: boolean, sessionPatche
     enablePatch,
     updatePatch,
     enablePatchGroup,
-  }), [patches, assemblePatch, undoPatch, undoPatches, enablePatch, updatePatch, enablePatchGroup]);
+    restoreImageBytes,
+  }), [patches, assemblePatch, undoPatch, undoPatches, enablePatch, updatePatch, enablePatchGroup, restoreImageBytes]);
 }
 
 export type PatchState = ReturnType<typeof usePatches>;

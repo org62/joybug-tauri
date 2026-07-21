@@ -1,17 +1,114 @@
-use tauri::{AppHandle, Emitter};
-use tracing::{debug, error};
+use std::sync::{Arc, Mutex};
 
+use joybug2::protocol_io::PdbLoadOutcome;
+use tauri::{AppHandle, Emitter};
+use tracing::{debug, error, info, warn};
+
+use super::helpers::module_short_name;
 use super::types::{DebugSession, SymbolData};
+use crate::state::{SessionStateUI, SymbolOverrideInfo};
+
+/// Remember a manually-loaded PDB so a session restart re-applies it. Keyed by
+/// the module's lowercased short name (the base changes with ASLR). Upserts the
+/// entry for that module and persists the whole set for the target.
+///
+/// `module_base` is resolved to a module short name via the live module list;
+/// if no module matches (shouldn't happen for a base the UI just loaded), the
+/// override isn't recorded.
+pub(crate) fn record_symbol_override(
+    state_arc: &Arc<Mutex<SessionStateUI>>,
+    module_base: u64,
+    pdb_path: &str,
+    force: bool,
+) {
+    let (launch_command, overrides) = {
+        let mut state = state_arc.lock().unwrap();
+        let Some(module) = state.modules.iter().find(|m| m.base == module_base) else {
+            warn!("record_symbol_override: no module at base 0x{:X}", module_base);
+            return;
+        };
+        let name = module_short_name(&module.name).to_lowercase();
+        state.symbol_overrides.retain(|o| !o.module_name.eq_ignore_ascii_case(&name));
+        state.symbol_overrides.push(SymbolOverrideInfo {
+            module_name: name,
+            pdb_path: pdb_path.to_string(),
+            force,
+        });
+        (state.launch_command.clone(), state.symbol_overrides.clone())
+    };
+    crate::symbol_store::save_symbol_overrides(&launch_command, &overrides);
+}
+
+/// Re-apply a persisted manual PDB when its module (re)loads. Looks up the
+/// override by short name and, if present, loads the PDB at the module's current
+/// base **on a background thread** so the debug event loop isn't blocked while
+/// the server parses the PDB (seconds for a large one).
+///
+/// The load runs over a fresh OOB connection; the server's symbol state is shared
+/// across connections, so the debug-loop client sees the result. When it lands,
+/// symbol status flips to `loaded` (the UI polls this and refreshes symbol-derived
+/// views on its own), and we re-resolve source lines for this module's breakpoints
+/// — the one thing the old synchronous "symbols before breakpoints" ordering gave
+/// us for free.
+pub(crate) fn reapply_symbols_for_module(
+    session: &mut DebugSession,
+    app_handle_clone: &Option<AppHandle>,
+    pid: u32,
+    module_name: &str,
+    module_base: u64,
+) {
+    let over = {
+        let state = session.state.lock().unwrap();
+        state
+            .symbol_overrides
+            .iter()
+            .find(|o| o.module_name.eq_ignore_ascii_case(module_name))
+            .map(|o| (o.pdb_path.clone(), o.force))
+    };
+    let Some((pdb_path, force)) = over else { return };
+
+    let state_arc = session.state.clone();
+    let handle = app_handle_clone.clone();
+    let module_name = module_name.to_string();
+    std::thread::spawn(move || {
+        let (mut client, _) = match crate::commands::create_oob_client(&state_arc) {
+            Ok(c) => c,
+            Err(e) => {
+                warn!("Async PDB reapply for {}: no OOB client: {}", module_name, e);
+                return;
+            }
+        };
+        match client.load_pdb_from_path(pid, module_base, &pdb_path, force) {
+            Ok(PdbLoadOutcome::Loaded { symbol_count }) => {
+                info!(
+                    "Re-applied manual PDB '{}' for {} at 0x{:X} ({} symbols)",
+                    pdb_path, module_name, module_base, symbol_count
+                );
+                // Symbols now exist — re-resolve source lines for breakpoints in
+                // this module (they were reapplied before the async load finished).
+                super::breakpoints::refresh_breakpoint_source_lines_for_module(
+                    &mut client, &handle, pid, &module_name,
+                );
+            }
+            Ok(PdbLoadOutcome::Mismatch(_)) => {
+                warn!(
+                    "Manual PDB '{}' for {} mismatched on restart; not loaded (force={})",
+                    pdb_path, module_name, force
+                );
+            }
+            Err(e) => warn!("Failed to re-apply manual PDB '{}' for {}: {}", pdb_path, module_name, e),
+        }
+    });
+}
 
 /// Processes a symbol search request and emits results to the frontend
 pub(crate) fn process_symbol_search(
     session: &mut DebugSession,
     app_handle_clone: &Option<AppHandle>,
-    event: &joybug2::protocol_io::DebugEvent,
+    pid: u32,
     pattern: &str,
     limit: u32,
 ) {
-    let pid = event.pid();
     debug!("📤 Processing symbol search request: pid={}, pattern='{}', limit={}", pid, pattern, limit);
 
     match session.find_symbols(pattern, limit as usize) {
@@ -159,10 +256,9 @@ pub(crate) fn process_resolve_thread_symbols(
 pub(crate) fn process_module_extra_info_request(
     session: &mut DebugSession,
     app_handle_clone: &Option<AppHandle>,
-    event: &joybug2::protocol_io::DebugEvent,
+    pid: u32,
     module_base: u64,
 ) {
-    let pid = event.pid();
     debug!("📤 Processing module extra info request: pid={}, module_base=0x{:X}", pid, module_base);
 
     if let Some(ref handle) = app_handle_clone {

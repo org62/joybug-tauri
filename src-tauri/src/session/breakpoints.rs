@@ -656,6 +656,47 @@ pub(crate) fn process_update_breakpoint(
     persist_breakpoints(&session.state);
 }
 
+/// Re-resolve source file/line for a module's active breakpoints and, if any
+/// changed, emit + persist. Called after a manual PDB finishes loading
+/// asynchronously (see `reapply_symbols_for_module`), so breakpoints that were
+/// re-applied before the symbols were ready pick up their source lines. Runs
+/// over whichever client the caller holds (the async path uses an OOB client).
+pub(crate) fn refresh_breakpoint_source_lines_for_module(
+    session: &mut DebugSession,
+    app_handle_clone: &Option<AppHandle>,
+    pid: u32,
+    module_name: &str,
+) {
+    let targets: Vec<(String, u64)> = {
+        let state = session.state.lock().unwrap();
+        state.breakpoints.iter()
+            .filter(|bp| bp.is_active && bp.address != 0 && bp.module_name.eq_ignore_ascii_case(module_name))
+            .map(|bp| (bp.id.clone(), bp.address))
+            .collect()
+    };
+    if targets.is_empty() {
+        return;
+    }
+
+    let mut changed = false;
+    for (bp_id, addr) in targets {
+        let (source_file, source_line) = resolve_source_line(session, pid, addr);
+        let mut state = session.state.lock().unwrap();
+        if let Some(bp) = state.breakpoints.iter_mut().find(|b| b.id == bp_id) {
+            if bp.source_file != source_file || bp.source_line != source_line {
+                bp.source_file = source_file;
+                bp.source_line = source_line;
+                changed = true;
+            }
+        }
+    }
+
+    if changed {
+        emit_breakpoints_event(session, app_handle_clone);
+        persist_breakpoints(&session.state);
+    }
+}
+
 /// Re-apply breakpoints for a newly loaded module
 pub(crate) fn reapply_breakpoints_for_module(
     session: &mut DebugSession,

@@ -452,7 +452,10 @@ function SourceRow({
   return (
     <div
       className={cn(
-        "flex items-center hover:bg-muted/30 cursor-default font-mono text-xs",
+        // overflow-hidden: rows are a fixed px height in a virtualized list, so
+        // clip rather than let an over-tall line (e.g. under OS text scaling)
+        // bleed into the neighbouring row. Prefer the UI-scale zoom for enlarging.
+        "flex items-center overflow-hidden hover:bg-muted/30 cursor-default font-mono text-xs",
         isSelected && "bg-accent/50",
         isPC && !isSelected && "bg-yellow-100 dark:bg-yellow-900/40",
         isNavTarget && !isPC && !isSelected && "bg-blue-100 dark:bg-blue-900/40",

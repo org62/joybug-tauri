@@ -379,16 +379,16 @@ fn process_command(
             }
             CommandResult::ResumeExecution
         }
-        UICommand::Disassembly { arch, address, count } => {
-            process_disassembly_request(session, app_handle_clone, event, arch, address, count);
+        UICommand::Disassembly { arch, address, count, compare_image } => {
+            process_disassembly_request(session, app_handle_clone, event.pid(), arch, address, count, compare_image);
             CommandResult::Continue
         }
-        UICommand::DisassembleFunction { arch, address, max_instructions } => {
-            process_function_disassembly_request(session, app_handle_clone, event, arch, address, max_instructions);
+        UICommand::DisassembleFunction { arch, address, max_instructions, compare_image } => {
+            process_function_disassembly_request(session, app_handle_clone, event.pid(), arch, address, max_instructions, compare_image);
             CommandResult::Continue
         }
-        UICommand::DisassembleBackward { arch, target, count } => {
-            process_disassembly_backward_request(session, app_handle_clone, event, arch, target, count);
+        UICommand::DisassembleBackward { arch, target, count, compare_image } => {
+            process_disassembly_backward_request(session, app_handle_clone, event.pid(), arch, target, count, compare_image);
             CommandResult::Continue
         }
         UICommand::GetCallStack => {
@@ -408,27 +408,27 @@ fn process_command(
             CommandResult::Continue
         }
         UICommand::SearchSymbols { ref pattern, limit } => {
-            process_symbol_search(session, app_handle_clone, event, pattern, limit);
+            process_symbol_search(session, app_handle_clone, event.pid(), pattern, limit);
             CommandResult::Continue
         }
         UICommand::ReadMemory { address, size } => {
-            process_memory_read(session, app_handle_clone, event, address, size);
+            process_memory_read(session, app_handle_clone, event.pid(), address, size);
             CommandResult::Continue
         }
         UICommand::WriteMemory { address, ref data } => {
-            process_memory_write(session, app_handle_clone, event, address, data);
+            process_memory_write(session, app_handle_clone, event.pid(), address, data);
             CommandResult::Continue
         }
         UICommand::GetMemoryRegions => {
-            process_memory_regions_request(session, app_handle_clone, event);
+            process_memory_regions_request(session, app_handle_clone, event.pid());
             CommandResult::Continue
         }
         UICommand::Dereference { address, count } => {
-            process_dereference_request(session, app_handle_clone, event, address, count);
+            process_dereference_request(session, app_handle_clone, event.pid(), address, count);
             CommandResult::Continue
         }
         UICommand::DereferenceBatch { ref addresses } => {
-            process_dereference_batch(session, app_handle_clone, event, addresses);
+            process_dereference_batch(session, app_handle_clone, event.pid(), addresses);
             CommandResult::Continue
         }
         UICommand::Emulate { max_instructions, mode, ref exit_condition, ref request_id, ref memory_reads } => {
@@ -492,11 +492,11 @@ fn process_command(
             CommandResult::Continue
         }
         UICommand::GetModuleExtraInfo { module_base } => {
-            process_module_extra_info_request(session, app_handle_clone, event, module_base);
+            process_module_extra_info_request(session, app_handle_clone, event.pid(), module_base);
             CommandResult::Continue
         }
         UICommand::SearchMemory { pattern, max_results } => {
-            process_memory_search(session, app_handle_clone, event, pattern, max_results);
+            process_memory_search(session, app_handle_clone, event.pid(), pattern, max_results);
             CommandResult::Continue
         }
         UICommand::AssemblePatch { address, ref assembly_text, arch, nop_pad } => {
@@ -521,6 +521,10 @@ fn process_command(
         }
         UICommand::EnablePatchGroup { ref group, enabled } => {
             process_enable_patch_group(session, app_handle_clone, event, group, enabled);
+            CommandResult::Continue
+        }
+        UICommand::RestoreImageBytes { address } => {
+            process_restore_image_bytes(session, app_handle_clone, event, address);
             CommandResult::Continue
         }
         UICommand::AddBookmark { ref kind, address, ref value_type, ref name, ref comment, ref pointer_offsets, ref base_symbol, ref asm_text } => {

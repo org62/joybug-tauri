@@ -1,6 +1,6 @@
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter};
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 use super::helpers::module_short_name;
 use super::types::DebugSession;
@@ -475,6 +475,112 @@ pub(crate) fn reapply_patches_for_module(
             info!("Resolved address for disabled patch {} at 0x{:X}", p.id, addr);
         }
     }
+}
+
+/// Max contiguous bytes a single "restore original image bytes" writes. Bounds
+/// the blast radius so an accidental restore can't rewrite a large region.
+const MAX_RESTORE_BYTES: usize = 64;
+
+/// Restore the original on-disk image bytes for the modified run containing
+/// `address`. Used for in-memory modifications that aren't tracked UI patches
+/// (external hooks, self-modifying code). Determines the contiguous differing
+/// range around `address` (bounded, never crossing outside the read window),
+/// suspends overlapping breakpoints, writes the original bytes, and refreshes.
+pub(crate) fn process_restore_image_bytes(
+    session: &mut DebugSession,
+    app_handle_clone: &Option<AppHandle>,
+    event: &joybug2::protocol_io::DebugEvent,
+    address: u64,
+) {
+    let pid = event.pid();
+    let arch = crate::commands::get_session_arch(&session.state);
+
+    // A tracked UI patch covering this address must be undone through the patch
+    // machinery (which flips is_applied and repersists) — a raw image restore
+    // would rewrite the bytes but leave the record applied, so the patch would
+    // silently come back via reapply_patches_for_module on the next start.
+    let covering_patch = {
+        let state = session.state.lock().unwrap();
+        state
+            .patches
+            .iter()
+            .find(|p| {
+                p.is_applied
+                    && p.address != 0
+                    && address >= p.address
+                    && address < p.address + p.patched_bytes.len() as u64
+            })
+            .map(|p| p.id.clone())
+    };
+    if let Some(patch_id) = covering_patch {
+        process_undo_patch(session, app_handle_clone, event, &patch_id);
+        return;
+    }
+
+    // Locate (lazily building) the original image covering this address.
+    let images = crate::session::image_cache::ensure_and_snapshot_images(&session.state, arch, address);
+    let Some(image) = images
+        .iter()
+        .find(|im| !im.unavailable && im.contains(address) && im.is_code(address))
+    else {
+        warn!("Restore image bytes: no original image for 0x{:X}", address);
+        emit_assemble_patch_error(
+            session,
+            app_handle_clone,
+            "No original image available for this address.".to_string(),
+        );
+        return;
+    };
+
+    // Read a window around the address and diff against the image to find the
+    // contiguous modified run. The window bounds the maximum restore size.
+    let window_start = address.saturating_sub(MAX_RESTORE_BYTES as u64);
+    let window_len = MAX_RESTORE_BYTES * 2 + 16;
+    let live = match session.read_memory(pid, window_start, window_len) {
+        Ok(b) => b,
+        Err(e) => {
+            warn!("Restore image bytes: read failed at 0x{:X}: {}", window_start, e);
+            emit_assemble_patch_error(session, app_handle_clone, format!("Failed to read memory: {}", e));
+            return;
+        }
+    };
+    let Some(orig_window) = image.bytes_at(window_start, live.len()) else {
+        warn!("Restore image bytes: image window out of range at 0x{:X}", window_start);
+        return;
+    };
+
+    // Index of `address` within the window; walk outward over differing bytes.
+    let anchor = (address - window_start) as usize;
+    if anchor >= live.len() || live[anchor] == orig_window[anchor] {
+        // Nothing differs at the anchor (already restored, or the row's first
+        // byte matches). Nothing to do.
+        debug!("Restore image bytes: no diff at anchor 0x{:X}", address);
+        return;
+    }
+    let mut start = anchor;
+    while start > 0 && live[start - 1] != orig_window[start - 1] && anchor - (start - 1) < MAX_RESTORE_BYTES {
+        start -= 1;
+    }
+    let mut end = anchor + 1;
+    while end < live.len() && live[end] != orig_window[end] && (end - anchor) < MAX_RESTORE_BYTES {
+        end += 1;
+    }
+
+    let restore_addr = window_start + start as u64;
+    let restore_bytes = orig_window[start..end].to_vec();
+    let size = restore_bytes.len();
+
+    let suspended_bps = suspend_overlapping_breakpoints(session, pid, restore_addr, size);
+    match session.write_memory(pid, restore_addr, restore_bytes) {
+        Ok(()) => info!("Restored {} original image bytes at 0x{:X}", size, restore_addr),
+        Err(e) => warn!("Failed to restore image bytes at 0x{:X}: {}", restore_addr, e),
+    }
+    restore_suspended_breakpoints(session, pid, &suspended_bps);
+
+    // The patch list is unchanged, but patches-updated is the event the assembly
+    // view already listens to for a disassembly refresh — reuse it so the
+    // restored bytes (and cleared is_patched flag) show without a new channel.
+    emit_patches_event(session, app_handle_clone);
 }
 
 pub(crate) fn deactivate_patches_for_module(

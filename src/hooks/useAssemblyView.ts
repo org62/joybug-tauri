@@ -16,9 +16,11 @@ import { NavHistoryStore } from '@/lib/navHistory';
 // Instruction interface matching backend SerializableInstruction
 export interface Instruction {
   address: string;
-  // Symbolized label; null when the address resolves to no module/symbol
-  // (the view falls back to rendering the address).
-  symbol: string | null;
+  // Every "module!name" starting exactly at this address (offset 0). Usually 0
+  // or 1, but aliases (e.g. NtClose/ZwClose) share an address → one label row
+  // each, rendered above the instruction — never in the first column, which
+  // always shows the address.
+  symbols?: string[];
   bytes: string;
   mnemonic: string;
   op_str: string;
@@ -27,6 +29,35 @@ export interface Instruction {
   is_ret: boolean;
   jump_target: string | null;
   is_patched?: boolean;
+  // When the live bytes differ from the on-disk image: original image bytes
+  // (space-separated hex) and their disassembly, shown on hover over the row.
+  original_bytes?: string;
+  original_disasm?: string;
+  // True for a synthetic `db 0xXX` row where a byte couldn't be decoded.
+  is_invalid?: boolean;
+}
+
+// Display row model: instructions plus the symbol label rows derived from them.
+// Labels attach to a single instruction (all names starting at its address), so a
+// slice's row count is intrinsic to the slice — prepends never change existing rows.
+export type AsmRow =
+  | { kind: 'label'; symbol: string; address: string }
+  | { kind: 'insn'; insn: Instruction };
+
+export function buildAsmRows(insns: Instruction[]): AsmRow[] {
+  const rows: AsmRow[] = [];
+  for (const insn of insns) {
+    for (const symbol of insn.symbols ?? []) {
+      rows.push({ kind: 'label', symbol, address: insn.address });
+    }
+    rows.push({ kind: 'insn', insn });
+  }
+  return rows;
+}
+
+/** Display-row count of `buildAsmRows(insns)` without materializing the rows. */
+export function countAsmRows(insns: Instruction[]): number {
+  return insns.reduce((n, insn) => n + 1 + (insn.symbols?.length ?? 0), 0);
 }
 
 // Event payloads from Tauri
@@ -48,6 +79,9 @@ interface FunctionDisassemblyError {
 // Settings stored in localStorage
 interface AssemblyViewSettings {
   showBytes: boolean;
+  // Compare live code against the on-disk image to flag patches/hooks (purple
+  // highlight + original-on-hover). Off skips the per-request image diff entirely.
+  compareImage: boolean;
 }
 
 const SETTINGS_KEY = 'assembly-view-settings';
@@ -55,21 +89,24 @@ const SETTINGS_KEY = 'assembly-view-settings';
 // The backend will use actual function bounds when possible
 const DEFAULT_MAX_INSTRUCTIONS = 2000;
 
+const DEFAULT_SETTINGS: AssemblyViewSettings = { showBytes: true, compareImage: true };
+
 function loadSettings(): AssemblyViewSettings {
   try {
     const stored = localStorage.getItem(SETTINGS_KEY);
     if (stored) {
-      return JSON.parse(stored);
+      return { ...DEFAULT_SETTINGS, ...JSON.parse(stored) };
     }
   } catch (e) {
     console.error('Failed to load assembly view settings:', e);
   }
-  return { showBytes: true };
+  return { ...DEFAULT_SETTINGS };
 }
 
-function saveSettings(settings: AssemblyViewSettings) {
+// Merge a partial update into the persisted settings (each toggle owns one field).
+function persistSettings(partial: Partial<AssemblyViewSettings>) {
   try {
-    localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify({ ...loadSettings(), ...partial }));
   } catch (e) {
     console.error('Failed to save assembly view settings:', e);
   }
@@ -85,6 +122,8 @@ export interface AssemblyViewState {
   isLoading: boolean;
   error: string | null;
   showBytes: boolean;
+  /** Whether live code is compared against the on-disk image (patch highlight). */
+  compareImage: boolean;
   canGoBack: boolean;
   canGoForward: boolean;
   // Address to highlight temporarily (after navigation)
@@ -93,9 +132,11 @@ export interface AssemblyViewState {
    *  scroll extension. The view gates its PC-follow/jump auto-scroll on this so
    *  prepend/append don't re-fire it. */
   loadGeneration: number;
-  /** Signals a just-completed prepend of `count` rows at the top (a fresh object
-   *  per prepend, so an effect keyed on it re-fires even for equal counts). The
-   *  view compensates the scroll offset so the viewport stays visually stable. */
+  /** Signals a just-completed prepend of `count` DISPLAY rows at the top —
+   *  instructions plus their derived label rows (`buildAsmRows`), matching what
+   *  the view actually inserts. A fresh object per prepend, so an effect keyed
+   *  on it re-fires even for equal counts. The view compensates the scroll
+   *  offset so the viewport stays visually stable. */
   prependSignal: { count: number };
 }
 
@@ -121,6 +162,8 @@ export interface AssemblyViewActions {
   followJump: (target: bigint, source: bigint) => void;
   refresh: () => void;
   toggleBytesColumn: () => void;
+  /** Toggle live-vs-disk patch comparison; re-requests so highlights appear/clear. */
+  toggleImageCompare: () => void;
   /** Jump back to the current PC: re-enables PC-follow and reloads the PC's
    *  function (with context) unless the PC row is already loaded. Records the
    *  departed location so "back" undoes the jump. */
@@ -211,14 +254,16 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showBytes, setShowBytes] = useState(() => loadSettings().showBytes);
+  const [compareImage, setCompareImage] = useState(() => loadSettings().compareImage);
   // Address to highlight temporarily after navigation (for jump targets)
   const [jumpTargetAddress, setJumpTargetAddress] = useState<bigint | null>(null);
 
   // Infinite-scroll extension. `loadGeneration` bumps ONLY on a full replace
   // (goto / PC-follow / function load), never on prepend/append — the component
   // gates its PC-follow/jump auto-scroll on it so extensions don't yank the view.
-  // `prependSignal` tells the component how many rows were just prepended so it can
-  // compensate the scroll offset (keep the viewport visually stable).
+  // `prependSignal` tells the component how many display rows (instructions +
+  // label rows) were just prepended so it can compensate the scroll offset
+  // (keep the viewport visually stable).
   const [loadGeneration, setLoadGeneration] = useState(0);
   const [prependSignal, setPrependSignal] = useState<{ count: number }>({ count: 0 });
 
@@ -255,6 +300,11 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
   // Derived PC address
   const pcAddress = pcAddressProp != null ? BigInt(pcAddressProp) : null;
 
+  // Mirror compareImage for the disassembly-request calls so they read the
+  // current value without carrying it in every callback's dependency list.
+  const compareImageRef = useRef(compareImage);
+  useEffect(() => { compareImageRef.current = compareImage; }, [compareImage]);
+
   // Keep the listener-visible mirror in sync.
   useEffect(() => { instructionsRef.current = instructions; }, [instructions]);
 
@@ -286,7 +336,7 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
     // often arrives in the same tick (context prefetch fires both), and it
     // must build on these rows or its setInstructions clobbers them.
     instructionsRef.current = next;
-    if (edge === 'above') setPrependSignal({ count: fresh.length });
+    if (edge === 'above') setPrependSignal({ count: countAsmRows(fresh) });
     setInstructions(next);
   }, []);
 
@@ -347,6 +397,7 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
         sessionId,
         address: Number(address),
         maxInstructions: DEFAULT_MAX_INSTRUCTIONS,
+        compareImage: compareImageRef.current,
       });
       setCurrentAddress(address);
     } catch (err) {
@@ -379,6 +430,7 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
       sessionId,
       target: Number(topAddr),
       count: EXTEND_CHUNK,
+      compareImage: compareImageRef.current,
     }).catch(() => {
       pendingBackwardTarget.current = null;
     });
@@ -401,6 +453,7 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
       sessionId,
       address: Number(bottomStart),
       count: EXTEND_CHUNK,
+      compareImage: compareImageRef.current,
     }).catch(() => {
       pendingAppendTarget.current = null;
     });
@@ -490,10 +543,30 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
   const toggleBytesColumn = useCallback(() => {
     setShowBytes(prev => {
       const newValue = !prev;
-      saveSettings({ showBytes: newValue });
+      persistSettings({ showBytes: newValue });
       return newValue;
     });
   }, []);
+
+  // Toggle live-vs-disk image comparison. The refresh happens in the effect below
+  // once compareImageRef reflects the new value, so the re-request uses it.
+  const toggleImageCompare = useCallback(() => {
+    setCompareImage(prev => {
+      const newValue = !prev;
+      persistSettings({ compareImage: newValue });
+      return newValue;
+    });
+  }, []);
+
+  // Re-request the current view when the compare toggle flips so patch highlights
+  // appear or clear immediately. The compareImageRef sync effect is declared
+  // earlier, so it runs first and the re-request reads the new value.
+  const prevCompareImage = useRef(compareImage);
+  useEffect(() => {
+    if (compareImage === prevCompareImage.current) return;
+    prevCompareImage.current = compareImage;
+    refresh();
+  }, [compareImage, refresh]);
 
   // Jump back to the current PC (toolbar button; also the recovery path when
   // the view is stranded elsewhere). Behaves like a user navigation (recorded
@@ -620,6 +693,23 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
       }
     );
 
+    // Forward (append) error — the scroll-down counterpart of
+    // `disassembly-backward-error`. Without this, a failed append never clears
+    // `pendingAppendTarget`, so the single-in-flight guard wedges scroll-down
+    // permanently. With resilient decode a bad byte no longer errors; a hard
+    // error here means genuinely unreadable memory below, so latch the edge.
+    const unlistenForwardError = listen<{ session_id: string; address: number; error: string }>(
+      'disassembly-error',
+      (event) => {
+        if (event.payload.session_id !== sessionId) return;
+        let echoed: bigint | null = null;
+        try { echoed = BigInt(event.payload.address); } catch { echoed = null; }
+        if (pendingAppendTarget.current === null || echoed !== pendingAppendTarget.current) return;
+        pendingAppendTarget.current = null;
+        reachedBottom.current = true;
+      }
+    );
+
     // Refresh disassembly when patches change so patched instructions are shown
     const unlistenPatches = listen<{session_id: string}>(
       'patches-updated',
@@ -632,6 +722,7 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
             sessionId,
             address: Number(lastRequestedAddress.current),
             maxInstructions: DEFAULT_MAX_INSTRUCTIONS,
+            compareImage: compareImageRef.current,
           }).catch(() => {
             // Ignore errors (e.g., session ended between patch and refresh)
           });
@@ -645,6 +736,7 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
       unlistenBackwardError.then(unlisten => unlisten());
       unlistenError.then(unlisten => unlisten());
       unlistenOldSuccess.then(unlisten => unlisten());
+      unlistenForwardError.then(unlisten => unlisten());
       unlistenPatches.then(unlisten => unlisten());
     };
   }, [sessionId, disassemble, resetExtension, applyEdgeExtension]);
@@ -770,6 +862,7 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
     isLoading,
     error,
     showBytes,
+    compareImage,
     canGoBack,
     canGoForward,
     jumpTargetAddress,
@@ -782,6 +875,7 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
     followJump,
     refresh,
     toggleBytesColumn,
+    toggleImageCompare,
     goToPC,
     loadMoreAbove,
     loadMoreBelow,

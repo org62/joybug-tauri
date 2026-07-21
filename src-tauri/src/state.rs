@@ -55,6 +55,16 @@ pub struct PatchInfo {
     pub group: Option<String>,         // group name
 }
 
+/// A manually-loaded PDB for a module, remembered per target so a restart
+/// re-applies it automatically. Keyed by module short name (base changes with
+/// ASLR), like breakpoints and patches.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SymbolOverrideInfo {
+    pub module_name: String, // lowercased module short name (incl. extension)
+    pub pdb_path: String,    // user-chosen PDB file path
+    pub force: bool,         // loaded despite a GUID/age mismatch ("Load anyway")
+}
+
 /// A persisted bookmark: a typed/named memory cell (Cheat-Engine style), a
 /// pointer chain, or a code annotation. Keyed per target by launch_command, like
 /// breakpoints and patches.
@@ -322,6 +332,9 @@ pub struct SessionStateUI {
     // Patches
     pub patches: Vec<PatchInfo>,
 
+    // Manually-loaded PDBs, re-applied per module on (re)start.
+    pub symbol_overrides: Vec<SymbolOverrideInfo>,
+
     // Bookmarks
     pub bookmarks: Vec<BookmarkInfo>,
 
@@ -332,6 +345,11 @@ pub struct SessionStateUI {
     /// (auto-continuing without pausing the UI) until the PC leaves the starting
     /// source line, then clears this and pauses. `None` = normal instruction stepping.
     pub source_step: Option<SourceStepState>,
+
+    /// Lazily-built original on-disk images per module base, used to flag
+    /// in-memory code that differs from the file (patch detection). Cleared on
+    /// session restart; entries dropped on module unload. See `session::image_cache`.
+    pub original_images: HashMap<u64, Arc<crate::session::image_cache::OriginalModuleImage>>,
 }
 
 /// Transient state for an active source-line step (see SessionStateUI::source_step).
@@ -382,9 +400,11 @@ impl SessionStateUI {
             is_callstack_window_open: false,
             breakpoints: Vec::new(),
             patches: Vec::new(),
+            symbol_overrides: Vec::new(),
             bookmarks: Vec::new(),
             pass_exception_on_continue: false,
             source_step: None,
+            original_images: HashMap::new(),
         }
     }
 
@@ -406,6 +426,9 @@ impl SessionStateUI {
 
         self.pass_exception_on_continue = false;
         self.source_step = None;
+
+        // Original-image cache is per-run (load bases change with ASLR).
+        self.original_images.clear();
 
         // Keep breakpoints but mark all as inactive/unresolved
         for bp in &mut self.breakpoints {

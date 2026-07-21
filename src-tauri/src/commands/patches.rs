@@ -62,6 +62,27 @@ pub fn undo_patches(
     Ok(())
 }
 
+/// Restore the original on-disk image bytes at `address` for an in-memory
+/// modification that has no tracked UI patch (external hook, self-modifying
+/// code). Requires a paused session (writes memory in the debug loop).
+#[tauri::command]
+pub fn restore_image_bytes(
+    session_id: String,
+    address: String,
+    session_states: State<'_, SessionStatesMap>,
+) -> Result<()> {
+    let address = super::parse_hex_u64(&address, "address")?;
+
+    super::send_paused_command(
+        &session_id,
+        &session_states,
+        UICommand::RestoreImageBytes { address },
+    )?;
+
+    info!("Restore image bytes request sent for session {} at 0x{:X}", session_id, address);
+    Ok(())
+}
+
 #[tauri::command]
 pub fn enable_patch(
     session_id: String,

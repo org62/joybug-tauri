@@ -1,5 +1,5 @@
 import { test, expect } from "../helpers/test-fixtures";
-import { createAndStartSession, cleanupSession, fixtureExe, invoke, goToWindow } from "../helpers/session-helpers";
+import { createAndStartSession, cleanupSession, fixtureExe, invoke, goToWindow, moduleBase } from "../helpers/session-helpers";
 import {
   waitForPaused,
   configureMinimalStopSettings,
@@ -36,15 +36,6 @@ async function waitForModuleSymbols(page: Page, sessionId: string, moduleSubstr:
     }, { id: sessionId, sub: moduleSubstr });
     expect(loaded).toBe(true);
   }).toPass({ timeout: 20_000, intervals: [200, 500] });
-}
-
-/** Module base ("0x..") for the first module whose path contains `substr`. */
-async function moduleBase(page: Page, sessionId: string, substr: string): Promise<string> {
-  return page.evaluate(async ({ id, sub }) => {
-    const mods = await (window as any).__TAURI_INTERNALS__.invoke("get_session_modules", { sessionId: id });
-    const m = (mods || []).find((x: any) => x.path.toLowerCase().includes(sub) || x.name.toLowerCase().includes(sub));
-    return m?.base_address as string;
-  }, { id: sessionId, sub: substr });
 }
 
 /** Activate a dock tab by its header title, opening it if the layout lacks it. */

@@ -3,8 +3,8 @@ use crate::session::{UICommand, SymbolData};
 use crate::state::SessionStatesMap;
 use joybug2::protocol_io::{PdbLoadOutcome, SymbolLoadState};
 use super::types::{ModuleSymbolStatusData, PdbLoadResultData, PdbMismatchData};
-use tauri::{Emitter, State};
-use tracing::{debug, error, info, warn};
+use tauri::State;
+use tracing::{debug, info, warn};
 
 /// Per-module symbol load status. Pure OOB so it works while Running, Paused, or
 /// non-invasively Open. Errors degrade to an empty list — this is advisory data
@@ -67,6 +67,8 @@ pub fn load_module_pdb(
     match super::flatten_oob(outcome) {
         Ok(PdbLoadOutcome::Loaded { symbol_count }) => {
             info!("Loaded PDB '{}' for module {} in session {} ({} symbols)", pdb_path, module_base, session_id, symbol_count);
+            // Remember this manual load so a session restart re-applies it.
+            crate::session::symbols::record_symbol_override(&session_arc, base, &pdb_path, force);
             Ok(PdbLoadResultData { loaded: true, symbol_count: Some(symbol_count), mismatch: None })
         }
         Ok(PdbLoadOutcome::Mismatch(m)) => {
@@ -115,60 +117,13 @@ pub fn search_session_symbols(
 ) -> Result<Vec<SymbolData>> {
     debug!("Searching for symbols in session {} with pattern '{}'", session_id, pattern);
     let limit_val = limit.unwrap_or(1000) as u32;
-    let session_arc = super::get_session_arc(&session_id, &session_states)?;
-
-    match super::try_send_paused_command(&session_arc, UICommand::SearchSymbols {
-        pattern: pattern.clone(),
-        limit: limit_val,
-    }) {
-        Ok(()) => {
-            info!("Symbol search request sent for session {} with pattern '{}'", session_id, pattern);
-        }
-        Err(_) => {
-            let found = super::with_oob_client(&session_arc, &session_id, &oob_pool, |oob, _pid| oob.find_symbols(&pattern, limit_val as usize));
-            match super::flatten_oob(found) {
-                Ok(resolved_symbols) => {
-                    let symbols: Vec<SymbolData> = resolved_symbols.iter().map(|rs| {
-                        let symbol_name = if let Some(pos) = rs.name.find('!') {
-                            rs.name[pos + 1..].to_string()
-                        } else {
-                            rs.name.clone()
-                        };
-                        SymbolData {
-                            name: symbol_name,
-                            module_name: rs.module_name.clone(),
-                            rva: rs.rva,
-                            va: format!("0x{:X}", rs.va),
-                            display_name: rs.name.clone(),
-                            is_function: rs.is_function,
-                        }
-                    }).collect();
-
-                    #[derive(serde::Serialize)]
-                    struct SymbolSearchResult<'a> {
-                        session_id: String,
-                        pattern: &'a str,
-                        symbols: &'a Vec<SymbolData>,
-                    }
-                    let result = SymbolSearchResult {
-                        session_id: session_id.clone(),
-                        pattern: &pattern,
-                        symbols: &symbols,
-                    };
-                    let _ = app_handle.emit("symbols-updated", &result);
-                    info!("OOB symbol search for session {} with pattern '{}'", session_id, pattern);
-                }
-                Err(e) => {
-                    error!("OOB symbol search failed: {}", e);
-                    #[derive(serde::Serialize)]
-                    struct SymbolSearchError<'a> { session_id: String, pattern: &'a str, error: String }
-                    let _ = app_handle.emit("symbols-error", &SymbolSearchError {
-                        session_id: session_id.clone(), pattern: &pattern, error: e.to_string(),
-                    });
-                }
-            }
-        }
-    }
+    // Both paths run `process_symbol_search`, which emits `symbols-updated`/`-error`.
+    let handle = Some(app_handle);
+    super::paused_or_oob(
+        &session_id, &session_states, &oob_pool,
+        UICommand::SearchSymbols { pattern: pattern.clone(), limit: limit_val },
+        move |client, pid| crate::session::symbols::process_symbol_search(client, &handle, pid, &pattern, limit_val),
+    )?;
     Ok(Vec::new())
 }
 

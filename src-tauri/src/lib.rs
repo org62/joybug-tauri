@@ -6,6 +6,7 @@ mod data_dir;
 mod error;
 mod events;
 mod patch_store;
+mod symbol_store;
 mod ui_logger;
 mod session;
 mod state;
@@ -165,6 +166,7 @@ pub fn run() {
             commands::enable_patch,
             commands::update_patch,
             commands::enable_patch_group,
+            commands::restore_image_bytes,
             commands::get_patches,
             commands::pe_open,
             commands::pe_read_bytes,

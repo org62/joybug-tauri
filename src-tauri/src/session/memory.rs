@@ -8,11 +8,10 @@ use super::types::*;
 pub(crate) fn process_memory_read(
     session: &mut DebugSession,
     app_handle_clone: &Option<AppHandle>,
-    event: &joybug2::protocol_io::DebugEvent,
+    pid: u32,
     address: u64,
     size: usize,
 ) {
-    let pid = event.pid();
     debug!("📤 Processing memory read request: pid={}, address=0x{:X}, size={}", pid, address, size);
 
     match session.read_memory(pid, address, size) {
@@ -76,11 +75,10 @@ pub(crate) fn process_memory_read(
 pub(crate) fn process_memory_write(
     session: &mut DebugSession,
     app_handle_clone: &Option<AppHandle>,
-    event: &joybug2::protocol_io::DebugEvent,
+    pid: u32,
     address: u64,
     data: &[u8],
 ) {
-    let pid = event.pid();
     debug!("📤 Processing memory write request: pid={}, address=0x{:X}, size={}", pid, address, data.len());
 
     match session.write_memory(pid, address, data.to_vec()) {
@@ -134,9 +132,8 @@ pub(crate) fn process_memory_write(
 pub(crate) fn process_memory_regions_request(
     session: &mut DebugSession,
     app_handle_clone: &Option<AppHandle>,
-    event: &joybug2::protocol_io::DebugEvent,
+    pid: u32,
 ) {
-    let pid = event.pid();
     debug!("📤 Processing memory regions request: pid={}", pid);
 
     match session.enumerate_memory_regions(pid) {
@@ -203,11 +200,10 @@ pub(crate) fn process_memory_regions_request(
 pub(crate) fn process_memory_search(
     session: &mut DebugSession,
     app_handle_clone: &Option<AppHandle>,
-    event: &joybug2::protocol_io::DebugEvent,
+    pid: u32,
     pattern: Vec<u8>,
     max_results: usize,
 ) {
-    let pid = event.pid();
     debug!("📤 Processing memory search request: pid={}, pattern_len={}, max_results={}", pid, pattern.len(), max_results);
 
     match session.search_memory(pid, pattern, max_results) {
@@ -308,11 +304,10 @@ pub(crate) fn serialize_dereference_entries(
 pub(crate) fn process_dereference_request(
     session: &mut DebugSession,
     app_handle_clone: &Option<AppHandle>,
-    event: &joybug2::protocol_io::DebugEvent,
+    pid: u32,
     address: u64,
     count: usize,
 ) {
-    let pid = event.pid();
     debug!("📤 Processing dereference request: pid={}, address=0x{:X}, count={}", pid, address, count);
 
     match session.dereference(pid, address, count, None) {
@@ -634,10 +629,10 @@ pub(crate) fn process_scan_memory_reset(
 pub(crate) fn process_dereference_batch(
     session: &mut DebugSession,
     app_handle_clone: &Option<AppHandle>,
-    event: &joybug2::protocol_io::DebugEvent,
+    pid: u32,
     addresses: &[u64],
 ) {
     for &address in addresses {
-        process_dereference_request(session, app_handle_clone, event, address, 1);
+        process_dereference_request(session, app_handle_clone, pid, address, 1);
     }
 }

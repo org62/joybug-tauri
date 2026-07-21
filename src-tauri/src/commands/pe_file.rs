@@ -29,16 +29,9 @@ use joybug2::protocol::{StringEncodingFilter, StringHit};
 use joybug2::windows_platform::disassembler::CapstoneDisassembler;
 use joybug2::windows_platform::{parse_module_extra_info_from_bytes, parse_pdb_matching_pe, WindowsSymbolProvider};
 
-const IMAGE_FILE_MACHINE_AMD64: u16 = 0x8664;
+use joybug2::pe_image::{rva_to_offset_loose, SectionMap};
 
-/// A section's file/virtual-address mapping, used to translate between file
-/// offsets and virtual/relative addresses.
-struct SectionMap {
-    raw_ptr: u32,
-    raw_size: u32,
-    virt_addr: u32,
-    virt_size: u32,
-}
+const IMAGE_FILE_MACHINE_AMD64: u16 = 0x8664;
 
 /// An opened PE file held in memory. `bytes` is the editable buffer.
 pub struct LoadedPeFile {
@@ -57,13 +50,7 @@ impl LoadedPeFile {
     /// RVAs outside any section (e.g. the PE headers) map to themselves.
     fn va_to_offset(&self, va: u64) -> Option<usize> {
         let rva = va.checked_sub(self.base)? as u32;
-        for s in &self.sections {
-            let size = s.virt_size.max(s.raw_size);
-            if rva >= s.virt_addr && rva < s.virt_addr + size {
-                return Some((s.raw_ptr as u64 + (rva - s.virt_addr) as u64) as usize);
-            }
-        }
-        Some(rva as usize)
+        Some(rva_to_offset_loose(&self.sections, rva))
     }
 
     /// Nearest symbol at-or-below `rva`, bounded to within the image.
@@ -166,16 +153,7 @@ fn machine_from_bytes(bytes: &[u8]) -> Option<u16> {
 }
 
 fn build_loaded(path: String, bytes: Vec<u8>, base: u64, info: &ModuleExtraInfo) -> LoadedPeFile {
-    let sections = info
-        .sections
-        .iter()
-        .map(|s| SectionMap {
-            raw_ptr: s.PointerToRawData,
-            raw_size: s.SizeOfRawData,
-            virt_addr: s.VirtualAddress,
-            virt_size: s.VirtualSize,
-        })
-        .collect();
+    let sections = info.sections.iter().map(SectionMap::from).collect();
     LoadedPeFile {
         path,
         bytes,
@@ -441,7 +419,7 @@ pub async fn pe_disassemble(
         }
         .map_err(|e| Error::InvalidParameter(format!("Disassembly failed: {:?}", e)))?;
 
-        Ok(crate::session::disassembly::serialize_instructions(&instructions, &[], &[]))
+        Ok(crate::session::disassembly::serialize_instructions(&instructions, &[], None))
     }))
     .await
 }

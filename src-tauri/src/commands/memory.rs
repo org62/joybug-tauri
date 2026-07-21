@@ -1,9 +1,12 @@
 use crate::error::Result;
-use crate::session::helpers::format_bytes;
+use crate::session::memory::{
+    process_dereference_batch, process_dereference_request, process_memory_read,
+    process_memory_regions_request, process_memory_search, process_memory_write,
+};
 use crate::session::UICommand;
 use crate::state::SessionStatesMap;
-use tauri::{Emitter, State};
-use tracing::{error, info};
+use tauri::State;
+use tracing::info;
 
 #[tauri::command]
 pub fn request_memory_read(
@@ -14,30 +17,14 @@ pub fn request_memory_read(
     oob_pool: State<'_, super::OobPool>,
     app_handle: tauri::AppHandle,
 ) -> Result<()> {
-    let session_arc = super::get_session_arc(&session_id, &session_states)?;
-    match super::try_send_paused_command(&session_arc, UICommand::ReadMemory { address, size }) {
-        Ok(()) => {
-            info!("Memory read request sent for session {} at 0x{:X}, size {}", session_id, address, size);
-        }
-        Err(_) => {
-            let read = super::with_oob_client(&session_arc, &session_id, &oob_pool, |oob, pid| oob.read_memory(pid, address, size));
-            match super::flatten_oob(read) {
-                Ok(data) => {
-                    let result = crate::session::types::MemoryReadResult {
-                        session_id: session_id.clone(), address, requested_size: size, data,
-                    };
-                    let _ = app_handle.emit("memory-read-updated", &result);
-                }
-                Err(e) => {
-                    error!("OOB memory read failed: {}", e);
-                    let _ = app_handle.emit("memory-read-error", &crate::session::types::MemoryReadError {
-                        session_id: session_id.clone(), address, error: e,
-                    });
-                }
-            }
-        }
-    }
-    Ok(())
+    // Both the paused loop and the OOB fallback run `process_memory_read`, which
+    // emits `memory-read-updated`/`-error` on either path.
+    let handle = Some(app_handle);
+    super::paused_or_oob(
+        &session_id, &session_states, &oob_pool,
+        UICommand::ReadMemory { address, size },
+        |client, pid| process_memory_read(client, &handle, pid, address, size),
+    )
 }
 
 #[tauri::command]
@@ -49,31 +36,12 @@ pub fn request_memory_write(
     oob_pool: State<'_, super::OobPool>,
     app_handle: tauri::AppHandle,
 ) -> Result<()> {
-    let session_arc = super::get_session_arc(&session_id, &session_states)?;
-    match super::try_send_paused_command(&session_arc, UICommand::WriteMemory { address, data: data.clone() }) {
-        Ok(()) => {
-            info!("Memory write request sent for session {} at 0x{:X}", session_id, address);
-        }
-        Err(_) => {
-            let written = super::with_oob_client(&session_arc, &session_id, &oob_pool, |oob, pid| oob.write_memory(pid, address, data.clone()));
-            match super::flatten_oob(written) {
-                Ok(_) => {
-                    let result = crate::session::types::MemoryWriteResult {
-                        session_id: session_id.clone(), address, success: true, bytes_written: data.len(),
-                    };
-                    let _ = app_handle.emit("memory-write-result", &result);
-                    info!("OOB memory write for session {} at 0x{:X}", session_id, address);
-                }
-                Err(e) => {
-                    error!("OOB memory write failed: {}", e);
-                    let _ = app_handle.emit("memory-write-error", &crate::session::types::MemoryWriteError {
-                        session_id: session_id.clone(), address, error: e.to_string(),
-                    });
-                }
-            }
-        }
-    }
-    Ok(())
+    let handle = Some(app_handle);
+    super::paused_or_oob(
+        &session_id, &session_states, &oob_pool,
+        UICommand::WriteMemory { address, data: data.clone() },
+        move |client, pid| process_memory_write(client, &handle, pid, address, &data),
+    )
 }
 
 /// Read a small chunk at each address in one call over the pooled live OOB
@@ -147,45 +115,12 @@ pub fn request_memory_regions(
     oob_pool: State<'_, super::OobPool>,
     app_handle: tauri::AppHandle,
 ) -> Result<()> {
-    let session_arc = super::get_session_arc(&session_id, &session_states)?;
-    match super::try_send_paused_command(&session_arc, UICommand::GetMemoryRegions) {
-        Ok(()) => {
-            info!("Memory regions request sent for session {}", session_id);
-        }
-        Err(_) => {
-            let enumerated = super::with_oob_client(&session_arc, &session_id, &oob_pool, |oob, pid| oob.enumerate_memory_regions(pid));
-            match super::flatten_oob(enumerated) {
-                Ok(regions) => {
-                    let serializable_regions: Vec<crate::session::types::SerializableMemoryRegion> = regions.iter().map(|r| {
-                        crate::session::types::SerializableMemoryRegion {
-                            base_address: format!("0x{:016X}", r.base_address),
-                            allocation_base: format!("0x{:016X}", r.allocation_base),
-                            region_size: r.region_size,
-                            region_size_formatted: format_bytes(r.region_size),
-                            state: joybug2::formatting::memory::state_to_str(r.state).to_string(),
-                            state_raw: r.state,
-                            protect: joybug2::formatting::memory::protect_to_str(r.protect).to_string(),
-                            protect_raw: r.protect,
-                            region_type: joybug2::formatting::memory::type_to_str(r.region_type).to_string(),
-                            type_raw: r.region_type,
-                        }
-                    }).collect();
-                    let result = crate::session::types::MemoryRegionsResult {
-                        session_id: session_id.clone(), regions: serializable_regions,
-                    };
-                    let _ = app_handle.emit("memory-regions-updated", &result);
-                    info!("OOB memory regions for session {}", session_id);
-                }
-                Err(e) => {
-                    error!("OOB memory regions failed: {}", e);
-                    let _ = app_handle.emit("memory-regions-error", &crate::session::types::MemoryRegionsError {
-                        session_id: session_id.clone(), error: e.to_string(),
-                    });
-                }
-            }
-        }
-    }
-    Ok(())
+    let handle = Some(app_handle);
+    super::paused_or_oob(
+        &session_id, &session_states, &oob_pool,
+        UICommand::GetMemoryRegions,
+        |client, pid| process_memory_regions_request(client, &handle, pid),
+    )
 }
 
 #[tauri::command]
@@ -197,33 +132,12 @@ pub fn request_memory_search(
     oob_pool: State<'_, super::OobPool>,
     app_handle: tauri::AppHandle,
 ) -> Result<()> {
-    let session_arc = super::get_session_arc(&session_id, &session_states)?;
-    match super::try_send_paused_command(&session_arc, UICommand::SearchMemory { pattern: pattern.clone(), max_results }) {
-        Ok(()) => {
-            info!("Memory search request sent for session {}", session_id);
-        }
-        Err(_) => {
-            let searched = super::with_oob_client(&session_arc, &session_id, &oob_pool, |oob, pid| oob.search_memory(pid, pattern, max_results));
-            match super::flatten_oob(searched) {
-                Ok((addresses, capped)) => {
-                    let result = crate::session::types::MemorySearchResult {
-                        session_id: session_id.clone(),
-                        addresses: addresses.iter().map(|a| format!("0x{:016X}", a)).collect(),
-                        capped,
-                    };
-                    let _ = app_handle.emit("memory-search-result", &result);
-                    info!("OOB memory search for session {}", session_id);
-                }
-                Err(e) => {
-                    error!("OOB memory search failed: {}", e);
-                    let _ = app_handle.emit("memory-search-error", &crate::session::types::MemorySearchError {
-                        session_id: session_id.clone(), error: e.to_string(),
-                    });
-                }
-            }
-        }
-    }
-    Ok(())
+    let handle = Some(app_handle);
+    super::paused_or_oob(
+        &session_id, &session_states, &oob_pool,
+        UICommand::SearchMemory { pattern: pattern.clone(), max_results },
+        move |client, pid| process_memory_search(client, &handle, pid, pattern, max_results),
+    )
 }
 
 #[tauri::command]
@@ -236,36 +150,12 @@ pub fn request_dereference(
     app_handle: tauri::AppHandle,
 ) -> Result<()> {
     let address = super::parse_hex_u64(&address, "address")?;
-
-    let session_arc = super::get_session_arc(&session_id, &session_states)?;
-    match super::try_send_paused_command(&session_arc, UICommand::Dereference { address, count }) {
-        Ok(()) => {
-            info!("Dereference request sent for session {} at 0x{:X}, count {}", session_id, address, count);
-        }
-        Err(_) => {
-            let derefed = super::with_oob_client(&session_arc, &session_id, &oob_pool, |oob, pid| oob.dereference(pid, address, count, None));
-            match super::flatten_oob(derefed) {
-                Ok(entries) => {
-                    let result = crate::session::types::DereferenceResult {
-                        session_id: session_id.clone(),
-                        base_address: format!("0x{:016X}", address),
-                        entries: crate::session::memory::serialize_dereference_entries(&entries),
-                    };
-                    let _ = app_handle.emit("dereference-updated", &result);
-                    info!("OOB dereference for session {} at 0x{:X}", session_id, address);
-                }
-                Err(e) => {
-                    error!("OOB dereference failed: {}", e);
-                    let _ = app_handle.emit("dereference-error", &crate::session::types::DereferenceError {
-                        session_id: session_id.clone(),
-                        address: format!("0x{:016X}", address),
-                        error: e.to_string(),
-                    });
-                }
-            }
-        }
-    }
-    Ok(())
+    let handle = Some(app_handle);
+    super::paused_or_oob(
+        &session_id, &session_states, &oob_pool,
+        UICommand::Dereference { address, count },
+        |client, pid| process_dereference_request(client, &handle, pid, address, count),
+    )
 }
 
 #[tauri::command]
@@ -281,40 +171,12 @@ pub fn request_dereference_batch(
         .map(|a| super::parse_hex_u64(a, "address"))
         .collect();
     let addresses = parsed?;
-
-    let count = addresses.len();
-    let session_arc = super::get_session_arc(&session_id, &session_states)?;
-    match super::try_send_paused_command(&session_arc, UICommand::DereferenceBatch { addresses: addresses.clone() }) {
-        Ok(()) => {
-            info!("Batch dereference request sent for session {} with {} addresses", session_id, count);
-        }
-        Err(_) => {
-            super::with_oob_client(&session_arc, &session_id, &oob_pool, |oob, pid| {
-                for &addr in &addresses {
-                    match oob.dereference(pid, addr, 1, None) {
-                        Ok(entries) => {
-                            let result = crate::session::types::DereferenceResult {
-                                session_id: session_id.clone(),
-                                base_address: format!("0x{:016X}", addr),
-                                entries: crate::session::memory::serialize_dereference_entries(&entries),
-                            };
-                            let _ = app_handle.emit("dereference-updated", &result);
-                        }
-                        Err(e) => {
-                            error!("OOB batch dereference failed for 0x{:X}: {}", addr, e);
-                            let _ = app_handle.emit("dereference-error", &crate::session::types::DereferenceError {
-                                session_id: session_id.clone(),
-                                address: format!("0x{:016X}", addr),
-                                error: e.to_string(),
-                            });
-                        }
-                    }
-                }
-            })?;
-            info!("OOB batch dereference for session {} with {} addresses", session_id, count);
-        }
-    }
-    Ok(())
+    let handle = Some(app_handle);
+    super::paused_or_oob(
+        &session_id, &session_states, &oob_pool,
+        UICommand::DereferenceBatch { addresses: addresses.clone() },
+        move |client, pid| process_dereference_batch(client, &handle, pid, &addresses),
+    )
 }
 
 // --- Memory scan & pointer scan ---

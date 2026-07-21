@@ -564,15 +564,28 @@ export default function Debugger() {
   };
 
   // Most-recently-used first; sessions never started/viewed fall back to
-  // creation time. last_used_at lives in localStorage (see sessionStorage.ts).
+  // creation time. last_used_at / created_at live in localStorage, at
+  // millisecond precision (see sessionStorage.ts).
   const sortedSessions = useMemo(() => {
-    const lastUsedById = new Map<string, string>();
+    // Prefer the storage timestamps (ms precision, UTC ISO) so same-second
+    // creations still order correctly; fall back to the backend created_at.
+    const timeById = new Map<string, string>();
     for (const config of loadSessionsFromStorage()) {
-      if (config.last_used_at) lastUsedById.set(config.id, config.last_used_at);
+      const t = config.last_used_at ?? config.created_at;
+      if (t) timeById.set(config.id, t);
     }
-    const sortKey = (s: DebugSession) =>
-      new Date(lastUsedById.get(s.id) ?? s.created_at).getTime();
-    return [...sessions].sort((a, b) => sortKey(b) - sortKey(a));
+    // The backend's created_at is UTC formatted WITHOUT a timezone marker
+    // ("YYYY-MM-DD HH:MM:SS"), which new Date() would parse as *local* time —
+    // shifting it hours away from the UTC-with-Z last_used_at and inverting the
+    // order. Parse un-zoned timestamps as UTC so both are on the same clock.
+    const toMs = (s?: string | null): number => {
+      if (!s) return 0;
+      if (/[zZ]|[+-]\d\d:?\d\d$/.test(s)) return new Date(s).getTime(); // already zoned
+      return new Date(s.replace(" ", "T") + "Z").getTime();
+    };
+    // Parse once per session, not once per comparison.
+    const msById = new Map(sessions.map((s) => [s.id, toMs(timeById.get(s.id) ?? s.created_at)]));
+    return [...sessions].sort((a, b) => msById.get(b.id)! - msById.get(a.id)!);
   }, [sessions, lastUsedTick]);
 
   const filteredProcesses = useMemo(() => {

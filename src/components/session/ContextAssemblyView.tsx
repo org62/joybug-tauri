@@ -29,7 +29,7 @@ export const ContextAssemblyView = () => {
   const emulation = useQuickEmulation(sessionId, isPaused, address);
 
   const { breakpoints, toggleBreakpoint, setHardwareBreakpoint } = sessionData.breakpointState;
-  const { assemblePatch } = sessionData.patchState;
+  const { assemblePatch, restoreImageBytes } = sessionData.patchState;
   const { addBookmark } = sessionData.bookmarkState;
 
   // Build a set of breakpoint addresses (uppercase hex) for quick lookup.
@@ -58,6 +58,7 @@ export const ContextAssemblyView = () => {
       onToggleSingleShotBreakpoint={(address) => toggleBreakpoint(address, true)}
       onSetHardwareBreakpoint={setHardwareBreakpoint}
       onAssemblePatch={assemblePatch}
+      onRestoreImageBytes={restoreImageBytes}
       onAddBookmark={(addr, asmText) => addBookmark({ kind: 'code', address: addr, asmText })}
       symbolsRefreshKey={sessionData.symbolsRefreshKey}
       onNavigateToSource={sessionData.onNavigateToSource}

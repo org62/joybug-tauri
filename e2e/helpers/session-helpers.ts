@@ -30,6 +30,18 @@ export async function invoke(
   );
 }
 
+/** Module base ("0x..") for the first module whose path/name contains `substr`. */
+export async function moduleBase(
+  page: Page,
+  sessionId: string,
+  substr: string,
+): Promise<string | undefined> {
+  const mods: ModuleData[] = (await invoke(page, "get_session_modules", { sessionId })) || [];
+  const sub = substr.toLowerCase();
+  return mods.find((m) => m.path.toLowerCase().includes(sub) || m.name.toLowerCase().includes(sub))
+    ?.base_address;
+}
+
 /**
  * Create and start a debug session via the UI dialog.
  * Uses `cmd.exe /c "echo hello world"` as the debug target.

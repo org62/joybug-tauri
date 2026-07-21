@@ -89,7 +89,15 @@ export function syncSessionsToStorage(sessions: SessionConfig[]) {
   const byContent = new Map(existing.map(s => [contentKey(s), s]));
   const merged = sessions.map(s => {
     const prev = byId.get(s.id) ?? byContent.get(contentKey(s));
-    return prev?.last_used_at ? { ...s, last_used_at: s.last_used_at ?? prev.last_used_at } : s;
+    if (!prev) return s;
+    // Keep the previously-stored created_at: addSessionToStorage records it at
+    // millisecond precision, whereas the backend's created_at is only
+    // second-granular, so preserving it keeps same-second creations orderable.
+    return {
+      ...s,
+      created_at: prev.created_at ?? s.created_at,
+      last_used_at: s.last_used_at ?? prev.last_used_at,
+    };
   });
   saveSessionsToStorage(merged);
 } 
