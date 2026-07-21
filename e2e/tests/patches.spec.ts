@@ -445,9 +445,9 @@ test.describe("Assembly Patching", () => {
         expect(p.length).toBe(1);
       }).toPass({ timeout: 5_000 });
 
-      // Open the Patches tab via the Windows menu → Debug submenu
+      // Open the User Patches tab via the Windows menu → Debug submenu
       await openWindowsSubmenu(page, "Debug");
-      await page.getByRole("menuitemcheckbox", { name: "Patches" }).click();
+      await page.getByRole("menuitemcheckbox", { name: "User Patches" }).click();
 
       // Wait for the patches view to render with data
       await expect(async () => {

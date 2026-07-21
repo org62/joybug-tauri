@@ -6,6 +6,7 @@ pub(crate) mod disassembly;
 mod emulation;
 pub(crate) mod helpers;
 pub(crate) mod image_cache;
+pub(crate) mod image_patches;
 pub(crate) mod memory;
 pub(crate) mod pointer_scan;
 pub(crate) mod region_annotations;

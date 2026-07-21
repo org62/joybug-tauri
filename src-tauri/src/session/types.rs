@@ -59,6 +59,9 @@ pub enum UICommand {
     /// Restore original on-disk image bytes for the modified run containing
     /// `address` (used when the diff wasn't created by a tracked UI patch).
     RestoreImageBytes { address: u64 },
+    /// Diff every loaded module's executable sections against its on-disk
+    /// image and emit the modified runs (the Image Patches window).
+    ScanImagePatches,
     AddBookmark {
         kind: String,
         address: u64,
@@ -242,6 +245,38 @@ pub struct SerializableInstruction {
     /// True for a synthetic `db 0xXX` row emitted where a byte couldn't be
     /// decoded — the frontend renders these in an error style.
     pub is_invalid: bool,
+}
+
+/// One contiguous run of in-memory code bytes differing from the on-disk
+/// image (the Image Patches window). Addresses are hex strings so 64-bit
+/// values survive the trip to JavaScript without precision loss.
+#[derive(serde::Serialize)]
+pub struct ImagePatchEntry {
+    pub address: String,
+    /// Lowercased module short name (e.g. "ntdll.dll").
+    pub module: String,
+    pub rva: String,
+    /// Nearest preceding symbol as "module!name+0xoff", if resolvable.
+    pub symbol: Option<String>,
+    /// Space-separated hex of the original on-disk bytes for this run.
+    pub original_bytes: String,
+    /// Space-separated hex of the current in-memory bytes for this run.
+    pub current_bytes: String,
+    /// Disassembly of the original bytes, instructions joined with "; ".
+    pub original_disasm: String,
+    /// Disassembly of the current bytes, instructions joined with "; ".
+    pub current_disasm: String,
+    /// True when the run overlaps a tracked (user-assembled) patch.
+    pub tracked: bool,
+}
+
+/// Event payload for a completed image-patch scan.
+#[derive(serde::Serialize)]
+pub struct ImagePatchesResult {
+    pub session_id: String,
+    pub patches: Vec<ImagePatchEntry>,
+    /// True when scanning stopped early because the entry cap was hit.
+    pub capped: bool,
 }
 
 #[derive(serde::Serialize, Clone, Debug)]

@@ -401,7 +401,7 @@ export function AssemblyView({ sessionId, isPaused, canLoad, address, registers,
         {/* Patch comparison toggle (session mode only — file mode has no live image to diff) */}
         {!disassemble && (
           <div className="flex items-center gap-2" title="Highlight code that differs from the on-disk image (patches/hooks)">
-            <Label htmlFor="compare-image" className="text-xs">Patches</Label>
+            <Label htmlFor="compare-image" className="text-xs">Image Patches</Label>
             <Switch
               id="compare-image"
               size="xs"

@@ -173,6 +173,38 @@ export async function restoreDefaultSettings(page: Page): Promise<void> {
 }
 
 /**
+ * Set a software breakpoint at `address` and wait until the backend confirms it
+ * is armed (`is_active`) in the debuggee before returning. `toggle_breakpoint`
+ * only enqueues the arm and resolves before it completes, so a caller that
+ * continues immediately can race the arm — on a cold PDB load the arm lands
+ * after the process has already run past the target, so the breakpoint is never
+ * hit and the run reads as a 30s "Running" timeout. Gating the continue on the
+ * confirmed-armed state removes that race. Idempotent: skips the toggle if a row
+ * is already armed at the address (toggling again would remove it).
+ */
+export async function setArmedBreakpoint(
+  page: Page,
+  sessionId: string,
+  address: string,
+): Promise<void> {
+  const armedAt = async (): Promise<boolean> => {
+    const s = await invoke(page, "get_debug_session", { sessionId });
+    const want = BigInt(address);
+    return (s?.breakpoints || []).some(
+      (b: any) => BigInt(b.address) === want && b.is_active === true,
+    );
+  };
+
+  if (await armedAt()) return;
+
+  await invoke(page, "toggle_breakpoint", { sessionId, address });
+
+  await expect(async () => {
+    expect(await armedAt()).toBe(true);
+  }).toPass({ timeout: 10_000, intervals: [50, 100, 200] });
+}
+
+/**
  * Send Go/Continue command via backend IPC — more reliable than keyboard F5
  * which can miss if the page focus is wrong.
  */

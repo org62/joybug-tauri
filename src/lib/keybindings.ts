@@ -19,6 +19,7 @@ export type ActionId =
   | "panel.memoryRegions"
   | "panel.breakpoints"
   | "panel.patches"
+  | "panel.imagePatches"
   | "panel.bookmarks"
   | "panel.memorySearch"
   | "panel.memoryScanner"
@@ -70,7 +71,8 @@ export const ACTION_REGISTRY: Record<ActionId, ActionMeta> = {
   "panel.addMemory":     { label: "Add Memory Window",     category: "Panels", description: "Open a new Memory hex editor tab",      scope: "session" },
   "panel.memoryRegions": { label: "Go to Memory Regions", category: "Panels", description: "Open and focus the Memory Regions panel", scope: "session" },
   "panel.breakpoints":   { label: "Go to Breakpoints",    category: "Panels", description: "Open and focus the Breakpoints panel",    scope: "session" },
-  "panel.patches":       { label: "Go to Patches",        category: "Panels", description: "Open and focus the Patches panel",        scope: "session" },
+  "panel.patches":       { label: "Go to User Patches",   category: "Panels", description: "Open and focus the User Patches panel",   scope: "session" },
+  "panel.imagePatches":  { label: "Go to Image Patches",  category: "Panels", description: "Open and focus the Image Patches panel",  scope: "session" },
   "panel.bookmarks":     { label: "Go to Bookmarks",      category: "Panels", description: "Open and focus the Bookmarks panel",      scope: "session" },
   "panel.memorySearch":  { label: "Go to Memory Search",  category: "Panels", description: "Open and focus the Memory Search panel",  scope: "session" },
   "panel.memoryScanner": { label: "Go to Memory Scanner", category: "Panels", description: "Open and focus the Memory Scanner panel", scope: "session" },

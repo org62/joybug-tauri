@@ -7,6 +7,7 @@ use super::callstack::*;
 use super::disassembly::*;
 use super::emulation::*;
 use super::helpers::report_step_error;
+use super::image_patches::process_scan_image_patches;
 use super::memory::*;
 use super::patches::*;
 use super::registers::*;
@@ -525,6 +526,10 @@ fn process_command(
         }
         UICommand::RestoreImageBytes { address } => {
             process_restore_image_bytes(session, app_handle_clone, event, address);
+            CommandResult::Continue
+        }
+        UICommand::ScanImagePatches => {
+            process_scan_image_patches(session, app_handle_clone, event);
             CommandResult::Continue
         }
         UICommand::AddBookmark { ref kind, address, ref value_type, ref name, ref comment, ref pointer_offsets, ref base_symbol, ref asm_text } => {

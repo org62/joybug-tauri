@@ -90,6 +90,11 @@ pub(crate) fn find_module_for_address(modules: &[joybug2::protocol_io::ModuleInf
     None
 }
 
+/// Formats bytes as space-separated uppercase hex ("48 8B 05").
+pub(crate) fn hex_join(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{:02X}", b)).collect::<Vec<_>>().join(" ")
+}
+
 /// Formats a symbol as "module!name+0xoffset"
 pub(crate) fn format_symbol(module: &str, name: &str, offset: u64) -> String {
     format!("{}!{}+0x{:x}", module, name, offset)

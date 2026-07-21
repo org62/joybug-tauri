@@ -167,6 +167,7 @@ pub fn run() {
             commands::update_patch,
             commands::enable_patch_group,
             commands::restore_image_bytes,
+            commands::scan_image_patches,
             commands::get_patches,
             commands::pe_open,
             commands::pe_read_bytes,

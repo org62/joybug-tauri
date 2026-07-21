@@ -104,13 +104,13 @@ test.describe("Windows: navigation, grouping, and reset", () => {
       await waitForPaused(page, sessionId);
 
       await openWindowsSubmenu(page, "Debug");
-      await page.getByRole("menuitemcheckbox", { name: "Patches" }).click();
+      await page.getByRole("menuitemcheckbox", { name: "User Patches" }).click();
       await page.keyboard.press("Escape");
       await expect(page.locator("[id$='-tab-patches']")).toHaveCount(1, { timeout: 5_000 });
 
       // Unchecking is the one affordance that closes a window.
       await openWindowsSubmenu(page, "Debug");
-      await page.getByRole("menuitemcheckbox", { name: "Patches" }).click();
+      await page.getByRole("menuitemcheckbox", { name: "User Patches" }).click();
       await page.keyboard.press("Escape");
       await expect(page.locator("[id$='-tab-patches']")).toHaveCount(0, { timeout: 5_000 });
     } finally {

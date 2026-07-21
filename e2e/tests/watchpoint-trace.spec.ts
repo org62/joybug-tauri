@@ -7,6 +7,7 @@ import {
   continueSession,
   goAndWaitForPause,
   waitForStatus,
+  setArmedBreakpoint,
 } from "../helpers/wait-helpers";
 import { installEventCapture, getCapturedEvents, waitForCapturedEvent } from "../helpers/event-helpers";
 
@@ -56,7 +57,9 @@ test.describe("Access Trace (hardware watchpoint)", () => {
       // registers armed that early don't reliably stick to the thread that later
       // runs the loop. Break at access_loop's entry, then arm on the global.
       const loopVa = await resolveVa("access_loop");
-      await invoke(page, "toggle_breakpoint", { sessionId, address: loopVa });
+      // Confirm the breakpoint is armed before continuing — arming otherwise
+      // races the resume and the target can run past access_loop's entry.
+      await setArmedBreakpoint(page, sessionId, loopVa);
       await goAndWaitForPause(page, sessionId, 20_000);
 
       const watchAddr = await resolveVa("g_watch_target");

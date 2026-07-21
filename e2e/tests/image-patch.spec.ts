@@ -3,6 +3,7 @@ import {
   createAndStartSession,
   cleanupSession,
   invoke,
+  openWindowsSubmenu,
 } from "../helpers/session-helpers";
 import {
   waitForPaused,
@@ -133,6 +134,68 @@ test.describe("Image patch detection", () => {
 
       // And the patched highlight is gone from the DOM.
       await expect(page.locator(`${ASM_ROW}[data-highlight="patched"]`)).toHaveCount(0, { timeout: 5_000 });
+
+      await cleanupSession(page, sessionId);
+    } finally {
+      await restoreDefaultSettings(page);
+    }
+  });
+
+  test("Image Patches window lists, filters, and restores image diffs", async ({
+    tauriPage: page,
+  }) => {
+    await configureMinimalStopSettings(page);
+
+    try {
+      const sessionId = await createAndStartSession(page, "Image Patch Window");
+      await waitForPaused(page, sessionId);
+      await waitForDisassemblyLoaded(page);
+      await installEventCapture(page, [FN_DISASM]);
+
+      // Same setup as above: flip one byte of a non-PC instruction so the
+      // in-memory code diverges from the on-disk image.
+      const rip = await getRip(page, sessionId);
+      const ripHex = `0X${rip.toString(16).toUpperCase()}`;
+      const insts = await disassembleFunction(page, sessionId, rip);
+      const ripIdx = insts.findIndex((i) => i.address.toUpperCase() === ripHex);
+      expect(ripIdx).toBeGreaterThanOrEqual(0);
+      const target = insts[ripIdx + 1 < insts.length ? ripIdx + 1 : ripIdx - 1];
+      const targetAddrNum = parseInt(target.address, 16);
+      const origFirstByte = parseInt(target.bytes.split(" ")[0], 16);
+      await invoke(page, "request_memory_write", {
+        sessionId,
+        address: targetAddrNum,
+        data: [origFirstByte ^ 0xff],
+      });
+
+      // Open the Image Patches window — it auto-scans on mount while paused.
+      // The scan command is queued behind the memory write, so it sees the diff.
+      await openWindowsSubmenu(page, "Debug");
+      await page.getByRole("menuitemcheckbox", { name: "Image Patches" }).click();
+      await page.keyboard.press("Escape");
+
+      const row = page.locator('[data-testid="image-patch-row"]', { hasText: target.address });
+      await expect(row).toHaveCount(1, { timeout: 15_000 });
+      // The diff renders both sides: the original disassembly and both byte runs.
+      await expect(row).toContainText(target.mnemonic);
+      await expect(row).toContainText(target.bytes.split(" ")[0]);
+
+      // Quick filter: a non-matching term hides the row and shows the empty state...
+      const filter = page.getByPlaceholder("Filter by address or symbol");
+      await filter.fill("zzzzzzzz");
+      await expect(row).toHaveCount(0, { timeout: 5_000 });
+      await expect(page.getByText("No matches")).toBeVisible({ timeout: 5_000 });
+      // ...and an address fragment (case-insensitive) brings it back.
+      await filter.fill(target.address.slice(-6).toLowerCase());
+      await expect(row).toHaveCount(1, { timeout: 5_000 });
+      await filter.fill("");
+
+      // Restore from the row; patches-updated triggers a re-scan that clears it.
+      await row.hover();
+      await row.getByRole("button", { name: "Restore original bytes" }).click();
+      await expect(
+        page.locator('[data-testid="image-patch-row"]', { hasText: target.address }),
+      ).toHaveCount(0, { timeout: 10_000 });
 
       await cleanupSession(page, sessionId);
     } finally {

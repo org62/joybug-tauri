@@ -83,6 +83,19 @@ pub fn restore_image_bytes(
     Ok(())
 }
 
+/// Diff all loaded modules' executable sections against their on-disk images
+/// and emit the modified runs on `image-patches-updated` (the Image Patches
+/// window). Requires a paused session (reads memory in the debug loop).
+#[tauri::command]
+pub fn scan_image_patches(
+    session_id: String,
+    session_states: State<'_, SessionStatesMap>,
+) -> Result<()> {
+    super::send_paused_command(&session_id, &session_states, UICommand::ScanImagePatches)?;
+    info!("Image patch scan request sent for session {}", session_id);
+    Ok(())
+}
+
 #[tauri::command]
 pub fn enable_patch(
     session_id: String,

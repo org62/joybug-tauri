@@ -51,3 +51,39 @@ pub fn ensure_and_snapshot_images(
     }
     state.original_images.values().cloned().collect()
 }
+
+/// Ensure every module in `bases` has an image entry and return one snapshot of
+/// all cached entries — the whole-image scan's variant of
+/// [`ensure_and_snapshot_images`] (which builds only the module covering a
+/// single address). One lock pass collects the missing modules, the builds run
+/// off-lock, and one re-lock commits everything and takes the snapshot.
+pub fn ensure_all_and_snapshot_images(
+    state_arc: &Arc<Mutex<SessionStateUI>>,
+    arch: joybug2::interfaces::Architecture,
+    bases: &[u64],
+) -> Vec<Arc<OriginalModuleImage>> {
+    if arch != joybug2::interfaces::Architecture::X64 {
+        return Vec::new();
+    }
+
+    let missing: Vec<(u64, String)> = {
+        let state = state_arc.lock().unwrap();
+        state
+            .modules
+            .iter()
+            .filter(|m| bases.contains(&m.base) && !state.original_images.contains_key(&m.base))
+            .map(|m| (m.base, m.name.clone()))
+            .collect()
+    };
+
+    let built: Vec<_> = missing
+        .into_iter()
+        .map(|(base, name)| (base, Arc::new(OriginalModuleImage::build(&name, base))))
+        .collect();
+
+    let mut state = state_arc.lock().unwrap();
+    for (base, image) in built {
+        state.original_images.entry(base).or_insert(image);
+    }
+    state.original_images.values().cloned().collect()
+}

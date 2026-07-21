@@ -1,5 +1,5 @@
 import { Page } from "@playwright/test";
-import { test, expect, navigateTo } from "../helpers/test-fixtures";
+import { test, expect, navigateTo, gotoFreshPe } from "../helpers/test-fixtures";
 import { cleanupSession, invoke } from "../helpers/session-helpers";
 import {
   configureMinimalStopSettings,
@@ -28,10 +28,11 @@ test.describe("Drag-drop file open", () => {
   test("dropping a PE file on the PE viewer opens it", async ({
     tauriPage: page,
   }) => {
-    await navigateTo(page, "/pe");
-    // Ensure the page (and its drop hook) is mounted before dispatching.
+    // Full load resets the PE reader's module-level open-file cache so an earlier
+    // test's leaked PE can't hide the placeholder this test opens from.
+    await gotoFreshPe(page);
     await expect(page.getByText("No PE file open").first()).toBeVisible({
-      timeout: 5_000,
+      timeout: 10_000,
     });
 
     await dropFiles(page, [NTDLL]);

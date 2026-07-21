@@ -1,6 +1,6 @@
 import React from "react";
 import {
-  Code, Cpu, Box, Layers, ListTree, Search, HardDrive, MapPin, FileCode,
+  Code, Cpu, Box, Layers, ListTree, Search, HardDrive, MapPin, FileCode, FileDiff,
   ScanSearch, Puzzle, Crosshair, Bookmark as BookmarkIcon, Boxes, Type, Radar, Fingerprint,
 } from "lucide-react";
 import type { ActionId } from "@/lib/keybindings";
@@ -112,9 +112,12 @@ const TAB_DEFS = [
   { id: "breakpoints", title: "Breakpoints", category: "Debug", home: "panel-center",
     action: "panel.breakpoints", icon: <MapPin className="size-4" />,
     keywords: ["breakpoints", "bp"] },
-  { id: "patches", title: "Patches", category: "Debug", home: "panel-center",
+  { id: "patches", title: "User Patches", category: "Debug", home: "panel-center",
     action: "panel.patches", icon: <Puzzle className="size-4" />,
-    keywords: ["patches", "assemble", "patch"] },
+    keywords: ["patches", "assemble", "patch", "user"] },
+  { id: "image_patches", title: "Image Patches", category: "Debug", home: "panel-center",
+    action: "panel.imagePatches", icon: <FileDiff className="size-4" />,
+    keywords: ["image", "patches", "patch", "hook", "diff", "modified", "detour"] },
   { id: "bookmarks", title: "Bookmarks", category: "Debug", home: "panel-center",
     action: "panel.bookmarks", icon: <BookmarkIcon className="size-4" />,
     keywords: ["bookmarks", "bookmark", "freeze", "lock", "cheat", "address"] },

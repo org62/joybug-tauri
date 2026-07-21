@@ -5,7 +5,7 @@ use joybug2::windows_platform::disassembler::CapstoneDisassembler;
 use tauri::{AppHandle, Emitter};
 use tracing::{debug, error};
 
-use super::helpers::effective_op_str;
+use super::helpers::{effective_op_str, hex_join};
 use super::image_cache::{ensure_and_snapshot_images, OriginalModuleImage};
 use super::types::{DebugSession, SerializableInstruction};
 use crate::state::SessionStateUI;
@@ -50,9 +50,33 @@ pub(crate) fn build_image_diff_context(
     }
 }
 
-/// Disassemble the original image bytes covering `[address, address+row_len)`,
-/// joining instruction texts with "; ". Covers changed instruction boundaries
+/// Disassemble `buf` at `address`, joining instruction texts with "; " until at
+/// least `min_len` bytes are covered — the buffer may extend past `min_len` so
+/// a trailing instruction decodes fully. Covers changed instruction boundaries
 /// (e.g. a 1-byte NOP written over a 5-byte call decodes several originals).
+/// `None` when nothing decodes.
+pub(crate) fn disasm_covering(
+    disasm: &CapstoneDisassembler,
+    arch: Architecture,
+    buf: &[u8],
+    address: u64,
+    min_len: usize,
+) -> Option<String> {
+    let insts = disasm.disassemble(arch, buf, address, 16).ok()?;
+    let mut parts: Vec<String> = Vec::new();
+    let mut covered = 0usize;
+    for inst in &insts {
+        let text = format!("{} {}", inst.mnemonic, inst.op_str);
+        parts.push(text.trim().to_string());
+        covered += inst.bytes.len();
+        if covered >= min_len {
+            break;
+        }
+    }
+    if parts.is_empty() { None } else { Some(parts.join("; ")) }
+}
+
+/// Disassemble the original image bytes covering `[address, address+row_len)`.
 fn disasm_original_at(
     diff: &ImageDiff,
     image: &OriginalModuleImage,
@@ -64,18 +88,7 @@ fn disasm_original_at(
     let buf = image
         .bytes_at(address, row_len.max(16))
         .or_else(|| image.bytes_at(address, row_len))?;
-    let insts = diff.disasm.disassemble(diff.arch, buf, address, 8).ok()?;
-    let mut parts: Vec<String> = Vec::new();
-    let mut covered = 0usize;
-    for inst in &insts {
-        let text = format!("{} {}", inst.mnemonic, inst.op_str);
-        parts.push(text.trim().to_string());
-        covered += inst.bytes.len();
-        if covered >= row_len {
-            break;
-        }
-    }
-    if parts.is_empty() { None } else { Some(parts.join("; ")) }
+    disasm_covering(&diff.disasm, diff.arch, buf, address, row_len)
 }
 
 /// Converts raw disassembled instructions into serializable form. `symbols` is
@@ -119,12 +132,7 @@ pub(crate) fn serialize_instructions(
                         if let Some(orig) = image.bytes_at(inst.address, inst.bytes.len()) {
                             if orig != inst.bytes.as_slice() {
                                 differs_from_image = true;
-                                original_bytes = Some(
-                                    orig.iter()
-                                        .map(|b| format!("{:02X}", b))
-                                        .collect::<Vec<String>>()
-                                        .join(" "),
-                                );
+                                original_bytes = Some(hex_join(orig));
                                 original_disasm =
                                     disasm_original_at(diff, image, inst.address, inst.bytes.len());
                             }
@@ -136,12 +144,7 @@ pub(crate) fn serialize_instructions(
             SerializableInstruction {
                 address: format!("{:#X}", inst.address),
                 symbols,
-                bytes: inst
-                    .bytes
-                    .iter()
-                    .map(|b| format!("{:02X}", b))
-                    .collect::<Vec<String>>()
-                    .join(" "),
+                bytes: hex_join(&inst.bytes),
                 mnemonic: inst.mnemonic.clone(),
                 op_str,
                 is_jump: inst.is_jump,

@@ -479,7 +479,9 @@ pub(crate) fn reapply_patches_for_module(
 
 /// Max contiguous bytes a single "restore original image bytes" writes. Bounds
 /// the blast radius so an accidental restore can't rewrite a large region.
-const MAX_RESTORE_BYTES: usize = 64;
+/// Shared with the whole-image scan's run splitter so one Image Patches row
+/// always maps to one restorable run.
+pub(crate) const MAX_RESTORE_BYTES: usize = 64;
 
 /// Restore the original on-disk image bytes for the modified run containing
 /// `address`. Used for in-memory modifications that aren't tracked UI patches

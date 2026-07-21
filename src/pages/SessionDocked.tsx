@@ -29,6 +29,7 @@ import { ContextHexView } from "@/components/session/ContextHexView";
 import { ContextMemoryRegionsView } from "@/components/session/ContextMemoryRegionsView";
 import { ContextBreakpointsView } from "@/components/session/ContextBreakpointsView";
 import { ContextPatchesView } from "@/components/session/ContextPatchesView";
+import { ContextImagePatchesView } from "@/components/session/ContextImagePatchesView";
 import { ContextBookmarksView } from "@/components/session/ContextBookmarksView";
 import { ContextMemorySearchView } from "@/components/session/ContextMemorySearchView";
 import { ContextMemoryScannerView } from "@/components/session/ContextMemoryScannerView";
@@ -593,6 +594,7 @@ export default function SessionDocked() {
     memory_regions: <ContextMemoryRegionsView onNavigateToAddress={handleNavigateToMemory} />,
     breakpoints: <ContextBreakpointsView />,
     patches: <ContextPatchesView />,
+    image_patches: <ContextImagePatchesView />,
     bookmarks: <ContextBookmarksView />,
     memory_search: <ContextMemorySearchView />,
     memory_scanner: <ContextMemoryScannerView />,

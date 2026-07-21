@@ -1,13 +1,15 @@
-import { test, expect, navigateTo } from "../helpers/test-fixtures";
+import { test, expect, navigateTo, gotoFreshPe } from "../helpers/test-fixtures";
 
 // A dependency-free 64-bit system DLL that always exists on the test host.
 const NTDLL = "C:\\Windows\\System32\\ntdll.dll";
 
 test.describe("PE Viewer", () => {
   test("empty page shows the placeholder", async ({ tauriPage: page }) => {
-    await navigateTo(page, "/pe");
+    // gotoFreshPe forces a full load so the placeholder is asserted against a
+    // genuine fresh start, not a PE another test opened and left cached.
+    await gotoFreshPe(page);
     await expect(page.getByText("No PE file open").first()).toBeVisible({
-      timeout: 5_000,
+      timeout: 10_000,
     });
   });
 

@@ -17,10 +17,12 @@ npx playwright test --config e2e/playwright.config.ts   # E2E tests (requires de
 
 ### E2E Tests
 
-Run `npx playwright test --config e2e/playwright.config.ts` after every major code change (new features, refactors, bug fixes that touch frontend or backend). The full suite (31 tests) runs in ~1.2 minutes. Keep it fast:
+Run `npx playwright test --config e2e/playwright.config.ts` after every major code change (new features, refactors, bug fixes that touch frontend or backend). The full suite runs in ~6 minutes. Keep it fast:
 - Never add hardcoded sleeps (`waitForTimeout`). Poll for the expected state instead using `toPass()` with tight intervals.
 - Use fast polling intervals (start at 50-100ms, not 250-500ms) — backend responses are typically <50ms.
 - When waiting for state transitions, compare state snapshots (e.g. event identity) rather than trying to catch brief intermediate states like "Running".
+
+**Zero tolerance for flaky tests.** A test that passes only on retry is a bug, not noise — treat a flaky result exactly like a failure. When a flake appears, investigate and fix it immediately (reproduce with `--repeat-each=N`, find the actual race, fix the root cause); never re-run to make it "go away" or lean on Playwright's `retries`. `retries` exists only to keep CI green while a flake is being fixed, not to hide it. Every fix must target a concrete cause — an unsynchronized wait, a command sent before the session is ready, cross-test state left behind (persisted patches/breakpoints, an open PE file), a too-tight timeout on a cold-start path — not a blanket timeout bump. After fixing, re-run the affected spec with `--repeat-each` to prove it's stable.
 
 The joybug2 external crate has integration tests (`external/joybug2/tests/`) that require Windows with debugging privileges.
 

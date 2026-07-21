@@ -5,6 +5,7 @@ import {
   configureMinimalStopSettings,
   restoreDefaultSettings,
   continueSession,
+  setArmedBreakpoint,
 } from "../helpers/wait-helpers";
 import { installEventCapture, waitForCapturedEvent } from "../helpers/event-helpers";
 import type { Page } from "@playwright/test";
@@ -82,10 +83,9 @@ test.describe("Source View", () => {
       expect(mapPayload.entries.length).toBeGreaterThan(0);
       const target = mapPayload.entries.reduce((a, b) => (BigInt(a.address) <= BigInt(b.address) ? a : b));
 
-      await page.evaluate(
-        async ({ id, addr }) => { await (window as any).__TAURI_INTERNALS__.invoke("toggle_breakpoint", { sessionId: id, address: addr }); },
-        { id: sessionId, addr: target.address },
-      );
+      // Arm and confirm before running so a cold-PDB arm can't land after the
+      // process has already sped past the target line.
+      await setArmedBreakpoint(page, sessionId, target.address);
 
       // Run to the source-line breakpoint.
       await continueSession(page, sessionId);
@@ -145,10 +145,7 @@ test.describe("Source View", () => {
         matchValue: "hello_c.c",
       });
       const target = map.entries.reduce((a, b) => (BigInt(a.address) <= BigInt(b.address) ? a : b));
-      await page.evaluate(
-        async ({ id, addr }) => { await (window as any).__TAURI_INTERNALS__.invoke("toggle_breakpoint", { sessionId: id, address: addr }); },
-        { id: sessionId, addr: target.address },
-      );
+      await setArmedBreakpoint(page, sessionId, target.address);
       await continueSession(page, sessionId);
       await waitForPaused(page, sessionId);
 
@@ -202,10 +199,7 @@ test.describe("Source View", () => {
       });
       expect(map.entries.length).toBeGreaterThan(0);
       const target = map.entries.reduce((a, b) => (BigInt(a.address) <= BigInt(b.address) ? a : b));
-      await page.evaluate(
-        async ({ id, addr }) => { await (window as any).__TAURI_INTERNALS__.invoke("toggle_breakpoint", { sessionId: id, address: addr }); },
-        { id: sessionId, addr: target.address },
-      );
+      await setArmedBreakpoint(page, sessionId, target.address);
       await continueSession(page, sessionId);
       await waitForPaused(page, sessionId);
 
