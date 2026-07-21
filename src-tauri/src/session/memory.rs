@@ -140,9 +140,13 @@ pub(crate) fn process_memory_regions_request(
         Ok(regions) => {
             debug!("📥 Received {} memory regions", regions.len());
 
+            let annotations =
+                super::region_annotations::annotate_regions(session, pid, &regions);
+
             let serializable_regions: Vec<SerializableMemoryRegion> = regions
                 .iter()
-                .map(|r| SerializableMemoryRegion {
+                .zip(annotations)
+                .map(|(r, annotations)| SerializableMemoryRegion {
                     base_address: format!("0x{:016X}", r.base_address),
                     allocation_base: format!("0x{:016X}", r.allocation_base),
                     region_size: r.region_size,
@@ -153,6 +157,7 @@ pub(crate) fn process_memory_regions_request(
                     protect_raw: r.protect,
                     region_type: joybug2::formatting::memory::type_to_str(r.region_type).to_string(),
                     type_raw: r.region_type,
+                    annotations,
                 })
                 .collect();
 

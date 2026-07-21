@@ -3,7 +3,7 @@ import { useParams, useNavigate } from "react-router-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { disassemblyNavigation, memoryNavigation, sourceNavigation, panelFocus, peviewerModuleNavigation, typesNavigation } from "@/lib/navigationStore";
+import { disassemblyNavigation, memoryNavigation, memoryRegionsNavigation, sourceNavigation, panelFocus, peviewerModuleNavigation, typesNavigation } from "@/lib/navigationStore";
 import {
   SESSION_TAB_DEFS, SESSION_TAB_CATEGORIES, SESSION_TAB_BY_ACTION, sessionTabDefFor,
   type SessionTabId,
@@ -218,6 +218,12 @@ export default function SessionDocked() {
   const handleNavigateToMemoryPointer = React.useCallback((address: string) => {
     navigateToMemoryTab(address, "pointer");
   }, [navigateToMemoryTab]);
+
+  // Activate the Memory Regions tab and highlight the region containing the address.
+  const handleNavigateToMemoryRegion = React.useCallback((address: string) => {
+    dockingRef.current?.showTab('memory_regions');
+    memoryRegionsNavigation.request(address);
+  }, []);
 
   // Open the PE Viewer tab (singleton) and select a module in it.
   const handleOpenModuleInfo = React.useCallback((moduleBase: string) => {
@@ -565,10 +571,11 @@ export default function SessionDocked() {
     watchpointState,
     onNavigateToDisassembly: handleNavigateToDisassembly,
     onNavigateToMemory: handleNavigateToMemory,
+    onNavigateToMemoryRegion: handleNavigateToMemoryRegion,
     onNavigateToSource: handleNavigateToSource,
     onNavigateToType: handleNavigateToType,
     onFindAccesses: handleFindAccesses,
-  }), [session, displayStatus, canUseMemoryOps, modules, threads, symbolStatuses, symbolsRefreshKey, loadModules, loadThreads, loadModulePdb, retryModuleSymbols, searchSymbols, breakpointState, patchState, bookmarkState, watchpointState, handleNavigateToDisassembly, handleNavigateToMemory, handleNavigateToSource, handleNavigateToType, handleFindAccesses]);
+  }), [session, displayStatus, canUseMemoryOps, modules, threads, symbolStatuses, symbolsRefreshKey, loadModules, loadThreads, loadModulePdb, retryModuleSymbols, searchSymbols, breakpointState, patchState, bookmarkState, watchpointState, handleNavigateToDisassembly, handleNavigateToMemory, handleNavigateToMemoryRegion, handleNavigateToSource, handleNavigateToType, handleFindAccesses]);
   
   // Static tab content - components will update via context.
   // Typed against the registry, so adding a tab to SESSION_TAB_DEFS without

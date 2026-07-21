@@ -350,6 +350,12 @@ pub struct SessionStateUI {
     /// in-memory code that differs from the file (patch detection). Cleared on
     /// session restart; entries dropped on module unload. See `session::image_cache`.
     pub original_images: HashMap<u64, Arc<crate::session::image_cache::OriginalModuleImage>>,
+
+    /// Caches for memory-region annotation (PE sections per module, PEB
+    /// address, per-thread TEB/stack bounds). Pruned against the live
+    /// module/thread lists on every regions refresh; cleared on restart
+    /// (addresses change with ASLR).
+    pub region_annotation_cache: crate::session::region_annotations::RegionAnnotationCache,
 }
 
 /// Transient state for an active source-line step (see SessionStateUI::source_step).
@@ -405,6 +411,7 @@ impl SessionStateUI {
             pass_exception_on_continue: false,
             source_step: None,
             original_images: HashMap::new(),
+            region_annotation_cache: Default::default(),
         }
     }
 
@@ -429,6 +436,7 @@ impl SessionStateUI {
 
         // Original-image cache is per-run (load bases change with ASLR).
         self.original_images.clear();
+        self.region_annotation_cache = Default::default();
 
         // Keep breakpoints but mark all as inactive/unresolved
         for bp in &mut self.breakpoints {

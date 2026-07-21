@@ -204,17 +204,20 @@ pub(crate) fn update_session_from_event(state: &mut SessionStateUI, event: &joyb
         }
         joybug2::protocol_io::DebugEvent::ThreadExited { tid, .. } => {
             state.threads.retain(|t| t.tid != *tid);
+            state.region_annotation_cache.threads.remove(tid);
             info!("Removed thread: {}", tid);
         }
         joybug2::protocol_io::DebugEvent::DllUnloaded { base_of_dll, .. } => {
             state.modules.retain(|m| m.base != *base_of_dll);
             state.original_images.remove(base_of_dll);
+            state.region_annotation_cache.sections.remove(base_of_dll);
             info!("Removed module at 0x{:X}", base_of_dll);
         }
         joybug2::protocol_io::DebugEvent::ProcessExited { .. } => {
             state.modules.clear();
             state.threads.clear();
             state.original_images.clear();
+            state.region_annotation_cache = Default::default();
             state.status = SessionStatusUI::Stopped;
             info!("Process exited, session stopped.");
         }

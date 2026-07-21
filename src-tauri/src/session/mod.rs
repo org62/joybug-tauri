@@ -8,6 +8,7 @@ pub(crate) mod helpers;
 pub(crate) mod image_cache;
 pub(crate) mod memory;
 pub(crate) mod pointer_scan;
+pub(crate) mod region_annotations;
 pub(crate) mod string_scan;
 pub(crate) mod patches;
 mod registers;

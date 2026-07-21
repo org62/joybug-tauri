@@ -54,6 +54,9 @@ export interface MemoryNavRequest {
 }
 
 export const disassemblyNavigation = new NavigationChannel();
+// "Go to memory region" → the Memory Regions tab scrolls to and highlights the
+// region containing this address (hex string).
+export const memoryRegionsNavigation = new NavigationChannel<string>();
 export const memoryNavigation = new NavigationChannel<string | MemoryNavRequest>();
 // Disassembly row click → source view scrolls/highlights the matching line
 // (passive sync; does not steal the active tab).

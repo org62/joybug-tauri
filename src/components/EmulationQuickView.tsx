@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useMemo, useCallback, memo } from "react";
-import { ChevronDown, ChevronRight, Loader2 } from "lucide-react";
+import { ChevronDown, ChevronRight, Copy, Loader2 } from "lucide-react";
+import { copyToClipboard } from "@/lib/clipboard";
 import { ScrollArea } from "./ui/scroll-area";
 import { VirtualizedList } from "./ui/virtualized-list";
 import { Button } from "./ui/button";
@@ -363,6 +364,43 @@ export const EmulationQuickView = memo(function EmulationQuickView({ emulation, 
   const hasAnyData = syscallResult || moduleResult || traceResult;
   const dimmed = isLoading && hasAnyData;
 
+  // Render the visible emulation output (summary + trace lines) as plain text,
+  // with the trace columns aligned like the on-screen layout.
+  const handleCopyLog = useCallback(() => {
+    const lines: string[] = [];
+    lines.push(
+      `Next Syscall: ${syscall.label}` +
+        (traceDistances.syscall !== undefined
+          ? ` (${traceDistances.syscall.toLocaleString()} instr away)`
+          : ""),
+    );
+    lines.push(`Next Module: ${module.label}`);
+    const timings = [
+      syscallResult && `syscall ${formatTimingUs(syscallResult.emulation_time_us)}`,
+      moduleResult && `module ${formatTimingUs(moduleResult.emulation_time_us)}`,
+      traceResult && `trace ${formatTimingUs(traceResult.emulation_time_us)}`,
+    ]
+      .filter(Boolean)
+      .join(", ");
+    if (timings) lines.push(`Emulation: ${timings}`);
+
+    if (traceLines.length > 0) {
+      lines.push("");
+      const addrWidth = Math.max(...traceLines.map((l) => l.address.length));
+      const asmTexts = traceLines.map((l) => (l.opStr ? `${l.mnemonic} ${l.opStr}` : l.mnemonic));
+      const asmWidth = Math.max(...asmTexts.map((a) => a.length));
+      const idxWidth = String(traceLines.length - 1).length;
+      traceLines.forEach((l, i) => {
+        const extras = [l.changes, l.memory].filter(Boolean).join(", ");
+        lines.push(
+          `${String(l.index).padStart(idxWidth)}  ${l.address.padEnd(addrWidth)}  ${asmTexts[i].padEnd(asmWidth)}${extras ? `  ${extras}` : ""}`.trimEnd(),
+        );
+      });
+    }
+
+    copyToClipboard(lines.join("\n"), "emulation log");
+  }, [syscall.label, module.label, traceDistances.syscall, syscallResult, moduleResult, traceResult, traceLines]);
+
   return (
     <div ref={rootRef} className="shrink-0 border-t border-border bg-muted/20">
       {/* Resize handle */}
@@ -381,13 +419,24 @@ export const EmulationQuickView = memo(function EmulationQuickView({ emulation, 
           {isLoading && <Loader2 className="h-3 w-3 animate-spin ml-1" />}
         </div>
         {!collapsed && (
-          <Button
-            variant="outline"
-            size="xs"
-            onClick={(e) => { e.stopPropagation(); toggleTraceMode(); }}
-          >
-            {traceMode === "InstructionTrace" ? "Instructions" : "Basic blocks"}
-          </Button>
+          <div className="flex items-center gap-1">
+            <Button
+              variant="outline"
+              size="icon-xs"
+              title="Copy emulation log"
+              disabled={!hasAnyData}
+              onClick={(e) => { e.stopPropagation(); handleCopyLog(); }}
+            >
+              <Copy />
+            </Button>
+            <Button
+              variant="outline"
+              size="xs"
+              onClick={(e) => { e.stopPropagation(); toggleTraceMode(); }}
+            >
+              {traceMode === "InstructionTrace" ? "Instructions" : "Basic blocks"}
+            </Button>
+          </div>
         )}
       </div>
 

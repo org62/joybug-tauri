@@ -9,7 +9,7 @@ import { HistoryInput } from "./ui/history-input";
 import { pushInputHistory } from "@/lib/inputHistory";
 import { Switch } from "./ui/switch";
 import { Label } from "./ui/label";
-import { Cpu, ArrowLeft, ArrowRight, RefreshCw, ChevronRight, Circle, CircleDot, Wrench, Copy, Bookmark, FileCode, LocateFixed, Zap, Undo2 } from "lucide-react";
+import { Cpu, ArrowLeft, ArrowRight, RefreshCw, ChevronRight, Circle, CircleDot, Wrench, Copy, Bookmark, FileCode, HardDrive, LocateFixed, Zap, Undo2 } from "lucide-react";
 import { sourceNavigation } from "@/lib/navigationStore";
 import { cn } from "@/lib/utils";
 import { useAssemblyView, buildAsmRows, Instruction, AsmDisassembleFn } from "@/hooks/useAssemblyView";
@@ -57,6 +57,8 @@ interface AssemblyViewProps {
   symbolsRefreshKey?: string;
   /** Activate the Source tab and reveal an address's source line (context-menu action). */
   onNavigateToSource?: (address: string) => void;
+  /** Highlight the memory region containing an address (context-menu action). */
+  onShowInMemoryRegions?: (address: string) => void;
   /** Non-session disassembly source (PE file on disk). Addresses are VAs. */
   disassemble?: AsmDisassembleFn;
   /** VA to disassemble first when using a file source. */
@@ -70,7 +72,7 @@ interface AssemblyViewProps {
   navHistory: NavHistoryStore;
 }
 
-export function AssemblyView({ sessionId, isPaused, canLoad, address, registers, resolveSymbol, breakpointAddresses, emulation, onToggleBreakpoint, onToggleSingleShotBreakpoint, onSetHardwareBreakpoint, onAssemblePatch, onRestoreImageBytes, onAddBookmark, symbolsRefreshKey, onNavigateToSource, disassemble, initialAddress, addressFormatter, translateGotoInput, navHistory }: AssemblyViewProps) {
+export function AssemblyView({ sessionId, isPaused, canLoad, address, registers, resolveSymbol, breakpointAddresses, emulation, onToggleBreakpoint, onToggleSingleShotBreakpoint, onSetHardwareBreakpoint, onAssemblePatch, onRestoreImageBytes, onAddBookmark, symbolsRefreshKey, onNavigateToSource, onShowInMemoryRegions, disassemble, initialAddress, addressFormatter, translateGotoInput, navHistory }: AssemblyViewProps) {
   const [addressInput, setAddressInput] = useState("");
   // Inline assembly input state
   const [assembleTarget, setAssembleTarget] = useState<{ address: string; defaultText: string } | null>(null);
@@ -642,6 +644,14 @@ export function AssemblyView({ sessionId, isPaused, canLoad, address, registers,
               onClick={() => onNavigateToSource(contextMenu.data.address)}
             >
               Show Source
+            </ContextMenuItem>
+          )}
+          {onShowInMemoryRegions && (
+            <ContextMenuItem
+              icon={<HardDrive className="text-blue-400" />}
+              onClick={() => onShowInMemoryRegions(contextMenu.data.address)}
+            >
+              Go to Memory Region
             </ContextMenuItem>
           )}
           <ContextMenuItem

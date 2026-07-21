@@ -9,7 +9,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "./ui/select";
-import { Binary, Save, X, ArrowRight, Copy, ClipboardPaste, Crosshair, Bookmark, Fingerprint } from "lucide-react";
+import { Binary, Save, X, ArrowRight, Copy, ClipboardPaste, Crosshair, Bookmark, Fingerprint, HardDrive } from "lucide-react";
 import { useHexEditor, ExtendStatus, HexDataSource } from "@/hooks/useHexEditor";
 import { isProcessAvailable } from "@/lib/sessionHelpers";
 import { CHANGED_VALUE_CLASS } from "@/lib/utils";
@@ -42,6 +42,8 @@ interface HexViewProps {
   onSetHardwareBreakpoint?: (address: string, hwType: string, hwSize: number) => void;
   onAddBookmark?: (address: string, valueType: string) => void;
   onFindAccesses?: (address: string, mode: "Write" | "ReadWrite", size: number) => void;
+  /** Highlight the memory region containing an address (context-menu action). */
+  onShowInMemoryRegions?: (address: string) => void;
   // Non-session byte source (e.g. a PE file on disk). When set, the view reads
   // and writes through it instead of session memory commands.
   dataSource?: HexDataSource;
@@ -65,7 +67,7 @@ const EDGE_EXTEND_THRESHOLD = ROW_HEIGHT * 6;
 // rows: at most one full chunk's worth of rows.
 const MAX_WHEEL_REVEAL = (DEFAULT_CHUNK_SIZE / BYTES_PER_ROW) * ROW_HEIGHT;
 
-export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}, resolveSymbol, initialAddress, initialViewMode, onSetHardwareBreakpoint, onAddBookmark, onFindAccesses, dataSource, addressFormatter, translateGotoInput }: HexViewProps) {
+export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}, resolveSymbol, initialAddress, initialViewMode, onSetHardwareBreakpoint, onAddBookmark, onFindAccesses, onShowInMemoryRegions, dataSource, addressFormatter, translateGotoInput }: HexViewProps) {
   const fmtAddr = addressFormatter ?? formatAddress;
   const {
     baseAddress,
@@ -556,6 +558,7 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
   return (
     <DockPanel
       ref={hexViewContainerRef}
+      data-testid="hex-panel"
       className="outline-none"
       tabIndex={0}
       onKeyDown={handleContainerKeyDown}
@@ -768,6 +771,19 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
           >
             Copy Address
           </ContextMenuItem>
+          {onShowInMemoryRegions && (
+            <ContextMenuItem
+              icon={<HardDrive />}
+              disabled={selectionStart === null}
+              onClick={() => {
+                if (selectionStart === null) return;
+                const address = baseAddress + BigInt(selectionStart);
+                onShowInMemoryRegions(`0x${address.toString(16)}`);
+              }}
+            >
+              Go to Memory Region
+            </ContextMenuItem>
+          )}
           <ContextMenuSeparator />
           <ContextMenuItem
             icon={<Copy />}

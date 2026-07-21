@@ -124,6 +124,19 @@ pub struct MemoryRegionsResult {
     pub regions: Vec<SerializableMemoryRegion>,
 }
 
+/// One annotation on a memory region ("what lives here").
+#[derive(serde::Serialize, Clone)]
+pub struct RegionAnnotation {
+    /// "module" | "section" | "teb" | "peb" | "heap" | "stack" | "kuser"
+    pub kind: String,
+    pub label: String,
+    /// Exact address of the annotated structure (TEB/PEB/heap base, section
+    /// start, ...), when it has one — lets the UI link a badge to the typed
+    /// view at that address.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub address: Option<String>,
+}
+
 /// Serializable memory region info
 #[derive(serde::Serialize)]
 pub struct SerializableMemoryRegion {
@@ -137,6 +150,7 @@ pub struct SerializableMemoryRegion {
     pub protect_raw: u32,
     pub region_type: String,
     pub type_raw: u32,
+    pub annotations: Vec<RegionAnnotation>,
 }
 
 /// Event payload for memory regions error

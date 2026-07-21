@@ -167,6 +167,8 @@ export interface SessionContextData {
   watchpointState: WatchpointTraceState;
   onNavigateToDisassembly?: (address: string) => void;
   onNavigateToMemory?: (address: string) => void;
+  /** Activate the Memory Regions tab and highlight the region containing address. */
+  onNavigateToMemoryRegion?: (address: string) => void;
   /** Activate the Source tab and reveal the given address's source line. */
   onNavigateToSource?: (address: string) => void;
   /** Open the Types tab with a named type overlaid on an address (e.g. a thread's

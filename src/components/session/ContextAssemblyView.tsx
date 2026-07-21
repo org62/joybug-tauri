@@ -62,6 +62,7 @@ export const ContextAssemblyView = () => {
       onAddBookmark={(addr, asmText) => addBookmark({ kind: 'code', address: addr, asmText })}
       symbolsRefreshKey={sessionData.symbolsRefreshKey}
       onNavigateToSource={sessionData.onNavigateToSource}
+      onShowInMemoryRegions={sessionData.onNavigateToMemoryRegion}
       navHistory={sessionNavHistory}
     />
   );
