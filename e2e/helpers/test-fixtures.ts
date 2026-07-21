@@ -71,11 +71,8 @@ export const test = base.extend<TestFixtures>({
       const theme = localStorage.getItem("theme");
       localStorage.clear();
       if (theme) localStorage.setItem("theme", theme);
-    });
-
-    // Disable quick emulation in disassembly view — it consumes CPU without
-    // being tested by e2e and can slow down / interfere with other tests.
-    await page.evaluate(() => {
+      // Disable quick emulation in disassembly view — it consumes CPU without
+      // being tested by e2e and can slow down / interfere with other tests.
       localStorage.setItem("assembly-quick-emulation-collapsed", "true");
     });
 
@@ -88,16 +85,19 @@ export const test = base.extend<TestFixtures>({
 
     await use(page);
 
-    // Capture screenshot after test for UI mode visibility
-    // (connectOverCDP doesn't support Playwright's built-in screenshot timeline)
-    try {
-      const screenshot = await page.screenshot();
-      await testInfo.attach("screenshot", {
-        body: screenshot,
-        contentType: "image/png",
-      });
-    } catch {
-      // Screenshot may fail if page crashed
+    // Capture a screenshot on failure only (connectOverCDP doesn't support
+    // Playwright's built-in screenshot timeline). Passing tests skip it —
+    // ~100-200ms per test that nobody looks at.
+    if (testInfo.status !== testInfo.expectedStatus) {
+      try {
+        const screenshot = await page.screenshot();
+        await testInfo.attach("screenshot", {
+          body: screenshot,
+          contentType: "image/png",
+        });
+      } catch {
+        // Screenshot may fail if page crashed
+      }
     }
 
     // Clean up after test

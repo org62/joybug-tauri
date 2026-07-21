@@ -46,6 +46,14 @@ export async function moduleBase(
  * Create and start a debug session via the UI dialog.
  * Uses `cmd.exe /c "echo hello world"` as the debug target.
  *
+ * NOTE: this deliberately drives the real dialog rather than invoking the
+ * backend create/start commands directly. A backend fast-path was tried and
+ * measurably faster, but removing the dialog's natural pacing made the full
+ * suite deeply flaky: ~20 specs then create+start sessions back-to-back with no
+ * UI settle time, and the disassembly/symbol-heavy tests (disassembly,
+ * navigation-history, pc-follow, input-history, patches) cascaded into repeated
+ * page-crash retries. The dialog path is the stable one — keep it.
+ *
  * Steps:
  * 1. Navigate to /debugger
  * 2. Click "Create Process"

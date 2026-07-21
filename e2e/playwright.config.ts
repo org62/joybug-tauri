@@ -13,7 +13,8 @@ export default defineConfig({
   },
   globalSetup: "./global-setup",
   globalTeardown: "./global-teardown",
-  // Run fast tests first to absorb Vite warmup penalty (~10s) on cheap tests
+  // Membership gate only — new specs must be added here to run at all.
+  // NOTE: testMatch does NOT control order; specs execute alphabetically.
   testMatch: [
     "routing.spec.ts",
     "pe-reader.spec.ts",
