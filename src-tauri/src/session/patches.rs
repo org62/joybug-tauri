@@ -31,23 +31,31 @@ pub(crate) fn persist_patches(session_state: &Arc<Mutex<SessionStateUI>>) {
     crate::patch_store::save_patches(&state.launch_command, &state.patches);
 }
 
+/// `changed = true` marks a view-affecting change (bumps `patches_revision`);
+/// the runner's every-pause re-broadcast passes `false` so listeners doing
+/// expensive refreshes can skip it by comparing revisions.
 pub(crate) fn emit_patches_event(
     session: &DebugSession,
     app_handle_clone: &Option<AppHandle>,
+    changed: bool,
 ) {
     if let Some(ref handle) = app_handle_clone {
-        let (session_id, patches) = {
-            let state = session.state.lock().unwrap();
-            (state.id.clone(), state.patches.clone())
+        let (session_id, patches, revision) = {
+            let mut state = session.state.lock().unwrap();
+            if changed {
+                state.patches_revision += 1;
+            }
+            (state.id.clone(), state.patches.clone(), state.patches_revision)
         };
 
         #[derive(serde::Serialize)]
         struct PatchesUpdatedEvent {
             session_id: String,
             patches: Vec<PatchInfo>,
+            revision: u64,
         }
 
-        let payload = PatchesUpdatedEvent { session_id, patches };
+        let payload = PatchesUpdatedEvent { session_id, patches, revision };
         if let Err(e) = handle.emit("patches-updated", &payload) {
             error!("Failed to emit patches-updated event: {}", e);
         }
@@ -284,7 +292,7 @@ pub(crate) fn process_assemble_patch(
     }
 
     persist_patches(&session.state);
-    emit_patches_event(session, app_handle_clone);
+    emit_patches_event(session, app_handle_clone, true);
 }
 
 pub(crate) fn process_undo_patch(
@@ -331,7 +339,7 @@ pub(crate) fn process_undo_patches(
     }
 
     persist_patches(&session.state);
-    emit_patches_event(session, app_handle_clone);
+    emit_patches_event(session, app_handle_clone, true);
 }
 
 /// Enable/disable one patch without persisting or emitting. Used both standalone
@@ -387,7 +395,7 @@ pub(crate) fn process_enable_patch(
 ) {
     apply_enable_patch(session, event.pid(), patch_id, enabled);
     persist_patches(&session.state);
-    emit_patches_event(session, app_handle_clone);
+    emit_patches_event(session, app_handle_clone, true);
 }
 
 pub(crate) fn process_update_patch(
@@ -402,7 +410,7 @@ pub(crate) fn process_update_patch(
             p.group = group;
         }
     }
-    emit_patches_event(session, app_handle_clone);
+    emit_patches_event(session, app_handle_clone, true);
     persist_patches(&session.state);
 }
 
@@ -425,7 +433,7 @@ pub(crate) fn process_enable_patch_group(
         apply_enable_patch(session, pid, &patch_id, enabled);
     }
     persist_patches(&session.state);
-    emit_patches_event(session, app_handle_clone);
+    emit_patches_event(session, app_handle_clone, true);
 }
 
 /// Re-apply patches for a newly loaded module.
@@ -462,6 +470,7 @@ pub(crate) fn reapply_patches_for_module(
 
     // Single lock to commit all results.
     let mut state = session.state.lock().unwrap();
+    let committed = !results.is_empty();
     for (patch_id, addr, fresh_original, written) in results {
         let Some(p) = state.patches.iter_mut().find(|p| p.id == patch_id) else { continue; };
         p.address = addr;
@@ -474,6 +483,11 @@ pub(crate) fn reapply_patches_for_module(
         } else if !p.enabled {
             info!("Resolved address for disabled patch {} at 0x{:X}", p.id, addr);
         }
+    }
+    // This runs before the runner's pause broadcast (which doesn't bump); mark
+    // the change here so listeners refresh for the newly applied patches.
+    if committed {
+        state.patches_revision += 1;
     }
 }
 
@@ -582,18 +596,25 @@ pub(crate) fn process_restore_image_bytes(
     // The patch list is unchanged, but patches-updated is the event the assembly
     // view already listens to for a disassembly refresh — reuse it so the
     // restored bytes (and cleared is_patched flag) show without a new channel.
-    emit_patches_event(session, app_handle_clone);
+    emit_patches_event(session, app_handle_clone, true);
 }
 
 pub(crate) fn deactivate_patches_for_module(
     state: &mut SessionStateUI,
     module_name: &str,
 ) {
+    let mut deactivated = false;
     for patch in &mut state.patches {
         if patch.module_name.eq_ignore_ascii_case(module_name) && patch.is_applied {
             patch.is_applied = false;
             patch.address = 0;
+            deactivated = true;
             info!("Deactivated patch {} (module {} unloaded)", patch.id, module_name);
         }
+    }
+    // Mutation without an emit of its own — the runner's pause broadcast
+    // follows; bump so that broadcast is seen as a change.
+    if deactivated {
+        state.patches_revision += 1;
     }
 }

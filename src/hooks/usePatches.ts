@@ -23,6 +23,9 @@ export interface Patch {
 interface PatchesUpdatedPayload {
   session_id: string;
   patches: RawPatch[];
+  /// Bumped by the backend only on view-affecting changes; the every-pause
+  /// re-broadcast keeps it stable (used by useAssemblyView to skip re-decodes).
+  revision: number;
 }
 
 interface AssemblePatchErrorPayload {

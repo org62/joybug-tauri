@@ -253,8 +253,16 @@ export function AssemblyView({ sessionId, isPaused, canLoad, address, registers,
   // end-of-range guards keep this from spamming requests, and the prepend
   // scroll-compensation moves the viewport off the top edge so it won't
   // immediately re-trigger.
+  //
+  // Prefetch a FULL viewport ahead (not a few rows): the backward decode is a
+  // round-trip, and if the user reaches the true top edge (scrollTop 0) before
+  // it lands, the prepend's scroll-compensation pins them in place — the rows
+  // load but the viewport doesn't move ("scrollbar grows but the line is stuck
+  // until I scroll down then up again"). Firing a screen early keeps a decoded
+  // buffer above/below the viewport so scrolling reveals it seamlessly. Only ever
+  // called on a real user gesture, so bare gotos/restores never auto-extend.
   const maybeExtendAtEdges = useCallback((el: HTMLElement, only?: 'above' | 'below') => {
-    const threshold = ASSEMBLY_ROW_HEIGHT * 8;
+    const threshold = Math.max(ASSEMBLY_ROW_HEIGHT * 8, el.clientHeight);
     if (only !== 'below' && el.scrollTop <= threshold) loadMoreAbove();
     if (only !== 'above' && el.scrollHeight - (el.scrollTop + el.clientHeight) <= threshold) loadMoreBelow();
   }, [loadMoreAbove, loadMoreBelow]);
@@ -328,10 +336,15 @@ export function AssemblyView({ sessionId, isPaused, canLoad, address, registers,
   // available") rather than a red error box (e.g. in non-invasive Open sessions
   // before an address is chosen).
   const benignUnavailable = error !== null && isBenignSessionError(error);
-  const showEmptyState = (!sessionId && !disassemble) || benignUnavailable || (address == null && !disassemble && instructions.length === 0 && !error && !isLoading);
-  const showErrorState = error !== null && !benignUnavailable;
-  const showLoadingState = isLoading && instructions.length === 0 && !error;
   const showInstructions = instructions.length > 0;
+  const showErrorState = error !== null && !benignUnavailable;
+  const showLoadingState = isLoading && !showInstructions && !error;
+  // Catch-all so the panel is NEVER blank: whenever there are no instructions to
+  // render and we're not mid-load or showing an error, fall back to the neutral
+  // empty state. Covers "no address entered yet" AND "disassembled an address
+  // whose memory was unreadable/undecodable, so nothing came back" — the latter
+  // previously left every state false and rendered an empty panel.
+  const showEmptyState = !showInstructions && !showLoadingState && !showErrorState;
 
   return (
     <DockPanel ref={containerRef} data-testid="assembly-panel">

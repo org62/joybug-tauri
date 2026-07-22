@@ -305,6 +305,35 @@ pub(crate) fn serialize_dereference_entries(
         .collect()
 }
 
+/// Emit one `dereference-updated` event for a single address's telescoped chain.
+fn emit_dereference_updated(
+    handle: &AppHandle,
+    session_id: &str,
+    address: u64,
+    entries: &[joybug2::protocol::DereferenceEntry],
+) {
+    let result = DereferenceResult {
+        session_id: session_id.to_string(),
+        base_address: format!("0x{:016X}", address),
+        entries: serialize_dereference_entries(entries),
+    };
+    if let Err(e) = handle.emit("dereference-updated", &result) {
+        error!("Failed to emit dereference-updated event: {}", e);
+    }
+}
+
+/// Emit one `dereference-error` event for a single address.
+fn emit_dereference_error(handle: &AppHandle, session_id: &str, address: u64, error: &str) {
+    let error_result = DereferenceError {
+        session_id: session_id.to_string(),
+        address: format!("0x{:016X}", address),
+        error: error.to_string(),
+    };
+    if let Err(emit_err) = handle.emit("dereference-error", &error_result) {
+        error!("Failed to emit dereference-error event: {}", emit_err);
+    }
+}
+
 /// Processes a dereference request and emits results to the frontend
 pub(crate) fn process_dereference_request(
     session: &mut DebugSession,
@@ -315,49 +344,14 @@ pub(crate) fn process_dereference_request(
 ) {
     debug!("📤 Processing dereference request: pid={}, address=0x{:X}, count={}", pid, address, count);
 
-    match session.dereference(pid, address, count, None) {
-        Ok(entries) => {
-            debug!("📥 Received {} dereference entries", entries.len());
-
-            let serializable_entries = serialize_dereference_entries(&entries);
-
-            if let Some(ref handle) = app_handle_clone {
-                let session_id = {
-                    let state = session.state.lock().unwrap();
-                    state.id.clone()
-                };
-
-                let result = DereferenceResult {
-                    session_id,
-                    base_address: format!("0x{:016X}", address),
-                    entries: serializable_entries,
-                };
-
-                if let Err(e) = handle.emit("dereference-updated", &result) {
-                    error!("Failed to emit dereference-updated event: {}", e);
-                } else {
-                    debug!("📡 Emitted dereference-updated event with {} entries", result.entries.len());
-                }
-            }
-        }
-        Err(e) => {
-            error!("Failed to dereference at 0x{:X}: {}", address, e);
-
-            if let Some(ref handle) = app_handle_clone {
-                let session_id = {
-                    let state = session.state.lock().unwrap();
-                    state.id.clone()
-                };
-
-                let error_result = DereferenceError {
-                    session_id,
-                    address: format!("0x{:016X}", address),
-                    error: e.to_string(),
-                };
-
-                if let Err(emit_err) = handle.emit("dereference-error", &error_result) {
-                    error!("Failed to emit dereference-error event: {}", emit_err);
-                }
+    let result = session.dereference(pid, address, count, None);
+    if let Some(ref handle) = app_handle_clone {
+        let session_id = { session.state.lock().unwrap().id.clone() };
+        match result {
+            Ok(entries) => emit_dereference_updated(handle, &session_id, address, &entries),
+            Err(e) => {
+                error!("Failed to dereference at 0x{:X}: {}", address, e);
+                emit_dereference_error(handle, &session_id, address, &e.to_string());
             }
         }
     }
@@ -630,14 +624,38 @@ pub(crate) fn process_scan_memory_reset(
     }
 }
 
-/// Processes a batch dereference request (multiple addresses in one command) and emits individual results.
+/// Processes a batch dereference request (multiple addresses in one command) and
+/// emits an individual `dereference-updated` event per address — the registers
+/// panel's listener contract is unchanged. Unlike looping `process_dereference_request`,
+/// this issues ONE server call: the server enumerates the process's memory regions
+/// once for the whole batch instead of once per address (that full address-space
+/// walk is the dominant per-step cost on large targets — ~16 registers × one walk
+/// each). A per-address emit still lets the panel update each row independently.
 pub(crate) fn process_dereference_batch(
     session: &mut DebugSession,
     app_handle_clone: &Option<AppHandle>,
     pid: u32,
     addresses: &[u64],
 ) {
-    for &address in addresses {
-        process_dereference_request(session, app_handle_clone, pid, address, 1);
+    debug!("📤 Processing dereference batch: pid={}, {} addresses", pid, addresses.len());
+
+    let result = session.dereference_batch(pid, addresses.to_vec(), 1, None);
+    let Some(handle) = app_handle_clone.as_ref() else { return };
+    let session_id = { session.state.lock().unwrap().id.clone() };
+    match result {
+        Ok(results) => {
+            // Contract: one entry list per input address, in order.
+            debug_assert_eq!(results.len(), addresses.len());
+            for (&address, entries) in addresses.iter().zip(results.iter()) {
+                emit_dereference_updated(handle, &session_id, address, entries);
+            }
+        }
+        Err(e) => {
+            error!("Failed to dereference batch: {}", e);
+            let msg = e.to_string();
+            for &address in addresses {
+                emit_dereference_error(handle, &session_id, address, &msg);
+            }
+        }
     }
 }

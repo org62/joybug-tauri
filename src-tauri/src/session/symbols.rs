@@ -200,6 +200,15 @@ pub(crate) fn process_resolve_thread_symbols(
         state.threads.clone()
     };
 
+    // Non-blocking batch resolve, one round-trip for all threads: an address
+    // in a module whose PDB is still parsing comes back `None` (shown as a raw
+    // address) instead of stalling the debug loop — the threads panel
+    // re-requests when `symbolsRefreshKey` flips, upgrading raw → named.
+    let start_addresses: Vec<u64> = threads.iter().map(|t| t.start_address).collect();
+    let resolved = session
+        .try_resolve_addresses_to_symbols(pid, start_addresses)
+        .unwrap_or_else(|_| vec![None; threads.len()]);
+
     #[derive(serde::Serialize, Clone)]
     struct ThreadSymbolEntry {
         tid: u32,
@@ -210,20 +219,19 @@ pub(crate) fn process_resolve_thread_symbols(
 
     let mut entries: Vec<ThreadSymbolEntry> = Vec::new();
 
-    for thread in &threads {
-        let addr = thread.start_address;
-        let (symbol_info, is_function) = match session.resolve_address_to_symbol(pid, addr) {
-            Ok((Some(module), Some(sym), Some(offset))) => {
+    for (thread, resolved) in threads.iter().zip(resolved) {
+        let (symbol_info, is_function) = match resolved {
+            Some((module, sym, offset)) => {
                 let short_module = module.rsplit(&['\\', '/'][..]).next().unwrap_or(&module);
                 let short_module = short_module.rsplitn(2, '.').last().unwrap_or(short_module);
                 let display = format!("{}!{}+0x{:x}", short_module, sym.name, offset);
                 (Some(display), sym.is_function)
             }
-            _ => (None, true),
+            None => (None, true),
         };
         entries.push(ThreadSymbolEntry {
             tid: thread.tid,
-            address: format!("0x{:016x}", addr),
+            address: format!("0x{:016x}", thread.start_address),
             symbol_info,
             is_function,
         });

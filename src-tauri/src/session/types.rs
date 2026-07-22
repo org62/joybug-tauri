@@ -86,6 +86,25 @@ pub enum UICommand {
     RefreshBookmarks,
 }
 
+impl UICommand {
+    /// Commands whose handler resumes target execution
+    /// (returns `CommandResult::ResumeExecution`). Keep in sync when adding a
+    /// stepping/continue variant — batch pruning in `dispatch::dedup_commands`
+    /// derives from this.
+    pub(crate) fn is_resume(&self) -> bool {
+        matches!(
+            self,
+            UICommand::Go
+                | UICommand::GoPassException
+                | UICommand::StepIn
+                | UICommand::StepOver
+                | UICommand::StepOut
+                | UICommand::StepOverLine
+                | UICommand::StepIntoLine
+        )
+    }
+}
+
 /// Event payload for successful memory read (may be partial)
 #[derive(serde::Serialize)]
 pub struct MemoryReadResult {

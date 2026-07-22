@@ -91,13 +91,17 @@ export const ContextThreadsView = ({ onNavigateToDisassembly, onNavigateToMemory
     }
   }, [sessionData?.session?.id, sessionData?.session?.status, sessionData?.session?.current_event]);
 
-  // Request symbol resolution when threads change and session is paused
+  // Request symbol resolution when threads change and session is paused. Also
+  // re-request when symbolsRefreshKey flips: the backend resolves only
+  // already-loaded modules (so it never blocks on a pending PDB parse), so once
+  // a module's symbols finish loading we must ask again to upgrade raw
+  // addresses to names.
   useEffect(() => {
     if (!sessionId || displayStatus !== 'Paused' || !sessionData?.threads?.length) return;
     invoke('request_resolve_thread_symbols', { sessionId }).catch((err) => {
       console.error('Failed to request thread symbol resolution:', err);
     });
-  }, [sessionId, displayStatus, sessionData?.threads]);
+  }, [sessionId, displayStatus, sessionData?.threads, sessionData?.symbolsRefreshKey]);
 
   // Fetch per-thread TEB addresses over OOB (works Paused/Running/Open). TEB bases
   // are stable for a thread's lifetime, so fetch only when an unseen tid appears.

@@ -514,7 +514,7 @@ pub fn run_debug_session(
             // Emit session events
             emit_session_event(&session.state, handle);
             emit_breakpoints_event(session, &app_handle_clone);
-            emit_patches_event(session, &app_handle_clone);
+            emit_patches_event(session, &app_handle_clone, false);
             super::bookmarks::emit_bookmarks_event(session, event.pid(), &app_handle_clone);
 
             info!("Debug event received, waiting for user command");

@@ -116,6 +116,16 @@ fn dedup_commands(commands: Vec<UICommand>) -> Vec<UICommand> {
         }
         result.push(cmd);
     }
+
+    // A resume in the batch means the user stepped/continued: any quick
+    // Emulate queued for the CURRENT PC is now stale (the frontend re-fires
+    // it at the next pause) and a full-trace run is slow — processing it
+    // ahead of the resume is exactly the "step takes a second" lag. Drop it
+    // so the resume happens immediately.
+    if result.iter().any(UICommand::is_resume) {
+        result.retain(|c| !matches!(c, UICommand::Emulate { .. }));
+    }
+
     result
 }
 

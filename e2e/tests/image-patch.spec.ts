@@ -68,6 +68,15 @@ test.describe("Image patch detection", () => {
       await waitForDisassemblyLoaded(page);
       await installEventCapture(page, [FN_DISASM]);
 
+      // Image-patch highlighting is an opt-in lens (off by default so ordinary
+      // stepping doesn't pay the per-instruction on-disk-image diff). This test
+      // exercises it, so turn it on in the view — otherwise the view's own
+      // re-decodes would clear the highlight this test asserts.
+      const imageToggle = page.locator("#compare-image");
+      if ((await imageToggle.getAttribute("data-state")) === "unchecked") {
+        await imageToggle.click();
+      }
+
       const rip = await getRip(page, sessionId);
       const ripHex = `0X${rip.toString(16).toUpperCase()}`;
 
@@ -137,6 +146,9 @@ test.describe("Image patch detection", () => {
 
       await cleanupSession(page, sessionId);
     } finally {
+      // No compare-image restore needed: the tauriPage fixture clears
+      // localStorage (preserving only theme) after every test, so the toggled
+      // setting can't leak into later specs.
       await restoreDefaultSettings(page);
     }
   });

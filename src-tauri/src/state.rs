@@ -331,6 +331,12 @@ pub struct SessionStateUI {
 
     // Patches
     pub patches: Vec<PatchInfo>,
+    /// Bumped on every view-affecting patch change (apply/undo/enable/update,
+    /// module reapply/deactivate, image-byte restore) and carried in the
+    /// `patches-updated` event. The runner re-broadcasts that event on every
+    /// pause with an unchanged list; listeners that do expensive work (the
+    /// assembly view's full re-decode) refresh only when this changes.
+    pub patches_revision: u64,
 
     // Manually-loaded PDBs, re-applied per module on (re)start.
     pub symbol_overrides: Vec<SymbolOverrideInfo>,
@@ -406,6 +412,7 @@ impl SessionStateUI {
             is_callstack_window_open: false,
             breakpoints: Vec::new(),
             patches: Vec::new(),
+            patches_revision: 0,
             symbol_overrides: Vec::new(),
             bookmarks: Vec::new(),
             pass_exception_on_continue: false,

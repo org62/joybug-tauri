@@ -50,7 +50,13 @@ export interface QuickEmulationState {
   toggleCollapsed: () => void;
 }
 
-const DEBOUNCE_MS = 150;
+// Quick-emulation fires only after the view settles at a location — long enough
+// that active stepping (and the disassembly refresh each step triggers) never
+// races it. Emulation is a "what happens if I sit here" tool; firing it 150ms
+// after every step both wasted work mid-stepping and competed with the post-step
+// disassembly render. The debounce resets on every PC change, so a run of steps
+// fires zero emulations until the user pauses to look.
+const DEBOUNCE_MS = 400;
 const MAX_INSTRUCTIONS_KEY = "assembly-quick-emulation-max-instructions";
 const COLLAPSED_KEY = "assembly-quick-emulation-collapsed";
 const DEFAULT_MAX_INSTRUCTIONS = 10000;

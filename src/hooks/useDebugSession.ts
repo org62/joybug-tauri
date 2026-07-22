@@ -312,14 +312,34 @@ export function useDebugSession(sessionId: string | undefined) {
   // Poll modules/threads while the target runs live (Running or non-invasive
   // Open): thread/module churn produces no status transition to re-trigger the
   // effect above, and in Open mode no dll events arrive at all.
+  //
+  // Also re-read the session status here as a self-heal: a `session-updated`
+  // event (e.g. the transition to Paused) can be missed if it fires during the
+  // listener-registration window, and a paused session emits no further status
+  // events — which would leave the UI stuck on "Running" until an unrelated
+  // action forced a refetch. Re-reading the session catches that within a
+  // second; the effect stops as soon as the status is no longer live.
   useEffect(() => {
     if (!isTargetLive(session?.status)) return;
     const interval = setInterval(() => {
       loadModules();
       loadThreads();
+      if (sessionId) {
+        invoke<DebugSession>("get_debug_session", { sessionId })
+          .then((s) => {
+            // Commit ONLY the transition the self-heal exists for: live → not
+            // live. An unconditional commit would hand React a fresh session
+            // object every second (re-rendering every consumer and re-firing
+            // object-identity effects); and a stale still-"Running" response
+            // arriving after a real `session-updated` Paused event must never
+            // overwrite it — this direction check makes that impossible.
+            if (s && !isTargetLive(s.status)) handleSessionUpdate(s);
+          })
+          .catch(() => {});
+      }
     }, 1000);
     return () => clearInterval(interval);
-  }, [session?.status, loadModules, loadThreads]);
+  }, [session?.status, sessionId, loadModules, loadThreads, handleSessionUpdate]);
 
   // Poll symbol statuses while PDB downloads are in flight (also while Paused —
   // downloads continue in the background) and while the target runs live (in

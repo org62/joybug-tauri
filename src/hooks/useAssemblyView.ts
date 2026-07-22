@@ -89,7 +89,13 @@ const SETTINGS_KEY = 'assembly-view-settings';
 // The backend will use actual function bounds when possible
 const DEFAULT_MAX_INSTRUCTIONS = 2000;
 
-const DEFAULT_SETTINGS: AssemblyViewSettings = { showBytes: true, compareImage: true };
+// Image-patch comparison defaults OFF: it adds a per-request cost (build an
+// on-disk image snapshot, then for every decoded instruction re-read + compare
+// the original bytes, re-disassembling any that differ) over the WHOLE requested
+// function — a real hit on large functions during navigation/stepping. It's an
+// opt-in "show me hooks/patches" lens the user flips on from the toolbar when
+// wanted, not something every disassembly should pay for.
+const DEFAULT_SETTINGS: AssemblyViewSettings = { showBytes: true, compareImage: false };
 
 function loadSettings(): AssemblyViewSettings {
   try {
@@ -296,6 +302,13 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
   const lastAutoPcAddress = useRef<bigint | null>(null);
   // Track if user manually navigated away from PC
   const userNavigatedAway = useRef<boolean>(false);
+  // Patch revision the current disassembly already reflects. The backend
+  // re-emits `patches-updated` on EVERY pause (same revision); without this,
+  // each step would re-request a full function disassembly of already-shown
+  // code (a multi-second stall on large functions). The backend bumps the
+  // revision only on view-affecting changes (apply/undo/enable, module
+  // reapply, image-byte restore), so we re-decode exactly then.
+  const lastPatchRevision = useRef<number | null>(null);
 
   // Derived PC address
   const pcAddress = pcAddressProp != null ? BigInt(pcAddressProp) : null;
@@ -530,12 +543,21 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
   // Refresh current view, preserving its shape: a context view (stepping) gets
   // its adjacent code re-prefetched after the replace; a bare anchor view
   // (goto/restore) stays bare, so refreshes never change what's on screen.
+  //
+  // Anchor on `lastRequestedAddress` (a ref, always the newest full-replace
+  // target), NOT the `currentAddress` state. A background refresh — symbols
+  // finished loading, patches changed, image-compare toggled — can fire during
+  // the async gap of a step's in-flight load, when `currentAddress` still holds
+  // the PREVIOUS function. Reloading that stale address would reset
+  // `lastRequestedAddress` to the old value, so the in-flight step's response
+  // fails its echo check and is dropped — leaving the view stuck on the old
+  // function (the PC row never appears). The ref is already the new target, so
+  // a refresh re-requests it and the dup-guard collapses the redundant load.
   const refresh = useCallback(() => {
     const keepContext = contextActive.current;
-    if (currentAddress !== null) {
-      loadDisassembly(currentAddress, keepContext);
-    } else if (pcAddress !== null) {
-      loadDisassembly(pcAddress, keepContext);
+    const target = lastRequestedAddress.current ?? currentAddress ?? pcAddress;
+    if (target !== null) {
+      loadDisassembly(target, keepContext);
     }
   }, [currentAddress, pcAddress, loadDisassembly]);
 
@@ -669,6 +691,12 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
           const msg = event.payload.error || '';
           if (!isBenignSessionError(msg)) {
             setError(msg);
+            // Drop the previous view's rows: this is a full-replace navigation
+            // that failed (e.g. unreadable/unmapped target), so keeping the old
+            // instructions would show stale code as if it were the requested
+            // address. Clearing lets the error surface instead.
+            instructionsRef.current = [];
+            setInstructions([]);
             toastError(`Disassembly failed: ${msg}`, sessionId);
           }
           requestInFlight.current = false;
@@ -710,23 +738,28 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
       }
     );
 
-    // Refresh disassembly when patches change so patched instructions are shown
-    const unlistenPatches = listen<{session_id: string}>(
+    // Refresh disassembly when patches change so patched instructions are shown.
+    // The backend re-emits this on every pause with the identical list but the
+    // same `revision`; it bumps the revision only on view-affecting changes. Gate
+    // the (expensive, full-function) re-decode on that — otherwise every single
+    // step would re-disassemble the current function even though nothing changed.
+    const unlistenPatches = listen<{ session_id: string; revision: number }>(
       'patches-updated',
       (event) => {
-        if (event.payload.session_id === sessionId && lastRequestedAddress.current !== null) {
-          // Re-request the current disassembly to pick up is_patched flags and
-          // new bytes. Context views get their surrounding code back.
-          if (contextActive.current) prefetchArmed.current = true;
-          invoke('request_function_disassembly', {
-            sessionId,
-            address: Number(lastRequestedAddress.current),
-            maxInstructions: DEFAULT_MAX_INSTRUCTIONS,
-            compareImage: compareImageRef.current,
-          }).catch(() => {
-            // Ignore errors (e.g., session ended between patch and refresh)
-          });
-        }
+        if (event.payload.session_id !== sessionId || lastRequestedAddress.current === null) return;
+        if (event.payload.revision === lastPatchRevision.current) return; // unchanged — nothing to re-decode
+        lastPatchRevision.current = event.payload.revision;
+        // Re-request the current disassembly to pick up is_patched flags and
+        // new bytes. Context views get their surrounding code back.
+        if (contextActive.current) prefetchArmed.current = true;
+        invoke('request_function_disassembly', {
+          sessionId,
+          address: Number(lastRequestedAddress.current),
+          maxInstructions: DEFAULT_MAX_INSTRUCTIONS,
+          compareImage: compareImageRef.current,
+        }).catch(() => {
+          // Ignore errors (e.g., session ended between patch and refresh)
+        });
       }
     );
 
@@ -799,23 +832,28 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
         // Clear any previous jump target so PC scroll effect can work
         setJumpTargetAddress(null);
 
-        // Check if PC is outside current function bounds - need to load new function
-        const pcOutsideFunction = functionStart === null || functionEnd === null ||
-          pcAddress < functionStart || pcAddress >= functionEnd;
+        // Reload only when the PC has stepped OUT of the loaded window — not
+        // merely out of the current function's bounds. Code without `.pdata`
+        // unwind info (stripped/packed/JIT/game binaries — very common) resolves
+        // no function bounds, so a bounds-based check treats EVERY step as
+        // "left the function" and re-decodes + re-centers the whole view on each
+        // step: the stepping flicker. The loaded window already spans a large
+        // range around the PC, so an in-window step just moves the highlight and
+        // the scroll effect keeps it centered — no re-decode, no flicker.
+        const pcLoaded = isAddressInView(instructionsRef.current, pcAddress);
 
-        if (pcOutsideFunction) {
-          // PC moved to a different function — load it with adjacent-code
-          // context so the PC never sits in an isolated function-only view.
+        if (!pcLoaded) {
+          // PC left the decoded window — load a fresh view around it, with
+          // adjacent-code context so it's never an isolated view.
           goToAddressDirect(pcAddress, { auto: true, prefetchContext: true });
         } else if (!contextActive.current) {
-          // Stepping within the loaded function: no reload needed, but upgrade
-          // a bare view to a context view so nearby code appears from the
-          // first step onward.
+          // In-window step on a bare view (e.g. right after a goto): pull in
+          // surrounding code once so nearby instructions are visible.
           contextActive.current = true;
           loadMoreAbove();
           loadMoreBelow();
         }
-        // If PC is still in current function, scroll effect will handle scrolling to it
+        // PC already in the window: the scroll effect centers it — no re-decode.
       }
       // First time seeing PC (mount) — skip if user already navigated (e.g., symbol click)
     }
@@ -847,6 +885,7 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
       contextActive.current = false;
       prefetchArmed.current = false;
       prefetchQueued.current = false;
+      lastPatchRevision.current = null;
       resetExtension();
     }
   }, [sessionId, isPaused, disassemble, resetExtension]);
