@@ -18,6 +18,7 @@ import {
 } from '@/components/ui/select';
 import { Type, Loader2, AlertTriangle, Search } from 'lucide-react';
 import { usePanelFocus } from '@/hooks/usePanelFocus';
+import { useHeaderScrollSync } from '@/hooks/useHeaderScrollSync';
 
 interface StringsPanelProps {
   scan: StringScanController;
@@ -58,6 +59,11 @@ export const StringsPanel = ({
   const { columnWidths, handleColumnResizeStart } = useColumnWidths(columnWidthsKey, {
     address: 150, encoding: 55, length: 55,
   });
+
+  // Below this width the results scroll horizontally instead of crushing the
+  // columns: the three fixed columns + px-2 padding + a floor for the string.
+  const rowMinWidth = `${columnWidths.address + columnWidths.encoding + columnWidths.length + 16 + 160}px`;
+  const { headerInnerRef, handleViewportScroll } = useHeaderScrollSync(rowMinWidth);
 
   const displayAddress = (address: string) => formatAddress?.(address) ?? address;
 
@@ -105,6 +111,8 @@ export const StringsPanel = ({
         items={scan.results}
         rowHeight={28}
         className="h-full"
+        minContentWidth={rowMinWidth}
+        onViewportScroll={handleViewportScroll}
         getItemKey={(s, i) => `${s.address}:${i}`}
         renderItem={(s) => (
           <div
@@ -208,24 +216,31 @@ export const StringsPanel = ({
         )}
       </PanelToolbar>
 
-      {/* Column header row (sortable Address & String) */}
+      {/* Column header row (sortable Address & String) — fixed vertically,
+          follows the list's horizontal scroll */}
       {scan.hasScanned && scan.results.length > 0 && (
-        <div className="flex items-center px-2 py-1 border-b bg-muted/30 text-xs font-medium text-muted-foreground select-none">
-          <ResizableHeaderCell width={columnWidths.address} onResizeStart={(e) => handleColumnResizeStart('address', e)}>
-            <SortHeader label="Address" active={scan.sortKey === 'address'} asc={scan.sortAsc}
-              onClick={() => scan.toggleSort('address')} />
-          </ResizableHeaderCell>
-          <ResizableHeaderCell width={columnWidths.encoding} onResizeStart={(e) => handleColumnResizeStart('encoding', e)}>
-            Enc
-          </ResizableHeaderCell>
-          <ResizableHeaderCell width={columnWidths.length} onResizeStart={(e) => handleColumnResizeStart('length', e)}>
-            <SortHeader label="Len" active={scan.sortKey === 'length'} asc={scan.sortAsc}
-              onClick={() => scan.toggleSort('length')} />
-          </ResizableHeaderCell>
-          <span className="flex-1 min-w-0">
-            <SortHeader label="String" active={scan.sortKey === 'value'} asc={scan.sortAsc}
-              onClick={() => scan.toggleSort('value')} />
-          </span>
+        <div className="shrink-0 overflow-hidden border-b bg-muted/30">
+          <div
+            ref={headerInnerRef}
+            style={{ minWidth: rowMinWidth }}
+            className="flex items-center px-2 py-1 text-xs font-medium text-muted-foreground select-none"
+          >
+            <ResizableHeaderCell width={columnWidths.address} onResizeStart={(e) => handleColumnResizeStart('address', e)}>
+              <SortHeader label="Address" active={scan.sortKey === 'address'} asc={scan.sortAsc}
+                onClick={() => scan.toggleSort('address')} />
+            </ResizableHeaderCell>
+            <ResizableHeaderCell width={columnWidths.encoding} onResizeStart={(e) => handleColumnResizeStart('encoding', e)}>
+              Enc
+            </ResizableHeaderCell>
+            <ResizableHeaderCell width={columnWidths.length} onResizeStart={(e) => handleColumnResizeStart('length', e)}>
+              <SortHeader label="Len" active={scan.sortKey === 'length'} asc={scan.sortAsc}
+                onClick={() => scan.toggleSort('length')} />
+            </ResizableHeaderCell>
+            <span className="flex-1 min-w-0">
+              <SortHeader label="String" active={scan.sortKey === 'value'} asc={scan.sortAsc}
+                onClick={() => scan.toggleSort('value')} />
+            </span>
+          </div>
         </div>
       )}
 

@@ -113,6 +113,7 @@ function VirtualizedTraceLines({
       items={traceLines}
       rowHeight={TRACE_ROW_HEIGHT}
       style={{ height }}
+      minContentWidth="560px"
       renderItem={(line) => (
         <div
           className="flex items-center px-2 whitespace-nowrap hover:bg-muted/50 h-full"

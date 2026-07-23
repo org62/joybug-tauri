@@ -533,6 +533,19 @@ pub fn run_debug_session(
             }
         });
 
+    // Suppress auto-download for modules whose symbol download failed in a
+    // previous run: a restart must never re-try them on its own — only an
+    // explicit user retry does (which also clears the persisted entry).
+    {
+        let denied = crate::symbol_store::load_failed_symbols(&launch_command);
+        if !denied.is_empty() {
+            if let Err(e) = session_builder.set_symbol_deny_list(denied) {
+                // Older external servers don't know the request — degrade quietly.
+                info!("Symbol deny list not applied (server too old?): {}", e);
+            }
+        }
+    }
+
     // Attach to an existing process, or launch the configured command.
     let _final_state = match attach_pid {
         Some(stored_pid) => {

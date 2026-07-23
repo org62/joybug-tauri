@@ -438,8 +438,9 @@ export const ModuleInfoView: React.FC<ModuleInfoViewProps> = ({
         </Select>
       </PanelToolbar>
 
-      {/* Content area */}
-      <PanelBody viewportRef={viewportRef}>
+      {/* Content area — wide fixed-width tables scroll horizontally below
+          560px instead of crushing their columns */}
+      <PanelBody viewportRef={viewportRef} minContentWidth="560px">
         <div className="p-2 space-y-4">
           {isLoading && (
             <div className="flex items-center justify-center py-8 text-muted-foreground">

@@ -160,6 +160,7 @@ export interface SessionContextData {
   loadThreads: () => Promise<Thread[]>;
   loadModulePdb: (baseAddress: string, pdbPath: string, force: boolean) => Promise<PdbLoadResult>;
   retryModuleSymbols: (baseAddress: string) => Promise<void>;
+  unloadModuleSymbols: (baseAddress: string) => Promise<void>;
   searchSymbols: (pattern: string, limit?: number) => Promise<Symbol[]>;
   breakpointState: BreakpointState;
   patchState: PatchState;

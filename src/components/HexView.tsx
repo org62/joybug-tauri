@@ -30,6 +30,7 @@ import { PointerDereferenceDisplay } from "@/components/DereferenceDisplay";
 import { DockPanel, PanelToolbar, PanelFooter } from "@/components/ui/panel";
 import { ContextMenu, ContextMenuItem, ContextMenuSeparator } from "@/components/ui/context-menu";
 import { useContextMenu } from "@/hooks/useContextMenu";
+import { useHeaderScrollSync } from "@/hooks/useHeaderScrollSync";
 
 interface HexViewProps {
   sessionId?: string;
@@ -375,26 +376,16 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
 
   // Keep the fixed column header horizontally aligned with the scrolled rows,
   // and extend the memory window when scrolling near a vertical edge.
-  const headerInnerRef = useRef<HTMLDivElement>(null);
-  const lastScrollLeft = useRef(0);
+  const { headerInnerRef, syncScrollLeft } = useHeaderScrollSync(
+    rowMinWidth,
+    () => virtualizerRef.current?.scrollElement,
+  );
   const handleViewportScroll = useCallback((e: UIEvent<HTMLDivElement>) => {
-    const { scrollLeft, scrollTop, scrollHeight, clientHeight } = e.currentTarget;
+    const { scrollTop, scrollHeight, clientHeight } = e.currentTarget;
     if (scrollTop < EDGE_EXTEND_THRESHOLD) extendUp();
     if (scrollHeight - scrollTop - clientHeight < EDGE_EXTEND_THRESHOLD) extendDown();
-    // Vertical scrolling is the hot path — skip the style write unless the
-    // horizontal offset actually changed.
-    if (scrollLeft === lastScrollLeft.current) return;
-    lastScrollLeft.current = scrollLeft;
-    if (headerInnerRef.current) {
-      headerInnerRef.current.style.transform = `translateX(-${scrollLeft}px)`;
-    }
-  }, [extendUp, extendDown]);
-  useEffect(() => {
-    lastScrollLeft.current = 0;
-    if (headerInnerRef.current) {
-      headerInnerRef.current.style.transform = "translateX(0)";
-    }
-  }, [rowMinWidth]);
+    syncScrollLeft(e.currentTarget.scrollLeft);
+  }, [extendUp, extendDown, syncScrollLeft]);
 
   // Wheeling while pinned at an edge produces no scroll event — catch it here
   // so the window still extends (e.g. scroll up right after a goto). The wheel

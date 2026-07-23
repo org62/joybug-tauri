@@ -3,7 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { toast } from 'sonner';
 import { DebugSession, Module, ModuleSymbolStatus, PdbLoadResult, Thread, Symbol, SessionStatus } from '@/contexts/SessionContext';
-import { isProcessAvailable, isTargetLive } from '@/lib/sessionHelpers';
+import { isProcessAvailable, isTargetLive, formatTauriError } from '@/lib/sessionHelpers';
 
 // The 1s live poll returns fresh arrays every tick even when nothing changed;
 // keeping the previous reference when contents match stops every context
@@ -25,7 +25,7 @@ export function useDebugSession(sessionId: string | undefined) {
   const [session, setSession] = useState<DebugSession | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [busyAction, setBusyAction] = useState<
-    "go" | "stepIn" | "stepOut" | "stepOver" | "stop" | "pause" | "detach" | "attach" | null
+    "go" | "stepIn" | "stepOut" | "stepOver" | "stop" | "restart" | "pause" | "detach" | "attach" | null
   >(null);
   const [modules, setModules] = useState<Module[]>([]);
   const [threads, setThreads] = useState<Thread[]>([]);
@@ -162,6 +162,19 @@ export function useDebugSession(sessionId: string | undefined) {
   const retryModuleSymbols = useCallback(async (baseAddress: string) => {
     if (!sessionId) return;
     await invoke("retry_module_symbols", { sessionId, moduleBase: baseAddress });
+    await loadSymbolStatuses();
+  }, [sessionId, loadSymbolStatuses]);
+
+  const unloadModuleSymbols = useCallback(async (baseAddress: string) => {
+    if (!sessionId) return;
+    try {
+      await invoke("unload_module_symbols", { sessionId, moduleBase: baseAddress });
+      toast.success("Symbols unloaded");
+    } catch (error) {
+      const errorMessage = `Failed to unload symbols: ${formatTauriError(error)}`;
+      toast.error(errorMessage);
+      console.error(errorMessage);
+    }
     await loadSymbolStatuses();
   }, [sessionId, loadSymbolStatuses]);
 
@@ -487,6 +500,23 @@ export function useDebugSession(sessionId: string | undefined) {
     }
   }, [sessionId, canStop, session]);
 
+  // Restart = stop + start, orchestrated by the backend (it waits for the old
+  // debug loop to unwind before starting the new run).
+  const handleRestart = useCallback(async () => {
+    if (!sessionId || !canStop) return;
+    setBusyAction("restart");
+    try {
+      await invoke("restart_debug_session", { sessionId });
+      toast.success("Restarting session…");
+    } catch (error) {
+      const errorMessage = `Failed to restart session: ${formatTauriError(error)}`;
+      toast.error(errorMessage);
+      console.error(errorMessage);
+    } finally {
+      setBusyAction(null);
+    }
+  }, [sessionId, canStop]);
+
   const handlePause = useCallback(async () => {
     if (!sessionId || !canPause) return;
     setBusyAction("pause");
@@ -546,6 +576,7 @@ export function useDebugSession(sessionId: string | undefined) {
     loadThreads,
     loadModulePdb,
     retryModuleSymbols,
+    unloadModuleSymbols,
     searchSymbols,
     handleGo,
     handleGoPassException,
@@ -554,6 +585,7 @@ export function useDebugSession(sessionId: string | undefined) {
     handleStepOver,
     handleStop,
     handleStart,
+    handleRestart,
     handlePause,
     handleDetach,
     handleAttach,

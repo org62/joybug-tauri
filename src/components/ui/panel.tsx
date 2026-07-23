@@ -60,21 +60,31 @@ function PanelToolbar({
   )
 }
 
-type PanelBodyProps = React.ComponentProps<typeof ScrollArea>
+type PanelBodyProps = React.ComponentProps<typeof ScrollArea> & {
+  /**
+   * Floor for the content width; the body scrolls horizontally below it
+   * instead of crushing the content (same contract as VirtualizedList's
+   * prop of the same name). Implies orientation "both" unless overridden.
+   */
+  minContentWidth?: string
+}
 
 /**
  * Scrollable content region. Fills the remaining panel height and scrolls only
  * its own content. Forwards `viewportRef`/`onScroll`/`orientation` to the
  * underlying ScrollArea (needed by virtualized views).
  */
-function PanelBody({ className, children, ...props }: PanelBodyProps) {
+function PanelBody({ className, children, minContentWidth, orientation, ...props }: PanelBodyProps) {
   return (
     <ScrollArea
       data-slot="panel-body"
       className={cn("flex-1 min-h-0", className)}
+      orientation={orientation ?? (minContentWidth ? "both" : undefined)}
       {...props}
     >
-      {children}
+      {minContentWidth
+        ? <div style={{ width: "100%", minWidth: minContentWidth }}>{children}</div>
+        : children}
     </ScrollArea>
   )
 }

@@ -320,6 +320,16 @@ pub struct SessionStateUI {
     pub ui_sender: Option<mpsc::Sender<UICommand>>, // Send true to continue, false to stop
     pub ui_receiver: Option<mpsc::Receiver<UICommand>>,
     pub debug_result: Option<Result<(), String>>, // Track if debug session succeeded or failed
+    /// Join handle of the debug-loop thread while one is running. Taken by
+    /// restart so it can wait for the old loop to fully unwind before starting
+    /// the next run (starting early races the old thread's final status write).
+    pub debug_loop_handle: Option<std::thread::JoinHandle<()>>,
+    /// In-memory mirror of this target's persisted failed-symbols list, lazily
+    /// loaded on first use. The status poll runs every second; diffing against
+    /// this keeps it off the disk entirely except on real transitions. Not
+    /// cleared on stop — the store is per-target, so the mirror stays valid
+    /// across runs. All access goes through `session::symbols`.
+    pub failed_symbols_cache: Option<Vec<String>>,
     
     // Window/Tab states
     pub is_disassembly_window_open: bool,
@@ -407,6 +417,8 @@ impl SessionStateUI {
             ui_sender: Some(step_sender),
             ui_receiver: Some(step_receiver),
             debug_result: None,
+            debug_loop_handle: None,
+            failed_symbols_cache: None,
             is_disassembly_window_open: false,
             is_registers_window_open: false,
             is_callstack_window_open: false,
@@ -422,21 +434,18 @@ impl SessionStateUI {
         }
     }
 
-    // Reset the state of a session to be ready for a new run
-    pub fn reset(&mut self) {
+    /// Free every per-run runtime resource: event/module/thread lists, the
+    /// original-image and region-annotation caches (both can hold many MB), and
+    /// stale server-side freeze handles. Called on stop (so a stopped session
+    /// holds no memory for a dead target) and as part of `reset()`.
+    pub fn clear_runtime_caches(&mut self) {
         self.events.clear();
         self.modules.clear();
         self.threads.clear();
         self.current_event = None;
         self.current_context = None;
-        self.debug_result = None;
         self.open_pid = None;
         self.embedded_server_port = None;
-
-        // Reset window states
-        self.is_disassembly_window_open = false;
-        self.is_registers_window_open = false;
-        self.is_callstack_window_open = false;
 
         self.pass_exception_on_continue = false;
         self.source_step = None;
@@ -444,6 +453,23 @@ impl SessionStateUI {
         // Original-image cache is per-run (load bases change with ASLR).
         self.original_images.clear();
         self.region_annotation_cache = Default::default();
+
+        // Keep bookmarks but drop stale server-side freeze handles (the freeze
+        // threads die with the run's server connection).
+        for bm in &mut self.bookmarks {
+            bm.freeze_id = None;
+        }
+    }
+
+    // Reset the state of a session to be ready for a new run
+    pub fn reset(&mut self) {
+        self.clear_runtime_caches();
+        self.debug_result = None;
+
+        // Reset window states
+        self.is_disassembly_window_open = false;
+        self.is_registers_window_open = false;
+        self.is_callstack_window_open = false;
 
         // Keep breakpoints but mark all as inactive/unresolved
         for bp in &mut self.breakpoints {
@@ -455,12 +481,6 @@ impl SessionStateUI {
         for patch in &mut self.patches {
             patch.is_applied = false;
             patch.address = 0;
-        }
-
-        // Keep bookmarks but drop stale server-side freeze handles (the freeze
-        // threads die with the previous run's server connection).
-        for bm in &mut self.bookmarks {
-            bm.freeze_id = None;
         }
 
         let (step_sender, step_receiver) = mpsc::channel();

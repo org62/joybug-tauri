@@ -1,6 +1,6 @@
 import { Page } from "@playwright/test";
 import { test, expect, navigateTo } from "../helpers/test-fixtures";
-import { cleanupSession } from "../helpers/session-helpers";
+import { cleanupSession, invoke } from "../helpers/session-helpers";
 import { spawnTarget, isAlive, killQuietly } from "../helpers/process-helpers";
 import {
   waitForPaused,
@@ -15,20 +15,16 @@ import {
  * no pause). Returns the session id.
  */
 async function createOpenSession(page: Page, pid: number): Promise<string> {
-  const sessionId: string = await page.evaluate(async (targetPid: number) => {
-    const invoke = (window as any).__TAURI_INTERNALS__.invoke;
-    const id = await invoke("create_debug_session", {
-      name: `Open ${targetPid}`,
-      serverUrl: "",
-      launchCommand: "ping.exe",
-      workingDirectory: null,
-      isLocalRun: true,
-      attachPid: targetPid,
-      nonInvasive: true,
-    });
-    await invoke("start_debug_session", { sessionId: id });
-    return id;
-  }, pid);
+  const sessionId: string = await invoke(page, "create_debug_session", {
+    name: `Open ${pid}`,
+    serverUrl: "",
+    launchCommand: "ping.exe",
+    workingDirectory: null,
+    isLocalRun: true,
+    attachPid: pid,
+    nonInvasive: true,
+  });
+  await invoke(page, "start_debug_session", { sessionId });
 
   await navigateTo(page, `/session/${sessionId}`);
   await waitForStatus(page, sessionId, "Open", 15_000);
@@ -49,55 +45,36 @@ test.describe("Non-invasive mode", () => {
       sessionId = await createOpenSession(page, pid);
 
       // The backend recorded the target PID.
-      const attachPid = await page.evaluate(async (id: string) => {
-        const s = await (window as any).__TAURI_INTERNALS__.invoke(
-          "get_debug_session",
-          { sessionId: id },
-        );
-        return s?.attach_pid;
-      }, sessionId!);
-      expect(attachPid).toBe(pid);
+      const session = await invoke(page, "get_debug_session", { sessionId });
+      expect(session?.attach_pid).toBe(pid);
 
-      // Module enumeration works with no debugger attach (Toolhelp fallback).
-      const modules = await page.evaluate(async (id: string) => {
-        return await (window as any).__TAURI_INTERNALS__.invoke(
-          "get_session_modules",
-          { sessionId: id },
-        );
-      }, sessionId!);
-      expect(Array.isArray(modules)).toBe(true);
-      expect(modules.length).toBeGreaterThan(0);
-
-      // Thread enumeration works with no debugger attach (Toolhelp fallback).
-      const threads = await page.evaluate(async (id: string) => {
-        return await (window as any).__TAURI_INTERNALS__.invoke(
-          "get_session_threads",
-          { sessionId: id },
-        );
-      }, sessionId!);
-      expect(Array.isArray(threads)).toBe(true);
-      expect(threads.length).toBeGreaterThan(0);
+      // Module/thread enumeration works with no debugger attach (Toolhelp
+      // fallback). A non-invasive Open session has no debug loop to populate
+      // the cached lists, so each call goes to the server over OOB; right
+      // after OpenProcess the Toolhelp snapshot can momentarily come back
+      // empty, so poll until the enumeration settles rather than reading once.
+      const expectNonEmptyList = async (cmd: string) => {
+        await expect(async () => {
+          const items = await invoke(page, cmd, { sessionId });
+          expect(Array.isArray(items)).toBe(true);
+          expect(items.length).toBeGreaterThan(0);
+        }).toPass({ timeout: 10_000, intervals: [50, 100, 250] });
+      };
+      await expectNonEmptyList("get_session_modules");
+      await expectNonEmptyList("get_session_threads");
 
       // A memory scan must run over the OOB scan connection against the
       // never-attached process. Starting one should resolve without error.
-      const scanOk = await page.evaluate(async (id: string) => {
-        try {
-          await (window as any).__TAURI_INTERNALS__.invoke("request_scan_memory_start", {
-            sessionId: id,
-            valueType: "U32",
-            compareType: "UnknownInitialValue",
-            value: null,
-            value2: null,
-            alignment: 4,
-            floatTolerance: null,
-            writableOnly: true,
-          });
-          return true;
-        } catch {
-          return false;
-        }
-      }, sessionId!);
-      expect(scanOk).toBe(true);
+      await invoke(page, "request_scan_memory_start", {
+        sessionId,
+        valueType: "U32",
+        compareType: "UnknownInitialValue",
+        value: null,
+        value2: null,
+        alignment: 4,
+        floatTolerance: null,
+        writableOnly: true,
+      });
 
       // The whole point of non-invasive: the target was never attached/suspended
       // and keeps running the entire time.
@@ -119,11 +96,7 @@ test.describe("Non-invasive mode", () => {
       sessionId = await createOpenSession(page, pid);
 
       // Stop the session — a non-invasive stop must NOT terminate the target.
-      await page.evaluate(async (id: string) => {
-        await (window as any).__TAURI_INTERNALS__.invoke("stop_debug_session", {
-          sessionId: id,
-        });
-      }, sessionId!);
+      await invoke(page, "stop_debug_session", { sessionId });
 
       await waitForStatus(page, sessionId!, "Stopped", 15_000);
 
@@ -146,16 +119,12 @@ test.describe("Non-invasive mode", () => {
       sessionId = await createOpenSession(page, pid);
 
       // Promote the non-invasive session to a full attached debug session.
-      await page.evaluate(async (id: string) => {
-        await (window as any).__TAURI_INTERNALS__.invoke("attach_open_session", { sessionId: id });
-      }, sessionId!);
+      await invoke(page, "attach_open_session", { sessionId });
 
       // Attaching injects a breakpoint, so the session pauses and becomes invasive.
       await waitForPaused(page, sessionId);
 
-      const s = await page.evaluate(async (id: string) => {
-        return await (window as any).__TAURI_INTERNALS__.invoke("get_debug_session", { sessionId: id });
-      }, sessionId!);
+      const s = await invoke(page, "get_debug_session", { sessionId });
       expect(s.non_invasive).toBe(false);
       expect(s.attach_pid).toBe(pid);
     } finally {

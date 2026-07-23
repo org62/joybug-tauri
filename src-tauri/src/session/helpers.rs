@@ -124,6 +124,19 @@ pub(crate) fn module_short_name(full_path: &str) -> String {
         .unwrap_or_else(|| full_path.to_string())
 }
 
+/// Lowercased short name of the module loaded at `module_base`, or None when
+/// no module matches. This is the identity key for the per-target persistence
+/// stores (symbol overrides, failed symbols, breakpoints, patches) — keyed by
+/// name, not base, so it survives ASLR. Every base-keyed store mutation should
+/// resolve its key through here.
+pub(crate) fn module_key_at_base(state: &SessionStateUI, module_base: u64) -> Option<String> {
+    state
+        .modules
+        .iter()
+        .find(|m| m.base == module_base)
+        .map(|m| module_short_name(&m.name).to_lowercase())
+}
+
 /// True when a module's full path lives under the Windows system directories
 /// (`\Windows\System32\` or `\Windows\SysWOW64\`) — used to split settings-driven
 /// auto breakpoints into "user" vs "system" module scopes.

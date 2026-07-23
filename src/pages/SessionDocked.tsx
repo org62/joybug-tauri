@@ -72,6 +72,7 @@ export default function SessionDocked() {
     loadThreads,
     loadModulePdb,
     retryModuleSymbols,
+    unloadModuleSymbols,
     searchSymbols,
     handleGo,
     handleGoPassException,
@@ -80,6 +81,7 @@ export default function SessionDocked() {
     handleStepOut,
     handleStop,
     handleStart,
+    handleRestart,
     handlePause,
     handleDetach,
     handleAttach,
@@ -329,6 +331,22 @@ export default function SessionDocked() {
           event.stopPropagation();
           handleStepOut();
           break;
+        // Session lifecycle (the Stop split-button dropdown items)
+        case "debug.stop":
+          event.preventDefault();
+          event.stopPropagation();
+          if (canStop) handleStop();
+          break;
+        case "debug.restart":
+          event.preventDefault();
+          event.stopPropagation();
+          if (canStop) handleRestart();
+          break;
+        case "debug.detach":
+          event.preventDefault();
+          event.stopPropagation();
+          if (canDetach) handleDetach();
+          break;
         case "panel.addMemory":
           event.preventDefault();
           event.stopPropagation();
@@ -377,7 +395,7 @@ export default function SessionDocked() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [handleGo, handleGoPassException, handlePause, handleStart, canStep, canPassException, canPause, canStart, handleStepIn, handleStepOver, handleStepOut, goToTab, handleAddNewMemoryTab, handleCloseActiveTab, reverseLookup, setOpen, enterSubInput, handleNavigateToDisassembly, handleNavigateToMemory]);
+  }, [handleGo, handleGoPassException, handlePause, handleStart, handleStop, handleRestart, handleDetach, canStep, canPassException, canPause, canStart, canStop, canDetach, handleStepIn, handleStepOver, handleStepOut, goToTab, handleAddNewMemoryTab, handleCloseActiveTab, reverseLookup, setOpen, enterSubInput, handleNavigateToDisassembly, handleNavigateToMemory]);
 
   const isPaused = displayStatus === 'Paused';
   // Memory/enumeration ops work over OOB whenever a process is available: paused,
@@ -405,6 +423,17 @@ export default function SessionDocked() {
         onSelect: handleStop,
         enabled: canStop,
         keywords: ["stop", "terminate", "kill"],
+        keybindingAction: "debug.stop",
+      },
+      {
+        id: "session.restart",
+        label: "Restart Session",
+        group: "Session",
+        icon: <RotateCcw className="size-4" />,
+        onSelect: handleRestart,
+        enabled: canStop,
+        keywords: ["restart", "rerun", "relaunch"],
+        keybindingAction: "debug.restart",
       },
       {
         id: "session.pause",
@@ -531,7 +560,7 @@ export default function SessionDocked() {
     return registerCommands(commands);
   }, [
     canStart, canStop, canPause, canStep, isPaused, canUseMemoryOps, session?.current_event?.event_type,
-    handleStart, handleStop, handlePause,
+    handleStart, handleStop, handleRestart, handlePause,
     handleGo, handleGoPassException, handleStepIn, handleStepOver, handleStepOut,
     handleNavigateToDisassembly, handleNavigateToMemory,
     goToTab, handleAddNewMemoryTab, handleResetLayout,
@@ -565,6 +594,7 @@ export default function SessionDocked() {
     loadThreads,
     loadModulePdb,
     retryModuleSymbols,
+    unloadModuleSymbols,
     searchSymbols: async (pattern: string, limit?: number) => { return await searchSymbols(pattern, limit); },
     breakpointState,
     patchState,
@@ -576,7 +606,7 @@ export default function SessionDocked() {
     onNavigateToSource: handleNavigateToSource,
     onNavigateToType: handleNavigateToType,
     onFindAccesses: handleFindAccesses,
-  }), [session, displayStatus, canUseMemoryOps, modules, threads, symbolStatuses, symbolsRefreshKey, loadModules, loadThreads, loadModulePdb, retryModuleSymbols, searchSymbols, breakpointState, patchState, bookmarkState, watchpointState, handleNavigateToDisassembly, handleNavigateToMemory, handleNavigateToMemoryRegion, handleNavigateToSource, handleNavigateToType, handleFindAccesses]);
+  }), [session, displayStatus, canUseMemoryOps, modules, threads, symbolStatuses, symbolsRefreshKey, loadModules, loadThreads, loadModulePdb, retryModuleSymbols, unloadModuleSymbols, searchSymbols, breakpointState, patchState, bookmarkState, watchpointState, handleNavigateToDisassembly, handleNavigateToMemory, handleNavigateToMemoryRegion, handleNavigateToSource, handleNavigateToType, handleFindAccesses]);
   
   // Static tab content - components will update via context.
   // Typed against the registry, so adding a tab to SESSION_TAB_DEFS without
@@ -701,6 +731,7 @@ export default function SessionDocked() {
           handleStepOver={handleStepOver}
           handleStepOut={handleStepOut}
           handleStop={handleStop}
+          handleRestart={handleRestart}
           handleAttach={handleAttach}
           handleStart={handleStart}
           handlePause={handlePause}

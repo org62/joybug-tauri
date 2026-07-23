@@ -4,9 +4,10 @@ use joybug2::protocol_io::PdbLoadOutcome;
 use tauri::{AppHandle, Emitter};
 use tracing::{debug, error, info, warn};
 
-use super::helpers::module_short_name;
+use super::helpers::{module_key_at_base, module_short_name};
 use super::types::{DebugSession, SymbolData};
 use crate::state::{SessionStateUI, SymbolOverrideInfo};
+use joybug2::protocol_io::{ModuleSymbolStatus, SymbolLoadState};
 
 /// Remember a manually-loaded PDB so a session restart re-applies it. Keyed by
 /// the module's lowercased short name (the base changes with ASLR). Upserts the
@@ -23,11 +24,10 @@ pub(crate) fn record_symbol_override(
 ) {
     let (launch_command, overrides) = {
         let mut state = state_arc.lock().unwrap();
-        let Some(module) = state.modules.iter().find(|m| m.base == module_base) else {
+        let Some(name) = module_key_at_base(&state, module_base) else {
             warn!("record_symbol_override: no module at base 0x{:X}", module_base);
             return;
         };
-        let name = module_short_name(&module.name).to_lowercase();
         state.symbol_overrides.retain(|o| !o.module_name.eq_ignore_ascii_case(&name));
         state.symbol_overrides.push(SymbolOverrideInfo {
             module_name: name,
@@ -37,6 +37,100 @@ pub(crate) fn record_symbol_override(
         (state.launch_command.clone(), state.symbol_overrides.clone())
     };
     crate::symbol_store::save_symbol_overrides(&launch_command, &overrides);
+}
+
+/// Forget a module's persisted manual-PDB override (symbols unloaded by the
+/// user). No-op when the base doesn't match a module or no override exists.
+pub(crate) fn remove_symbol_override(state_arc: &Arc<Mutex<SessionStateUI>>, module_base: u64) {
+    let saved = {
+        let mut state = state_arc.lock().unwrap();
+        let Some(name) = module_key_at_base(&state, module_base) else {
+            return;
+        };
+        let before = state.symbol_overrides.len();
+        state.symbol_overrides.retain(|o| !o.module_name.eq_ignore_ascii_case(&name));
+        if state.symbol_overrides.len() == before {
+            None
+        } else {
+            Some((state.launch_command.clone(), state.symbol_overrides.clone()))
+        }
+    };
+    if let Some((launch_command, overrides)) = saved {
+        crate::symbol_store::save_symbol_overrides(&launch_command, &overrides);
+    }
+}
+
+/// Run `mutate` over the in-memory failed-symbols list (lazily initialized
+/// from the per-target store) and persist when it reports a change. The
+/// in-memory mirror keeps the 1 Hz status poll off the disk entirely: the
+/// store is read once per session, then written only on real transitions.
+fn with_failed_symbols(
+    state_arc: &Arc<Mutex<SessionStateUI>>,
+    mutate: impl FnOnce(&mut Vec<String>) -> bool,
+) {
+    let saved = {
+        let mut state = state_arc.lock().unwrap();
+        if state.failed_symbols_cache.is_none() {
+            let stored = crate::symbol_store::load_failed_symbols(&state.launch_command);
+            state.failed_symbols_cache = Some(stored);
+        }
+        let launch_command = state.launch_command.clone();
+        let cache = state.failed_symbols_cache.as_mut().unwrap();
+        mutate(cache).then(|| (launch_command, cache.clone()))
+    };
+    if let Some((launch_command, modules)) = saved {
+        crate::symbol_store::save_failed_symbols(&launch_command, &modules);
+    }
+}
+
+/// Keep the per-target failed-symbols store in sync with the live statuses:
+/// newly failed downloads are remembered (so a restart won't re-try them),
+/// modules that now have symbols are forgotten. Modules not in the current
+/// status list (e.g. unloaded DLLs) keep their entries.
+pub(crate) fn sync_failed_symbols(
+    state_arc: &Arc<Mutex<SessionStateUI>>,
+    statuses: &[ModuleSymbolStatus],
+) {
+    with_failed_symbols(state_arc, |stored| {
+        let mut changed = false;
+        for s in statuses {
+            match &s.state {
+                SymbolLoadState::Failed { .. } => {
+                    let short = module_short_name(&s.module_path).to_lowercase();
+                    if !stored.contains(&short) {
+                        stored.push(short);
+                        changed = true;
+                    }
+                }
+                // Nothing to forget while the list is empty — skips the
+                // per-module allocation on the steady-state poll.
+                SymbolLoadState::Loaded { .. } if !stored.is_empty() => {
+                    let short = module_short_name(&s.module_path).to_lowercase();
+                    let before = stored.len();
+                    stored.retain(|m| m != &short);
+                    changed |= stored.len() != before;
+                }
+                _ => {}
+            }
+        }
+        changed
+    });
+}
+
+/// Drop a module's entry from the target's persisted failed-symbols store
+/// (user retry), looked up by base in the session's module list.
+pub(crate) fn forget_failed_symbol(state_arc: &Arc<Mutex<SessionStateUI>>, module_base: u64) {
+    let Some(short) = ({
+        let state = state_arc.lock().unwrap();
+        module_key_at_base(&state, module_base)
+    }) else {
+        return;
+    };
+    with_failed_symbols(state_arc, |stored| {
+        let before = stored.len();
+        stored.retain(|m| m != &short);
+        stored.len() != before
+    });
 }
 
 /// Re-apply a persisted manual PDB when its module (re)loads. Looks up the

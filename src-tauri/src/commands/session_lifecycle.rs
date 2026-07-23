@@ -286,38 +286,42 @@ fn spawn_debug_loop(
     app_handle: tauri::AppHandle,
     session_id: String,
 ) {
-    thread::spawn(move || {
-        let result = run_debug_session(session_state.clone(), Some(app_handle.clone()));
+    let handle = thread::spawn({
+        let session_state = session_state.clone();
+        move || {
+            let result = run_debug_session(session_state.clone(), Some(app_handle.clone()));
 
-        {
-            let mut state = session_state.lock().unwrap();
-            match &result {
-                Ok(_) => {
-                    if !matches!(state.status, SessionStatusUI::Stopped) {
-                        state.status = SessionStatusUI::Stopped;
+            {
+                let mut state = session_state.lock().unwrap();
+                match &result {
+                    Ok(_) => {
+                        if !matches!(state.status, SessionStatusUI::Stopped) {
+                            state.status = SessionStatusUI::Stopped;
+                        }
+                        info!("Debug session {} completed successfully", session_id);
                     }
-                    info!("Debug session {} completed successfully", session_id);
-                }
-                Err(e) => {
-                    // A user-initiated stop marks the session Stopped up front and
-                    // then tears down the server, which surfaces here as a
-                    // connection error. Keep it Stopped rather than flipping to a
-                    // spurious Error.
-                    if matches!(state.status, SessionStatusUI::Stopped) {
-                        info!("Debug session {} stopped by user", session_id);
-                    } else {
-                        state.status = SessionStatusUI::Error(e.to_string());
-                        let error_message = format!("Debug session {} failed: {}", session_id, e);
-                        error!("{}", &error_message);
-                        crate::ui_logger::log_error(&app_handle, &error_message, Some(session_id.clone()));
+                    Err(e) => {
+                        // A user-initiated stop marks the session Stopped up front and
+                        // then tears down the server, which surfaces here as a
+                        // connection error. Keep it Stopped rather than flipping to a
+                        // spurious Error.
+                        if matches!(state.status, SessionStatusUI::Stopped) {
+                            info!("Debug session {} stopped by user", session_id);
+                        } else {
+                            state.status = SessionStatusUI::Error(e.to_string());
+                            let error_message = format!("Debug session {} failed: {}", session_id, e);
+                            error!("{}", &error_message);
+                            crate::ui_logger::log_error(&app_handle, &error_message, Some(session_id.clone()));
+                        }
                     }
                 }
+                state.debug_result = Some(result.map_err(|e| e.to_string()));
             }
-            state.debug_result = Some(result.map_err(|e| e.to_string()));
-        }
 
-        emit_session_event(&session_state, &app_handle);
+            emit_session_event(&session_state, &app_handle);
+        }
     });
+    session_state.lock().unwrap().debug_loop_handle = Some(handle);
 }
 
 /// Promote a non-invasive `Open` session to a full attached debug session on the
@@ -417,7 +421,11 @@ pub fn stop_debug_session(
             // now makes those polls short-circuit (see `oob_pid`) and updates
             // the UI at once.
             state.status = SessionStatusUI::Stopped;
-            state.open_pid = None;
+            // Free the per-run heap caches now, not on the next start — a
+            // stopped session must not keep holding module images, event
+            // history, or annotation caches for a dead target. (The debug-loop
+            // thread may still be unwinding; its clean-exit path clears again.)
+            state.clear_runtime_caches();
         }
 
         // Bind the handle out of the map lock before stopping it, so a slow
@@ -430,6 +438,68 @@ pub fn stop_debug_session(
 
         emit_session_event(&session_state, &app_handle);
     }
+    Ok(())
+}
+
+/// Restart a session: stop it (terminating the target), wait for the old
+/// debug-loop thread to fully unwind, then start a fresh run. The wait happens
+/// on a background thread — the command returns immediately and the UI follows
+/// along via `session-updated` events.
+#[tauri::command]
+pub fn restart_debug_session(
+    session_id: String,
+    session_states: State<'_, SessionStatesMap>,
+    embedded_servers: State<'_, EmbeddedServersMap>,
+    oob_pool: State<'_, super::OobPool>,
+    app_handle: tauri::AppHandle,
+) -> Result<()> {
+    let session_state = super::get_session_arc(&session_id, &session_states)?;
+
+    stop_debug_session(
+        session_id.clone(),
+        session_states,
+        embedded_servers,
+        oob_pool,
+        app_handle.clone(),
+    )?;
+
+    // The old loop thread flips status/debug_result when it exits; starting a
+    // new run before that write would let it clobber the fresh run's state.
+    let old_loop = session_state.lock().unwrap().debug_loop_handle.take();
+
+    thread::spawn(move || {
+        if let Some(handle) = old_loop {
+            // Join with a deadline: a helper thread joins the loop and signals
+            // by dropping its channel end (no polling). If the loop hangs past
+            // the deadline the helper stays parked on the join and dies with
+            // the process — the same leak the old sleep-poll had.
+            let (exit_tx, exit_rx) = std::sync::mpsc::channel::<()>();
+            thread::spawn(move || {
+                let _ = handle.join();
+                drop(exit_tx);
+            });
+            if let Err(std::sync::mpsc::RecvTimeoutError::Timeout) =
+                exit_rx.recv_timeout(std::time::Duration::from_secs(15))
+            {
+                let msg = format!(
+                    "Restart aborted: session {} did not stop within 15s",
+                    session_id
+                );
+                error!("{}", msg);
+                crate::ui_logger::toast_error(&app_handle, &msg);
+                return;
+            }
+        }
+
+        let states = app_handle.state::<SessionStatesMap>();
+        let servers = app_handle.state::<EmbeddedServersMap>();
+        if let Err(e) = start_debug_session(session_id.clone(), states, servers, app_handle.clone()) {
+            let msg = format!("Restart failed to start session {}: {}", session_id, e);
+            error!("{}", msg);
+            crate::ui_logger::toast_error(&app_handle, &msg);
+        }
+    });
+
     Ok(())
 }
 

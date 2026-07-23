@@ -24,22 +24,28 @@ pub fn get_session_symbol_status(
         oob.get_symbol_status(pid)
     });
     match super::flatten_oob(statuses) {
-        Ok(statuses) => Ok(statuses.into_iter().map(|s| {
-            let (status, symbol_count, error) = match s.state {
-                SymbolLoadState::Loaded { symbol_count } => ("loaded", Some(symbol_count), None),
-                SymbolLoadState::Loading => ("loading", None, None),
-                SymbolLoadState::Failed { error } => ("failed", None, Some(error)),
-                SymbolLoadState::NotRequested => ("not_requested", None, None),
-            };
-            ModuleSymbolStatusData {
-                module_path: s.module_path,
-                base_address: format!("0x{:X}", s.module_base),
-                status: status.to_string(),
-                symbol_count,
-                error,
-                pdb_path: s.pdb_path,
-            }
-        }).collect()),
+        Ok(statuses) => {
+            // Sync while the statuses are still typed — the store must not
+            // depend on the stringified UI representation below.
+            crate::session::symbols::sync_failed_symbols(&session_arc, &statuses);
+            let data: Vec<ModuleSymbolStatusData> = statuses.into_iter().map(|s| {
+                let (status, symbol_count, error) = match s.state {
+                    SymbolLoadState::Loaded { symbol_count } => ("loaded", Some(symbol_count), None),
+                    SymbolLoadState::Loading => ("loading", None, None),
+                    SymbolLoadState::Failed { error } => ("failed", None, Some(error)),
+                    SymbolLoadState::NotRequested => ("not_requested", None, None),
+                };
+                ModuleSymbolStatusData {
+                    module_path: s.module_path,
+                    base_address: format!("0x{:X}", s.module_base),
+                    status: status.to_string(),
+                    symbol_count,
+                    error,
+                    pdb_path: s.pdb_path,
+                }
+            }).collect();
+            Ok(data)
+        }
         Err(e) => {
             warn!("Symbol status query failed for session {}: {}", session_id, e);
             Ok(Vec::new())
@@ -98,11 +104,36 @@ pub fn retry_module_symbols(
 ) -> Result<()> {
     let base = super::parse_hex_u64(&module_base, "module base")?;
     let session_arc = super::get_session_arc(&session_id, &session_states)?;
+    // Forget the persisted failure so future restarts auto-download again
+    // (if the retry fails too, the status poll re-records it).
+    crate::session::symbols::forget_failed_symbol(&session_arc, base);
     let result = super::with_oob_client(&session_arc, &session_id, &oob_pool, |oob, pid| {
         oob.retry_symbol_load(pid, base)
     });
     super::flatten_oob(result).map_err(Error::InternalCommunication)?;
     info!("Symbol retry requested for module {} in session {}", module_base, session_id);
+    Ok(())
+}
+
+/// Unload a module's symbols: frees the server-side caches (symbols, line
+/// tables, type info) and drops any persisted manual-PDB override so a restart
+/// doesn't re-apply it. The local source-index cache is untouched — it holds
+/// only file-content-derived line offsets, self-validated by len+mtime.
+#[tauri::command]
+pub fn unload_module_symbols(
+    session_id: String,
+    module_base: String,
+    session_states: State<'_, SessionStatesMap>,
+    oob_pool: State<'_, super::OobPool>,
+) -> Result<()> {
+    let base = super::parse_hex_u64(&module_base, "module base")?;
+    let session_arc = super::get_session_arc(&session_id, &session_states)?;
+    let result = super::with_oob_client(&session_arc, &session_id, &oob_pool, |oob, pid| {
+        oob.unload_module_symbols(pid, base)
+    });
+    super::flatten_oob(result).map_err(Error::InternalCommunication)?;
+    crate::session::symbols::remove_symbol_override(&session_arc, base);
+    info!("Symbols unloaded for module {} in session {}", module_base, session_id);
     Ok(())
 }
 

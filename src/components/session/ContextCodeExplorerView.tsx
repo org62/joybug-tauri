@@ -4,6 +4,7 @@ import { useCodeExplorer, CoverageFn } from '@/hooks/useCodeExplorer';
 import { useContextMenu } from '@/hooks/useContextMenu';
 import { useColumnWidths } from '@/hooks/useColumnWidths';
 import { usePanelFocus } from '@/hooks/usePanelFocus';
+import { useHeaderScrollSync } from '@/hooks/useHeaderScrollSync';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { VirtualizedList } from '@/components/ui/virtualized-list';
@@ -42,6 +43,11 @@ export const ContextCodeExplorerView = () => {
   const { columnWidths, handleColumnResizeStart } = useColumnWidths('codeExplorerView', {
     address: 150, rva: 90, order: 60, threads: 90, hits: 80,
   });
+
+  // Below this width the results scroll horizontally instead of crushing the
+  // columns: the five fixed columns + px-2 padding + a floor for the symbol.
+  const rowMinWidth = `${columnWidths.address + columnWidths.rva + columnWidths.order + columnWidths.threads + columnWidths.hits + 16 + 160}px`;
+  const { headerInnerRef, handleViewportScroll } = useHeaderScrollSync(rowMinWidth);
 
   // Load the module list so the user can pick which module to instrument.
   useEffect(() => {
@@ -124,6 +130,8 @@ export const ContextCodeExplorerView = () => {
         items={rows}
         rowHeight={28}
         className="h-full"
+        minContentWidth={rowMinWidth}
+        onViewportScroll={handleViewportScroll}
         getItemKey={(r) => r.address}
         renderItem={(r) => {
           const intensity = maxHits > 0 ? r.hitCount / maxHits : 0;
@@ -236,31 +244,38 @@ export const ContextCodeExplorerView = () => {
         )}
       </PanelToolbar>
 
-      {/* Column header row (sortable Symbol / Address / Hits) */}
+      {/* Column header row (sortable Symbol / Address / Hits) — fixed
+          vertically, follows the list's horizontal scroll */}
       {rows.length > 0 && (
-        <div className="flex items-center px-2 py-1 border-b bg-muted/30 text-xs font-medium text-muted-foreground select-none">
-          <span className="flex-1 min-w-0 pr-1">
-            <SortHeader label="Symbol" active={ce.sortKey === 'symbol'} asc={ce.sortAsc}
-              onClick={() => ce.toggleSort('symbol')} />
-          </span>
-          <ResizableHeaderCell width={columnWidths.address} onResizeStart={(e) => handleColumnResizeStart('address', e)}>
-            <SortHeader label="Address" active={ce.sortKey === 'address'} asc={ce.sortAsc}
-              onClick={() => ce.toggleSort('address')} />
-          </ResizableHeaderCell>
-          <ResizableHeaderCell width={columnWidths.rva} onResizeStart={(e) => handleColumnResizeStart('rva', e)}>
-            RVA
-          </ResizableHeaderCell>
-          <ResizableHeaderCell width={columnWidths.order} onResizeStart={(e) => handleColumnResizeStart('order', e)}>
-            <SortHeader label="Order" active={ce.sortKey === 'order'} asc={ce.sortAsc}
-              onClick={() => ce.toggleSort('order')} />
-          </ResizableHeaderCell>
-          <ResizableHeaderCell width={columnWidths.threads} onResizeStart={(e) => handleColumnResizeStart('threads', e)}>
-            Threads
-          </ResizableHeaderCell>
-          <ResizableHeaderCell width={columnWidths.hits} onResizeStart={(e) => handleColumnResizeStart('hits', e)} className="text-right">
-            <SortHeader label="Hits" active={ce.sortKey === 'hits'} asc={ce.sortAsc}
-              onClick={() => ce.toggleSort('hits')} />
-          </ResizableHeaderCell>
+        <div className="shrink-0 overflow-hidden border-b bg-muted/30">
+          <div
+            ref={headerInnerRef}
+            style={{ minWidth: rowMinWidth }}
+            className="flex items-center px-2 py-1 text-xs font-medium text-muted-foreground select-none"
+          >
+            <span className="flex-1 min-w-0 pr-1">
+              <SortHeader label="Symbol" active={ce.sortKey === 'symbol'} asc={ce.sortAsc}
+                onClick={() => ce.toggleSort('symbol')} />
+            </span>
+            <ResizableHeaderCell width={columnWidths.address} onResizeStart={(e) => handleColumnResizeStart('address', e)}>
+              <SortHeader label="Address" active={ce.sortKey === 'address'} asc={ce.sortAsc}
+                onClick={() => ce.toggleSort('address')} />
+            </ResizableHeaderCell>
+            <ResizableHeaderCell width={columnWidths.rva} onResizeStart={(e) => handleColumnResizeStart('rva', e)}>
+              RVA
+            </ResizableHeaderCell>
+            <ResizableHeaderCell width={columnWidths.order} onResizeStart={(e) => handleColumnResizeStart('order', e)}>
+              <SortHeader label="Order" active={ce.sortKey === 'order'} asc={ce.sortAsc}
+                onClick={() => ce.toggleSort('order')} />
+            </ResizableHeaderCell>
+            <ResizableHeaderCell width={columnWidths.threads} onResizeStart={(e) => handleColumnResizeStart('threads', e)}>
+              Threads
+            </ResizableHeaderCell>
+            <ResizableHeaderCell width={columnWidths.hits} onResizeStart={(e) => handleColumnResizeStart('hits', e)} className="text-right">
+              <SortHeader label="Hits" active={ce.sortKey === 'hits'} asc={ce.sortAsc}
+                onClick={() => ce.toggleSort('hits')} />
+            </ResizableHeaderCell>
+          </div>
         </div>
       )}
 

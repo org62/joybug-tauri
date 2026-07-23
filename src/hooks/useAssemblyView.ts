@@ -310,8 +310,11 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
   // reapply, image-byte restore), so we re-decode exactly then.
   const lastPatchRevision = useRef<number | null>(null);
 
-  // Derived PC address
-  const pcAddress = pcAddressProp != null ? BigInt(pcAddressProp) : null;
+  // Derived PC address — only truthful while paused (or in file mode, where
+  // isPaused is undefined): while running/stopped the last event's address is
+  // stale, so every consumer (row highlight, goToPC, refresh/prepend anchors)
+  // sees null instead of a dead address.
+  const pcAddress = isPaused === false || pcAddressProp == null ? null : BigInt(pcAddressProp);
 
   // Mirror compareImage for the disassembly-request calls so they read the
   // current value without carrying it in every callback's dependency list.

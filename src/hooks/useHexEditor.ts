@@ -1009,10 +1009,12 @@ export function useHexEditor(options: UseHexEditorOptions): HexEditorState & Hex
     }
   }, [sessionId, dataSource, loadWindow, initialAddress, sessionStatus, listenersReady, persisted?.baseAddress]);
 
-  // Reset error and data when session ends (keep data visible while running).
-  // Skipped in file mode, which has no session lifecycle to react to.
+  // Reset error and data when the session ends OR the debugged process goes
+  // away (Stopped/Error) — a dead target's bytes must not keep rendering.
+  // Data stays visible while Running/Open (live polling) and across step
+  // transitions. Skipped in file mode, which has no session lifecycle.
   useEffect(() => {
-    if (!sessionId && !dataSource) {
+    if (!dataSource && (!sessionId || !isProcessAvailable(sessionStatus))) {
       setError(null);
       setMemoryData(new Uint8Array(0));
       setDereferenceData(new Map());
@@ -1022,7 +1024,7 @@ export function useHexEditor(options: UseHexEditorOptions): HexEditorState & Hex
       initialLoadDone.current = false;
       pendingRead.current = null;
     }
-  }, [sessionId, dataSource]);
+  }, [sessionId, dataSource, sessionStatus]);
 
   // Fetch dereference data when in pointer mode and memory data is available
   useEffect(() => {
@@ -1080,7 +1082,9 @@ export function useHexEditor(options: UseHexEditorOptions): HexEditorState & Hex
   // clear on sessionStatus changes so the baseline survives step transitions
   // (Running → Paused) and the post-step reload can highlight what changed.
   useEffect(() => {
-    if (!sessionId && !dataSource) {
+    // Also drop the baseline when the process goes away: after a restart the
+    // first read must not diff (and highlight) against the previous run's bytes.
+    if (!dataSource && (!sessionId || !isProcessAvailable(sessionStatus))) {
       prevMemoryDataRef.current = undefined;
       lastSeenMemoryDataRef.current = null;
       return;
@@ -1095,7 +1099,7 @@ export function useHexEditor(options: UseHexEditorOptions): HexEditorState & Hex
     // address, so a slid window still compares overlapping bytes correctly
     // and a jump to an unrelated address simply has no overlap.
     prevMemoryDataRef.current = { data: new Uint8Array(memoryData), baseAddress };
-  }, [memoryData, baseAddress, sessionId, dataSource]);
+  }, [memoryData, baseAddress, sessionId, dataSource, sessionStatus]);
 
   return {
     // State

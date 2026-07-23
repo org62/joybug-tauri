@@ -2,7 +2,7 @@ import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { ArrowLeft, Square, Play, MoveRight, CornerDownRight, CornerUpLeft, Pause, Plus, ChevronDown, Unplug, Loader2, AlertTriangle, Search } from 'lucide-react';
+import { ArrowLeft, Square, Play, MoveRight, CornerDownRight, CornerUpLeft, Pause, Plus, ChevronDown, Unplug, Loader2, AlertTriangle, Search, RotateCcw } from 'lucide-react';
 import { exceptionName, formatExceptionCode, EXCEPTION_SINGLE_STEP } from '@/lib/exceptionNames';
 import {
   DropdownMenu,
@@ -19,7 +19,7 @@ import { useCommandPaletteContext } from '@/contexts/CommandPaletteContext';
 
 export interface SessionHeaderProps {
   session: DebugSession;
-  busyAction: "go" | "stepIn" | "stepOut" | "stepOver" | "stop" | "pause" | "detach" | "attach" | null;
+  busyAction: "go" | "stepIn" | "stepOut" | "stepOver" | "stop" | "restart" | "pause" | "detach" | "attach" | null;
   handleGo: () => void;
   handleGoPassException: () => void;
   handleStepIn: () => void;
@@ -27,6 +27,7 @@ export interface SessionHeaderProps {
   handleStepOut: () => void;
   handleStop: () => void;
   handleStart: () => void;
+  handleRestart: () => void;
   handlePause: () => void;
   handleDetach: () => void;
   handleAttach: () => void;
@@ -78,6 +79,7 @@ export const SessionHeader: React.FC<SessionHeaderProps> = ({
   handleStepOut,
   handleStop,
   handleStart,
+  handleRestart,
   handlePause,
   handleDetach,
   handleAttach,
@@ -285,13 +287,10 @@ export const SessionHeader: React.FC<SessionHeaderProps> = ({
               size="sm"
               variant="destructive"
               className={isOpen ? undefined : "rounded-r-none"}
+              title={`Stop Session (${getKeybinding("debug.stop")})`}
+              aria-label="Stop"
             >
-              <Square className="h-4 w-4 mr-2" />
-              {busyAction === "stop"
-                ? "Stopping..."
-                : busyAction === "detach"
-                  ? "Detaching..."
-                  : "Stop"}
+              <Square className="h-4 w-4" />
             </Button>
             {!isOpen && (
               <DropdownMenu>
@@ -307,9 +306,14 @@ export const SessionHeader: React.FC<SessionHeaderProps> = ({
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
-                  <DropdownMenuItem onSelect={handleStop} disabled={!canStop}>
-                    <Square className="h-4 w-4" />
-                    Stop Session
+                  <DropdownMenuItem
+                    onSelect={handleRestart}
+                    disabled={!canStop}
+                    title="Stop the session and start a fresh run"
+                  >
+                    <RotateCcw className="h-4 w-4" />
+                    <span className="flex-1">Restart Session</span>
+                    <DropdownMenuShortcut>{getKeybinding("debug.restart")}</DropdownMenuShortcut>
                   </DropdownMenuItem>
                   <DropdownMenuItem
                     onSelect={handleDetach}
@@ -317,7 +321,8 @@ export const SessionHeader: React.FC<SessionHeaderProps> = ({
                     title="Detach from the target and leave it running (available while paused)"
                   >
                     <Unplug className="h-4 w-4" />
-                    Detach (leave running)
+                    <span className="flex-1">Detach (leave running)</span>
+                    <DropdownMenuShortcut>{getKeybinding("debug.detach")}</DropdownMenuShortcut>
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>

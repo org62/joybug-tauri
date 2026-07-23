@@ -19,6 +19,7 @@ import { AddressExpressionInput } from "@/components/AddressExpressionInput";
 import { isBenignSessionError } from "@/lib/sessionHelpers";
 import { useContextMenu } from "@/hooks/useContextMenu";
 import { useColumnWidths } from "@/hooks/useColumnWidths";
+import { useHeaderScrollSync } from "@/hooks/useHeaderScrollSync";
 import { EmulationQuickView } from "./EmulationQuickView";
 import { QuickEmulationState } from "@/hooks/useQuickEmulation";
 import { Virtualizer } from "@tanstack/react-virtual";
@@ -267,11 +268,33 @@ export function AssemblyView({ sessionId, isPaused, canLoad, address, registers,
     if (only !== 'above' && el.scrollHeight - (el.scrollTop + el.clientHeight) <= threshold) loadMoreBelow();
   }, [loadMoreAbove, loadMoreBelow]);
 
-  // Extend the loaded range as the user scrolls to either edge.
+  // Minimum row width: below this the panel scrolls horizontally instead of
+  // crushing the columns into an unreadable layout. Mirrors the row markup:
+  // two w-4 icon slots + px-2 padding, the three resizable columns with their
+  // w-1 + mx-px resize handles, and a readable floor for the operands column.
+  const rowMinWidth = useMemo(() => {
+    const RESIZER = 6; // w-1 handle + mx-px margins
+    const GUTTERS = 16 /* px-2 */ + 16 + 16; /* two w-4 icon columns */
+    const OPERANDS_MIN = 160;
+    const cols =
+      columnWidths.symbol + RESIZER +
+      (showBytes ? columnWidths.bytes + RESIZER : 0) +
+      columnWidths.mnemonic + RESIZER;
+    return `${GUTTERS + cols + OPERANDS_MIN}px`;
+  }, [columnWidths, showBytes]);
+
+  const { headerInnerRef, syncScrollLeft } = useHeaderScrollSync(
+    rowMinWidth,
+    () => virtualizerRef.current?.scrollElement,
+  );
+
+  // Extend the loaded range as the user scrolls to either edge, and mirror
+  // horizontal scrolling onto the fixed header.
   const handleViewportScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
+    syncScrollLeft(e.currentTarget.scrollLeft);
     if (!userGestureSinceLoadRef.current) return;
     maybeExtendAtEdges(e.currentTarget);
-  }, [maybeExtendAtEdges]);
+  }, [syncScrollLeft, maybeExtendAtEdges]);
 
   // Wheel-driven extension. The scroll handler above only fires when the content
   // overflows the viewport; when the whole loaded range fits (e.g. a short function,
@@ -500,22 +523,28 @@ export function AssemblyView({ sessionId, isPaused, canLoad, address, registers,
         </div>
       )}
 
-      {/* Column header - fixed outside scroll area */}
+      {/* Column header - fixed vertically, follows horizontal scroll */}
       {showInstructions && (
-        <div className="shrink-0 flex items-center px-2 py-0.5 border-b border-border font-mono text-xs text-foreground/60 select-none">
-          <span className="w-4 shrink-0" />
-          <span className="w-4 shrink-0" />
-          <span className="shrink-0 truncate" style={{ width: columnWidths.symbol }}>Address</span>
-          <div className="w-1 shrink-0 self-stretch cursor-col-resize hover:bg-blue-500/30 active:bg-blue-500/50 mx-px" onMouseDown={(e) => handleColumnResizeStart("symbol", e)} />
-          {showBytes && (
-            <>
-              <span className="shrink-0 truncate" style={{ width: columnWidths.bytes }}>Bytes</span>
-              <div className="w-1 shrink-0 self-stretch cursor-col-resize hover:bg-blue-500/30 active:bg-blue-500/50 mx-px" onMouseDown={(e) => handleColumnResizeStart("bytes", e)} />
-            </>
-          )}
-          <span className="shrink-0 truncate" style={{ width: columnWidths.mnemonic }}>Mnemonic</span>
-          <div className="w-1 shrink-0 self-stretch cursor-col-resize hover:bg-blue-500/30 active:bg-blue-500/50 mx-px" onMouseDown={(e) => handleColumnResizeStart("mnemonic", e)} />
-          <span className="flex-1">Operands</span>
+        <div className="shrink-0 overflow-hidden border-b border-border">
+          <div
+            ref={headerInnerRef}
+            style={{ minWidth: rowMinWidth }}
+            className="flex items-center px-2 py-0.5 font-mono text-xs text-foreground/60 select-none"
+          >
+            <span className="w-4 shrink-0" />
+            <span className="w-4 shrink-0" />
+            <span className="shrink-0 truncate" style={{ width: columnWidths.symbol }}>Address</span>
+            <div className="w-1 shrink-0 self-stretch cursor-col-resize hover:bg-blue-500/30 active:bg-blue-500/50 mx-px" onMouseDown={(e) => handleColumnResizeStart("symbol", e)} />
+            {showBytes && (
+              <>
+                <span className="shrink-0 truncate" style={{ width: columnWidths.bytes }}>Bytes</span>
+                <div className="w-1 shrink-0 self-stretch cursor-col-resize hover:bg-blue-500/30 active:bg-blue-500/50 mx-px" onMouseDown={(e) => handleColumnResizeStart("bytes", e)} />
+              </>
+            )}
+            <span className="shrink-0 truncate" style={{ width: columnWidths.mnemonic }}>Mnemonic</span>
+            <div className="w-1 shrink-0 self-stretch cursor-col-resize hover:bg-blue-500/30 active:bg-blue-500/50 mx-px" onMouseDown={(e) => handleColumnResizeStart("mnemonic", e)} />
+            <span className="flex-1">Operands</span>
+          </div>
         </div>
       )}
 
@@ -526,6 +555,7 @@ export function AssemblyView({ sessionId, isPaused, canLoad, address, registers,
           rowHeight={ASSEMBLY_ROW_HEIGHT}
           overscan={30}
           className="flex-1 min-h-0"
+          minContentWidth={rowMinWidth}
           virtualizerRef={virtualizerRef}
           onViewportScroll={handleViewportScroll}
           renderItem={(row) => {
@@ -534,6 +564,8 @@ export function AssemblyView({ sessionId, isPaused, canLoad, address, registers,
             }
             const inst = row.insn;
             const instAddrUpper = inst.address.toUpperCase();
+            // pcAddress is already nulled while running/stopped (stale event
+            // address) by useAssemblyView, so a plain null check suffices.
             const isPC = pcAddress !== null && instAddrUpper === `0X${pcAddress.toString(16).toUpperCase()}`;
             const isHighlighted = highlightedAddress !== null && instAddrUpper === `0X${highlightedAddress.toString(16).toUpperCase()}`;
             const isHoverTarget = hoveredJumpTarget !== null && instAddrUpper === `0X${hoveredJumpTarget.toString(16).toUpperCase()}`;

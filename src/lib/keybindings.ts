@@ -6,6 +6,9 @@ export type ActionId =
   | "debug.stepIn"
   | "debug.stepOver"
   | "debug.stepOut"
+  | "debug.stop"
+  | "debug.restart"
+  | "debug.detach"
   // Panels — these navigate to a panel; only panel.closeTab closes one
   | "panel.disassembly"
   | "panel.source"
@@ -59,6 +62,9 @@ export const ACTION_REGISTRY: Record<ActionId, ActionMeta> = {
   "debug.stepIn":    { label: "Step Into",         category: "Debug",    description: "Step into the next instruction or function",  scope: "session" },
   "debug.stepOver":  { label: "Step Over",         category: "Debug",    description: "Step over the next instruction",              scope: "session" },
   "debug.stepOut":   { label: "Step Out",          category: "Debug",    description: "Step out of the current function",            scope: "session" },
+  "debug.stop":      { label: "Stop Session",      category: "Debug",    description: "Stop the session (terminates a running target)", scope: "session" },
+  "debug.restart":   { label: "Restart Session",   category: "Debug",    description: "Stop the session and start a fresh run",      scope: "session" },
+  "debug.detach":    { label: "Detach",            category: "Debug",    description: "Detach from the target and leave it running (while paused)", scope: "session" },
 
   "panel.disassembly":   { label: "Go to Disassembly",    category: "Panels", description: "Open and focus the Disassembly panel",    scope: "session" },
   "panel.source":        { label: "Go to Source",         category: "Panels", description: "Open and focus the Source panel",         scope: "session" },
@@ -141,6 +147,11 @@ export const KEYBINDING_PRESETS: Record<PresetName, Record<ActionId, ChordString
     "debug.stepIn":   "f11",
     "debug.stepOver": "f10",
     "debug.stepOut":  "shift+f11",
+    // WinDbg's Debug menu: Ctrl+Shift+F5 restarts; stop/detach are unbound by
+    // default (WinDbg's Shift+F5 "stop" collides with goPassException here).
+    "debug.stop":     "",
+    "debug.restart":  "ctrl+shift+f5",
+    "debug.detach":   "",
     "assembly.toggleBreakpoint": "f9",
     ...SHARED_BINDINGS,
   } as Record<ActionId, ChordString>,
@@ -150,6 +161,10 @@ export const KEYBINDING_PRESETS: Record<PresetName, Record<ActionId, ChordString
     "debug.stepIn":   "f7",
     "debug.stepOver": "f8",
     "debug.stepOut":  "ctrl+f9",
+    // x64dbg defaults: Ctrl+F2 restart, Alt+F2 close/stop, Ctrl+Alt+F2 detach.
+    "debug.stop":     "alt+f2",
+    "debug.restart":  "ctrl+f2",
+    "debug.detach":   "alt+ctrl+f2",
     "assembly.toggleBreakpoint": "f2",
     ...SHARED_BINDINGS,
   } as Record<ActionId, ChordString>,
