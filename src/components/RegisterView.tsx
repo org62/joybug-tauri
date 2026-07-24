@@ -39,6 +39,12 @@ interface SerializableArm64ThreadContext {
   x24: string; x25: string; x26: string; x27: string;
   x28: string; x29: string; x30: string;
   sp: string; pc: string; cpsr: string;
+  // NEON/SIMD vector registers V0-V31 (128-bit, "0x"+32 hex digits) + FP control/status.
+  v0: string; v1: string; v2: string; v3: string; v4: string; v5: string; v6: string; v7: string;
+  v8: string; v9: string; v10: string; v11: string; v12: string; v13: string; v14: string; v15: string;
+  v16: string; v17: string; v18: string; v19: string; v20: string; v21: string; v22: string; v23: string;
+  v24: string; v25: string; v26: string; v27: string; v28: string; v29: string; v30: string; v31: string;
+  fpcr: string; fpsr: string;
 }
 
 export type SerializableThreadContext =
@@ -154,6 +160,14 @@ export const ARM64_REGISTERS: RegisterDef[] = [
   { name: "CPSR", field: "cpsr", showDereference: false },
 ];
 
+/** ARM64 NEON/SIMD vector registers V0-V31 (128-bit each), the ARM analogue of
+ *  x64's XMM. Rendered under the "NEON" toggle. */
+export const ARM64_NEON_REGISTERS: RegisterDef[] = Array.from({ length: 32 }, (_, i) => ({
+  name: `V${i}`,
+  field: `v${i}`,
+  showDereference: false,
+}));
+
 function formatFloat(v: number): string {
   if (Number.isNaN(v)) return "NaN";
   if (!Number.isFinite(v)) return v > 0 ? "+Inf" : "-Inf";
@@ -186,6 +200,56 @@ const SectionLabel = ({ children, right }: { children: React.ReactNode; right?: 
     {right}
   </div>
 );
+
+/** 128-bit vector-register section (XMM on x64, NEON on ARM64): section header
+ *  with the lane-format selector, then one row per register. */
+function VectorRegisterSection({
+  label,
+  defs,
+  registers,
+  format,
+  onFormatChange,
+  isChanged,
+}: {
+  label: string;
+  defs: RegisterDef[];
+  registers: Record<string, string>;
+  format: XmmFormat;
+  onFormatChange?: (format: XmmFormat) => void;
+  isChanged: (field: string) => boolean;
+}) {
+  return (
+    <>
+      <SectionLabel
+        right={
+          <Select value={format} onValueChange={(v) => onFormatChange?.(v as XmmFormat)}>
+            <SelectTrigger size="xs" className="w-20" aria-label={`${label} format`}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="hex">Hex</SelectItem>
+              <SelectItem value="f32">f32</SelectItem>
+              <SelectItem value="f64">f64</SelectItem>
+            </SelectContent>
+          </Select>
+        }
+      >
+        {label}
+      </SectionLabel>
+      {defs.map(({ name, field }) => (
+        <RegisterPair
+          key={field}
+          name={name}
+          field={field}
+          value={format === "hex" ? registers[field] : xmmLanes(registers[field], format).join("  ")}
+          showDereference={false}
+          isChanged={isChanged(field)}
+          nameWidthClass="w-12"
+        />
+      ))}
+    </>
+  );
+}
 
 function renderRegisterRows(
   registers: Record<string, string>,
@@ -230,13 +294,35 @@ export function RegisterView({
 
   if (context.arch === "Arm64") {
     const registers = context as unknown as Record<string, string>;
+    // NEON (V0-V31) is the ARM64 analogue of XMM; it reuses the same
+    // show/format state (showXmm/xmmFormat) as x64's vector view.
     return (
       <DockPanel>
+        <PanelToolbar>
+          <Button
+            variant={showXmm ? "default" : "outline"}
+            size="xs"
+            onClick={onToggleXmm}
+            title="Show NEON (SIMD) registers V0–V31"
+          >
+            NEON
+          </Button>
+        </PanelToolbar>
         <PanelBody>
           {/* w-0 min-w-full: zero the intrinsic max-content width so long
               deref chains can't widen the panel (same idiom as GroupedItemList) */}
           <div className="p-1 flex flex-col gap-0.5 w-0 min-w-full">
             {renderRegisterRows(registers, ARM64_REGISTERS, getDeref, isChanged, "w-8", onRegisterEdit)}
+            {showXmm && (
+              <VectorRegisterSection
+                label="NEON"
+                defs={ARM64_NEON_REGISTERS}
+                registers={registers}
+                format={xmmFormat}
+                onFormatChange={onXmmFormatChange}
+                isChanged={isChanged}
+              />
+            )}
           </div>
         </PanelBody>
       </DockPanel>
@@ -271,35 +357,14 @@ export function RegisterView({
           <div className="p-1 flex flex-col gap-0.5 w-0 min-w-full">
             {renderRegisterRows(registers, X64_REGISTERS, getDeref, isChanged, "w-8", onRegisterEdit)}
             {showXmm && (
-              <>
-                <SectionLabel
-                  right={
-                    <Select value={xmmFormat} onValueChange={(v) => onXmmFormatChange?.(v as XmmFormat)}>
-                      <SelectTrigger size="xs" className="w-20" aria-label="XMM format">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="hex">Hex</SelectItem>
-                        <SelectItem value="f32">f32</SelectItem>
-                        <SelectItem value="f64">f64</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  }
-                >
-                  XMM
-                </SectionLabel>
-                {X64_XMM_REGISTERS.map(({ name, field }) => (
-                  <RegisterPair
-                    key={field}
-                    name={name}
-                    field={field}
-                    value={xmmFormat === "hex" ? registers[field] : xmmLanes(registers[field], xmmFormat).join("  ")}
-                    showDereference={false}
-                    isChanged={isChanged(field)}
-                    nameWidthClass="w-12"
-                  />
-                ))}
-              </>
+              <VectorRegisterSection
+                label="XMM"
+                defs={X64_XMM_REGISTERS}
+                registers={registers}
+                format={xmmFormat}
+                onFormatChange={onXmmFormatChange}
+                isChanged={isChanged}
+              />
             )}
             {showDr && (
               <>

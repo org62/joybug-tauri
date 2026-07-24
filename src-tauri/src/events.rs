@@ -59,6 +59,13 @@ pub fn convert_raw_context_to_serializable(
             #[cfg(target_arch = "aarch64")]
             {
                 // ARM64 architecture - access ARM64 registers through Anonymous union
+                // 128-bit NEON vector register V<n> as high64|low64 hex (XMM layout).
+                macro_rules! neon {
+                    ($i:expr) => {{
+                        let v = ctx.V[$i].Anonymous;
+                        format!("0x{:016x}{:016x}", v.High as u64, v.Low)
+                    }};
+                }
                 unsafe {
                     SerializableThreadContext::Arm64(SerializableArm64ThreadContext {
                         // ARM64 CONTEXT struct has X0-X30 registers accessed via Anonymous.X array
@@ -96,6 +103,18 @@ pub fn convert_raw_context_to_serializable(
                         sp: format!("{:#018x}", ctx.Sp),
                         pc: format!("{:#018x}", ctx.Pc),
                         cpsr: format!("{:#010x}", ctx.Cpsr),
+                        // V0-V31: high 64 bits then low 64, matching the x64 XMM
+                        // string layout the frontend lane decoder consumes.
+                        v0: neon!(0), v1: neon!(1), v2: neon!(2), v3: neon!(3),
+                        v4: neon!(4), v5: neon!(5), v6: neon!(6), v7: neon!(7),
+                        v8: neon!(8), v9: neon!(9), v10: neon!(10), v11: neon!(11),
+                        v12: neon!(12), v13: neon!(13), v14: neon!(14), v15: neon!(15),
+                        v16: neon!(16), v17: neon!(17), v18: neon!(18), v19: neon!(19),
+                        v20: neon!(20), v21: neon!(21), v22: neon!(22), v23: neon!(23),
+                        v24: neon!(24), v25: neon!(25), v26: neon!(26), v27: neon!(27),
+                        v28: neon!(28), v29: neon!(29), v30: neon!(30), v31: neon!(31),
+                        fpcr: format!("{:#010x}", ctx.Fpcr),
+                        fpsr: format!("{:#010x}", ctx.Fpsr),
                     })
                 }
             }

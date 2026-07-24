@@ -5,6 +5,7 @@ import {
   cleanupSession,
   goToWindow,
   runPaletteCommand,
+  pcRegister,
 } from "../helpers/session-helpers";
 import {
   waitForPaused,
@@ -83,7 +84,7 @@ test.describe("Unified navigation history", () => {
       const original = await firstRowText(page);
 
       // Navigate somewhere else within ntdll (different function).
-      await gotoAddress(page, "rip+0x2000");
+      await gotoAddress(page, `${await pcRegister(page, sessionId)}+0x2000`);
       await expectFirstRow(page, original, { not: true });
       const jumped = await firstRowText(page);
       await expect(backButton(page)).toBeEnabled();
@@ -202,7 +203,7 @@ test.describe("Unified navigation history", () => {
         "Enter address or symbol (e.g. 0x00007FF...)",
       );
       await addrInput.waitFor({ state: "visible" });
-      await addrInput.fill("rip+0x2000");
+      await addrInput.fill(`${await pcRegister(page, sessionId)}+0x2000`);
       await addrInput.press("Enter");
 
       await expect(page.locator(ASM_PANEL)).toBeVisible();

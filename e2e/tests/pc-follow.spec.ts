@@ -1,5 +1,5 @@
 import { test, expect } from "../helpers/test-fixtures";
-import { createAndStartSession, cleanupSession } from "../helpers/session-helpers";
+import { createAndStartSession, cleanupSession, pcRegister } from "../helpers/session-helpers";
 import {
   waitForPaused,
   waitForDisassemblyLoaded,
@@ -108,7 +108,7 @@ test.describe("PC follow across steps", () => {
 
       // Navigate away (different function) — the PC row leaves the view.
       const gotoInput = page.locator(`${ASM_PANEL} input`).first();
-      await gotoInput.fill("rip+0x2000");
+      await gotoInput.fill(`${await pcRegister(page, sessionId)}+0x2000`);
       await gotoInput.press("Enter");
       await expect(async () => {
         expect(await pcInViewport(page)).toBe(false);

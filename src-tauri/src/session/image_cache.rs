@@ -15,18 +15,15 @@ use crate::state::SessionStateUI;
 /// instructions live in one module, so its covering image is all a given
 /// disassembly response needs.
 ///
-/// Only runs for x64 sessions; `arch != X64` returns an empty vec (no diff).
+/// Runs for both x64 and ARM64: `OriginalModuleImage::build` is PE-arch-neutral
+/// (pelite `pe64` parses both, DIR64 relocs apply to both), and ARM64
+/// disassembly of the original bytes is now safe.
 /// The build I/O happens without the state lock held; a short re-lock commits
 /// the result, guarding against a racing insert from a concurrent path.
 pub fn ensure_and_snapshot_images(
     state_arc: &Arc<Mutex<SessionStateUI>>,
-    arch: joybug2::interfaces::Architecture,
     address: u64,
 ) -> Vec<Arc<OriginalModuleImage>> {
-    if arch != joybug2::interfaces::Architecture::X64 {
-        return Vec::new();
-    }
-
     // Find the module covering `address` that isn't cached yet.
     let missing: Option<(u64, String)> = {
         let state = state_arc.lock().unwrap();
@@ -59,13 +56,8 @@ pub fn ensure_and_snapshot_images(
 /// off-lock, and one re-lock commits everything and takes the snapshot.
 pub fn ensure_all_and_snapshot_images(
     state_arc: &Arc<Mutex<SessionStateUI>>,
-    arch: joybug2::interfaces::Architecture,
     bases: &[u64],
 ) -> Vec<Arc<OriginalModuleImage>> {
-    if arch != joybug2::interfaces::Architecture::X64 {
-        return Vec::new();
-    }
-
     let missing: Vec<(u64, String)> = {
         let state = state_arc.lock().unwrap();
         state

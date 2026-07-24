@@ -3,6 +3,7 @@ import {
   createAndStartSession,
   cleanupSession,
   invoke,
+  debuggeeArch,
 } from "../helpers/session-helpers";
 import {
   waitForPaused,
@@ -340,15 +341,21 @@ test.describe("Disassembly View", () => {
       expect(targetAddr).toBeTruthy();
       const addrNum = Number(BigInt(targetAddr!));
 
-      // Overwrite that instruction's first byte with 0x06 (PUSH ES) — invalid in
-      // x64 long mode. WriteProcessMemory temporarily lifts the code page's
-      // protection, so this lands even in read-only ntdll code (same mechanism
-      // as software breakpoints / patches). The real backend decode must now
-      // emit a `db 0x06` row there and keep decoding below it.
-      await invoke(page, "request_memory_write", { sessionId, address: addrNum, data: [0x06] });
-
       const s = await invoke(page, "get_debug_session", { sessionId });
       const pc = s.current_event.address;
+      const arch = await debuggeeArch(page, sessionId);
+
+      // Corrupt the picked instruction with an undecodable pattern. On x64
+      // (variable-length) a single 0x06 (PUSH ES, invalid in long mode) suffices
+      // and capstone resyncs on the next byte. On ARM64 (fixed 4-byte words) one
+      // byte usually just yields another valid instruction, so overwrite the
+      // whole aligned word with 0x00000000 — an unallocated encoding capstone
+      // refuses. WriteProcessMemory temporarily lifts the code page's protection,
+      // so this lands even in read-only ntdll code (same mechanism as software
+      // breakpoints / patches). The real backend decode must now emit a `db` row
+      // there and keep decoding valid code below it.
+      const invalidBytes = arch === "Arm64" ? [0x00, 0x00, 0x00, 0x00] : [0x06];
+      await invoke(page, "request_memory_write", { sessionId, address: addrNum, data: invalidBytes });
 
       // Re-request the PC's function so the corrupted byte is re-read (FIFO after
       // the write on the same session channel). Poll the rendered rows.

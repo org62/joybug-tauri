@@ -1,5 +1,5 @@
 import { test, expect } from "../helpers/test-fixtures";
-import { createAndStartSession, cleanupSession } from "../helpers/session-helpers";
+import { createAndStartSession, cleanupSession, debuggeeArch } from "../helpers/session-helpers";
 import {
   waitForPaused,
   configureMinimalStopSettings,
@@ -39,15 +39,19 @@ test.describe("Registers View", () => {
         expect(text).toMatch(/0x[0-9a-fA-F]{8,16}/);
       }).toPass({ timeout: 5_000 });
 
-      // XMM registers are hidden by default; toggling the XMM button reveals them.
-      const xmmToggle = page.getByRole("button", { name: "XMM", exact: true });
-      await expect(xmmToggle).toBeVisible();
-      await xmmToggle.click();
+      // Vector registers are hidden by default; toggling reveals them. The set
+      // is architecture-specific: XMM (SSE) on x64, NEON (V0-V31) on ARM64.
+      const isArm64 = (await debuggeeArch(page, sessionId)) === "Arm64";
+      const toggleLabel = isArm64 ? "NEON" : "XMM";
+      const firstVecReg = isArm64 ? "v0" : "xmm0";
+      const vecToggle = page.getByRole("button", { name: toggleLabel, exact: true });
+      await expect(vecToggle).toBeVisible();
+      await vecToggle.click();
       await expect(async () => {
         const text = await page.evaluate(() =>
           document.body.innerText.toLowerCase(),
         );
-        expect(text).toContain("xmm0");
+        expect(text).toContain(firstVecReg);
       }).toPass({ timeout: 5_000 });
 
       await cleanupSession(page, sessionId);

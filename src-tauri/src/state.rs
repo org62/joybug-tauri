@@ -264,9 +264,32 @@ pub struct SerializableArm64ThreadContext {
     // Stack pointer and program counter
     pub sp: String,
     pub pc: String,
-    
+
     // Processor state
     pub cpsr: String,
+
+    // NEON/SIMD & floating-point state. V0-V31 are 128-bit vector registers,
+    // formatted as "0x" + 32 hex digits (high 64 bits then low 64) to match the
+    // x64 XMM encoding the frontend's lane decoder expects. Fpcr/Fpsr are the
+    // floating-point control/status registers.
+    #[serde(default)] pub v0: String, #[serde(default)] pub v1: String,
+    #[serde(default)] pub v2: String, #[serde(default)] pub v3: String,
+    #[serde(default)] pub v4: String, #[serde(default)] pub v5: String,
+    #[serde(default)] pub v6: String, #[serde(default)] pub v7: String,
+    #[serde(default)] pub v8: String, #[serde(default)] pub v9: String,
+    #[serde(default)] pub v10: String, #[serde(default)] pub v11: String,
+    #[serde(default)] pub v12: String, #[serde(default)] pub v13: String,
+    #[serde(default)] pub v14: String, #[serde(default)] pub v15: String,
+    #[serde(default)] pub v16: String, #[serde(default)] pub v17: String,
+    #[serde(default)] pub v18: String, #[serde(default)] pub v19: String,
+    #[serde(default)] pub v20: String, #[serde(default)] pub v21: String,
+    #[serde(default)] pub v22: String, #[serde(default)] pub v23: String,
+    #[serde(default)] pub v24: String, #[serde(default)] pub v25: String,
+    #[serde(default)] pub v26: String, #[serde(default)] pub v27: String,
+    #[serde(default)] pub v28: String, #[serde(default)] pub v29: String,
+    #[serde(default)] pub v30: String, #[serde(default)] pub v31: String,
+    #[serde(default)] pub fpcr: String,
+    #[serde(default)] pub fpsr: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

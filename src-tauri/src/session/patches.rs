@@ -509,7 +509,6 @@ pub(crate) fn process_restore_image_bytes(
     address: u64,
 ) {
     let pid = event.pid();
-    let arch = crate::commands::get_session_arch(&session.state);
 
     // A tracked UI patch covering this address must be undone through the patch
     // machinery (which flips is_applied and repersists) — a raw image restore
@@ -534,7 +533,7 @@ pub(crate) fn process_restore_image_bytes(
     }
 
     // Locate (lazily building) the original image covering this address.
-    let images = crate::session::image_cache::ensure_and_snapshot_images(&session.state, arch, address);
+    let images = crate::session::image_cache::ensure_and_snapshot_images(&session.state, address);
     let Some(image) = images
         .iter()
         .find(|im| !im.unavailable && im.contains(address) && im.is_code(address))

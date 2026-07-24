@@ -6,6 +6,8 @@ import {
   restoreDefaultSettings,
   continueSession,
   setArmedBreakpoint,
+  stepAndWaitForNewPc,
+  getPcAddress,
 } from "../helpers/wait-helpers";
 import { installEventCapture, waitForCapturedEvent } from "../helpers/event-helpers";
 import type { Page } from "@playwright/test";
@@ -149,22 +151,17 @@ test.describe("Source View", () => {
       await continueSession(page, sessionId);
       await waitForPaused(page, sessionId);
 
-      // Resolve the current source line, step over one source line, and confirm
-      // the line changed (a source-line step covers >1 instruction here).
-      const lineBefore = await page.evaluate(async (id: string) => {
-        const s = await (window as any).__TAURI_INTERNALS__.invoke("get_debug_session", { sessionId: id });
-        return s?.current_event?.address as number;
-      }, sessionId);
-
-      await page.evaluate(async (id: string) => {
-        await (window as any).__TAURI_INTERNALS__.invoke("step_over_line_debug_session", { sessionId: id });
-      }, sessionId);
-      await waitForPaused(page, sessionId);
-
-      const lineAfter = await page.evaluate(async (id: string) => {
-        const s = await (window as any).__TAURI_INTERNALS__.invoke("get_debug_session", { sessionId: id });
-        return s?.current_event?.address as number;
-      }, sessionId);
+      // Step over one source line and confirm the PC advanced (a source-line
+      // step covers >1 instruction here). stepAndWaitForNewPc polls until the
+      // session is Paused *at a new PC*, rather than racing the stale "Paused"
+      // that still holds the instant the async step command is dispatched — the
+      // latter can read the pre-step address before the step has even started.
+      const lineBefore = await getPcAddress(page, sessionId);
+      const lineAfter = await stepAndWaitForNewPc(
+        page,
+        sessionId,
+        "step_over_line_debug_session",
+      );
 
       expect(lineAfter).not.toBe(lineBefore);
 

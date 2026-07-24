@@ -32,6 +32,20 @@ use joybug2::windows_platform::{parse_module_extra_info_from_bytes, parse_pdb_ma
 use joybug2::pe_image::{rva_to_offset_loose, SectionMap};
 
 const IMAGE_FILE_MACHINE_AMD64: u16 = 0x8664;
+const IMAGE_FILE_MACHINE_ARM64: u16 = 0xAA64;
+
+/// The instruction set to disassemble an opened PE's code with. The underlying
+/// parser is pelite `pe64`, so the constraint is PE32+ (64-bit), not x64
+/// specifically — ARM64 images parse identically and only differ in the
+/// exception directory, which `parse_module_extra_info_from_bytes` already
+/// branches on.
+fn arch_from_machine(machine: u16) -> Option<Architecture> {
+    match machine {
+        IMAGE_FILE_MACHINE_AMD64 => Some(Architecture::X64),
+        IMAGE_FILE_MACHINE_ARM64 => Some(Architecture::Arm64),
+        _ => None,
+    }
+}
 
 /// An opened PE file held in memory. `bytes` is the editable buffer.
 pub struct LoadedPeFile {
@@ -43,6 +57,10 @@ pub struct LoadedPeFile {
     sections: Vec<SectionMap>,
     /// Symbols sorted ascending by RVA (once a PDB is loaded).
     symbols: Option<Vec<ModuleSymbol>>,
+    /// Instruction set of this image, from its PE machine field. Disassembling
+    /// with the host's architecture instead would silently emit garbage for a
+    /// cross-architecture image.
+    arch: Architecture,
 }
 
 impl LoadedPeFile {
@@ -152,9 +170,10 @@ fn machine_from_bytes(bytes: &[u8]) -> Option<u16> {
     Some(u16::from_le_bytes(bytes[nt + 4..nt + 6].try_into().ok()?))
 }
 
-fn build_loaded(path: String, bytes: Vec<u8>, base: u64, info: &ModuleExtraInfo) -> LoadedPeFile {
+fn build_loaded(path: String, bytes: Vec<u8>, base: u64, info: &ModuleExtraInfo, arch: Architecture) -> LoadedPeFile {
     let sections = info.sections.iter().map(SectionMap::from).collect();
     LoadedPeFile {
+        arch,
         path,
         bytes,
         base,
@@ -232,20 +251,19 @@ fn pe_open_impl(
     let bytes = std::fs::read(&path)
         .map_err(|e| Error::InvalidParameter(format!("Failed to read '{}': {}", path, e)))?;
 
-    match machine_from_bytes(&bytes) {
-        Some(IMAGE_FILE_MACHINE_AMD64) => {}
-        Some(other) => {
-            return Err(Error::InvalidParameter(format!(
-                "Unsupported PE machine 0x{:04X}. The PE viewer currently supports 64-bit (x64) images only.",
-                other
-            )));
-        }
+    let arch = match machine_from_bytes(&bytes) {
+        Some(machine) => arch_from_machine(machine).ok_or_else(|| {
+            Error::InvalidParameter(format!(
+                "Unsupported PE machine 0x{:04X}. The PE viewer supports 64-bit (x64 and ARM64) images only.",
+                machine
+            ))
+        })?,
         None => {
             return Err(Error::InvalidParameter(
                 "Not a valid PE file (missing MZ/PE headers).".to_string(),
             ));
         }
-    }
+    };
 
     let info = parse_module_extra_info_from_bytes(&bytes)
         .map_err(|e| Error::InvalidParameter(format!("Failed to parse PE: {:?}", e)))?;
@@ -256,7 +274,7 @@ fn pe_open_impl(
     };
 
     let size = bytes.len();
-    let mut loaded = build_loaded(path.clone(), bytes, base, &info);
+    let mut loaded = build_loaded(path.clone(), bytes, base, &info, arch);
 
     // Best-effort local symbol load (explicit PDB, or one next to the file).
     let (status, syms) = load_symbols_impl(&path, base, size, pdb_path.as_deref(), true);
@@ -413,9 +431,9 @@ pub async fn pe_disassemble(
                     offset: (rva - sym.rva) as u64,
                 })
             };
-            disassembler.disassemble_with_symbols(Architecture::X64, data, va, count, resolver)
+            disassembler.disassemble_with_symbols(file.arch, data, va, count, resolver)
         } else {
-            disassembler.disassemble(Architecture::X64, data, va, count)
+            disassembler.disassemble(file.arch, data, va, count)
         }
         .map_err(|e| Error::InvalidParameter(format!("Disassembly failed: {:?}", e)))?;
 

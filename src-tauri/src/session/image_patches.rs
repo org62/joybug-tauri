@@ -61,9 +61,8 @@ pub(crate) fn process_scan_image_patches(
     };
 
     // Ensure every loaded module has an image entry, then take one snapshot.
-    // ARM64 sessions yield no images → empty scan.
     let module_bases: Vec<u64> = module_names.keys().copied().collect();
-    let images = ensure_all_and_snapshot_images(&session.state, arch, &module_bases);
+    let images = ensure_all_and_snapshot_images(&session.state, &module_bases);
 
     let disasm = match CapstoneDisassembler::new() {
         Ok(d) => Some(d),

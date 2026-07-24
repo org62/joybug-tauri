@@ -30,6 +30,31 @@ export async function invoke(
   );
 }
 
+/**
+ * Architecture of the *debuggee*, read from the paused session's context. The
+ * runner's own architecture is irrelevant — on Windows ARM64 the Node process
+ * may be x64-emulated while the debuggee is native ARM64, so process.arch (or
+ * sniffing rendered text) is not a reliable proxy. Throws rather than silently
+ * defaulting when the session has no paused context.
+ */
+export async function debuggeeArch(page: Page, sessionId: string): Promise<"X64" | "Arm64"> {
+  const s = await invoke(page, "get_debug_session", { sessionId });
+  const arch = s?.current_event?.context?.arch;
+  if (arch !== "X64" && arch !== "Arm64") {
+    throw new Error(`Cannot determine debuggee arch (got ${arch}); is the session paused?`);
+  }
+  return arch;
+}
+
+/**
+ * Name of the program-counter register for the *debuggee's* architecture:
+ * "rip" on x64, "pc" on ARM64. Use this to build PC-relative goto expressions
+ * (e.g. `${await pcRegister(page, id)}+0x2000`) that resolve on either target.
+ */
+export async function pcRegister(page: Page, sessionId: string): Promise<"rip" | "pc"> {
+  return (await debuggeeArch(page, sessionId)) === "Arm64" ? "pc" : "rip";
+}
+
 /** Module base ("0x..") for the first module whose path/name contains `substr`. */
 export async function moduleBase(
   page: Page,

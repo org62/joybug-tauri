@@ -30,14 +30,14 @@ pub(crate) struct ImageDiff {
 }
 
 /// Build the disassembler + original-image snapshot for a live session's
-/// disassembly response. `None` (ARM64, no disk-backed modules, or capstone
-/// init failure) disables the diff.
+/// disassembly response. `None` (no disk-backed modules, or capstone init
+/// failure) disables the diff.
 pub(crate) fn build_image_diff_context(
     state_arc: &Arc<std::sync::Mutex<SessionStateUI>>,
     arch: Architecture,
     address: u64,
 ) -> Option<ImageDiff> {
-    let images = ensure_and_snapshot_images(state_arc, arch, address);
+    let images = ensure_and_snapshot_images(state_arc, address);
     if images.is_empty() {
         return None;
     }

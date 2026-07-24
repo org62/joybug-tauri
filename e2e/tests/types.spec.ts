@@ -1,6 +1,6 @@
 import type { Page } from "@playwright/test";
 import { test, expect } from "../helpers/test-fixtures";
-import { createAndStartSession, cleanupSession, invoke, goToWindow } from "../helpers/session-helpers";
+import { createAndStartSession, cleanupSession, invoke, goToWindow, debuggeeArch } from "../helpers/session-helpers";
 import {
   waitForPaused,
   configureMinimalStopSettings,
@@ -69,9 +69,15 @@ test.describe("Type System", () => {
       // Types come from ntdll's PDB.
       const kuser = await waitForTypeResolved(page, sessionId, "_KUSER_SHARED_DATA");
 
-      // _KUSER_SHARED_DATA is a fixed-size struct with a known NtSystemRoot member.
+      // _KUSER_SHARED_DATA is a fixed-size struct with a known NtSystemRoot
+      // member. Its declared size differs between the x64 and ARM64 ntdll PDBs
+      // (the struct carries per-architecture processor-feature fields), so the
+      // exact size is keyed off the debuggee arch. The member checks below prove
+      // the layout actually parsed regardless of which value it is.
+      const arch = await debuggeeArch(page, sessionId);
+      const expectedKuserSize = arch === "Arm64" ? 2688 : 1848;
       expect(kuser.kind).toBe("struct");
-      expect(kuser.size).toBe(1848);
+      expect(kuser.size).toBe(expectedKuserSize);
       expect(kuser.members.some((m) => m.name === "NtSystemRoot")).toBeTruthy();
 
       // _PEB: BeingDebugged is an unsigned char at offset 2, and no member should
