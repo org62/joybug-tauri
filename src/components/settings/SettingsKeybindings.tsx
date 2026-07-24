@@ -123,7 +123,7 @@ export function SettingsKeybindings({ searchQuery, embedded }: SettingsKeybindin
           <div className="flex items-center justify-between py-1.5 px-2 rounded hover:bg-muted/50 border-b border-border/50 mb-0">
             <div className="text-sm font-medium">Preset</div>
             <Select value={localSettings.preset} onValueChange={handlePresetChange}>
-              <SelectTrigger className="h-7 w-[130px] text-sm">
+              <SelectTrigger size="xs" className="w-[130px]">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -158,7 +158,7 @@ export function SettingsKeybindings({ searchQuery, embedded }: SettingsKeybindin
 
   const resetAllButton = (
     <div className="flex justify-end">
-      <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={handleResetAll} disabled={!hasCustomBindings}>
+      <Button variant="ghost" size="xs" onClick={handleResetAll} disabled={!hasCustomBindings}>
         Reset All to Defaults
       </Button>
     </div>

@@ -1,10 +1,12 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { HistoryInput } from "@/components/ui/history-input";
+import { pushInputHistory } from "@/lib/inputHistory";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import {
@@ -18,7 +20,9 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
-import { Plus, Play, Eye, Pencil, Trash2, XSquare, FileCode2, FolderOpen } from "lucide-react";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Page } from "@/components/ui/page";
+import { Plus, Play, Eye, Pencil, Trash2, XSquare, FileCode2, FolderOpen, Unplug, RefreshCw, Search } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { toast } from "sonner";
 import { 
@@ -27,36 +31,21 @@ import {
   updateSessionInStorage, 
   removeSessionFromStorage,
   sessionToConfig,
-  syncSessionsToStorage 
+  syncSessionsToStorage,
+  touchSessionInStorage,
 } from "@/lib/sessionStorage";
+
+import { DebugSession, SessionStatus } from "@/contexts/SessionContext";
+import { isProcessAvailable, formatTauriError, moduleBasename, buildLaunchCommand } from "@/lib/sessionHelpers";
+import { useFileDrop, pickDroppedFile } from "@/hooks/useFileDrop";
+import { FileDropOverlay } from "@/components/FileDropOverlay";
 
 const DEFAULT_SESSION_NAME = "Unnamed Session";
 
-interface DebugSession {
-  id: string;
+interface ProcessInfo {
+  pid: number;
   name: string;
-  server_url: string;
-  launch_command: string;
-  working_directory: string | null;
-  is_local_run: boolean;
-  status: SessionStatus;
-  current_event: DebugEventInfo | null;
-  created_at: string;
 }
-
-interface DebugEventInfo {
-  event_type: string;
-  process_id: number;
-  thread_id: number;
-  details: string;
-  can_continue: boolean;
-}
-
-type SessionStatus = 
-  | "Stopped"
-  | "Running"
-  | "Paused"
-  | { Error: string };
 
 export default function Debugger() {
   const navigate = useNavigate();
@@ -71,14 +60,31 @@ export default function Debugger() {
   const [formWorkingDirectory, setFormWorkingDirectory] = useState("");
   const [formLocalRun, setFormLocalRun] = useState(true);
 
+  // Attach-to-process dialog state
+  const [isAttachDialogOpen, setIsAttachDialogOpen] = useState(false);
+  const [attachServerUrl, setAttachServerUrl] = useState("");
+  const [processes, setProcesses] = useState<ProcessInfo[]>([]);
+  const [processFilter, setProcessFilter] = useState("");
+  const [isLoadingProcesses, setIsLoadingProcesses] = useState(false);
+  const [attachingPid, setAttachingPid] = useState<number | null>(null);
+  // When true, the chosen process is opened non-invasively (OpenProcess only, no
+  // debugger attach) — memory/enumeration/scan features only, no breakpoints/stepping.
+  const [attachNonInvasive, setAttachNonInvasive] = useState(false);
+  // When set, the attach dialog re-attaches this existing (stopped) session to
+  // the chosen PID instead of creating a new session.
+  const [attachTargetSessionId, setAttachTargetSessionId] = useState<string | null>(null);
+
   // Load sessions from backend with storage restoration
   const loadSessions = async () => {
     try {
       const sessionList = await invoke<DebugSession[]>("get_debug_sessions");
       setSessions(sessionList);
-      
-      // Sync storage with current sessions
-      const sessionConfigs = sessionList.map(sessionToConfig);
+
+      // Sync storage with current sessions. Attach sessions are bound to a live
+      // PID that won't exist next launch, so they're never persisted/restored.
+      const sessionConfigs = sessionList
+        .filter((s) => s.attach_pid == null)
+        .map(sessionToConfig);
       syncSessionsToStorage(sessionConfigs);
     } catch (error) {
       console.error("Failed to load debug sessions:", error);
@@ -110,6 +116,7 @@ export default function Debugger() {
               launchCommand: config.launch_command,
               workingDirectory: config.working_directory ?? null,
               isLocalRun: config.is_local_run ?? true,
+              attachPid: null,
             });
             existingByContent.add(contentKey);
           } catch (error) {
@@ -194,7 +201,7 @@ export default function Debugger() {
         ],
       });
       if (selected) {
-        setFormLaunchCommand(selected);
+        setFormLaunchCommand(buildLaunchCommand(selected));
       }
     } catch (error) {
       console.error("Failed to open file dialog:", error);
@@ -237,31 +244,58 @@ export default function Debugger() {
     setIsSessionDialogOpen(true);
   };
 
+  // Record the launch-form values for ArrowUp/Down recall next time the dialog
+  // is used; called only after the backend accepts them.
+  const pushLaunchFormHistory = () => {
+    pushInputHistory("launch-command", formLaunchCommand);
+    pushInputHistory("launch-cwd", formWorkingDirectory);
+    if (!formLocalRun) pushInputHistory("server-url", formServerUrl);
+  };
+
+  // Backend create + storage persistence, shared by the dialog and the
+  // drag-drop path. Returns the new session id.
+  const createSessionRecord = async (cfg: {
+    name: string;
+    serverUrl: string;
+    launchCommand: string;
+    workingDirectory: string | null;
+    isLocalRun: boolean;
+  }): Promise<string> => {
+    const sessionId = await invoke<string>("create_debug_session", {
+      name: cfg.name,
+      serverUrl: cfg.serverUrl,
+      launchCommand: cfg.launchCommand,
+      workingDirectory: cfg.workingDirectory,
+      isLocalRun: cfg.isLocalRun,
+      attachPid: null,
+    });
+
+    addSessionToStorage({
+      id: sessionId,
+      name: cfg.name,
+      server_url: cfg.serverUrl,
+      launch_command: cfg.launchCommand,
+      working_directory: cfg.workingDirectory,
+      is_local_run: cfg.isLocalRun,
+      created_at: new Date().toISOString(),
+    });
+
+    return sessionId;
+  };
+
   const handleCreateSession = async () => {
     const sessionName = formName.trim() || DEFAULT_SESSION_NAME;
 
     try {
-      const workingDirectory = formWorkingDirectory.trim() || null;
-
-      const sessionId = await invoke<string>("create_debug_session", {
+      const sessionId = await createSessionRecord({
         name: sessionName,
         serverUrl: formLocalRun ? "" : formServerUrl,
         launchCommand: formLaunchCommand,
-        workingDirectory,
+        workingDirectory: formWorkingDirectory.trim() || null,
         isLocalRun: formLocalRun,
       });
 
-      // Save session config to storage
-      addSessionToStorage({
-        id: sessionId,
-        name: sessionName,
-        server_url: formLocalRun ? "" : formServerUrl,
-        launch_command: formLaunchCommand,
-        working_directory: workingDirectory,
-        is_local_run: formLocalRun,
-        created_at: new Date().toISOString(),
-      });
-
+      pushLaunchFormHistory();
       toast.success("Debug session created successfully");
       setIsSessionDialogOpen(false);
 
@@ -297,6 +331,7 @@ export default function Debugger() {
         launchCommand: formLaunchCommand,
         workingDirectory,
         isLocalRun: formLocalRun,
+        attachPid: null,
       });
 
       // Update session config in storage
@@ -310,6 +345,7 @@ export default function Debugger() {
         created_at: sessionToEdit.created_at,
       });
 
+      pushLaunchFormHistory();
       toast.success("Debug session updated successfully");
       setIsSessionDialogOpen(false);
       setSessionToEdit(null);
@@ -321,12 +357,100 @@ export default function Debugger() {
     }
   };
 
-  const handleStartSession = async (sessionId: string) => {
+  // Bumped whenever a session's last_used_at changes so the MRU sort re-runs.
+  const [lastUsedTick, setLastUsedTick] = useState(0);
+
+  const touchSession = (sessionId: string) => {
+    touchSessionInStorage(sessionId);
+    setLastUsedTick((t) => t + 1);
+  };
+
+  const startAndNavigate = async (sessionId: string) => {
+    await invoke("start_debug_session", { sessionId });
+    touchSession(sessionId);
+    toast.success("Debug session started");
+    navigate(`/session/${sessionId}`);
+  };
+
+  // Drag-drop an .exe onto the page: create a local-run session (embedded
+  // debug server) for it, start it, and jump into the session view.
+  const handleFileDrop = async (paths: string[]) => {
+    const dropped = pickDroppedFile(paths, {
+      pattern: /\.exe$/i,
+      rejectMessage: "Only .exe files can be launched — use the PE Viewer for other PE files",
+    });
+    if (!dropped) return;
+
+    const name = moduleBasename(dropped).replace(/\.exe$/i, "");
+    const sepIdx = Math.max(dropped.lastIndexOf("\\"), dropped.lastIndexOf("/"));
+    const workingDirectory = sepIdx > 0 ? dropped.slice(0, sepIdx) : null;
+
     try {
-      await invoke("start_debug_session", { sessionId });
-      toast.success("Debug session started");
-      // Navigate to session view
-      navigate(`/session/${sessionId}`);
+      const sessionId = await createSessionRecord({
+        name,
+        serverUrl: "",
+        launchCommand: buildLaunchCommand(dropped),
+        workingDirectory,
+        isLocalRun: true,
+      });
+      await startAndNavigate(sessionId);
+    } catch (error) {
+      console.error("Failed to launch dropped executable:", error);
+      toast.error(formatTauriError(error));
+    }
+  };
+
+  const { isDragOver } = useFileDrop({
+    onDrop: handleFileDrop,
+    enabled: !isSessionDialogOpen && !isAttachDialogOpen,
+  });
+
+  const updateAttachPid = async (session: DebugSession, pid: number) => {
+    await invoke("update_debug_session", {
+      sessionId: session.id,
+      name: session.name,
+      serverUrl: session.is_local_run ? "" : session.server_url,
+      launchCommand: session.launch_command,
+      workingDirectory: session.working_directory ?? null,
+      isLocalRun: session.is_local_run,
+      attachPid: pid,
+      nonInvasive: session.non_invasive,
+    });
+  };
+
+  const handleStartSession = async (session: DebugSession) => {
+    try {
+      // Attach sessions: the stored PID may be stale if the target restarted.
+      // Keep it if still alive; otherwise resolve by image name — auto-attach a
+      // lone match, or let the user pick when several instances are running.
+      if (session.attach_pid != null) {
+        const serverUrl = session.is_local_run ? null : session.server_url;
+        const list = await invoke<ProcessInfo[]>("list_processes", { serverUrl });
+        const pidAlive = list.some((p) => p.pid === session.attach_pid);
+
+        if (!pidAlive) {
+          const want = session.launch_command.toLowerCase();
+          const matches = list.filter((p) => p.name.toLowerCase() === want);
+
+          if (matches.length === 0) {
+            toast.error(`"${session.launch_command}" is not running`);
+            return;
+          }
+          if (matches.length === 1) {
+            await updateAttachPid(session, matches[0].pid);
+          } else {
+            // Several instances — let the user choose which one to re-attach to.
+            setAttachTargetSessionId(session.id);
+            setAttachServerUrl(session.is_local_run ? "" : session.server_url);
+            setProcesses(list);
+            setProcessFilter(session.launch_command);
+            setIsAttachDialogOpen(true);
+            return;
+          }
+        }
+      }
+
+      await startAndNavigate(session.id);
     } catch (error) {
       console.error("Failed to start debug session:", error);
       toast.error(`Failed to start debug session: ${error}`);
@@ -363,16 +487,114 @@ export default function Debugger() {
     try {
       const sessionId = await handleCreateSession();
       if (sessionId) {
-        await handleStartSession(sessionId);
+        await startAndNavigate(sessionId);
       }
     } catch (error) {
-      // Error already handled in handleCreateSession/handleStartSession
+      // Error already handled in handleCreateSession/startAndNavigate
     }
   };
 
   const handleViewSession = (sessionId: string) => {
+    touchSession(sessionId);
     navigate(`/session/${sessionId}`);
   };
+
+  const loadProcesses = async () => {
+    setIsLoadingProcesses(true);
+    try {
+      const serverUrl = attachServerUrl.trim() || null;
+      const list = await invoke<ProcessInfo[]>("list_processes", { serverUrl });
+      setProcesses(list);
+    } catch (error) {
+      console.error("Failed to list processes:", error);
+      toast.error(`Failed to list processes: ${error}`);
+    } finally {
+      setIsLoadingProcesses(false);
+    }
+  };
+
+  const handleOpenAttachDialog = async () => {
+    setAttachTargetSessionId(null);
+    setProcessFilter("");
+    setProcesses([]);
+    setAttachNonInvasive(false);
+    setIsAttachDialogOpen(true);
+    await loadProcesses();
+  };
+
+  const handleAttachToProcess = async (proc: ProcessInfo) => {
+    const remoteUrl = attachServerUrl.trim();
+    pushInputHistory("server-url", remoteUrl);
+    setAttachingPid(proc.pid);
+    try {
+      // Re-attach an existing stopped session, or create a fresh one.
+      if (attachTargetSessionId) {
+        const existing = sessions.find((s) => s.id === attachTargetSessionId);
+        if (existing) {
+          await updateAttachPid(existing, proc.pid);
+          toast.success(`Re-attaching to ${proc.name} (${proc.pid})`);
+          setIsAttachDialogOpen(false);
+          setAttachTargetSessionId(null);
+          await startAndNavigate(existing.id);
+          return;
+        }
+      }
+
+      const label = attachNonInvasive ? "Open" : "Attach";
+      const sessionId = await invoke<string>("create_debug_session", {
+        name: `${label}: ${proc.name} (${proc.pid})`,
+        serverUrl: remoteUrl,
+        launchCommand: proc.name,
+        workingDirectory: null,
+        isLocalRun: remoteUrl === "",
+        attachPid: proc.pid,
+        nonInvasive: attachNonInvasive,
+      });
+
+      await invoke("start_debug_session", { sessionId });
+      toast.success(`${attachNonInvasive ? "Opening" : "Attaching to"} ${proc.name} (${proc.pid})`);
+      setIsAttachDialogOpen(false);
+      navigate(`/session/${sessionId}`);
+    } catch (error) {
+      console.error("Failed to attach:", error);
+      toast.error(`Failed to attach: ${error}`);
+    } finally {
+      setAttachingPid(null);
+    }
+  };
+
+  // Most-recently-used first; sessions never started/viewed fall back to
+  // creation time. last_used_at / created_at live in localStorage, at
+  // millisecond precision (see sessionStorage.ts).
+  const sortedSessions = useMemo(() => {
+    // Prefer the storage timestamps (ms precision, UTC ISO) so same-second
+    // creations still order correctly; fall back to the backend created_at.
+    const timeById = new Map<string, string>();
+    for (const config of loadSessionsFromStorage()) {
+      const t = config.last_used_at ?? config.created_at;
+      if (t) timeById.set(config.id, t);
+    }
+    // The backend's created_at is UTC formatted WITHOUT a timezone marker
+    // ("YYYY-MM-DD HH:MM:SS"), which new Date() would parse as *local* time —
+    // shifting it hours away from the UTC-with-Z last_used_at and inverting the
+    // order. Parse un-zoned timestamps as UTC so both are on the same clock.
+    const toMs = (s?: string | null): number => {
+      if (!s) return 0;
+      if (/[zZ]|[+-]\d\d:?\d\d$/.test(s)) return new Date(s).getTime(); // already zoned
+      return new Date(s.replace(" ", "T") + "Z").getTime();
+    };
+    // Parse once per session, not once per comparison.
+    const msById = new Map(sessions.map((s) => [s.id, toMs(timeById.get(s.id) ?? s.created_at)]));
+    return [...sessions].sort((a, b) => msById.get(b.id)! - msById.get(a.id)!);
+  }, [sessions, lastUsedTick]);
+
+  const filteredProcesses = useMemo(() => {
+    const q = processFilter.trim().toLowerCase();
+    if (!q) return processes;
+    return processes.filter(
+      (p) => p.name.toLowerCase().includes(q) || String(p.pid).includes(q),
+    );
+  }, [processes, processFilter]);
 
   const getStatusBadge = (status: SessionStatus) => {
     if (typeof status === "string") {
@@ -383,6 +605,8 @@ export default function Debugger() {
           return <Badge variant="default" className="bg-green-600 animate-pulse">Running</Badge>;
         case "Paused":
           return <Badge variant="default" className="bg-yellow-600">Paused</Badge>;
+        case "Open":
+          return <Badge variant="default" className="bg-blue-600">Open</Badge>;
         default:
           return <Badge variant="secondary">{status}</Badge>;
       }
@@ -401,6 +625,8 @@ export default function Debugger() {
           return "Debug session is running";
         case "Paused":
           return "Debug session is paused on an event";
+        case "Open":
+          return "Process opened non-invasively (no debugger attached)";
         default:
           return status;
       }
@@ -419,19 +645,9 @@ export default function Debugger() {
     return ["Stopped"].includes(status);
   };
 
-  const canView = (status: SessionStatus) => {
-    if (typeof status === "string") {
-      return ["Running", "Paused"].includes(status);
-    }
-    return false;
-  };
+  const canView = (status: SessionStatus) => isProcessAvailable(status);
 
-  const canStop = (status: SessionStatus) => {
-    if (typeof status === "string") {
-      return ["Running", "Paused"].includes(status);
-    }
-    return false;
-  };
+  const canStop = (status: SessionStatus) => isProcessAvailable(status);
 
   const canDelete = (status: SessionStatus) => {
     if (typeof status !== "string") return true; // Allow to delete on error
@@ -439,7 +655,7 @@ export default function Debugger() {
   };
 
   return (
-    <div className="container mx-auto px-4 py-8">
+    <Page>
       <div className="max-w-6xl mx-auto space-y-6">
         <div className="flex items-center justify-between">
           <div>
@@ -447,16 +663,21 @@ export default function Debugger() {
             <p className="text-muted-foreground">Manage your debug sessions</p>
           </div>
           
+          <div className="flex items-center gap-2">
+          <Button variant="outline" className="flex items-center gap-2" onClick={handleOpenAttachDialog}>
+            <Unplug className="h-4 w-4" />
+            Attach to Process
+          </Button>
           <Dialog open={isSessionDialogOpen} onOpenChange={setIsSessionDialogOpen}>
             <DialogTrigger asChild>
               <Button variant={sessions.length > 0 ? "default" : "outline"} className="flex items-center gap-2" onClick={handleOpenNewSessionDialog}>
                 <Plus className="h-4 w-4" />
-                New Session
+                Create Process
               </Button>
             </DialogTrigger>
             <DialogContent className="sm:max-w-[425px]">
               <DialogHeader>
-                <DialogTitle>{sessionToEdit ? "Edit Debug Session" : "Create New Debug Session"}</DialogTitle>
+                <DialogTitle>{sessionToEdit ? "Edit Process" : "Create Process"}</DialogTitle>
                 <DialogDescription>
                   {sessionToEdit 
                     ? "Update the details for this debug session."
@@ -490,7 +711,8 @@ export default function Debugger() {
                 {!formLocalRun && (
                   <div className="space-y-2">
                     <Label htmlFor="serverUrl">Debug Server URL</Label>
-                    <Input
+                    <HistoryInput
+                      historyKey="server-url"
                       id="serverUrl"
                       value={formServerUrl}
                       onChange={(e) => setFormServerUrl(e.target.value)}
@@ -501,7 +723,8 @@ export default function Debugger() {
                 <div className="space-y-2">
                   <Label htmlFor="launchCommand">Launch Command</Label>
                   <div className="flex gap-2">
-                    <Input
+                    <HistoryInput
+                      historyKey="launch-command"
                       id="launchCommand"
                       value={formLaunchCommand}
                       onChange={(e) => setFormLaunchCommand(e.target.value)}
@@ -517,7 +740,8 @@ export default function Debugger() {
                 <div className="space-y-2">
                   <Label htmlFor="workingDirectory">Working Directory (optional)</Label>
                   <div className="flex gap-2">
-                    <Input
+                    <HistoryInput
+                      historyKey="launch-cwd"
                       id="workingDirectory"
                       value={formWorkingDirectory}
                       onChange={(e) => setFormWorkingDirectory(e.target.value)}
@@ -539,7 +763,7 @@ export default function Debugger() {
                   <Button onClick={() => handleUpdateSession().catch(() => {})}>Update Session</Button>
                 ) : (
                   <>
-                    <Button onClick={() => handleCreateSession().catch(() => { /* error already toasted */})}>
+                    <Button variant="outline" onClick={() => handleCreateSession().catch(() => { /* error already toasted */})}>
                       Create Session
                     </Button>
                     <Button onClick={handleCreateAndStart} variant="default">
@@ -550,27 +774,102 @@ export default function Debugger() {
               </div>
             </DialogContent>
           </Dialog>
+
+          <Dialog open={isAttachDialogOpen} onOpenChange={setIsAttachDialogOpen}>
+            <DialogContent className="sm:max-w-[560px]">
+              <DialogHeader>
+                <DialogTitle>{attachNonInvasive ? "Open Running Process" : "Attach to Running Process"}</DialogTitle>
+                <DialogDescription>
+                  {attachNonInvasive
+                    ? "Pick a process to open non-invasively. Memory, threads, modules, search and scan are available; the process is never attached, paused, or debugged."
+                    : "Pick a process to attach the debugger to. It will pause once attached."}
+                </DialogDescription>
+              </DialogHeader>
+              <div className="space-y-3 py-2">
+                <div className="flex items-center justify-between rounded-md border p-2">
+                  <div className="min-w-0 pr-3 space-y-0.5">
+                    <Label htmlFor="attachNonInvasive">Non-invasive (don't attach debugger)</Label>
+                    <p className="text-xs text-muted-foreground">Open the process for memory/enumeration only — no breakpoints or stepping.</p>
+                  </div>
+                  <Switch id="attachNonInvasive" checked={attachNonInvasive} onCheckedChange={setAttachNonInvasive} className="shrink-0" />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="attachServerUrl">Debug Server URL (optional)</Label>
+                  <div className="flex gap-2">
+                    <HistoryInput
+                      historyKey="server-url"
+                      id="attachServerUrl"
+                      value={attachServerUrl}
+                      onChange={(e) => setAttachServerUrl(e.target.value)}
+                      placeholder="Leave empty to use a local embedded server"
+                    />
+                    <Button variant="outline" size="icon" onClick={loadProcesses} title="Refresh process list" type="button" disabled={isLoadingProcesses}>
+                      <RefreshCw className={`h-4 w-4 ${isLoadingProcesses ? "animate-spin" : ""}`} />
+                    </Button>
+                  </div>
+                </div>
+                <div className="relative">
+                  <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                  <Input
+                    value={processFilter}
+                    onChange={(e) => setProcessFilter(e.target.value)}
+                    placeholder="Filter by name or PID"
+                    className="pl-8"
+                  />
+                </div>
+                <ScrollArea className="h-72 rounded-md border">
+                  {isLoadingProcesses ? (
+                    <div className="p-4 text-sm text-muted-foreground">Loading processes…</div>
+                  ) : filteredProcesses.length === 0 ? (
+                    <div className="p-4 text-sm text-muted-foreground">No processes found.</div>
+                  ) : (
+                    <div className="divide-y">
+                      {filteredProcesses.map((proc) => (
+                        <Button
+                          key={proc.pid}
+                          type="button"
+                          variant="ghost"
+                          onClick={() => handleAttachToProcess(proc)}
+                          disabled={attachingPid !== null}
+                          className="flex w-full items-center justify-between h-auto px-3 py-2 rounded-none text-left text-sm font-normal"
+                        >
+                          <span className="min-w-0 truncate font-medium">{proc.name}</span>
+                          <span className="ml-3 shrink-0 text-xs text-muted-foreground">
+                            {attachingPid === proc.pid ? "Attaching…" : `PID ${proc.pid}`}
+                          </span>
+                        </Button>
+                      ))}
+                    </div>
+                  )}
+                </ScrollArea>
+              </div>
+              <div className="flex justify-end">
+                <Button variant="outline" onClick={() => setIsAttachDialogOpen(false)}>
+                  Cancel
+                </Button>
+              </div>
+            </DialogContent>
+          </Dialog>
+          </div>
         </div>
 
         {sessions.length === 0 ? (
           <Card>
             <CardContent className="flex flex-col items-center justify-center text-center">
               <FileCode2 className="h-12 w-12 mb-4 text-muted-foreground opacity-40" />
-              <h2 className="text-xl font-semibold text-muted-foreground mb-2">No debug sessions yet</h2>
+              <h2 className="text-xl font-semibold text-muted-foreground mb-2">No processes yet</h2>
               <p className="text-sm text-muted-foreground mb-6">
-                Create your first debug session to get started
+                Create a new process or attach to a running one to get started
               </p>
               <Button onClick={handleOpenNewSessionDialog} className="flex items-center gap-2">
                 <Plus className="h-4 w-4" />
-                Create Session
+                Create Process
               </Button>
             </CardContent>
           </Card>
         ) : (
           <div className="grid gap-4">
-            {sessions
-              .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
-              .map((session) => (
+            {sortedSessions.map((session) => (
               <Card key={session.id} className="hover:shadow-md transition-shadow">
                 <CardHeader>
                   <div className="flex items-center justify-between">
@@ -584,7 +883,7 @@ export default function Debugger() {
                       </CardDescription>
                     </div>
                     <div className="flex items-center gap-2">
-                      <Button variant="ghost" size="icon" onClick={() => handleStartSession(session.id)} disabled={!canStart(session.status)} title="Start">
+                      <Button variant="ghost" size="icon" onClick={() => handleStartSession(session)} disabled={!canStart(session.status)} title={session.attach_pid != null ? "Re-attach" : "Start"}>
                         <Play className="h-4 w-4" />
                       </Button>
                       <Button variant="ghost" size="icon" onClick={() => handleStopSession(session.id)} disabled={!canStop(session.status)} title="Stop">
@@ -660,6 +959,8 @@ export default function Debugger() {
           </div>
         )}
       </div>
-    </div>
+
+      <FileDropOverlay active={isDragOver} message="Drop an executable to debug" />
+    </Page>
   );
-} 
+}

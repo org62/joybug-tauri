@@ -1,9 +1,11 @@
 import { useState, useCallback } from "react";
-import { ScrollArea } from "./ui/scroll-area";
-import { Input } from "./ui/input";
-import { ChevronDown, ChevronRight, Trash2 } from "lucide-react";
+import { InlineEditInput } from "./ui/inline-edit-input";
+import { Button } from "./ui/button";
+import { ChevronDown, ChevronRight, GripVertical, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useContextMenu } from "@/hooks/useContextMenu";
+import { PanelBody } from "./ui/panel";
+import { ContextMenu, ContextMenuItem, ContextMenuSeparator } from "./ui/context-menu";
 import {
   DndContext,
   DragOverlay,
@@ -32,9 +34,42 @@ export interface GroupedItemListProps<T extends GroupableItem> {
   onDeleteGroup: (itemIds: string[]) => void;
   renderItem: (item: T, isDragOverlay?: boolean) => React.ReactNode;
   renderToolbar?: () => React.ReactNode;
+  /**
+   * Column header cells. GroupedItemList supplies the row chrome (padding,
+   * typography, drag-gutter spacer), renders it inside the scroll content (so
+   * it scrolls horizontally with the rows), and keeps it sticky during
+   * vertical scroll.
+   */
+  renderHeader?: () => React.ReactNode;
+  /** Empty-state content; GroupedItemList centers it in the panel body. */
   renderEmptyState?: () => React.ReactNode;
   /** Color class for group dot (default "red") */
   groupDotColor?: string;
+  /**
+   * Floor for the scroll content width in px, excluding the drag-handle
+   * gutter (added internally). When set, the list scrolls horizontally
+   * instead of squeezing rows below this width.
+   */
+  minContentWidth?: number;
+}
+
+/** Width of the drag-handle gutter (w-4) the list prepends to every row. */
+const GUTTER_PX = 16;
+
+/** Drag-handle gutter shared by rows and the drag overlay so they align. */
+function DragHandleGutter({ interactive, ...props }: { interactive?: boolean } & React.HTMLAttributes<HTMLSpanElement>) {
+  return (
+    <span
+      {...props}
+      className={cn(
+        "w-4 shrink-0 self-stretch flex items-center justify-center text-muted-foreground/40 select-none touch-none",
+        interactive && "cursor-grab active:cursor-grabbing hover:text-muted-foreground",
+        props.className,
+      )}
+    >
+      <GripVertical className="h-3 w-3" />
+    </span>
+  );
 }
 
 function DraggableItemRow<T extends GroupableItem>({ item, children }: { item: T; children: React.ReactNode }) {
@@ -49,9 +84,12 @@ function DraggableItemRow<T extends GroupableItem>({ item, children }: { item: T
     opacity: isDragging ? 0.4 : undefined,
   };
 
+  // Listeners go on the handle only — dragging starts from the grip, never
+  // from the row content (which has its own clicks, selection and editing).
   return (
-    <div ref={setNodeRef} style={style} {...attributes} {...listeners}>
-      {children}
+    <div ref={setNodeRef} style={style} className="flex items-stretch">
+      <DragHandleGutter interactive {...attributes} {...listeners} title="Drag to move into a group" />
+      <div className="flex-1 min-w-0">{children}</div>
     </div>
   );
 }
@@ -76,12 +114,14 @@ export function GroupedItemList<T extends GroupableItem>({
   onDeleteGroup,
   renderItem,
   renderToolbar,
+  renderHeader,
   renderEmptyState,
   groupDotColor = "red",
+  minContentWidth,
 }: GroupedItemListProps<T>) {
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
 
-  const { contextMenu, contextMenuRef, openContextMenu, closeContextMenu } = useContextMenu<{
+  const { contextMenu, openContextMenu, closeContextMenu } = useContextMenu<{
     groupName: string;
   }>();
 
@@ -221,7 +261,25 @@ export function GroupedItemList<T extends GroupableItem>({
       onDragOver={handleDragOver}
       onDragEnd={handleDragEnd}
     >
-      <div>
+      {/* w-0 zeroes the intrinsic max-content contribution so long symbols
+          can't widen the scroll content; min-w-full restores fill (same idiom
+          as RegisterView). The inline minWidth adds the horizontal-scroll
+          floor on top. */}
+      <div
+        className="w-0 min-w-full"
+        style={minContentWidth ? { minWidth: `max(100%, ${minContentWidth + GUTTER_PX}px)` } : undefined}
+      >
+        {/* Column header — inside the min-width wrapper so it scrolls
+            horizontally with the rows; sticky against vertical scroll */}
+        {renderHeader && (
+          <div className="sticky top-0 z-10 bg-background border-b border-border flex">
+            <span className="w-4 shrink-0" />
+            <div className="flex-1 min-w-0 flex items-center px-2 py-1 text-xs text-muted-foreground font-medium select-none">
+              {renderHeader()}
+            </div>
+          </div>
+        )}
+
         {/* Ungrouped items */}
         <DroppableGroupZone groupName="__ungrouped__">
           <div id="ungrouped">
@@ -261,8 +319,10 @@ export function GroupedItemList<T extends GroupableItem>({
                   {isCollapsed ? <ChevronRight className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
                 </span>
                 {/* Group dot */}
-                <button
-                  className="w-4 h-4 shrink-0 flex items-center justify-center"
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  className="w-4 h-4 p-0 shrink-0 hover:bg-transparent"
                   onClick={(e) => {
                     e.stopPropagation();
                     onEnableGroup(groupName, !allEnabled);
@@ -277,28 +337,24 @@ export function GroupedItemList<T extends GroupableItem>({
                       !allEnabled && !noneEnabled && dotPartial,
                     )}
                   />
-                </button>
+                </Button>
                 {isEditingHeader ? (
-                  <Input
+                  <InlineEditInput
                     value={editValue}
-                    onChange={(e) => setEditValue(e.target.value)}
-                    onKeyDown={(e) => {
-                      e.stopPropagation();
-                      if (e.key === "Enter") commitGroupRename();
-                      if (e.key === "Escape") setEditingGroup(null);
-                    }}
-                    onClick={(e) => e.stopPropagation()}
-                    onBlur={commitGroupRename}
-                    className="h-5 text-xs px-1 py-0 rounded-sm shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 flex-1"
+                    onChange={setEditValue}
+                    onCommit={commitGroupRename}
+                    onCancel={() => setEditingGroup(null)}
+                    className="flex-1"
                     placeholder="group name"
-                    autoFocus
                   />
                 ) : (
                   <>
                     <span>{groupName}</span>
                     <span className="text-muted-foreground ml-1">({groupItems.length})</span>
                     <span className="flex-1" />
-                    <button
+                    <Button
+                      variant="ghost"
+                      size="icon-xs"
                       className="h-4 w-4 shrink-0 opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive transition-opacity"
                       onClick={(e) => {
                         e.stopPropagation();
@@ -307,7 +363,7 @@ export function GroupedItemList<T extends GroupableItem>({
                       title="Remove group"
                     >
                       <Trash2 className="h-3 w-3" />
-                    </button>
+                    </Button>
                   </>
                 )}
               </div>
@@ -338,7 +394,12 @@ export function GroupedItemList<T extends GroupableItem>({
 
       {/* Drag overlay */}
       <DragOverlay dropAnimation={null}>
-        {activeDragItem && renderItem(activeDragItem, true)}
+        {activeDragItem && (
+          <div className="flex items-stretch bg-popover border rounded shadow-md">
+            <DragHandleGutter />
+            <div className="flex-1 min-w-0">{renderItem(activeDragItem, true)}</div>
+          </div>
+        )}
       </DragOverlay>
     </DndContext>
   );
@@ -350,56 +411,40 @@ export function GroupedItemList<T extends GroupableItem>({
 
       {/* List */}
       {items.length === 0 ? (
-        renderEmptyState?.()
+        renderEmptyState && (
+          <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground p-4">
+            {renderEmptyState()}
+          </div>
+        )
       ) : (
-        <ScrollArea className="flex-1 min-h-0">
+        <PanelBody orientation={minContentWidth ? "both" : undefined}>
           {renderGroupedContent()}
-        </ScrollArea>
+        </PanelBody>
       )}
 
       {/* Group context menu */}
       {contextMenu && (
-        <div
-          ref={contextMenuRef}
-          className="fixed z-50 bg-popover text-popover-foreground rounded-md border shadow-md py-1 min-w-[160px]"
-          style={{ left: contextMenu.x, top: contextMenu.y }}
-        >
-          <button
-            className="w-full px-3 py-1.5 text-sm text-left hover:bg-accent hover:text-accent-foreground"
-            onClick={() => {
-              onEnableGroup(contextMenu.data.groupName, true);
-              closeContextMenu();
-            }}
-          >
+        <ContextMenu x={contextMenu.x} y={contextMenu.y} onClose={closeContextMenu}>
+          <ContextMenuItem onClick={() => onEnableGroup(contextMenu.data.groupName, true)}>
             Enable All
-          </button>
-          <button
-            className="w-full px-3 py-1.5 text-sm text-left hover:bg-accent hover:text-accent-foreground"
-            onClick={() => {
-              onEnableGroup(contextMenu.data.groupName, false);
-              closeContextMenu();
-            }}
-          >
+          </ContextMenuItem>
+          <ContextMenuItem onClick={() => onEnableGroup(contextMenu.data.groupName, false)}>
             Disable All
-          </button>
-          <button
-            className="w-full px-3 py-1.5 text-sm text-left hover:bg-accent hover:text-accent-foreground"
-            onClick={() => startGroupRename(contextMenu.data.groupName)}
-          >
+          </ContextMenuItem>
+          <ContextMenuItem onClick={() => startGroupRename(contextMenu.data.groupName)}>
             Rename Group
-          </button>
-          <div className="border-t border-border my-1" />
-          <button
-            className="w-full px-3 py-1.5 text-sm text-left hover:bg-accent hover:text-accent-foreground text-destructive"
+          </ContextMenuItem>
+          <ContextMenuSeparator />
+          <ContextMenuItem
+            destructive
             onClick={() => {
               const groupItems = items.filter((i) => i.group === contextMenu.data.groupName);
               onDeleteGroup(groupItems.map((i) => i.id));
-              closeContextMenu();
             }}
           >
             Remove Group
-          </button>
-        </div>
+          </ContextMenuItem>
+        </ContextMenu>
       )}
     </>
   );

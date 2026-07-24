@@ -26,6 +26,10 @@ const buttonVariants = cva(
         sm: "h-8 rounded-md gap-1.5 px-3 has-[>svg]:px-2.5",
         lg: "h-10 rounded-md px-6 has-[>svg]:px-4",
         icon: "size-9",
+        // Dense panel-toolbar controls: 28px tall, 14px icons (the canonical
+        // panel button/icon size — see CLAUDE.md UI conventions).
+        xs: "h-7 rounded-md gap-1 px-2 text-xs has-[>svg]:px-1.5 [&_svg:not([class*='size-'])]:size-3.5",
+        "icon-xs": "size-7 [&_svg:not([class*='size-'])]:size-3.5",
       },
     },
     defaultVariants: {

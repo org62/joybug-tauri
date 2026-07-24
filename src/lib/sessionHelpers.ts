@@ -1,6 +1,25 @@
 import { invoke } from '@tauri-apps/api/core';
 import { RegisterContext, SymbolResolver } from '@/lib/hexUtils';
+import { resolveSymbol as resolveSymbolByName, SearchSymbolsFn, ModuleRef } from '@/lib/symbolUtils';
 import { SerializableThreadContext } from '@/components/RegisterView';
+import type { SessionStatus } from '@/contexts/SessionContext';
+
+/**
+ * True when a process is available for memory/enumeration ops: paused, running
+ * (invasive), or a non-invasive Open session. These ops run over the OOB
+ * connection and never need a pause.
+ */
+export function isProcessAvailable(status: SessionStatus | string | undefined | null): boolean {
+  return status === 'Paused' || status === 'Running' || status === 'Open';
+}
+
+/**
+ * True while the target executes live and values drift between reads: running
+ * (invasive), or a non-invasive Open session. Used to gate polling loops.
+ */
+export function isTargetLive(status: SessionStatus | string | undefined | null): boolean {
+  return status === 'Running' || status === 'Open';
+}
 
 /**
  * Extract a human-readable error message from a Tauri invoke error.
@@ -22,6 +41,30 @@ export function formatTauriError(err: unknown): string {
     return JSON.stringify(err);
   }
   return String(err);
+}
+
+/**
+ * True for backend errors that mean "nothing to show yet" rather than a real
+ * failure — e.g. no active process, or an op that needs a pause (non-invasive
+ * Open sessions before an address is chosen). Views should render their neutral
+ * empty state instead of an error box. Single place matching the backend's
+ * `InvalidSessionState` message wording (see src-tauri `Error` variants).
+ */
+export function isBenignSessionError(message: string): boolean {
+  // `invalid ?session ?state` matches both the Display text ("Invalid session
+  // state: ...") and the serialized variant name ("InvalidSessionState").
+  return /no active process|must be paused|session not|invalid ?session ?state/i.test(message);
+}
+
+export { moduleBasename } from '@/lib/symbolUtils';
+
+/**
+ * Turn an executable path into a launch command the backend can parse as a
+ * command line: a path containing spaces must be quoted. Every producer of
+ * `launch_command` (file picker, drag-drop) must go through this.
+ */
+export function buildLaunchCommand(exePath: string): string {
+  return exePath.includes(' ') ? `"${exePath}"` : exePath;
 }
 
 /** Convert a thread context snapshot to a flat register name -> value map for address expression parsing. */
@@ -91,29 +134,42 @@ export function contextToRegisters(context: SerializableThreadContext | undefine
   return registers;
 }
 
-/** Invoke the toggle_breakpoint Tauri command for the given session and address. */
-export async function invokeToggleBreakpoint(sessionId: string, address: string): Promise<void> {
-  await invoke('toggle_breakpoint', { sessionId, address });
+/**
+ * Invoke the toggle_breakpoint Tauri command for the given session and address. When
+ * `singleShot` is true, a newly added breakpoint is one-shot (auto-removed on first hit).
+ */
+export async function invokeToggleBreakpoint(sessionId: string, address: string, singleShot?: boolean): Promise<void> {
+  await invoke('toggle_breakpoint', { sessionId, address, singleShot: singleShot ?? false });
 }
 
-/** Create a SymbolResolver that delegates to the session's searchSymbols function. */
+/**
+ * Invoke the batched set_breakpoints Tauri command: sets a software breakpoint at each
+ * address (skipping addresses that already have one), tagging every new breakpoint with
+ * `group`. When `singleShot` is true the breakpoints are one-shot (auto-removed on first hit).
+ */
+export async function invokeSetBreakpoints(sessionId: string, addresses: string[], group?: string, singleShot?: boolean): Promise<void> {
+  await invoke('set_breakpoints', { sessionId, addresses, group: group ?? null, singleShot: singleShot ?? false });
+}
+
+/**
+ * Create a SymbolResolver that delegates to the session's searchSymbols
+ * function via resolveSymbolByName, which understands "module!symbol" syntax
+ * and prefers exact name matches over the first fuzzy hit. When `modules` is
+ * provided, bare module names ("orig", "ntdll.dll") resolve to the module base
+ * so `module+0x...` expressions land in the right module.
+ */
 export function createSymbolResolver(
-  searchSymbols: ((query: string, maxResults: number) => Promise<Array<{ va: string }>>) | undefined,
+  searchSymbols: SearchSymbolsFn | undefined,
+  modules?: ModuleRef[],
 ): SymbolResolver {
   return async (name: string): Promise<bigint | null> => {
     if (!searchSymbols) return null;
     try {
-      const symbols = await searchSymbols(name, 1);
-      if (symbols.length > 0) {
-        try {
-          return BigInt(symbols[0].va);
-        } catch {
-          return null;
-        }
-      }
+      const result = await resolveSymbolByName(searchSymbols, name, modules);
+      return result?.address ?? null;
     } catch (e) {
       console.error('Symbol resolution failed:', e);
+      return null;
     }
-    return null;
   };
 }

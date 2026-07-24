@@ -2,8 +2,9 @@ import { BrowserRouter as Router, Routes, Route, useNavigate } from "react-route
 import React, { Suspense, useEffect, useState, useCallback, useRef } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
-import { toast } from "sonner";
 import { useTheme } from "next-themes";
+import { dispatchToast } from "@/lib/toastDispatcher";
+import { isProcessAvailable } from "@/lib/sessionHelpers";
 import Header from "@/components/Header";
 import { KeybindingContext, useKeybindingContext } from "@/contexts/KeybindingContext";
 import { useKeybindings } from "@/hooks/useKeybindings";
@@ -11,8 +12,9 @@ import { keyboardEventToChord } from "@/lib/keybindings";
 import { CommandPaletteContext, useCommandPaletteContext } from "@/contexts/CommandPaletteContext";
 import { useCommandPalette } from "@/hooks/useCommandPalette";
 import { CommandPalette } from "@/components/CommandPalette";
+import { applyZoom, getStoredZoom, nudgeZoom } from "@/lib/uiZoom";
 import { useDebugSettings, EVENT_ITEMS } from "@/hooks/useDebugSettings";
-import { Home as HomeIcon, Bug, ScrollText, Settings as SettingsIcon, Info, Sun, Moon, Keyboard, Bell, Zap, Plus, Eye } from "lucide-react";
+import { Home as HomeIcon, Bug, ScrollText, Settings as SettingsIcon, Info, Sun, Moon, Keyboard, Bell, Zap, Plus, Eye, FileSearch } from "lucide-react";
 
 // Lazy load pages for code splitting
 const Home = React.lazy(() => import("@/pages/Home"));
@@ -21,8 +23,10 @@ const SessionDocked = React.lazy(() => import("@/pages/SessionDocked"));
 const Logs = React.lazy(() => import("@/pages/Logs"));
 const Settings = React.lazy(() => import("@/pages/Settings"));
 const About = React.lazy(() => import("@/pages/About"));
+const PeReader = React.lazy(() => import("@/pages/PeReader"));
 
 import { Toaster } from "@/components/ui/sonner";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import "./App.css";
 import RcDockThemeLoader from "./components/RcDockThemeLoader";
 
@@ -31,6 +35,20 @@ function AppContent() {
   const { resolvedTheme, setTheme } = useTheme();
   const { reverseLookup } = useKeybindingContext();
   const { toggle, registerCommands } = useCommandPaletteContext();
+
+  // Apply the saved UI scale on startup, and handle zoom hotkeys
+  // (Ctrl/Cmd +/-/0) — persisted via uiZoom so the choice survives restarts.
+  useEffect(() => {
+    applyZoom(getStoredZoom());
+    const onZoomKey = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
+      if (e.key === "=" || e.key === "+") { e.preventDefault(); nudgeZoom(1); }
+      else if (e.key === "-" || e.key === "_") { e.preventDefault(); nudgeZoom(-1); }
+      else if (e.key === "0") { e.preventDefault(); nudgeZoom(0); }
+    };
+    window.addEventListener("keydown", onZoomKey);
+    return () => window.removeEventListener("keydown", onZoomKey);
+  }, []);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -66,12 +84,14 @@ function AppContent() {
 
     window.addEventListener('keydown', handleKeyDown);
 
-    // Global toast listeners
+    // Global toast listeners. Routed through the burst-aware dispatcher so rare
+    // events show their full message while bursts collapse into a single
+    // "N× category" summary (prevents sonner's per-toast reflow from freezing the UI).
     const unlistenInfo = listen<string>("show-toast", (event) => {
-      toast.info(event.payload);
+      dispatchToast("info", event.payload);
     });
     const unlistenError = listen<string>("show-toast-error", (event) => {
-      toast.error(event.payload);
+      dispatchToast("error", event.payload);
     });
 
     return () => {
@@ -140,6 +160,14 @@ function AppContent() {
         keybindingAction: "nav.debugger",
         onSelect: () => navigate("/debugger"),
         keywords: ["debug", "session"],
+      },
+      {
+        id: "nav.pe",
+        label: "PE Viewer",
+        group: "Navigation",
+        icon: <FileSearch className="size-4" />,
+        onSelect: () => navigate("/pe"),
+        keywords: ["pe", "portable executable", "exe", "dll", "headers"],
       },
       {
         id: "nav.logs",
@@ -219,7 +247,7 @@ function AppContent() {
         group: "Sessions",
         icon: <Eye className="size-4" />,
         onSelect: () => {
-          if (s.status === "Running" || s.status === "Paused") {
+          if (isProcessAvailable(s.status)) {
             navigate(`/session/${s.id}`);
           } else {
             navigate("/debugger");
@@ -245,6 +273,7 @@ function AppContent() {
           <Routes>
             <Route path="/" element={<Home />} />
             <Route path="/debugger" element={<Debugger />} />
+            <Route path="/pe" element={<PeReader />} />
             <Route path="/session/:sessionId" element={<SessionDocked />} />
             <Route path="/logs" element={<Logs />} />
             <Route path="/settings" element={<Settings />} />
@@ -280,7 +309,11 @@ function App() {
     <Router>
       <KeybindingProvider>
         <CommandPaletteProvider>
-          <AppContent />
+          {/* Single tooltip provider so per-symbol tooltips (TruncatedSymbol
+              in virtualized rows) don't each mount their own. */}
+          <TooltipProvider delayDuration={300}>
+            <AppContent />
+          </TooltipProvider>
         </CommandPaletteProvider>
       </KeybindingProvider>
     </Router>

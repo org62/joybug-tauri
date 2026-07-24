@@ -14,11 +14,20 @@ edition = "2021"
 name = "joybug_tauri_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+[features]
+# DO NOT REMOVE!! Enabled by `tauri build`; switches the webview from the dev
+# server (devUrl) to the embedded frontend served over the custom protocol.
+# Without it, release binaries try to load http://localhost:1420 and fail.
+custom-protocol = ["tauri/custom-protocol"]
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+# `devtools` is auto-enabled in debug builds but not release; enable it
+# explicitly so the WebView2 CDP endpoint (used by the e2e tests) is available
+# in the release binary too.
+tauri = { version = "2", features = ["devtools"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-opener = "2"
 tauri-plugin-window-state = "2"
@@ -33,4 +42,8 @@ dirs = "6"
 chrono = { version = "0.4", features = ["serde"] }
 thiserror = "2.0.12"
 uuid = { version = "1", features = ["v4"] }
+# Source-view checksum verification against PDB file records
+md-5 = "0.10"
+sha1 = "0.10"
+sha2 = "0.10"
 

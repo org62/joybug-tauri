@@ -1,11 +1,14 @@
 import { useState, useCallback } from "react";
 import { Button } from "./ui/button";
 import { Switch } from "./ui/switch";
+import { Checkbox } from "./ui/checkbox";
 import { X, Puzzle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { Patch } from "@/hooks/usePatches";
 import { useContextMenu } from "@/hooks/useContextMenu";
 import { GroupedItemList } from "./GroupedItemList";
+import { DockPanel, PanelToolbar } from "./ui/panel";
+import { ContextMenu, ContextMenuItem, ContextMenuSeparator } from "./ui/context-menu";
 
 interface PatchesViewProps {
   patches: Patch[];
@@ -28,7 +31,7 @@ export function PatchesView({
 }: PatchesViewProps) {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
-  const { contextMenu, contextMenuRef, openContextMenu, closeContextMenu } = useContextMenu<{
+  const { contextMenu, openContextMenu, closeContextMenu } = useContextMenu<{
     patchId: string;
   }>();
 
@@ -78,11 +81,9 @@ export function PatchesView({
       onContextMenu={(e) => { if (!isDragOverlay) openContextMenu(e, { patchId: patch.id }); }}
     >
       <span className="w-6 shrink-0 flex items-center justify-center">
-        <input
-          type="checkbox"
+        <Checkbox
           checked={selectedIds.has(patch.id)}
-          onChange={() => toggleSelect(patch.id)}
-          className="h-3.5 w-3.5 accent-primary"
+          onCheckedChange={() => toggleSelect(patch.id)}
         />
       </span>
       <span
@@ -102,21 +103,21 @@ export function PatchesView({
       </span>
       <span className="w-14 shrink-0 flex items-center justify-center">
         <Switch
+          size="xs"
           checked={patch.enabled}
           onCheckedChange={(checked) => onEnablePatch?.(patch.id, checked)}
-          className="h-4 w-7"
         />
       </span>
       {!isDragOverlay && (
         <span className="w-8 shrink-0 flex items-center justify-center">
           <Button
             variant="ghost"
-            size="icon"
-            className="h-5 w-5 opacity-0 group-hover:opacity-100 transition-opacity"
+            size="icon-xs"
+            className="opacity-0 group-hover:opacity-100 transition-opacity"
             onClick={() => onUndoPatch?.(patch.id)}
             title="Undo patch"
           >
-            <X className="h-3 w-3" />
+            <X />
           </Button>
         </span>
       )}
@@ -124,7 +125,7 @@ export function PatchesView({
   );
 
   return (
-    <div className="absolute inset-0 flex flex-col overflow-hidden">
+    <DockPanel>
       <GroupedItemList
         items={patches}
         onUpdateItemGroup={(id, group) => onUpdatePatch?.(id, group)}
@@ -134,11 +135,10 @@ export function PatchesView({
         groupDotColor="purple"
         renderToolbar={() => (
           <>
-            <div className="flex items-center gap-2 p-2 border-b border-border bg-muted/30 shrink-0">
+            <PanelToolbar>
               <Button
                 variant="outline"
-                size="sm"
-                className="h-7 text-xs"
+                size="xs"
                 disabled={selectedIds.size === 0}
                 onClick={handleUndoSelected}
               >
@@ -146,15 +146,13 @@ export function PatchesView({
               </Button>
               <div className="flex-1" />
               <span className="text-xs text-muted-foreground">{patches.length} patch{patches.length !== 1 ? 'es' : ''}</span>
-            </div>
+            </PanelToolbar>
             {patches.length > 0 && (
               <div className="flex items-center px-2 py-1 border-b border-border text-xs text-muted-foreground font-medium shrink-0">
                 <span className="w-6 shrink-0 flex items-center justify-center">
-                  <input
-                    type="checkbox"
+                  <Checkbox
                     checked={allSelected}
-                    onChange={toggleSelectAll}
-                    className="h-3.5 w-3.5 accent-primary"
+                    onCheckedChange={toggleSelectAll}
                   />
                 </span>
                 <span className="w-28 shrink-0">Address</span>
@@ -167,59 +165,44 @@ export function PatchesView({
           </>
         )}
         renderEmptyState={() => (
-          <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground p-4">
+          <>
             <Puzzle className="h-12 w-12 mx-auto mb-4 opacity-50" />
-            <p className="text-base font-medium">No patches</p>
+            <p className="text-base font-medium">No user patches</p>
             <p className="text-sm mt-1">Right-click an instruction in the disassembly view and select "Assemble..." to create a patch</p>
-          </div>
+          </>
         )}
       />
 
-      {contextMenu && (
-        <div
-          ref={contextMenuRef}
-          className="fixed z-50 bg-popover text-popover-foreground rounded-md border shadow-md py-1 min-w-[160px]"
-          style={{ left: contextMenu.x, top: contextMenu.y }}
-        >
-          {(() => {
-            const patch = patches.find((p) => p.id === contextMenu.data.patchId);
-            return (
-              <>
-                <button
-                  className="w-full px-3 py-1.5 text-sm text-left hover:bg-accent hover:text-accent-foreground"
-                  onClick={() => {
-                    if (patch) onEnablePatch?.(patch.id, !patch.enabled);
-                    closeContextMenu();
-                  }}
-                >
-                  {patch?.enabled ? "Disable" : "Enable"}
-                </button>
-                <button
-                  className="w-full px-3 py-1.5 text-sm text-left hover:bg-accent hover:text-accent-foreground"
-                  onClick={() => {
-                    if (!patch) return;
-                    const name = generateNewGroupName();
-                    onUpdatePatch?.(patch.id, name);
-                    closeContextMenu();
-                  }}
-                >
-                  Set Group
-                </button>
-                <div className="border-t border-border my-1" />
-                <button
-                  className="w-full px-3 py-1.5 text-sm text-left hover:bg-accent hover:text-accent-foreground text-destructive"
-                  onClick={() => {
-                    onUndoPatch?.(contextMenu.data.patchId);
-                    closeContextMenu();
-                  }}
-                >
-                  Undo Patch
-                </button>
-              </>
-            );
-          })()}
-        </div>
-      )}
-    </div>
+      {contextMenu && (() => {
+        const patch = patches.find((p) => p.id === contextMenu.data.patchId);
+        return (
+          <ContextMenu x={contextMenu.x} y={contextMenu.y} onClose={closeContextMenu}>
+            <ContextMenuItem
+              onClick={() => {
+                if (patch) onEnablePatch?.(patch.id, !patch.enabled);
+              }}
+            >
+              {patch?.enabled ? "Disable" : "Enable"}
+            </ContextMenuItem>
+            <ContextMenuItem
+              onClick={() => {
+                if (!patch) return;
+                const name = generateNewGroupName();
+                onUpdatePatch?.(patch.id, name);
+              }}
+            >
+              Set Group
+            </ContextMenuItem>
+            <ContextMenuSeparator />
+            <ContextMenuItem
+              destructive
+              onClick={() => onUndoPatch?.(contextMenu.data.patchId)}
+            >
+              Undo Patch
+            </ContextMenuItem>
+          </ContextMenu>
+        );
+      })()}
+    </DockPanel>
   );
 }

@@ -1,7 +1,10 @@
 import { useMemo } from 'react';
 import { useSessionContext } from '@/contexts/SessionContext';
 import { AssemblyView } from '@/components/AssemblyView';
-import { contextToRegisters, createSymbolResolver } from '@/lib/sessionHelpers';
+import { contextToRegisters, isProcessAvailable } from '@/lib/sessionHelpers';
+import { sessionNavHistory } from '@/lib/navHistory';
+import { useQuickEmulation } from '@/hooks/useQuickEmulation';
+import { useSymbolResolver } from '@/hooks/useSymbolResolver';
 
 export const ContextAssemblyView = () => {
   const sessionData = useSessionContext();
@@ -16,16 +19,18 @@ export const ContextAssemblyView = () => {
     return contextToRegisters(currentEvent?.context);
   }, [currentEvent?.context]);
 
-  const resolveSymbol = useMemo(
-    () => createSymbolResolver(sessionData?.searchSymbols),
-    [sessionData?.searchSymbols],
-  );
+  const resolveSymbol = useSymbolResolver();
 
   const isPaused = displayStatus === 'Paused';
   const sessionId = sessionData?.session?.id;
 
+  // Quick emulation is a session capability, so the hook lives in this wrapper —
+  // the shared AssemblyView (also hosted by the PE viewer) just receives the state.
+  const emulation = useQuickEmulation(sessionId, isPaused, address);
+
   const { breakpoints, toggleBreakpoint, setHardwareBreakpoint } = sessionData.breakpointState;
-  const { assemblePatch } = sessionData.patchState;
+  const { assemblePatch, restoreImageBytes } = sessionData.patchState;
+  const { addBookmark } = sessionData.bookmarkState;
 
   // Build a set of breakpoint addresses (uppercase hex) for quick lookup.
   // Exclude unresolved breakpoints (address "0x0") since they have no real location yet.
@@ -43,13 +48,22 @@ export const ContextAssemblyView = () => {
     <AssemblyView
       sessionId={sessionId}
       isPaused={isPaused}
+      canLoad={isProcessAvailable(displayStatus)}
       address={address}
       registers={registers}
       resolveSymbol={resolveSymbol}
       breakpointAddresses={breakpointAddresses}
+      emulation={emulation}
       onToggleBreakpoint={toggleBreakpoint}
+      onToggleSingleShotBreakpoint={(address) => toggleBreakpoint(address, true)}
       onSetHardwareBreakpoint={setHardwareBreakpoint}
       onAssemblePatch={assemblePatch}
+      onRestoreImageBytes={restoreImageBytes}
+      onAddBookmark={(addr, asmText) => addBookmark({ kind: 'code', address: addr, asmText })}
+      symbolsRefreshKey={sessionData.symbolsRefreshKey}
+      onNavigateToSource={sessionData.onNavigateToSource}
+      onShowInMemoryRegions={sessionData.onNavigateToMemoryRegion}
+      navHistory={sessionNavHistory}
     />
   );
 };

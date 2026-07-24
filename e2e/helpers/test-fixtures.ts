@@ -1,7 +1,48 @@
 import { test as base, chromium, Page, TestInfo } from "@playwright/test";
+import { rmSync } from "fs";
+import path from "path";
+
+// Persisted stores keyed by launch_command. Most tests share the default
+// `cmd.exe /c echo e2e_test` command, so a breakpoint/patch/bookmark one test
+// leaves behind reloads into the next same-command session and corrupts it
+// (e.g. a leaked breakpoint re-arms and pauses a "run to exit" test). The
+// backend only rewrites these on a session's own state change, so deleting them
+// between tests — while no session is active — is safe and isolates every test.
+// The "persist across restart" specs create and reload their own state within a
+// single test, so a pre-test wipe leaves them unaffected.
+const PERSISTED_STORES = ["breakpoints.json", "patches.json", "bookmarks.json"];
+
+function clearPersistedStores(): void {
+  const dir = process.env.JOYBUG_E2E_DATA_DIR;
+  if (!dir) return;
+  for (const file of PERSISTED_STORES) {
+    try {
+      rmSync(path.join(dir, file), { force: true });
+    } catch {
+      // Transient lock (the backend rewriting the store) — skip this round;
+      // `force` already swallows the missing-file case.
+    }
+  }
+}
+
+/** Wait for the React app to mount (a connect/load may arrive before render). */
+async function waitForAppMount(page: Page): Promise<void> {
+  await page.waitForFunction(
+    () => {
+      const root = document.getElementById("root");
+      return !!root && root.children.length > 0;
+    },
+    { timeout: 15_000 },
+  );
+}
 
 const CDP_ENDPOINT = "http://localhost:9222";
-const APP_ORIGIN = "http://localhost:1420";
+// In release mode the app serves its frontend over the Tauri custom protocol
+// (tauri.localhost); in dev it's the Vite dev server (localhost:1420).
+const APP_ORIGIN =
+  process.env.JOYBUG_E2E_RELEASE === "1"
+    ? "http://tauri.localhost"
+    : "http://localhost:1420";
 
 type TestFixtures = {
   tauriPage: Page;
@@ -13,17 +54,13 @@ export const test = base.extend<TestFixtures>({
     const context = browser.contexts()[0];
     const page = context.pages()[0] || (await context.newPage());
 
-    // Wait for React app to mount (first connect may arrive before render)
-    await page.waitForFunction(
-      () => {
-        const root = document.getElementById("root");
-        return root && root.children.length > 0;
-      },
-      { timeout: 15_000 },
-    );
+    await waitForAppMount(page);
 
     // Pin theme in localStorage so next-themes doesn't re-detect system
-    // preference on each CDP reconnect (which causes dark↔light flicker)
+    // preference on each CDP reconnect (which causes dark↔light flicker),
+    // then clear everything else so each test starts from default UI state
+    // (a dock layout persisted from before a feature existed would otherwise
+    // hide that feature's default tabs).
     await page.evaluate(() => {
       if (!localStorage.getItem("theme")) {
         const isDark =
@@ -31,30 +68,36 @@ export const test = base.extend<TestFixtures>({
           window.matchMedia("(prefers-color-scheme: dark)").matches;
         localStorage.setItem("theme", isDark ? "dark" : "light");
       }
-    });
-
-    // Disable quick emulation in disassembly view — it consumes CPU without
-    // being tested by e2e and can slow down / interfere with other tests.
-    await page.evaluate(() => {
+      const theme = localStorage.getItem("theme");
+      localStorage.clear();
+      if (theme) localStorage.setItem("theme", theme);
+      // Disable quick emulation in disassembly view — it consumes CPU without
+      // being tested by e2e and can slow down / interfere with other tests.
       localStorage.setItem("assembly-quick-emulation-collapsed", "true");
     });
 
     // Clean up any existing sessions and restore settings before test
     await cleanupAllSessions(page);
     await restoreSettings(page);
+    // Wipe persisted per-target stores so no prior test's breakpoints/patches/
+    // bookmarks leak into this test's same-command session.
+    clearPersistedStores();
 
     await use(page);
 
-    // Capture screenshot after test for UI mode visibility
-    // (connectOverCDP doesn't support Playwright's built-in screenshot timeline)
-    try {
-      const screenshot = await page.screenshot();
-      await testInfo.attach("screenshot", {
-        body: screenshot,
-        contentType: "image/png",
-      });
-    } catch {
-      // Screenshot may fail if page crashed
+    // Capture a screenshot on failure only (connectOverCDP doesn't support
+    // Playwright's built-in screenshot timeline). Passing tests skip it —
+    // ~100-200ms per test that nobody looks at.
+    if (testInfo.status !== testInfo.expectedStatus) {
+      try {
+        const screenshot = await page.screenshot();
+        await testInfo.attach("screenshot", {
+          body: screenshot,
+          contentType: "image/png",
+        });
+      } catch {
+        // Screenshot may fail if page crashed
+      }
     }
 
     // Clean up after test
@@ -174,6 +217,20 @@ export async function navigateTo(page: Page, path: string): Promise<void> {
     // Context destroyed — fall back to full navigation
     await page.goto(`${APP_ORIGIN}${path}`);
   }
+}
+
+/**
+ * Open the PE viewer from a full document load. The PeReader caches its open
+ * file in a module-level variable that survives client-side navigation (so
+ * switching tabs keeps the file open), and that cache is invisible to the
+ * fixture's per-test cleanup. A soft navigation would therefore restore a PE
+ * opened — and left open — by an earlier test, hiding the empty-state
+ * placeholder. A full load resets the module state, so any test that asserts
+ * the fresh-start empty view must reach `/pe` this way.
+ */
+export async function gotoFreshPe(page: Page): Promise<void> {
+  await page.goto(`${APP_ORIGIN}/pe`);
+  await waitForAppMount(page);
 }
 
 export { expect } from "@playwright/test";

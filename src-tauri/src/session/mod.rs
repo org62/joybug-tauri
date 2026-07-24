@@ -1,14 +1,21 @@
+pub(crate) mod bookmarks;
 pub(crate) mod breakpoints;
-mod callstack;
+pub(crate) mod callstack;
 mod dispatch;
 pub(crate) mod disassembly;
 mod emulation;
 pub(crate) mod helpers;
-mod memory;
+pub(crate) mod image_cache;
+pub(crate) mod image_patches;
+pub(crate) mod memory;
+pub(crate) mod pointer_scan;
+pub(crate) mod region_annotations;
+pub(crate) mod string_scan;
 pub(crate) mod patches;
 mod registers;
 mod runner;
-mod symbols;
+pub(crate) mod source;
+pub(crate) mod symbols;
 pub mod types;
 
 pub use types::UICommand;

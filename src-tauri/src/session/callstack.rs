@@ -97,10 +97,9 @@ pub(crate) fn process_callstack_request(
 pub(crate) fn process_thread_callstack_request(
     session: &mut DebugSession,
     app_handle_clone: &Option<AppHandle>,
-    event: &joybug2::protocol_io::DebugEvent,
+    pid: u32,
     tid: u32,
 ) {
-    let pid = event.pid();
     debug!("📤 Processing thread callstack request: pid={}, tid={}", pid, tid);
 
     let modules = get_modules_snapshot(session);

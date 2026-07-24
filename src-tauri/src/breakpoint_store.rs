@@ -1,27 +1,10 @@
 use crate::state::BreakpointInfo;
 use std::collections::HashMap;
-use std::fs;
-use std::io::Write;
-use std::path::PathBuf;
-use tracing::error;
 
-fn breakpoints_file_path() -> PathBuf {
-    crate::data_dir::joybug_data_dir().join("breakpoints.json")
-}
+const BREAKPOINTS_FILE: &str = "breakpoints.json";
 
 pub fn load_breakpoints(launch_command: &str) -> Vec<BreakpointInfo> {
-    let path = breakpoints_file_path();
-    let bytes = match fs::read(&path) {
-        Ok(b) => b,
-        Err(_) => return Vec::new(),
-    };
-    let map: HashMap<String, Vec<BreakpointInfo>> = match serde_json::from_slice(&bytes) {
-        Ok(m) => m,
-        Err(e) => {
-            error!("Failed to parse breakpoints file: {}", e);
-            return Vec::new();
-        }
-    };
+    let map: HashMap<String, Vec<BreakpointInfo>> = crate::data_dir::load_json(BREAKPOINTS_FILE);
     match map.get(launch_command) {
         Some(bps) => bps
             .iter()
@@ -33,11 +16,20 @@ pub fn load_breakpoints(launch_command: &str) -> Vec<BreakpointInfo> {
                 name: bp.name.clone(),
                 group: bp.group.clone(),
                 symbol: bp.symbol.clone(),
-                enabled: bp.enabled,
+                // A persisted access trace reloads inert (disabled) — its collected
+                // results are session-live only, so re-arming (which starts a fresh
+                // trace on module load) is an explicit user action.
+                enabled: bp.enabled && bp.bp_kind != "watchpoint",
                 is_active: false,
                 bp_kind: bp.bp_kind.clone(),
                 hw_type: bp.hw_type.clone(),
                 hw_size: bp.hw_size,
+                // Same binary → module+RVA is stable, so the persisted file:line
+                // stays valid until re-resolved on module load.
+                source_file: bp.source_file.clone(),
+                source_line: bp.source_line,
+                auto: false,
+                single_shot: false,
             })
             .collect(),
         None => Vec::new(),
@@ -45,33 +37,18 @@ pub fn load_breakpoints(launch_command: &str) -> Vec<BreakpointInfo> {
 }
 
 pub fn save_breakpoints(launch_command: &str, breakpoints: &[BreakpointInfo]) {
-    let path = breakpoints_file_path();
-
     // Read existing file to preserve other targets' breakpoints
-    let mut map: HashMap<String, Vec<BreakpointInfo>> = if let Ok(bytes) = fs::read(&path) {
-        serde_json::from_slice(&bytes).unwrap_or_default()
-    } else {
-        HashMap::new()
-    };
+    let mut map: HashMap<String, Vec<BreakpointInfo>> = crate::data_dir::load_json(BREAKPOINTS_FILE);
 
-    if breakpoints.is_empty() {
+    // Auto-planted rows (module entry / TLS callbacks) are regenerated from settings
+    // on each run, and single-shot rows are session-only — never persist either.
+    let persistable: Vec<BreakpointInfo> = breakpoints.iter().filter(|b| !b.auto && !b.single_shot).cloned().collect();
+
+    if persistable.is_empty() {
         map.remove(launch_command);
     } else {
-        map.insert(launch_command.to_string(), breakpoints.to_vec());
+        map.insert(launch_command.to_string(), persistable);
     }
 
-    if let Some(parent) = path.parent() {
-        let _ = fs::create_dir_all(parent);
-    }
-
-    match serde_json::to_vec_pretty(&map) {
-        Ok(data) => {
-            if let Err(e) = fs::File::create(&path).and_then(|mut f| f.write_all(&data)) {
-                error!("Failed to save breakpoints: {}", e);
-            }
-        }
-        Err(e) => {
-            error!("Failed to serialize breakpoints: {}", e);
-        }
-    }
+    crate::data_dir::save_json(BREAKPOINTS_FILE, &map);
 }

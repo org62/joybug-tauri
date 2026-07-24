@@ -1,17 +1,208 @@
-use tauri::{AppHandle, Emitter};
-use tracing::{debug, error};
+use std::sync::{Arc, Mutex};
 
+use joybug2::protocol_io::PdbLoadOutcome;
+use tauri::{AppHandle, Emitter};
+use tracing::{debug, error, info, warn};
+
+use super::helpers::{module_key_at_base, module_short_name};
 use super::types::{DebugSession, SymbolData};
+use crate::state::{SessionStateUI, SymbolOverrideInfo};
+use joybug2::protocol_io::{ModuleSymbolStatus, SymbolLoadState};
+
+/// Remember a manually-loaded PDB so a session restart re-applies it. Keyed by
+/// the module's lowercased short name (the base changes with ASLR). Upserts the
+/// entry for that module and persists the whole set for the target.
+///
+/// `module_base` is resolved to a module short name via the live module list;
+/// if no module matches (shouldn't happen for a base the UI just loaded), the
+/// override isn't recorded.
+pub(crate) fn record_symbol_override(
+    state_arc: &Arc<Mutex<SessionStateUI>>,
+    module_base: u64,
+    pdb_path: &str,
+    force: bool,
+) {
+    let (launch_command, overrides) = {
+        let mut state = state_arc.lock().unwrap();
+        let Some(name) = module_key_at_base(&state, module_base) else {
+            warn!("record_symbol_override: no module at base 0x{:X}", module_base);
+            return;
+        };
+        state.symbol_overrides.retain(|o| !o.module_name.eq_ignore_ascii_case(&name));
+        state.symbol_overrides.push(SymbolOverrideInfo {
+            module_name: name,
+            pdb_path: pdb_path.to_string(),
+            force,
+        });
+        (state.launch_command.clone(), state.symbol_overrides.clone())
+    };
+    crate::symbol_store::save_symbol_overrides(&launch_command, &overrides);
+}
+
+/// Forget a module's persisted manual-PDB override (symbols unloaded by the
+/// user). No-op when the base doesn't match a module or no override exists.
+pub(crate) fn remove_symbol_override(state_arc: &Arc<Mutex<SessionStateUI>>, module_base: u64) {
+    let saved = {
+        let mut state = state_arc.lock().unwrap();
+        let Some(name) = module_key_at_base(&state, module_base) else {
+            return;
+        };
+        let before = state.symbol_overrides.len();
+        state.symbol_overrides.retain(|o| !o.module_name.eq_ignore_ascii_case(&name));
+        if state.symbol_overrides.len() == before {
+            None
+        } else {
+            Some((state.launch_command.clone(), state.symbol_overrides.clone()))
+        }
+    };
+    if let Some((launch_command, overrides)) = saved {
+        crate::symbol_store::save_symbol_overrides(&launch_command, &overrides);
+    }
+}
+
+/// Run `mutate` over the in-memory failed-symbols list (lazily initialized
+/// from the per-target store) and persist when it reports a change. The
+/// in-memory mirror keeps the 1 Hz status poll off the disk entirely: the
+/// store is read once per session, then written only on real transitions.
+fn with_failed_symbols(
+    state_arc: &Arc<Mutex<SessionStateUI>>,
+    mutate: impl FnOnce(&mut Vec<String>) -> bool,
+) {
+    let saved = {
+        let mut state = state_arc.lock().unwrap();
+        if state.failed_symbols_cache.is_none() {
+            let stored = crate::symbol_store::load_failed_symbols(&state.launch_command);
+            state.failed_symbols_cache = Some(stored);
+        }
+        let launch_command = state.launch_command.clone();
+        let cache = state.failed_symbols_cache.as_mut().unwrap();
+        mutate(cache).then(|| (launch_command, cache.clone()))
+    };
+    if let Some((launch_command, modules)) = saved {
+        crate::symbol_store::save_failed_symbols(&launch_command, &modules);
+    }
+}
+
+/// Keep the per-target failed-symbols store in sync with the live statuses:
+/// newly failed downloads are remembered (so a restart won't re-try them),
+/// modules that now have symbols are forgotten. Modules not in the current
+/// status list (e.g. unloaded DLLs) keep their entries.
+pub(crate) fn sync_failed_symbols(
+    state_arc: &Arc<Mutex<SessionStateUI>>,
+    statuses: &[ModuleSymbolStatus],
+) {
+    with_failed_symbols(state_arc, |stored| {
+        let mut changed = false;
+        for s in statuses {
+            match &s.state {
+                SymbolLoadState::Failed { .. } => {
+                    let short = module_short_name(&s.module_path).to_lowercase();
+                    if !stored.contains(&short) {
+                        stored.push(short);
+                        changed = true;
+                    }
+                }
+                // Nothing to forget while the list is empty — skips the
+                // per-module allocation on the steady-state poll.
+                SymbolLoadState::Loaded { .. } if !stored.is_empty() => {
+                    let short = module_short_name(&s.module_path).to_lowercase();
+                    let before = stored.len();
+                    stored.retain(|m| m != &short);
+                    changed |= stored.len() != before;
+                }
+                _ => {}
+            }
+        }
+        changed
+    });
+}
+
+/// Drop a module's entry from the target's persisted failed-symbols store
+/// (user retry), looked up by base in the session's module list.
+pub(crate) fn forget_failed_symbol(state_arc: &Arc<Mutex<SessionStateUI>>, module_base: u64) {
+    let Some(short) = ({
+        let state = state_arc.lock().unwrap();
+        module_key_at_base(&state, module_base)
+    }) else {
+        return;
+    };
+    with_failed_symbols(state_arc, |stored| {
+        let before = stored.len();
+        stored.retain(|m| m != &short);
+        stored.len() != before
+    });
+}
+
+/// Re-apply a persisted manual PDB when its module (re)loads. Looks up the
+/// override by short name and, if present, loads the PDB at the module's current
+/// base **on a background thread** so the debug event loop isn't blocked while
+/// the server parses the PDB (seconds for a large one).
+///
+/// The load runs over a fresh OOB connection; the server's symbol state is shared
+/// across connections, so the debug-loop client sees the result. When it lands,
+/// symbol status flips to `loaded` (the UI polls this and refreshes symbol-derived
+/// views on its own), and we re-resolve source lines for this module's breakpoints
+/// — the one thing the old synchronous "symbols before breakpoints" ordering gave
+/// us for free.
+pub(crate) fn reapply_symbols_for_module(
+    session: &mut DebugSession,
+    app_handle_clone: &Option<AppHandle>,
+    pid: u32,
+    module_name: &str,
+    module_base: u64,
+) {
+    let over = {
+        let state = session.state.lock().unwrap();
+        state
+            .symbol_overrides
+            .iter()
+            .find(|o| o.module_name.eq_ignore_ascii_case(module_name))
+            .map(|o| (o.pdb_path.clone(), o.force))
+    };
+    let Some((pdb_path, force)) = over else { return };
+
+    let state_arc = session.state.clone();
+    let handle = app_handle_clone.clone();
+    let module_name = module_name.to_string();
+    std::thread::spawn(move || {
+        let (mut client, _) = match crate::commands::create_oob_client(&state_arc) {
+            Ok(c) => c,
+            Err(e) => {
+                warn!("Async PDB reapply for {}: no OOB client: {}", module_name, e);
+                return;
+            }
+        };
+        match client.load_pdb_from_path(pid, module_base, &pdb_path, force) {
+            Ok(PdbLoadOutcome::Loaded { symbol_count }) => {
+                info!(
+                    "Re-applied manual PDB '{}' for {} at 0x{:X} ({} symbols)",
+                    pdb_path, module_name, module_base, symbol_count
+                );
+                // Symbols now exist — re-resolve source lines for breakpoints in
+                // this module (they were reapplied before the async load finished).
+                super::breakpoints::refresh_breakpoint_source_lines_for_module(
+                    &mut client, &handle, pid, &module_name,
+                );
+            }
+            Ok(PdbLoadOutcome::Mismatch(_)) => {
+                warn!(
+                    "Manual PDB '{}' for {} mismatched on restart; not loaded (force={})",
+                    pdb_path, module_name, force
+                );
+            }
+            Err(e) => warn!("Failed to re-apply manual PDB '{}' for {}: {}", pdb_path, module_name, e),
+        }
+    });
+}
 
 /// Processes a symbol search request and emits results to the frontend
 pub(crate) fn process_symbol_search(
     session: &mut DebugSession,
     app_handle_clone: &Option<AppHandle>,
-    event: &joybug2::protocol_io::DebugEvent,
+    pid: u32,
     pattern: &str,
     limit: u32,
 ) {
-    let pid = event.pid();
     debug!("📤 Processing symbol search request: pid={}, pattern='{}', limit={}", pid, pattern, limit);
 
     match session.find_symbols(pattern, limit as usize) {
@@ -103,6 +294,15 @@ pub(crate) fn process_resolve_thread_symbols(
         state.threads.clone()
     };
 
+    // Non-blocking batch resolve, one round-trip for all threads: an address
+    // in a module whose PDB is still parsing comes back `None` (shown as a raw
+    // address) instead of stalling the debug loop — the threads panel
+    // re-requests when `symbolsRefreshKey` flips, upgrading raw → named.
+    let start_addresses: Vec<u64> = threads.iter().map(|t| t.start_address).collect();
+    let resolved = session
+        .try_resolve_addresses_to_symbols(pid, start_addresses)
+        .unwrap_or_else(|_| vec![None; threads.len()]);
+
     #[derive(serde::Serialize, Clone)]
     struct ThreadSymbolEntry {
         tid: u32,
@@ -113,20 +313,19 @@ pub(crate) fn process_resolve_thread_symbols(
 
     let mut entries: Vec<ThreadSymbolEntry> = Vec::new();
 
-    for thread in &threads {
-        let addr = thread.start_address;
-        let (symbol_info, is_function) = match session.resolve_address_to_symbol(pid, addr) {
-            Ok((Some(module), Some(sym), Some(offset))) => {
+    for (thread, resolved) in threads.iter().zip(resolved) {
+        let (symbol_info, is_function) = match resolved {
+            Some((module, sym, offset)) => {
                 let short_module = module.rsplit(&['\\', '/'][..]).next().unwrap_or(&module);
                 let short_module = short_module.rsplitn(2, '.').last().unwrap_or(short_module);
                 let display = format!("{}!{}+0x{:x}", short_module, sym.name, offset);
                 (Some(display), sym.is_function)
             }
-            _ => (None, true),
+            None => (None, true),
         };
         entries.push(ThreadSymbolEntry {
             tid: thread.tid,
-            address: format!("0x{:016x}", addr),
+            address: format!("0x{:016x}", thread.start_address),
             symbol_info,
             is_function,
         });
@@ -159,10 +358,9 @@ pub(crate) fn process_resolve_thread_symbols(
 pub(crate) fn process_module_extra_info_request(
     session: &mut DebugSession,
     app_handle_clone: &Option<AppHandle>,
-    event: &joybug2::protocol_io::DebugEvent,
+    pid: u32,
     module_base: u64,
 ) {
-    let pid = event.pid();
     debug!("📤 Processing module extra info request: pid={}, module_base=0x{:X}", pid, module_base);
 
     if let Some(ref handle) = app_handle_clone {

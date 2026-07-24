@@ -1,7 +1,7 @@
-import { useState, useRef, useEffect, useCallback, useMemo, KeyboardEvent, MouseEvent } from "react";
+import { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo, KeyboardEvent, MouseEvent, UIEvent, WheelEvent } from "react";
+import { Virtualizer } from "@tanstack/react-virtual";
 import { VirtualizedList } from "./ui/virtualized-list";
 import { Button } from "./ui/button";
-import { Input } from "./ui/input";
 import {
   Select,
   SelectContent,
@@ -9,8 +9,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from "./ui/select";
-import { Binary, RefreshCw, Save, X, ArrowRight, Copy, ClipboardPaste, ChevronLeft, ChevronRight, Crosshair } from "lucide-react";
-import { useHexEditor } from "@/hooks/useHexEditor";
+import { Binary, Save, X, ArrowRight, Copy, ClipboardPaste, Crosshair, Bookmark, Fingerprint, HardDrive } from "lucide-react";
+import { useHexEditor, ExtendStatus, HexDataSource } from "@/hooks/useHexEditor";
+import { isProcessAvailable } from "@/lib/sessionHelpers";
+import { CHANGED_VALUE_CLASS } from "@/lib/utils";
 import { useNavigationChannel } from "@/hooks/useNavigationChannel";
 import { memoryNavigation } from "@/lib/navigationStore";
 import {
@@ -19,11 +21,16 @@ import {
   formatAddress,
   byteToAscii,
   BYTES_PER_ROW,
+  DEFAULT_CHUNK_SIZE,
   RegisterContext,
   SymbolResolver,
-  sanitizeAddressInput,
 } from "@/lib/hexUtils";
+import { AddressExpressionInput } from "@/components/AddressExpressionInput";
 import { PointerDereferenceDisplay } from "@/components/DereferenceDisplay";
+import { DockPanel, PanelToolbar, PanelFooter } from "@/components/ui/panel";
+import { ContextMenu, ContextMenuItem, ContextMenuSeparator } from "@/components/ui/context-menu";
+import { useContextMenu } from "@/hooks/useContextMenu";
+import { useHeaderScrollSync } from "@/hooks/useHeaderScrollSync";
 
 interface HexViewProps {
   sessionId?: string;
@@ -34,9 +41,35 @@ interface HexViewProps {
   initialAddress?: bigint;
   initialViewMode?: ViewMode;
   onSetHardwareBreakpoint?: (address: string, hwType: string, hwSize: number) => void;
+  onAddBookmark?: (address: string, valueType: string) => void;
+  onFindAccesses?: (address: string, mode: "Write" | "ReadWrite", size: number) => void;
+  /** Highlight the memory region containing an address (context-menu action). */
+  onShowInMemoryRegions?: (address: string) => void;
+  // Non-session byte source (e.g. a PE file on disk). When set, the view reads
+  // and writes through it instead of session memory commands.
+  dataSource?: HexDataSource;
+  // Overrides how absolute addresses (baseAddress + offset) render in the gutter
+  // and footer — used by the PE viewer to show VA / RVA / file-offset per mode.
+  addressFormatter?: (absoluteAddress: bigint) => string;
+  // Reinterprets a goto-box address before navigating (PE viewer: map a VA or
+  // an RVA typed per the address mode to the file offset this view needs).
+  translateGotoInput?: (address: bigint) => bigint;
 }
 
-export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}, resolveSymbol, initialAddress, initialViewMode, onSetHardwareBreakpoint }: HexViewProps) {
+const VIEWMODE_VALUE_TYPE: Record<ViewMode, string> = {
+  byte: 'U8', word: 'U16', dword: 'U32', qword: 'U64', float: 'F32', pointer: 'U64',
+};
+
+const ROW_HEIGHT = 28;
+// Scrolling within this distance of the top/bottom edge extends the memory
+// window in that direction (infinite scroll).
+const EDGE_EXTEND_THRESHOLD = ROW_HEIGHT * 6;
+// Cap on how far a wheel-at-edge extension may auto-scroll into the fetched
+// rows: at most one full chunk's worth of rows.
+const MAX_WHEEL_REVEAL = (DEFAULT_CHUNK_SIZE / BYTES_PER_ROW) * ROW_HEIGHT;
+
+export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}, resolveSymbol, initialAddress, initialViewMode, onSetHardwareBreakpoint, onAddBookmark, onFindAccesses, onShowInMemoryRegions, dataSource, addressFormatter, translateGotoInput }: HexViewProps) {
+  const fmtAddr = addressFormatter ?? formatAddress;
   const {
     baseAddress,
     memoryData,
@@ -59,13 +92,18 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
     changedOffsets,
     // Dereference data
     dereferenceData,
+    // Window boundaries
+    topExhausted,
+    bottomExhausted,
+    viewGeneration,
+    viewTargetOffset,
+    extendStatus,
     // Actions
     goToAddress,
-    refresh,
     setViewMode,
-    // Pagination
-    loadPreviousPage,
-    loadNextPage,
+    // Window extension
+    extendUp,
+    extendDown,
     applyPendingChanges,
     discardPendingChanges,
     // Selection actions
@@ -82,20 +120,18 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
     // Clipboard actions
     copySelection,
     pasteBytes,
-  } = useHexEditor({ sessionId, memoryViewId, sessionStatus, registers, resolveSymbol, initialAddress, initialViewMode });
+  } = useHexEditor({ sessionId, memoryViewId, sessionStatus, registers, resolveSymbol, initialAddress, initialViewMode, dataSource });
 
   const [addressInput, setAddressInput] = useState("");
   const hexViewContainerRef = useRef<HTMLDivElement>(null);
 
-  // External navigation (e.g., from symbol click or "Go to Memory")
-  useNavigationChannel(memoryNavigation, goToAddress);
+  // External navigation (e.g., from symbol click or "Go to Memory"); object
+  // payloads carry a byte range to select at the target (PE field spans).
+  useNavigationChannel(memoryNavigation, (payload) =>
+    typeof payload === "string" ? goToAddress(payload) : goToAddress(payload.address, payload.selectLength));
 
   // Context menu state
-  const [contextMenu, setContextMenu] = useState<{
-    x: number;
-    y: number;
-  } | null>(null);
-  const contextMenuRef = useRef<HTMLDivElement>(null);
+  const { contextMenu, openContextMenu, closeContextMenu } = useContextMenu();
 
   // Track mouse down offset for drag selection
   const [mouseDownOffset, setMouseDownOffset] = useState<number | null>(null);
@@ -113,26 +149,6 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
       return () => document.removeEventListener('mouseup', handleMouseUp);
     }
   }, [isDragging, setIsDragging]);
-
-  // Close context menu on click outside (left-click only, and only if outside menu)
-  useEffect(() => {
-    if (contextMenu) {
-      const handleClick = (e: globalThis.MouseEvent) => {
-        // Only close on left click outside the context menu
-        if (e.button === 0) {
-          // Check if click is inside the context menu
-          if (contextMenuRef.current && contextMenuRef.current.contains(e.target as Node)) {
-            return; // Don't close if clicking inside the menu
-          }
-          setContextMenu(null);
-        }
-      };
-      document.addEventListener('mousedown', handleClick);
-      return () => {
-        document.removeEventListener('mousedown', handleClick);
-      };
-    }
-  }, [contextMenu]);
 
   // ============================================================================
   // Mouse event handlers for selection
@@ -197,11 +213,6 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
   // ============================================================================
   // Context menu handlers
   // ============================================================================
-
-  const handleContextMenu = useCallback((e: MouseEvent) => {
-    e.preventDefault();
-    setContextMenu({ x: e.clientX, y: e.clientY });
-  }, []);
 
   // ============================================================================
   // Keyboard event handlers
@@ -338,19 +349,10 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
     handleKeyInput,
   ]);
 
-  // Handle goto address
-  const handleGoto = () => {
-    if (addressInput.trim()) {
-      goToAddress(addressInput.trim());
-      setAddressInput("");
-    }
-  };
-
-  // Handle enter key in address input
-  const handleAddressKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === "Enter") {
-      handleGoto();
-    }
+  // Handle goto address (expression already resolved by AddressExpressionInput)
+  const handleAddressResolved = (address: bigint) => {
+    goToAddress(translateGotoInput ? translateGotoInput(address) : address);
+    setAddressInput("");
   };
 
   // Calculate rows
@@ -359,14 +361,103 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
   const bytesPerRow = viewMode === 'pointer' ? config.bytesPerUnit : BYTES_PER_ROW;
   const unitsPerRow = viewMode === 'pointer' ? 1 : Math.floor(BYTES_PER_ROW / config.bytesPerUnit);
   const totalRows = Math.ceil(memoryData.length / bytesPerRow);
-  const ROW_HEIGHT = 28;
   const rowIndices = useMemo(() => Array.from({ length: totalRows }, (_, i) => i), [totalRows]);
+  const virtualizerRef = useRef<Virtualizer<HTMLDivElement, Element> | null>(null);
 
-  // Can navigate to previous page if baseAddress > 0
-  const canGoBack = baseAddress > 0n;
+  // Minimum row width: below this the view scrolls horizontally instead of
+  // wrapping/squeezing columns. ch units resolve against the mono font set on
+  // both the header inner div and the VirtualizedList. The terms mirror the
+  // row markup: 9rem = w-36 address column, 16px = px-2 row padding, 136px =
+  // w-[136px] ascii column, 8px/unit = gap-x-1 + px-0.5 slack — keep in sync.
+  const rowMinWidth = viewMode === 'pointer'
+    // address + row padding + pointer value + floor for the deref chain
+    ? `calc(9rem + 16px + ${config.displayWidth}ch + 12rem)`
+    : `calc(9rem + 16px + 136px + ${unitsPerRow * config.displayWidth}ch + ${unitsPerRow * 8}px)`;
 
-  // Empty state
-  if (!sessionId) {
+  // Keep the fixed column header horizontally aligned with the scrolled rows,
+  // and extend the memory window when scrolling near a vertical edge.
+  const { headerInnerRef, syncScrollLeft } = useHeaderScrollSync(
+    rowMinWidth,
+    () => virtualizerRef.current?.scrollElement,
+  );
+  const handleViewportScroll = useCallback((e: UIEvent<HTMLDivElement>) => {
+    const { scrollTop, scrollHeight, clientHeight } = e.currentTarget;
+    if (scrollTop < EDGE_EXTEND_THRESHOLD) extendUp();
+    if (scrollHeight - scrollTop - clientHeight < EDGE_EXTEND_THRESHOLD) extendDown();
+    syncScrollLeft(e.currentTarget.scrollLeft);
+  }, [extendUp, extendDown, syncScrollLeft]);
+
+  // Wheeling while pinned at an edge produces no scroll event — catch it here
+  // so the window still extends (e.g. scroll up right after a goto). The wheel
+  // distance is remembered so the view scrolls into the fetched rows once they
+  // arrive; otherwise the scroll anchor keeps the content visually frozen and
+  // the user has to wheel a second time to see anything happen.
+  const pendingRevealRef = useRef(0);
+  const handleWheel = useCallback((e: WheelEvent<HTMLDivElement>) => {
+    const viewport = virtualizerRef.current?.scrollElement;
+    if (!viewport) return;
+    if (e.deltaY < 0 && viewport.scrollTop <= 0) {
+      if (extendUp()) {
+        pendingRevealRef.current = e.deltaY;
+      } else if (pendingRevealRef.current < 0) {
+        // Fetch already in flight — keep accumulating the wheel distance
+        pendingRevealRef.current = Math.max(pendingRevealRef.current + e.deltaY, -MAX_WHEEL_REVEAL);
+      }
+    } else if (e.deltaY > 0 && viewport.scrollTop + viewport.clientHeight >= viewport.scrollHeight - 1) {
+      if (extendDown()) {
+        pendingRevealRef.current = e.deltaY;
+      } else if (pendingRevealRef.current > 0) {
+        pendingRevealRef.current = Math.min(pendingRevealRef.current + e.deltaY, MAX_WHEEL_REVEAL);
+      }
+    }
+  }, [extendUp, extendDown]);
+
+  // Keep the scroll position meaningful across window changes:
+  // - goto (viewGeneration bump): scroll to the target row — again once the
+  //   replace read lands, since the first attempt clamps to the old content
+  // - window base moved (prepend/trim): anchor so content stays put, plus any
+  //   remembered wheel-at-edge distance to reveal the fetched rows
+  // - pure append while pinned at the bottom: apply the remembered wheel distance
+  const prevWindowRef = useRef({ base: baseAddress, generation: viewGeneration, data: memoryData });
+  const gotoTargetRowRef = useRef<number | null>(null);
+  useLayoutEffect(() => {
+    const prev = prevWindowRef.current;
+    prevWindowRef.current = { base: baseAddress, generation: viewGeneration, data: memoryData };
+
+    const isNewGeneration = viewGeneration !== prev.generation;
+    if (isNewGeneration) {
+      pendingRevealRef.current = 0;
+      gotoTargetRowRef.current = Math.floor(viewTargetOffset / bytesPerRow);
+    }
+    const virtualizer = virtualizerRef.current;
+    const viewport = virtualizer?.scrollElement;
+    // No list rendered yet (goto from an empty view) — the goto scroll stays
+    // pending in gotoTargetRowRef until the replace read lands.
+    if (!virtualizer || !viewport) return;
+    const isNewData = memoryData !== prev.data;
+    if (!isNewGeneration && !isNewData) return;
+
+    if (gotoTargetRowRef.current !== null) {
+      // Scroll to the goto target row. On the generation bump the replace
+      // read usually hasn't landed (scroll clamps to the old content), so
+      // repeat when the data arrives and finish there.
+      virtualizer.scrollToOffset(gotoTargetRowRef.current * ROW_HEIGHT);
+      if (!isNewGeneration && isNewData) gotoTargetRowRef.current = null;
+      return;
+    }
+    const deltaBytes = Number(prev.base - baseAddress);
+    if (deltaBytes !== 0) {
+      const anchored = viewport.scrollTop + (deltaBytes / bytesPerRow) * ROW_HEIGHT + pendingRevealRef.current;
+      pendingRevealRef.current = 0;
+      virtualizer.scrollToOffset(Math.max(0, anchored));
+    } else if (pendingRevealRef.current !== 0) {
+      virtualizer.scrollToOffset(viewport.scrollTop + pendingRevealRef.current);
+      pendingRevealRef.current = 0;
+    }
+  }, [baseAddress, viewGeneration, bytesPerRow, memoryData, viewTargetOffset]);
+
+  // Empty state — no byte source at all (no session and no file).
+  if (!sessionId && !dataSource) {
     return (
       <div className="flex flex-col items-center justify-center h-full text-muted-foreground p-4">
         <div className="text-center">
@@ -378,32 +469,30 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
     );
   }
 
-  // Check if session is active (can interact with memory)
-  const isSessionActive = sessionStatus === 'Running' || sessionStatus === 'Paused';
+  // Check if the view can interact with bytes. A file data-source is always
+  // active; for a session this includes the non-invasive Open session, which
+  // reads memory over OOB without a debug loop.
+  const isSessionActive = dataSource ? true : isProcessAvailable(sessionStatus);
 
   if (memoryData.length === 0 && !isLoading && !error) {
     // If session is active, show toolbar so user can enter address
     if (isSessionActive) {
       return (
-        <div className="absolute inset-0 flex flex-col overflow-hidden">
-          <div className="shrink-0">
-            <HexToolbar
-              addressInput={addressInput}
-              setAddressInput={setAddressInput}
-              handleAddressKeyDown={handleAddressKeyDown}
-              handleGoto={handleGoto}
-              viewMode={viewMode}
-              setViewMode={setViewMode}
-              refresh={refresh}
-              isLoading={isLoading}
-              pendingChanges={pendingChanges}
-              applyPendingChanges={applyPendingChanges}
-              discardPendingChanges={discardPendingChanges}
-              loadPreviousPage={loadPreviousPage}
-              loadNextPage={loadNextPage}
-              canGoBack={canGoBack}
-            />
-          </div>
+        <DockPanel>
+          <HexToolbar
+            addressInput={addressInput}
+            setAddressInput={setAddressInput}
+            onResolveAddress={handleAddressResolved}
+            registers={registers}
+            resolveSymbol={resolveSymbol}
+            sessionId={sessionId}
+            memoryViewId={memoryViewId}
+            viewMode={viewMode}
+            setViewMode={setViewMode}
+            pendingChanges={pendingChanges}
+            applyPendingChanges={applyPendingChanges}
+            discardPendingChanges={discardPendingChanges}
+          />
           <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground p-4">
             <div className="text-center">
               <Binary className="h-12 w-12 mx-auto mb-4 opacity-50" />
@@ -411,7 +500,7 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
               <p className="text-sm mt-1">Enter an address above to view memory</p>
             </div>
           </div>
-        </div>
+        </DockPanel>
       );
     }
 
@@ -430,25 +519,21 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
   if (error) {
     // Show toolbar so user can try a different address
     return (
-      <div className="absolute inset-0 flex flex-col overflow-hidden">
-        <div className="shrink-0">
-          <HexToolbar
-            addressInput={addressInput}
-            setAddressInput={setAddressInput}
-            handleAddressKeyDown={handleAddressKeyDown}
-            handleGoto={handleGoto}
-            viewMode={viewMode}
-            setViewMode={setViewMode}
-            refresh={refresh}
-            isLoading={isLoading}
-            pendingChanges={pendingChanges}
-            applyPendingChanges={applyPendingChanges}
-            discardPendingChanges={discardPendingChanges}
-            loadPreviousPage={loadPreviousPage}
-            loadNextPage={loadNextPage}
-            canGoBack={canGoBack}
-          />
-        </div>
+      <DockPanel>
+        <HexToolbar
+          addressInput={addressInput}
+          setAddressInput={setAddressInput}
+          onResolveAddress={handleAddressResolved}
+          registers={registers}
+          resolveSymbol={resolveSymbol}
+          sessionId={sessionId}
+          memoryViewId={memoryViewId}
+          viewMode={viewMode}
+          setViewMode={setViewMode}
+          pendingChanges={pendingChanges}
+          applyPendingChanges={applyPendingChanges}
+          discardPendingChanges={discardPendingChanges}
+        />
         <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground p-4">
           <div className="text-center">
             <Binary className="h-12 w-12 mx-auto mb-4 opacity-50" />
@@ -457,68 +542,71 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
             <p className="text-sm mt-2">Try a different address</p>
           </div>
         </div>
-      </div>
+      </DockPanel>
     );
   }
 
   return (
-    <div
+    <DockPanel
       ref={hexViewContainerRef}
-      className="absolute inset-0 flex flex-col overflow-hidden outline-none"
+      data-testid="hex-panel"
+      className="outline-none"
       tabIndex={0}
       onKeyDown={handleContainerKeyDown}
     >
       {/* Toolbar - Fixed */}
-      <div className="shrink-0">
-        <HexToolbar
-          addressInput={addressInput}
-          setAddressInput={setAddressInput}
-          handleAddressKeyDown={handleAddressKeyDown}
-          handleGoto={handleGoto}
-          viewMode={viewMode}
-          setViewMode={setViewMode}
-          refresh={refresh}
-          isLoading={isLoading}
-          pendingChanges={pendingChanges}
-          applyPendingChanges={applyPendingChanges}
-          discardPendingChanges={discardPendingChanges}
-          loadPreviousPage={loadPreviousPage}
-          loadNextPage={loadNextPage}
-          canGoBack={canGoBack}
-        />
-      </div>
+      <HexToolbar
+        addressInput={addressInput}
+        setAddressInput={setAddressInput}
+        onResolveAddress={handleAddressResolved}
+        registers={registers}
+        resolveSymbol={resolveSymbol}
+        sessionId={sessionId}
+        viewMode={viewMode}
+        setViewMode={setViewMode}
+        pendingChanges={pendingChanges}
+        applyPendingChanges={applyPendingChanges}
+        discardPendingChanges={discardPendingChanges}
+      />
 
-      {/* Column Header - Fixed */}
-      <div className="shrink-0 font-mono text-sm px-2 pt-2 pb-1 border-b border-border text-muted-foreground text-xs">
-        <div className="flex items-center">
-          <span className="w-36 shrink-0">Address</span>
-          <span className="flex-1">{viewMode === 'pointer' ? 'Pointer' : 'Hex'}</span>
+      {/* Column Header - Fixed vertically, follows horizontal scroll */}
+      <div className="shrink-0 overflow-hidden border-b border-border">
+        <div
+          ref={headerInnerRef}
+          style={{ minWidth: rowMinWidth }}
+          className="flex items-center font-mono text-sm px-2 pt-2 pb-1 text-muted-foreground"
+        >
+          <span className="w-36 shrink-0 text-xs">Address</span>
+          <span className="flex-1 text-xs">{viewMode === 'pointer' ? 'Pointer' : 'Hex'}</span>
           {viewMode !== 'pointer' && (
-            <span className="w-[136px] shrink-0 text-right pr-2">ASCII</span>
+            <span className="w-[136px] shrink-0 text-right pr-2 text-xs">ASCII</span>
           )}
         </div>
       </div>
 
       {/* Hex Data - Scrollable + Virtualized */}
-      <div className="flex-1 min-h-0" onContextMenu={handleContextMenu}>
+      <div className="flex-1 min-h-0" onContextMenu={(e) => openContextMenu(e, {})} onWheel={handleWheel}>
         <VirtualizedList
           items={rowIndices}
           rowHeight={ROW_HEIGHT}
-          className="h-full"
+          className="h-full font-mono text-sm"
+          minContentWidth={rowMinWidth}
+          onViewportScroll={handleViewportScroll}
+          virtualizerRef={virtualizerRef}
           renderItem={(rowIndex) => {
             const rowOffset = rowIndex * bytesPerRow;
             const rowAddress = baseAddress + BigInt(rowOffset);
             const rowBytes = memoryData.slice(rowOffset, rowOffset + bytesPerRow);
 
             return (
-              <div className="flex items-center hover:bg-muted/30 h-full font-mono text-sm px-2 select-none">
+              <div className="flex items-center hover:bg-muted/30 h-full px-2 select-none">
                 {/* Address column */}
                 <span className="w-36 shrink-0 text-muted-foreground text-xs">
-                  {formatAddress(rowAddress)}
+                  {fmtAddr(rowAddress)}
                 </span>
 
                 {/* Hex values column */}
-                <div className="flex-1 flex flex-wrap gap-x-1">
+                <div className="flex-1 flex gap-x-1 min-w-0">
                   {Array.from({ length: unitsPerRow }).map((_, unitIndex) => {
                     const unitOffset = rowOffset + unitIndex * config.bytesPerUnit;
                     const unitBytes = memoryData.slice(
@@ -572,16 +660,17 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
                     return (
                       <span
                         key={unitIndex}
-                        className="inline-flex items-center gap-1"
+                        className="inline-flex items-center gap-1 min-w-0"
                       >
                         <span
+                          data-changed={hasChangedByte || undefined}
                           className={`cursor-pointer rounded px-0.5 inline-block text-center ${
                             isSelected
                               ? "bg-primary text-primary-foreground"
                               : hasPendingChange
                               ? "bg-yellow-200 dark:bg-yellow-800"
                               : hasChangedByte
-                              ? "text-red-400 hover:bg-muted/50"
+                              ? `${CHANGED_VALUE_CLASS} hover:bg-muted/50`
                               : "hover:bg-muted/50"
                           } ${isEditing ? "ring-1 ring-primary" : ""}`}
                           style={{ minWidth: `${config.displayWidth}ch` }}
@@ -611,13 +700,14 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
                       return (
                         <span
                           key={i}
+                          data-changed={hasChanged || undefined}
                           className={`cursor-pointer ${
                             isSelected
                               ? "bg-primary text-primary-foreground"
                               : hasPending
                               ? "bg-yellow-200 dark:bg-yellow-800"
                               : hasChanged
-                              ? "text-red-400"
+                              ? CHANGED_VALUE_CLASS
                               : ""
                           } ${isAsciiEditing ? "ring-1 ring-primary" : ""}`}
                           onClick={(e) => handleAsciiClick(offset, e)}
@@ -645,121 +735,144 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
           selectionEnd={selectionEnd}
           pendingChanges={pendingChanges}
           isLoading={isLoading}
+          topExhausted={topExhausted}
+          bottomExhausted={bottomExhausted}
+          extendStatus={extendStatus}
+          addressFormatter={fmtAddr}
         />
       </div>
 
       {/* Context Menu */}
       {contextMenu && (
-        <div
-          ref={contextMenuRef}
-          className="fixed z-50 bg-popover text-popover-foreground rounded-md border shadow-md py-1 min-w-[160px]"
-          style={{ left: contextMenu.x, top: contextMenu.y }}
+        <ContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          onClose={closeContextMenu}
+          className="min-w-[160px]"
         >
-          <button
-            className="w-full px-3 py-1.5 text-sm text-left hover:bg-accent hover:text-accent-foreground flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+          <ContextMenuItem
+            icon={<Copy />}
             onClick={async () => {
               if (selectionStart !== null) {
                 const address = baseAddress + BigInt(selectionStart);
-                await navigator.clipboard.writeText(formatAddress(address));
+                await navigator.clipboard.writeText(fmtAddr(address));
               }
-              setContextMenu(null);
             }}
             disabled={selectionStart === null}
           >
-            <Copy className="h-4 w-4" />
             Copy Address
-          </button>
-          <div className="border-t border-border my-1" />
-          <button
-            className="w-full px-3 py-1.5 text-sm text-left hover:bg-accent hover:text-accent-foreground flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-            onClick={() => {
-              copySelection('text');
-              setContextMenu(null);
-            }}
+          </ContextMenuItem>
+          {onShowInMemoryRegions && (
+            <ContextMenuItem
+              icon={<HardDrive />}
+              disabled={selectionStart === null}
+              onClick={() => {
+                if (selectionStart === null) return;
+                const address = baseAddress + BigInt(selectionStart);
+                onShowInMemoryRegions(`0x${address.toString(16)}`);
+              }}
+            >
+              Go to Memory Region
+            </ContextMenuItem>
+          )}
+          <ContextMenuSeparator />
+          <ContextMenuItem
+            icon={<Copy />}
+            onClick={() => copySelection('text')}
             disabled={selectionStart === null}
           >
-            <Copy className="h-4 w-4" />
             Copy Text
-          </button>
-          <button
-            className="w-full px-3 py-1.5 text-sm text-left hover:bg-accent hover:text-accent-foreground flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-            onClick={() => {
-              copySelection('hex');
-              setContextMenu(null);
-            }}
+          </ContextMenuItem>
+          <ContextMenuItem
+            icon={<Copy />}
+            onClick={() => copySelection('hex')}
             disabled={selectionStart === null}
           >
-            <Copy className="h-4 w-4" />
             Copy Hex
-          </button>
-          <button
-            className="w-full px-3 py-1.5 text-sm text-left hover:bg-accent hover:text-accent-foreground flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-            onClick={() => {
-              copySelection('dump');
-              setContextMenu(null);
-            }}
+          </ContextMenuItem>
+          <ContextMenuItem
+            icon={<Copy />}
+            onClick={() => copySelection('dump')}
             disabled={selectionStart === null}
           >
-            <Copy className="h-4 w-4" />
             Copy Dump
-          </button>
-          <div className="border-t border-border my-1" />
-          <button
-            className="w-full px-3 py-1.5 text-sm text-left hover:bg-accent hover:text-accent-foreground flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-            onClick={() => {
-              pasteBytes('hex');
-              setContextMenu(null);
-            }}
+          </ContextMenuItem>
+          <ContextMenuSeparator />
+          <ContextMenuItem
+            icon={<ClipboardPaste />}
+            onClick={() => pasteBytes('hex')}
             disabled={selectionStart === null}
           >
-            <ClipboardPaste className="h-4 w-4" />
             Paste Hex
-          </button>
-          <button
-            className="w-full px-3 py-1.5 text-sm text-left hover:bg-accent hover:text-accent-foreground flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-            onClick={() => {
-              pasteBytes('text');
-              setContextMenu(null);
-            }}
+          </ContextMenuItem>
+          <ContextMenuItem
+            icon={<ClipboardPaste />}
+            onClick={() => pasteBytes('text')}
             disabled={selectionStart === null}
           >
-            <ClipboardPaste className="h-4 w-4" />
             Paste Text
-          </button>
-          {onSetHardwareBreakpoint && selectionStart !== null && (() => {
+          </ContextMenuItem>
+          {onAddBookmark && selectionStart !== null && (
+            <>
+              <ContextMenuSeparator />
+              <ContextMenuItem
+                icon={<Bookmark />}
+                onClick={() => {
+                  const address = baseAddress + BigInt(selectionStart);
+                  onAddBookmark(`0x${address.toString(16)}`, VIEWMODE_VALUE_TYPE[viewMode]);
+                }}
+              >
+                Add to Bookmarks
+              </ContextMenuItem>
+            </>
+          )}
+          {(onSetHardwareBreakpoint || onFindAccesses) && selectionStart !== null && (() => {
             const address = baseAddress + BigInt(selectionStart);
             const selSize = selectionEnd !== null ? Math.abs(selectionEnd - selectionStart) + 1 : 1;
             const hwSize = selSize >= 8 ? 8 : selSize >= 4 ? 4 : selSize >= 2 ? 2 : 1;
             const addrStr = `0x${address.toString(16)}`;
             return (
               <>
-                <div className="border-t border-border my-1" />
-                <button
-                  className="w-full px-3 py-1.5 text-sm text-left hover:bg-accent hover:text-accent-foreground flex items-center gap-2"
-                  onClick={() => {
-                    onSetHardwareBreakpoint(addrStr, "Write", hwSize);
-                    setContextMenu(null);
-                  }}
-                >
-                  <Crosshair className="h-4 w-4" />
-                  Break on Write ({hwSize}B)
-                </button>
-                <button
-                  className="w-full px-3 py-1.5 text-sm text-left hover:bg-accent hover:text-accent-foreground flex items-center gap-2"
-                  onClick={() => {
-                    onSetHardwareBreakpoint(addrStr, "ReadWrite", hwSize);
-                    setContextMenu(null);
-                  }}
-                >
-                  <Crosshair className="h-4 w-4" />
-                  Break on Read/Write ({hwSize}B)
-                </button>
+                {onSetHardwareBreakpoint && (
+                  <>
+                    <ContextMenuSeparator />
+                    <ContextMenuItem
+                      icon={<Crosshair />}
+                      onClick={() => onSetHardwareBreakpoint(addrStr, "Write", hwSize)}
+                    >
+                      Break on Write ({hwSize}B)
+                    </ContextMenuItem>
+                    <ContextMenuItem
+                      icon={<Crosshair />}
+                      onClick={() => onSetHardwareBreakpoint(addrStr, "ReadWrite", hwSize)}
+                    >
+                      Break on Read/Write ({hwSize}B)
+                    </ContextMenuItem>
+                  </>
+                )}
+                {onFindAccesses && (
+                  <>
+                    <ContextMenuSeparator />
+                    <ContextMenuItem
+                      icon={<Fingerprint />}
+                      onClick={() => onFindAccesses(addrStr, "Write", hwSize)}
+                    >
+                      Find what writes to this address ({hwSize}B)
+                    </ContextMenuItem>
+                    <ContextMenuItem
+                      icon={<Fingerprint />}
+                      onClick={() => onFindAccesses(addrStr, "ReadWrite", hwSize)}
+                    >
+                      Find what accesses (read/write) ({hwSize}B)
+                    </ContextMenuItem>
+                  </>
+                )}
               </>
             );
           })()}
-        </div>
+        </ContextMenu>
       )}
-    </div>
+    </DockPanel>
   );
 }
 
@@ -767,81 +880,56 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
 interface HexToolbarProps {
   addressInput: string;
   setAddressInput: (value: string) => void;
-  handleAddressKeyDown: (e: KeyboardEvent<HTMLInputElement>) => void;
-  handleGoto: () => void;
+  onResolveAddress: (address: bigint) => void;
+  registers?: RegisterContext;
+  resolveSymbol?: SymbolResolver;
+  sessionId?: string;
+  /** Dock tab id of this hex view, so "Go to Memory" focuses the right one. */
+  memoryViewId?: string;
   viewMode: ViewMode;
   setViewMode: (mode: ViewMode) => void;
-  refresh: () => void;
-  isLoading: boolean;
   pendingChanges: Map<number, number>;
   applyPendingChanges: () => void;
   discardPendingChanges: () => void;
-  loadPreviousPage: () => void;
-  loadNextPage: () => void;
-  canGoBack: boolean;
 }
 
 function HexToolbar({
   addressInput,
   setAddressInput,
-  handleAddressKeyDown,
-  handleGoto,
+  onResolveAddress,
+  registers,
+  resolveSymbol,
+  sessionId,
+  memoryViewId,
   viewMode,
   setViewMode,
-  refresh,
-  isLoading,
   pendingChanges,
   applyPendingChanges,
   discardPendingChanges,
-  loadPreviousPage,
-  loadNextPage,
-  canGoBack,
 }: HexToolbarProps) {
   return (
-    <div className="flex items-center gap-2 p-2 border-b border-border bg-muted/30">
+    <PanelToolbar>
       {/* Address input */}
-      <div className="flex items-center gap-2">
-        <Input
-          placeholder="rsp, rax+0x10, symbol..."
-          value={addressInput}
-          onChange={(e) => setAddressInput(sanitizeAddressInput(e.target.value))}
-          onKeyDown={handleAddressKeyDown}
-        />
-        <Button
-          variant="outline"
-          onClick={handleGoto}
-          title="Go to address"
-        >
-          <ArrowRight />
-          <span>Go</span>
-        </Button>
-      </div>
-
-      {/* Page navigation */}
-      <div className="flex items-center gap-1">
-        <Button
-          variant="outline"
-          size="icon"
-          onClick={loadPreviousPage}
-          disabled={isLoading || !canGoBack}
-          title="Previous page"
-        >
-          <ChevronLeft className="h-4 w-4" />
-        </Button>
-        <Button
-          variant="outline"
-          size="icon"
-          onClick={loadNextPage}
-          disabled={isLoading}
-          title="Next page"
-        >
-          <ChevronRight className="h-4 w-4" />
-        </Button>
-      </div>
+      <AddressExpressionInput
+        value={addressInput}
+        onChange={setAddressInput}
+        onResolve={onResolveAddress}
+        registers={registers}
+        resolveSymbol={resolveSymbol}
+        sessionId={sessionId}
+        focusTabId={memoryViewId}
+        historyKey="hex-goto"
+        buttonLabel={
+          <>
+            <ArrowRight />
+            <span>Go</span>
+          </>
+        }
+      />
 
       {/* View mode selector */}
       <Select value={viewMode} onValueChange={(v) => setViewMode(v as ViewMode)}>
-        <SelectTrigger>
+        <SelectTrigger size="xs">
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
@@ -854,16 +942,6 @@ function HexToolbar({
         </SelectContent>
       </Select>
 
-      {/* Refresh */}
-      <Button
-        variant="outline"
-        onClick={refresh}
-        disabled={isLoading}
-        title="Refresh memory"
-      >
-        <RefreshCw className={`h-3 w-3 ${isLoading ? "animate-spin" : ""}`} />
-      </Button>
-
       {/* Spacer */}
       <div className="flex-1" />
 
@@ -874,26 +952,26 @@ function HexToolbar({
             {pendingChanges.size} pending
           </span>
           <Button
-            size="sm"
+            size="xs"
             variant="outline"
             onClick={applyPendingChanges}
-            className="h-7 px-2 rounded-sm"
+            className="rounded-sm"
             title="Apply changes"
           >
-            <Save className="h-3 w-3" />
+            <Save />
           </Button>
           <Button
-            size="sm"
+            size="xs"
             variant="outline"
             onClick={discardPendingChanges}
-            className="h-7 px-2 rounded-sm"
+            className="rounded-sm"
             title="Discard changes"
           >
-            <X className="h-3 w-3" />
+            <X />
           </Button>
         </div>
       )}
-    </div>
+    </PanelToolbar>
   );
 }
 
@@ -905,6 +983,11 @@ interface HexStatusBarProps {
   selectionEnd: number | null;
   pendingChanges: Map<number, number>;
   isLoading: boolean;
+  topExhausted: boolean;
+  bottomExhausted: boolean;
+  extendStatus: ExtendStatus | null;
+  // Already defaulted by HexView — the parent passes its resolved fmtAddr.
+  addressFormatter: (absoluteAddress: bigint) => string;
 }
 
 function HexStatusBar({
@@ -914,6 +997,10 @@ function HexStatusBar({
   selectionEnd,
   pendingChanges,
   isLoading,
+  topExhausted,
+  bottomExhausted,
+  extendStatus,
+  addressFormatter: fmtAddr,
 }: HexStatusBarProps) {
   const endAddress = baseAddress + BigInt(memoryData.length);
 
@@ -927,10 +1014,10 @@ function HexStatusBar({
     : null;
 
   return (
-    <div className="flex items-center gap-4 px-2 py-1 border-t border-border bg-muted/30 text-xs text-muted-foreground">
+    <PanelFooter className="gap-4 text-xs text-muted-foreground">
       {/* Address range */}
       <span>
-        {formatAddress(baseAddress)} - {formatAddress(endAddress)}
+        {fmtAddr(baseAddress)} - {fmtAddr(endAddress)}
       </span>
 
       {/* Size */}
@@ -941,15 +1028,29 @@ function HexStatusBar({
         <span>
           {selectionCount === 1 ? (
             <>
-              Cursor: {formatAddress(baseAddress + BigInt(normalizedStart!))} (offset +0x
+              Cursor: {fmtAddr(baseAddress + BigInt(normalizedStart!))} (offset +0x
               {normalizedStart!.toString(16).toUpperCase()})
             </>
           ) : (
             <>
               Selected: {selectionCount} bytes at{" "}
-              {formatAddress(baseAddress + BigInt(normalizedStart!))}
+              {fmtAddr(baseAddress + BigInt(normalizedStart!))}
             </>
           )}
+        </span>
+      )}
+
+      {/* Window boundary indicators (replaces the old partial-read toast) */}
+      {topExhausted && <span>▲ start of accessible memory</span>}
+      {bottomExhausted && <span>▼ end of accessible memory</span>}
+
+      {/* Edge extension feedback: fetching, then what arrived */}
+      {extendStatus && (
+        <span className="text-primary">
+          {extendStatus.direction === 'up' ? '▲' : '▼'}{' '}
+          {extendStatus.done
+            ? `fetched ${extendStatus.size} bytes at ${fmtAddr(extendStatus.address)}`
+            : `fetching ${fmtAddr(extendStatus.address)}…`}
         </span>
       )}
 
@@ -962,6 +1063,6 @@ function HexStatusBar({
           {pendingChanges.size} unsaved changes
         </span>
       )}
-    </div>
+    </PanelFooter>
   );
 }

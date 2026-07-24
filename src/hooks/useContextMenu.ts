@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useCallback } from 'react';
 
 export interface ContextMenuState<T = Record<string, unknown>> {
   x: number;
@@ -7,30 +7,18 @@ export interface ContextMenuState<T = Record<string, unknown>> {
 }
 
 /**
- * Manages a right-click context menu: state, ref for the menu DOM element,
- * auto-close on outside click, and open/close helpers.
+ * Manages right-click context menu state (position + payload) and open/close
+ * helpers. Outside-click and Escape handling live in the `<ContextMenu>`
+ * primitive (`@/components/ui/context-menu`), so render the menu with that:
+ *
+ *   {contextMenu && (
+ *     <ContextMenu x={contextMenu.x} y={contextMenu.y} onClose={closeContextMenu}>
+ *       ...<ContextMenuItem />...
+ *     </ContextMenu>
+ *   )}
  */
 export function useContextMenu<T = Record<string, unknown>>() {
   const [contextMenu, setContextMenu] = useState<ContextMenuState<T> | null>(null);
-  const contextMenuRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (contextMenu) {
-      const handleMouseDown = (e: globalThis.MouseEvent) => {
-        if (contextMenuRef.current && contextMenuRef.current.contains(e.target as Node)) return;
-        setContextMenu(null);
-      };
-      const handleKeyDown = (e: globalThis.KeyboardEvent) => {
-        if (e.key === 'Escape') setContextMenu(null);
-      };
-      document.addEventListener('mousedown', handleMouseDown);
-      document.addEventListener('keydown', handleKeyDown);
-      return () => {
-        document.removeEventListener('mousedown', handleMouseDown);
-        document.removeEventListener('keydown', handleKeyDown);
-      };
-    }
-  }, [contextMenu]);
 
   const openContextMenu = useCallback((e: React.MouseEvent, data: T) => {
     e.preventDefault();
@@ -41,5 +29,5 @@ export function useContextMenu<T = Record<string, unknown>>() {
     setContextMenu(null);
   }, []);
 
-  return { contextMenu, contextMenuRef, openContextMenu, closeContextMenu };
+  return { contextMenu, openContextMenu, closeContextMenu };
 }

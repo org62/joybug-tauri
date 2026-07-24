@@ -31,14 +31,18 @@ function CommandDialog({
   children,
   title = "Command Palette",
   description = "Search for a command to run...",
+  onCloseAutoFocus,
   ...props
 }: React.ComponentProps<typeof Dialog> & {
   title?: string
   description?: string
+  /** Radix restores focus to the previously-focused element on close. Pass
+   *  `(e) => e.preventDefault()` when a command focuses something itself. */
+  onCloseAutoFocus?: React.ComponentProps<typeof DialogContent>["onCloseAutoFocus"]
 }) {
   return (
     <Dialog {...props}>
-      <DialogContent className="overflow-hidden p-0 top-[20%] translate-y-0 max-h-[calc(100vh-20%-1rem)] flex flex-col" showCloseButton={false}>
+      <DialogContent className="overflow-hidden p-0 top-[20%] translate-y-0 max-h-[calc(100vh-20%-1rem)] flex flex-col" showCloseButton={false} onCloseAutoFocus={onCloseAutoFocus}>
         <DialogHeader className="sr-only">
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>{description}</DialogDescription>
@@ -51,23 +55,45 @@ function CommandDialog({
   )
 }
 
+// Shared between CommandInput and CommandSubInput so their styling can't drift.
+const commandInputWrapperClass = "flex items-center border-b px-3"
+const commandInputClass =
+  "placeholder:text-muted-foreground flex h-10 w-full rounded-md bg-transparent py-3 text-sm outline-hidden disabled:cursor-not-allowed disabled:opacity-50"
+
 function CommandInput({
   className,
   ...props
 }: React.ComponentProps<typeof CommandPrimitive.Input>) {
   return (
     <div
-      className="flex items-center border-b px-3"
+      className={commandInputWrapperClass}
       data-slot="command-input-wrapper"
       cmdk-input-wrapper=""
     >
       <SearchIcon className="mr-2 h-4 w-4 shrink-0 opacity-50" />
       <CommandPrimitive.Input
         data-slot="command-input"
-        className={cn(
-          "placeholder:text-muted-foreground flex h-10 w-full rounded-md bg-transparent py-3 text-sm outline-hidden disabled:cursor-not-allowed disabled:opacity-50",
-          className
-        )}
+        className={cn(commandInputClass, className)}
+        {...props}
+      />
+    </div>
+  )
+}
+
+// Free-form text input styled like CommandInput, for sub-prompts inside a
+// CommandDialog that are not cmdk-filtered (e.g. "Go to address").
+function CommandSubInput({
+  className,
+  ...props
+}: React.ComponentProps<"input">) {
+  return (
+    <div
+      className={commandInputWrapperClass}
+      data-slot="command-sub-input-wrapper"
+    >
+      <input
+        data-slot="command-sub-input"
+        className={cn(commandInputClass, className)}
         {...props}
       />
     </div>
@@ -176,4 +202,5 @@ export {
   CommandList,
   CommandSeparator,
   CommandShortcut,
+  CommandSubInput,
 }

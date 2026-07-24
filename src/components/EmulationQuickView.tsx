@@ -1,15 +1,17 @@
-import { useState, useRef, useEffect, useMemo, useCallback } from "react";
-import { ChevronDown, ChevronRight, Loader2 } from "lucide-react";
+import { useState, useRef, useEffect, useMemo, useCallback, memo } from "react";
+import { ChevronDown, ChevronRight, Copy, Loader2 } from "lucide-react";
+import { copyToClipboard } from "@/lib/clipboard";
 import { ScrollArea } from "./ui/scroll-area";
 import { VirtualizedList } from "./ui/virtualized-list";
+import { Button } from "./ui/button";
+import { HistoryInput } from "./ui/history-input";
+import { pushInputHistory } from "@/lib/inputHistory";
 import { cn } from "@/lib/utils";
-import { useQuickEmulation, QuickEmulationResult } from "@/hooks/useQuickEmulation";
+import { QuickEmulationState, QuickEmulationResult } from "@/hooks/useQuickEmulation";
 import { parseTenetTrace } from "@/lib/tenetParser";
 
 interface EmulationQuickViewProps {
-  sessionId?: string;
-  isPaused?: boolean;
-  pcAddress?: number;
+  emulation: QuickEmulationState;
   onNavigateToAddress?: (hexAddress: string) => void;
 }
 
@@ -17,18 +19,9 @@ function formatTimingUs(us: number): string {
   return `${(us / 1000).toFixed(1)}ms`;
 }
 
-const COLLAPSED_KEY = "assembly-quick-emulation-collapsed";
 const HEIGHT_KEY = "assembly-quick-emulation-height";
 const DEFAULT_HEIGHT = 180;
 const MIN_HEIGHT = 60;
-
-function getInitialCollapsed(): boolean {
-  try {
-    return localStorage.getItem(COLLAPSED_KEY) === "true";
-  } catch {
-    return false;
-  }
-}
 
 function getInitialHeight(): number {
   try {
@@ -120,6 +113,7 @@ function VirtualizedTraceLines({
       items={traceLines}
       rowHeight={TRACE_ROW_HEIGHT}
       style={{ height }}
+      minContentWidth="560px"
       renderItem={(line) => (
         <div
           className="flex items-center px-2 whitespace-nowrap hover:bg-muted/50 h-full"
@@ -150,8 +144,7 @@ function VirtualizedTraceLines({
   );
 }
 
-export function EmulationQuickView({ sessionId, isPaused, pcAddress, onNavigateToAddress }: EmulationQuickViewProps) {
-  const [collapsed, setCollapsed] = useState(getInitialCollapsed);
+export const EmulationQuickView = memo(function EmulationQuickView({ emulation, onNavigateToAddress }: EmulationQuickViewProps) {
   const [height, setHeight] = useState(getInitialHeight);
   const rootRef = useRef<HTMLDivElement>(null);
 
@@ -192,7 +185,9 @@ export function EmulationQuickView({ sessionId, isPaused, pcAddress, onNavigateT
     toggleTraceMode,
     maxInstructions,
     setMaxInstructions,
-  } = useQuickEmulation(sessionId, isPaused, collapsed, pcAddress);
+    collapsed,
+    toggleCollapsed,
+  } = emulation;
 
   // Hover tooltip state (trace rows)
   const [visibleTooltipRow, setVisibleTooltipRow] = useState<number | null>(null);
@@ -276,14 +271,6 @@ export function EmulationQuickView({ sessionId, isPaused, pcAddress, onNavigateT
     statsHoveredRef.current = false;
     dismissStatsPopover();
   }, [dismissStatsPopover]);
-
-  const toggleCollapsed = () => {
-    setCollapsed(prev => {
-      const next = !prev;
-      try { localStorage.setItem(COLLAPSED_KEY, String(next)); } catch {}
-      return next;
-    });
-  };
 
   const syscall = parseSummaryRow(syscallResult, "syscall");
   const module = parseSummaryRow(moduleResult, "module");
@@ -378,6 +365,43 @@ export function EmulationQuickView({ sessionId, isPaused, pcAddress, onNavigateT
   const hasAnyData = syscallResult || moduleResult || traceResult;
   const dimmed = isLoading && hasAnyData;
 
+  // Render the visible emulation output (summary + trace lines) as plain text,
+  // with the trace columns aligned like the on-screen layout.
+  const handleCopyLog = useCallback(() => {
+    const lines: string[] = [];
+    lines.push(
+      `Next Syscall: ${syscall.label}` +
+        (traceDistances.syscall !== undefined
+          ? ` (${traceDistances.syscall.toLocaleString()} instr away)`
+          : ""),
+    );
+    lines.push(`Next Module: ${module.label}`);
+    const timings = [
+      syscallResult && `syscall ${formatTimingUs(syscallResult.emulation_time_us)}`,
+      moduleResult && `module ${formatTimingUs(moduleResult.emulation_time_us)}`,
+      traceResult && `trace ${formatTimingUs(traceResult.emulation_time_us)}`,
+    ]
+      .filter(Boolean)
+      .join(", ");
+    if (timings) lines.push(`Emulation: ${timings}`);
+
+    if (traceLines.length > 0) {
+      lines.push("");
+      const addrWidth = Math.max(...traceLines.map((l) => l.address.length));
+      const asmTexts = traceLines.map((l) => (l.opStr ? `${l.mnemonic} ${l.opStr}` : l.mnemonic));
+      const asmWidth = Math.max(...asmTexts.map((a) => a.length));
+      const idxWidth = String(traceLines.length - 1).length;
+      traceLines.forEach((l, i) => {
+        const extras = [l.changes, l.memory].filter(Boolean).join(", ");
+        lines.push(
+          `${String(l.index).padStart(idxWidth)}  ${l.address.padEnd(addrWidth)}  ${asmTexts[i].padEnd(asmWidth)}${extras ? `  ${extras}` : ""}`.trimEnd(),
+        );
+      });
+    }
+
+    copyToClipboard(lines.join("\n"), "emulation log");
+  }, [syscall.label, module.label, traceDistances.syscall, syscallResult, moduleResult, traceResult, traceLines]);
+
   return (
     <div ref={rootRef} className="shrink-0 border-t border-border bg-muted/20">
       {/* Resize handle */}
@@ -396,12 +420,24 @@ export function EmulationQuickView({ sessionId, isPaused, pcAddress, onNavigateT
           {isLoading && <Loader2 className="h-3 w-3 animate-spin ml-1" />}
         </div>
         {!collapsed && (
-          <button
-            className="text-xs px-2 py-0.5 rounded border border-border bg-background hover:bg-muted"
-            onClick={(e) => { e.stopPropagation(); toggleTraceMode(); }}
-          >
-            {traceMode === "InstructionTrace" ? "Instructions" : "Basic blocks"}
-          </button>
+          <div className="flex items-center gap-1">
+            <Button
+              variant="outline"
+              size="icon-xs"
+              title="Copy emulation log"
+              disabled={!hasAnyData}
+              onClick={(e) => { e.stopPropagation(); handleCopyLog(); }}
+            >
+              <Copy />
+            </Button>
+            <Button
+              variant="outline"
+              size="xs"
+              onClick={(e) => { e.stopPropagation(); toggleTraceMode(); }}
+            >
+              {traceMode === "InstructionTrace" ? "Instructions" : "Basic blocks"}
+            </Button>
+          </div>
         )}
       </div>
 
@@ -494,17 +530,22 @@ export function EmulationQuickView({ sessionId, isPaused, pcAddress, onNavigateT
               )}
               <span className="ml-auto flex items-center gap-1">
                 limit
-                <input
+                <HistoryInput
+                  historyKey="emu-instr-limit"
                   key={maxInstructions}
                   type="text"
-                  className="w-14 px-1 py-0 rounded border border-border bg-background text-right font-mono"
+                  inputSize="inline"
+                  className="w-14 text-right font-mono"
                   defaultValue={maxInstructions.toLocaleString()}
                   onClick={(e) => e.stopPropagation()}
                   onFocus={(e) => e.target.select()}
                   onKeyDown={(e) => {
                     if (e.key === "Enter") {
                       const val = parseInt((e.target as HTMLInputElement).value.replace(/,/g, ""), 10);
-                      if (!isNaN(val) && val > 0) setMaxInstructions(val);
+                      if (!isNaN(val) && val > 0) {
+                        pushInputHistory("emu-instr-limit", val.toLocaleString());
+                        setMaxInstructions(val);
+                      }
                       (e.target as HTMLInputElement).blur();
                     }
                   }}
@@ -591,4 +632,4 @@ export function EmulationQuickView({ sessionId, isPaused, pcAddress, onNavigateT
       })()}
     </div>
   );
-}
+});

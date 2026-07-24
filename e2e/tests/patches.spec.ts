@@ -1,14 +1,16 @@
 import { writeFileSync } from "fs";
 import path from "path";
 import { test, expect } from "../helpers/test-fixtures";
-import { createAndStartSession, cleanupSession } from "../helpers/session-helpers";
+import { createAndStartSession, cleanupSession, openWindowsSubmenu } from "../helpers/session-helpers";
 import {
   waitForPaused,
+  waitForDisassemblyLoaded,
   waitForStopped,
   configureMinimalStopSettings,
   restoreDefaultSettings,
   continueSession,
 } from "../helpers/wait-helpers";
+import { ASM_ROW } from "../helpers/selectors";
 
 const PATCHES_FILE = process.env.JOYBUG_E2E_DATA_DIR
   ? path.join(process.env.JOYBUG_E2E_DATA_DIR, "patches.json")
@@ -398,13 +400,7 @@ test.describe("Assembly Patching", () => {
       await waitForPaused(page, sessionId);
 
       // Wait for disassembly to load
-      await expect(async () => {
-        const text = await page.evaluate(() => document.body.innerText);
-        const hasAsm = ["mov", "push", "sub", "call", "int", "lea"].some(
-          (m) => text.includes(m),
-        );
-        expect(hasAsm).toBe(true);
-      }).toPass({ timeout: 15_000 });
+      await waitForDisassemblyLoaded(page);
 
       const address = await getCurrentAddress(page, sessionId);
 
@@ -449,9 +445,9 @@ test.describe("Assembly Patching", () => {
         expect(p.length).toBe(1);
       }).toPass({ timeout: 5_000 });
 
-      // Open the Patches tab via the Windows menu
-      await page.getByRole("button", { name: "Windows" }).click();
-      await page.getByRole("menuitemcheckbox", { name: "Patches" }).click();
+      // Open the User Patches tab via the Windows menu → Debug submenu
+      await openWindowsSubmenu(page, "Debug");
+      await page.getByRole("menuitemcheckbox", { name: "User Patches" }).click();
 
       // Wait for the patches view to render with data
       await expect(async () => {
@@ -482,21 +478,15 @@ test.describe("Assembly Patching", () => {
       await waitForPaused(page, sessionId);
 
       // Wait for disassembly to load
-      await expect(async () => {
-        const text = await page.evaluate(() => document.body.innerText);
-        const hasAsm = ["mov", "push", "sub", "call", "int", "lea"].some(
-          (m) => text.includes(m),
-        );
-        expect(hasAsm).toBe(true);
-      }).toPass({ timeout: 15_000 });
+      await waitForDisassemblyLoaded(page);
 
       // Right-click on the first visible instruction row
       // The instruction rows are rendered inside the virtualized list
-      const firstRow = page.locator('[data-capture-mouse-nav] .flex.items-center.hover\\:bg-muted\\/30').first();
+      const firstRow = page.locator(ASM_ROW).first();
       await firstRow.click({ button: "right" });
 
       // Context menu should appear with "Assemble..." option
-      const assembleBtn = page.getByRole("button", { name: "Assemble..." });
+      const assembleBtn = page.getByRole("menuitem", { name: "Assemble..." });
       await expect(assembleBtn).toBeVisible({ timeout: 3_000 });
 
       // Click "Assemble..."
@@ -604,18 +594,12 @@ test.describe("Assembly Patching", () => {
       await waitForPaused(page, sessionId);
 
       // Wait for disassembly
-      await expect(async () => {
-        const text = await page.evaluate(() => document.body.innerText);
-        const hasAsm = ["mov", "push", "sub", "call", "int", "lea"].some(
-          (m) => text.includes(m),
-        );
-        expect(hasAsm).toBe(true);
-      }).toPass({ timeout: 15_000 });
+      await waitForDisassemblyLoaded(page);
 
       // Right-click → Assemble...
-      const firstRow = page.locator('[data-capture-mouse-nav] .flex.items-center.hover\\:bg-muted\\/30').first();
+      const firstRow = page.locator(ASM_ROW).first();
       await firstRow.click({ button: "right" });
-      await page.getByRole("button", { name: "Assemble..." }).click();
+      await page.getByRole("menuitem", { name: "Assemble..." }).click();
 
       // Inline input should appear
       const input = page.getByPlaceholder("e.g. nop, mov eax, 1");

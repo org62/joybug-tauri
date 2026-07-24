@@ -62,6 +62,40 @@ pub fn undo_patches(
     Ok(())
 }
 
+/// Restore the original on-disk image bytes at `address` for an in-memory
+/// modification that has no tracked UI patch (external hook, self-modifying
+/// code). Requires a paused session (writes memory in the debug loop).
+#[tauri::command]
+pub fn restore_image_bytes(
+    session_id: String,
+    address: String,
+    session_states: State<'_, SessionStatesMap>,
+) -> Result<()> {
+    let address = super::parse_hex_u64(&address, "address")?;
+
+    super::send_paused_command(
+        &session_id,
+        &session_states,
+        UICommand::RestoreImageBytes { address },
+    )?;
+
+    info!("Restore image bytes request sent for session {} at 0x{:X}", session_id, address);
+    Ok(())
+}
+
+/// Diff all loaded modules' executable sections against their on-disk images
+/// and emit the modified runs on `image-patches-updated` (the Image Patches
+/// window). Requires a paused session (reads memory in the debug loop).
+#[tauri::command]
+pub fn scan_image_patches(
+    session_id: String,
+    session_states: State<'_, SessionStatesMap>,
+) -> Result<()> {
+    super::send_paused_command(&session_id, &session_states, UICommand::ScanImagePatches)?;
+    info!("Image patch scan request sent for session {}", session_id);
+    Ok(())
+}
+
 #[tauri::command]
 pub fn enable_patch(
     session_id: String,
@@ -85,6 +119,7 @@ pub fn update_patch(
     patch_id: String,
     group: Option<String>,
     session_states: State<'_, SessionStatesMap>,
+    oob_pool: State<'_, super::OobPool>,
     app_handle: tauri::AppHandle,
 ) -> Result<()> {
     let session_arc = super::get_session_arc(&session_id, &session_states)?;
@@ -94,8 +129,9 @@ pub fn update_patch(
         }
         Err(_) => {
             // Metadata-only, no server communication needed.
-            let (oob, _pid) = super::create_oob_client(&session_arc)?;
-            crate::session::patches::process_update_patch(&oob, &Some(app_handle), &patch_id, group);
+            super::with_oob_client(&session_arc, &session_id, &oob_pool, |oob, _pid| {
+                crate::session::patches::process_update_patch(oob, &Some(app_handle), &patch_id, group);
+            })?;
             info!("OOB update patch for session {}, patch_id {}", session_id, patch_id);
         }
     }
@@ -108,6 +144,7 @@ pub fn enable_patch_group(
     group: String,
     enabled: bool,
     session_states: State<'_, SessionStatesMap>,
+    oob_pool: State<'_, super::OobPool>,
     app_handle: tauri::AppHandle,
 ) -> Result<()> {
     let session_arc = super::get_session_arc(&session_id, &session_states)?;
@@ -116,13 +153,14 @@ pub fn enable_patch_group(
             info!("Enable patch group request sent for session {}, group '{}', enabled={}", session_id, group, enabled);
         }
         Err(_) => {
-            let (mut oob, _pid) = super::create_oob_client(&session_arc)?;
             let event = {
                 let state = session_arc.lock().unwrap();
                 state.current_event.clone()
             };
             if let Some(ref event) = event {
-                crate::session::patches::process_enable_patch_group(&mut oob, &Some(app_handle), event, &group, enabled);
+                super::with_oob_client(&session_arc, &session_id, &oob_pool, |oob, _pid| {
+                    crate::session::patches::process_enable_patch_group(oob, &Some(app_handle), event, &group, enabled);
+                })?;
             }
             info!("OOB enable patch group for session {}, group '{}', enabled={}", session_id, group, enabled);
         }

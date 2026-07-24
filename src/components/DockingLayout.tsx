@@ -19,9 +19,11 @@ export interface DockingLayoutRef {
   addTypedTab: (type: string, contentFactory: (tabId: string) => React.ReactElement) => string;
   resetLayout: () => void;
   toggleTab: (tabId: string) => void;
-  showTab: (tabId: string) => void;
+  showTab: (tabId: string, opts?: { recordHistory?: boolean }) => void;
   getActiveTabs: () => string[];
   closeActiveTab: () => void;
+  /** Active tab of the panel containing `tabId` (null if the tab is gone). */
+  activeTabOf: (tabId: string) => string | null;
 }
 
 const DockingLayoutComponent = React.forwardRef<DockingLayoutRef, DockingLayoutProps>(
@@ -42,6 +44,7 @@ const DockingLayoutComponent = React.forwardRef<DockingLayoutRef, DockingLayoutP
       toggleTab: docking.toggleTab,
       showTab: docking.showTab,
       closeActiveTab: docking.closeActiveTab,
+      activeTabOf: docking.activeTabOf,
       getActiveTabs: () => {
         const activeTabIds: string[] = [];
         const findTabIds = (box: any) => {
@@ -125,4 +128,6 @@ const DockingLayoutComponent = React.forwardRef<DockingLayoutRef, DockingLayoutP
 
 DockingLayoutComponent.displayName = "DockingLayout";
 
-export default DockingLayoutComponent; 
+// Memoized: hosts pass stable config/refs, so parent re-renders (e.g. toolbar
+// state changing per keystroke) shouldn't re-run the whole rc-dock tree.
+export default React.memo(DockingLayoutComponent);

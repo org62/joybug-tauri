@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { useTheme } from "next-themes";
 import {
   Select,
@@ -6,6 +7,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Input } from "@/components/ui/input";
+import { useDebugSettings } from "@/hooks/useDebugSettings";
+import { applyZoom, getStoredZoom, ZOOM_CHANGED_EVENT, ZOOM_STEPS } from "@/lib/uiZoom";
 
 interface SettingItem {
   key: string;
@@ -15,6 +19,8 @@ interface SettingItem {
 
 const SETTING_ITEMS: SettingItem[] = [
   { key: "theme", label: "Theme", keywords: ["dark", "light", "system", "appearance", "color"] },
+  { key: "uiScale", label: "UI scale", keywords: ["zoom", "scale", "ui", "enlarge", "bigger", "size", "font", "magnify", "text", "large", "small"] },
+  { key: "scanThreads", label: "Memory scan threads (0 = all cores)", keywords: ["scan", "thread", "threads", "memory", "performance", "cores", "parallel", "cpu"] },
 ];
 
 interface SettingsGeneralProps {
@@ -24,6 +30,17 @@ interface SettingsGeneralProps {
 /** Renders a "General" category block matching the keybinding section style. */
 export function SettingsGeneral({ searchQuery }: SettingsGeneralProps) {
   const { theme, setTheme } = useTheme();
+  const { settings, setScanThreadCount } = useDebugSettings();
+  const [scanThreadsDraft, setScanThreadsDraft] = useState<string | null>(null);
+  const [uiScale, setUiScale] = useState(() => getStoredZoom());
+
+  // Track zoom changes made elsewhere (Ctrl/Cmd +/-/0 hotkeys) while this
+  // panel is open, so the dropdown never shows a stale factor.
+  useEffect(() => {
+    const onZoomChanged = (e: Event) => setUiScale((e as CustomEvent<number>).detail);
+    window.addEventListener(ZOOM_CHANGED_EVENT, onZoomChanged);
+    return () => window.removeEventListener(ZOOM_CHANGED_EVENT, onZoomChanged);
+  }, []);
 
   const matchesSearch = (item: SettingItem): boolean => {
     if (!searchQuery) return true;
@@ -51,7 +68,7 @@ export function SettingsGeneral({ searchQuery }: SettingsGeneralProps) {
             <div className="text-sm font-medium">{item.label}</div>
             {item.key === "theme" && (
               <Select value={theme} onValueChange={setTheme}>
-                <SelectTrigger className="w-[130px] h-7 text-sm">
+                <SelectTrigger size="xs" className="w-[130px]">
                   <SelectValue placeholder="Select theme" />
                 </SelectTrigger>
                 <SelectContent>
@@ -60,6 +77,42 @@ export function SettingsGeneral({ searchQuery }: SettingsGeneralProps) {
                   <SelectItem value="system">System</SelectItem>
                 </SelectContent>
               </Select>
+            )}
+            {item.key === "uiScale" && (
+              <Select
+                value={String(uiScale)}
+                // applyZoom fires ZOOM_CHANGED_EVENT, which updates uiScale.
+                onValueChange={(v) => applyZoom(parseFloat(v))}
+              >
+                <SelectTrigger size="xs" className="w-[130px]">
+                  <SelectValue placeholder="Scale" />
+                </SelectTrigger>
+                <SelectContent>
+                  {ZOOM_STEPS.map((z) => (
+                    <SelectItem key={z} value={String(z)}>
+                      {Math.round(z * 100)}%{z === 1 ? " (default)" : ""}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+            {item.key === "scanThreads" && (
+              <Input
+                type="number"
+                min={0}
+                step={1}
+                inputSize="xs"
+                className="w-[130px]"
+                value={scanThreadsDraft ?? String(settings.scan_thread_count)}
+                onChange={(e) => setScanThreadsDraft(e.target.value)}
+                onBlur={() => {
+                  if (scanThreadsDraft !== null) {
+                    const parsed = parseInt(scanThreadsDraft, 10);
+                    setScanThreadCount(Number.isNaN(parsed) ? 0 : parsed);
+                    setScanThreadsDraft(null);
+                  }
+                }}
+              />
             )}
           </div>
         ))}

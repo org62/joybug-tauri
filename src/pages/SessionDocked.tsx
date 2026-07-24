@@ -3,29 +3,46 @@ import { useParams, useNavigate } from "react-router-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { disassemblyNavigation, memoryNavigation } from "@/lib/navigationStore";
+import { disassemblyNavigation, memoryNavigation, memoryRegionsNavigation, sourceNavigation, panelFocus, peviewerModuleNavigation, typesNavigation } from "@/lib/navigationStore";
+import {
+  SESSION_TAB_DEFS, SESSION_TAB_CATEGORIES, SESSION_TAB_BY_ACTION, sessionTabDefFor,
+  type SessionTabId,
+} from "@/lib/sessionTabs";
+import { sessionNavHistory } from "@/lib/navHistory";
+import { useNavHistoryDock } from "@/hooks/useNavHistoryDock";
 import { parseAddress, type ViewMode } from "@/lib/hexUtils";
 import { ArrowLeft, AlertCircle } from "lucide-react";
 import DockingLayout, { DockingLayoutRef } from "@/components/DockingLayout";
 import { DebuggerDockingConfig } from "@/lib/dockingConfigs";
 import { TabData } from "rc-dock";
 import { SessionContext, SessionStatus } from "@/contexts/SessionContext";
+import { isProcessAvailable, isTargetLive } from "@/lib/sessionHelpers";
 import { ContextAssemblyView } from "@/components/session/ContextAssemblyView";
+import { ContextSourceView } from "@/components/session/ContextSourceView";
 import { ContextRegisterView } from "@/components/session/ContextRegisterView";
 import { ContextModulesView } from "@/components/session/ContextModulesView";
 import { ContextThreadsView } from "@/components/session/ContextThreadsView";
 import { ContextCallStackView } from "@/components/session/ContextCallStackView";
 import { ContextSymbolsView } from "@/components/session/ContextSymbolsView";
+import { ContextTypesView } from "@/components/session/ContextTypesView";
 import { ContextHexView } from "@/components/session/ContextHexView";
 import { ContextMemoryRegionsView } from "@/components/session/ContextMemoryRegionsView";
 import { ContextBreakpointsView } from "@/components/session/ContextBreakpointsView";
 import { ContextPatchesView } from "@/components/session/ContextPatchesView";
+import { ContextImagePatchesView } from "@/components/session/ContextImagePatchesView";
+import { ContextBookmarksView } from "@/components/session/ContextBookmarksView";
 import { ContextMemorySearchView } from "@/components/session/ContextMemorySearchView";
 import { ContextMemoryScannerView } from "@/components/session/ContextMemoryScannerView";
+import { ContextPointerScanView } from "@/components/session/ContextPointerScanView";
+import { ContextStringsView } from "@/components/session/ContextStringsView";
+import { ContextCodeExplorerView } from "@/components/session/ContextCodeExplorerView";
 import { ContextModuleInfoView } from "@/components/session/ContextModuleInfoView";
+import { ContextWatchpointAccessView } from "@/components/session/ContextWatchpointAccessView";
 import { useDebugSession } from "@/hooks/useDebugSession";
 import { useBreakpoints } from "@/hooks/useBreakpoints";
+import { useWatchpointTrace } from "@/hooks/useWatchpointTrace";
 import { usePatches } from "@/hooks/usePatches";
+import { useBookmarks } from "@/hooks/useBookmarks";
 import { SessionHeader } from "@/components/session/SessionHeader";
 import { useKeybindingContext } from "@/contexts/KeybindingContext";
 import { keyboardEventToChord } from "@/lib/keybindings";
@@ -33,8 +50,7 @@ import { useCommandPaletteContext } from "@/contexts/CommandPaletteContext";
 import type { PaletteCommand } from "@/contexts/CommandPaletteContext";
 import {
   Play, Square, Pause, ArrowDownToLine, CornerDownRight, ArrowUpFromLine, SkipForward,
-  Code, Cpu, Box, Layers, ListTree, Search, HardDrive, MapPin, FileCode,
-  Plus, RotateCcw, Navigation, ScanSearch, Puzzle,
+  Plus, RotateCcw, Navigation,
 } from "lucide-react";
 
 export default function SessionDocked() {
@@ -50,8 +66,13 @@ export default function SessionDocked() {
     busyAction,
     modules,
     threads,
+    symbolStatuses,
+    symbolsRefreshKey,
     loadModules,
     loadThreads,
+    loadModulePdb,
+    retryModuleSymbols,
+    unloadModuleSymbols,
     searchSymbols,
     handleGo,
     handleGoPassException,
@@ -60,11 +81,15 @@ export default function SessionDocked() {
     handleStepOut,
     handleStop,
     handleStart,
+    handleRestart,
     handlePause,
+    handleDetach,
+    handleAttach,
     canStep,
     canStop,
     canStart,
     canPause,
+    canDetach,
   } = useDebugSession(sessionId);
 
   // Function to sync window states with backend
@@ -115,9 +140,33 @@ export default function SessionDocked() {
     await syncWindowStates(activeTabIds);
   };
 
-  // Simple toggle function - onTabsChanged will handle backend sync
+  // Toggle (open ⇄ close) — only the Windows menu checkboxes still mean this.
+  // onTabsChanged handles backend sync.
   const toggleTabWithBackendUpdate = React.useCallback((tabId: string) => {
     dockingRef.current?.toggleTab(tabId);
+  }, []);
+
+  // Quick navigation: activate the tab, opening it at its home if closed, and
+  // never closing it. Used by the palette and every panel keyboard chord.
+  // The focus request is only claimed by a view that registered its primary
+  // input via usePanelFocus(tabId); for other tabs it's inert.
+  const goToTab = React.useCallback((tabId: string) => {
+    dockingRef.current?.showTab(tabId);
+    panelFocus.request(tabId);
+  }, []);
+
+  // Where a tab lands when opened into a layout that lacks it: next to a tab
+  // sharing its home (so it rejoins the group wherever the user dragged it),
+  // else the home panel itself.
+  const placement = React.useCallback((tabId: string) => {
+    const def = sessionTabDefFor(tabId);
+    if (!def) return undefined;
+    return {
+      homePanelId: def.home,
+      siblingTabIds: SESSION_TAB_DEFS
+        .filter((d) => d.home === def.home && d.id !== def.id)
+        .map((d) => d.id),
+    };
   }, []);
 
   // Simple reset function - onTabsChanged will handle backend sync
@@ -139,8 +188,15 @@ export default function SessionDocked() {
 
   // Navigate to disassembly at a specific address (from symbol click)
   const handleNavigateToDisassembly = React.useCallback((address: string) => {
+    sessionNavHistory.recordJumpToDisasm();
     dockingRef.current?.showTab('disassembly');
     disassemblyNavigation.request(address);
+  }, []);
+
+  // Activate the Source tab and reveal an address's source line.
+  const handleNavigateToSource = React.useCallback((address: string) => {
+    dockingRef.current?.showTab('source');
+    sourceNavigation.request(address);
   }, []);
 
   // Navigate to memory view at a specific address, reusing an existing tab if open.
@@ -166,19 +222,27 @@ export default function SessionDocked() {
     navigateToMemoryTab(address, "pointer");
   }, [navigateToMemoryTab]);
 
-  // Open PE Viewer tab (singleton) — if already open, focus it and dispatch module selection
+  // Activate the Memory Regions tab and highlight the region containing the address.
+  const handleNavigateToMemoryRegion = React.useCallback((address: string) => {
+    dockingRef.current?.showTab('memory_regions');
+    memoryRegionsNavigation.request(address);
+  }, []);
+
+  // Open the PE Viewer tab (singleton) and select a module in it.
   const handleOpenModuleInfo = React.useCallback((moduleBase: string) => {
-    const activeTabs = dockingRef.current?.getActiveTabs() ?? [];
-    if (activeTabs.includes('peviewer')) {
-      dockingRef.current?.showTab('peviewer');
-      window.dispatchEvent(new CustomEvent('select-peviewer-module', { detail: moduleBase }));
-    } else {
-      dockingRef.current?.toggleTab('peviewer');
-      // Dispatch after a tick so the component mounts first
-      setTimeout(() => {
-        window.dispatchEvent(new CustomEvent('select-peviewer-module', { detail: moduleBase }));
-      }, 0);
-    }
+    dockingRef.current?.showTab('peviewer');
+    peviewerModuleNavigation.request(moduleBase);
+  }, []);
+
+  // Open the Access Trace panel (singleton) — focus it if already open.
+  const handleOpenAccessTrace = React.useCallback(() => {
+    dockingRef.current?.showTab('access_trace');
+  }, []);
+
+  // Open the Types tab with a named type overlaid on an address (e.g. a thread's TEB).
+  const handleNavigateToType = React.useCallback((typeName: string, address: string) => {
+    dockingRef.current?.showTab('types');
+    typesNavigation.request({ typeName, address });
   }, []);
 
   // Initial state detection - sync when docking becomes ready
@@ -202,9 +266,22 @@ export default function SessionDocked() {
     }
   }, [sessionId, isDockingReady]); // Check after each layout update
 
+  // Unified navigation history: controller, tab-switch recording, mouse buttons.
+  const { onTabSwitch } = useNavHistoryDock(sessionNavHistory, dockingRef);
+
+  // History belongs to one debug session — a different session's addresses and
+  // tab trail would be stale.
+  useEffect(() => {
+    sessionNavHistory.clear();
+    return () => sessionNavHistory.clear();
+  }, [sessionId]);
+
   // Hotkey handlers — chord-based lookup via keybinding context
   const { reverseLookup } = useKeybindingContext();
   const { registerCommands, setOpen, enterSubInput } = useCommandPaletteContext();
+
+  // Pass-exception only makes sense while paused on an exception event.
+  const canPassException = canStep && session?.current_event?.event_type === "Exception";
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -214,12 +291,30 @@ export default function SessionDocked() {
       const action = reverseLookup.get(chord);
       if (!action) return;
 
+      // Panel chords mean "go there", never "close" — same as the palette. Ctrl+W
+      // (panel.closeTab) is the affordance for dismissing the tab you're on.
+      const tabDef = SESSION_TAB_BY_ACTION.get(action);
+      if (tabDef) {
+        event.preventDefault();
+        event.stopPropagation();
+        goToTab(tabDef.id);
+        return;
+      }
+
       switch (action) {
-        // Debug stepping
+        // Debug stepping. The go key toggles execution: continue when paused,
+        // break in while running, start when the session is stopped.
         case "debug.go":
           event.preventDefault();
           event.stopPropagation();
-          handleGo();
+          if (canStep) handleGo();
+          else if (canPause) handlePause();
+          else if (canStart) handleStart();
+          break;
+        case "debug.goPassException":
+          event.preventDefault();
+          event.stopPropagation();
+          if (canPassException) handleGoPassException();
           break;
         case "debug.stepIn":
           event.preventDefault();
@@ -236,76 +331,43 @@ export default function SessionDocked() {
           event.stopPropagation();
           handleStepOut();
           break;
-        // Panel toggles
-        case "panel.disassembly":
+        // Session lifecycle (the Stop split-button dropdown items)
+        case "debug.stop":
           event.preventDefault();
           event.stopPropagation();
-          toggleTabWithBackendUpdate("disassembly");
+          if (canStop) handleStop();
           break;
-        case "panel.registers":
+        case "debug.restart":
           event.preventDefault();
           event.stopPropagation();
-          toggleTabWithBackendUpdate("registers");
+          if (canStop) handleRestart();
           break;
-        case "panel.modules":
+        case "debug.detach":
           event.preventDefault();
           event.stopPropagation();
-          toggleTabWithBackendUpdate("modules");
-          break;
-        case "panel.threads":
-          event.preventDefault();
-          event.stopPropagation();
-          toggleTabWithBackendUpdate("threads");
-          break;
-        case "panel.callstack":
-          event.preventDefault();
-          event.stopPropagation();
-          toggleTabWithBackendUpdate("callstack");
-          break;
-        case "panel.symbols":
-          event.preventDefault();
-          event.stopPropagation();
-          toggleTabWithBackendUpdate("symbols");
+          if (canDetach) handleDetach();
           break;
         case "panel.addMemory":
           event.preventDefault();
           event.stopPropagation();
           handleAddNewMemoryTab();
           break;
-        case "panel.memoryRegions":
-          event.preventDefault();
-          event.stopPropagation();
-          toggleTabWithBackendUpdate("memory_regions");
-          break;
-        case "panel.breakpoints":
-          event.preventDefault();
-          event.stopPropagation();
-          toggleTabWithBackendUpdate("breakpoints");
-          break;
-        case "panel.patches":
-          event.preventDefault();
-          event.stopPropagation();
-          toggleTabWithBackendUpdate("patches");
-          break;
-        case "panel.memorySearch":
-          event.preventDefault();
-          event.stopPropagation();
-          toggleTabWithBackendUpdate("memory_search");
-          break;
-        case "panel.memoryScanner":
-          event.preventDefault();
-          event.stopPropagation();
-          toggleTabWithBackendUpdate("memory_scanner");
-          break;
-        case "panel.peViewer":
-          event.preventDefault();
-          event.stopPropagation();
-          toggleTabWithBackendUpdate("peviewer");
-          break;
         case "panel.closeTab":
           event.preventDefault();
           event.stopPropagation();
           handleCloseActiveTab();
+          break;
+        // Unified back/forward — one chronological history of user navigation
+        // actions (disassembly follows and tab switches alike).
+        case "assembly.goBack":
+          event.preventDefault();
+          event.stopPropagation();
+          sessionNavHistory.goBack();
+          break;
+        case "assembly.goForward":
+          event.preventDefault();
+          event.stopPropagation();
+          sessionNavHistory.goForward();
           break;
         // Navigate actions
         case "navigate.goToDisassembly":
@@ -333,9 +395,12 @@ export default function SessionDocked() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [handleGo, handleStepIn, handleStepOver, handleStepOut, toggleTabWithBackendUpdate, handleCloseActiveTab, reverseLookup, setOpen, enterSubInput, handleNavigateToDisassembly, handleNavigateToMemory]);
+  }, [handleGo, handleGoPassException, handlePause, handleStart, handleStop, handleRestart, handleDetach, canStep, canPassException, canPause, canStart, canStop, canDetach, handleStepIn, handleStepOver, handleStepOut, goToTab, handleAddNewMemoryTab, handleCloseActiveTab, reverseLookup, setOpen, enterSubInput, handleNavigateToDisassembly, handleNavigateToMemory]);
 
   const isPaused = displayStatus === 'Paused';
+  // Memory/enumeration ops work over OOB whenever a process is available: paused,
+  // running (invasive), or a non-invasive Open session. They never need a pause.
+  const canUseMemoryOps = isProcessAvailable(displayStatus);
 
   // ── Command palette registration ──────────────────────────────────────────
   useEffect(() => {
@@ -358,6 +423,17 @@ export default function SessionDocked() {
         onSelect: handleStop,
         enabled: canStop,
         keywords: ["stop", "terminate", "kill"],
+        keybindingAction: "debug.stop",
+      },
+      {
+        id: "session.restart",
+        label: "Restart Session",
+        group: "Session",
+        icon: <RotateCcw className="size-4" />,
+        onSelect: handleRestart,
+        enabled: canStop,
+        keywords: ["restart", "rerun", "relaunch"],
+        keybindingAction: "debug.restart",
       },
       {
         id: "session.pause",
@@ -384,8 +460,9 @@ export default function SessionDocked() {
         label: "Go (Pass Exception)",
         group: "Debug",
         icon: <SkipForward className="size-4" />,
+        keybindingAction: "debug.goPassException",
         onSelect: handleGoPassException,
-        enabled: canStep && session?.current_event?.event_type === "Exception",
+        enabled: canPassException,
         keywords: ["continue", "pass", "exception", "forward"],
       },
       {
@@ -418,131 +495,24 @@ export default function SessionDocked() {
         enabled: canStep,
         keywords: ["step", "out", "return"],
       },
-      // Panel toggles
-      {
-        id: "panel.disassembly",
-        label: "Toggle Disassembly",
-        group: "Windows",
-        icon: <Code className="size-4" />,
-        keybindingAction: "panel.disassembly",
-        onSelect: () => toggleTabWithBackendUpdate("disassembly"),
-        keepOpen: true,
-        keywords: ["disassembly", "asm", "code"],
-      },
-      {
-        id: "panel.registers",
-        label: "Toggle Registers",
-        group: "Windows",
-        icon: <Cpu className="size-4" />,
-        keybindingAction: "panel.registers",
-        onSelect: () => toggleTabWithBackendUpdate("registers"),
-        keepOpen: true,
-        keywords: ["registers", "regs"],
-      },
-      {
-        id: "panel.modules",
-        label: "Toggle Modules",
-        group: "Windows",
-        icon: <Box className="size-4" />,
-        keybindingAction: "panel.modules",
-        onSelect: () => toggleTabWithBackendUpdate("modules"),
-        keepOpen: true,
-        keywords: ["modules", "dll"],
-      },
-      {
-        id: "panel.threads",
-        label: "Toggle Threads",
-        group: "Windows",
-        icon: <Layers className="size-4" />,
-        keybindingAction: "panel.threads",
-        onSelect: () => toggleTabWithBackendUpdate("threads"),
-        keepOpen: true,
-        keywords: ["threads"],
-      },
-      {
-        id: "panel.callstack",
-        label: "Toggle Call Stack",
-        group: "Windows",
-        icon: <ListTree className="size-4" />,
-        keybindingAction: "panel.callstack",
-        onSelect: () => toggleTabWithBackendUpdate("callstack"),
-        keepOpen: true,
-        keywords: ["callstack", "stack", "frames"],
-      },
-      {
-        id: "panel.symbols",
-        label: "Toggle Symbols",
-        group: "Windows",
-        icon: <Search className="size-4" />,
-        keybindingAction: "panel.symbols",
-        onSelect: () => toggleTabWithBackendUpdate("symbols"),
-        keepOpen: true,
-        keywords: ["symbols", "functions"],
-      },
-      {
-        id: "panel.memoryRegions",
-        label: "Toggle Memory Regions",
-        group: "Windows",
-        icon: <HardDrive className="size-4" />,
-        keybindingAction: "panel.memoryRegions",
-        onSelect: () => toggleTabWithBackendUpdate("memory_regions"),
-        keepOpen: true,
-        keywords: ["memory", "regions", "map"],
-      },
-      {
-        id: "panel.breakpoints",
-        label: "Toggle Breakpoints",
-        group: "Windows",
-        icon: <MapPin className="size-4" />,
-        keybindingAction: "panel.breakpoints",
-        onSelect: () => toggleTabWithBackendUpdate("breakpoints"),
-        keepOpen: true,
-        keywords: ["breakpoints", "bp"],
-      },
-      {
-        id: "panel.patches",
-        label: "Toggle Patches",
-        group: "Windows",
-        icon: <Puzzle className="size-4" />,
-        keybindingAction: "panel.patches",
-        onSelect: () => toggleTabWithBackendUpdate("patches"),
-        keepOpen: true,
-        keywords: ["patches", "assemble", "patch"],
-      },
-      {
-        id: "panel.memorySearch",
-        label: "Toggle Memory Search",
-        group: "Windows",
-        icon: <Search className="size-4" />,
-        keybindingAction: "panel.memorySearch",
-        onSelect: () => toggleTabWithBackendUpdate("memory_search"),
-        keepOpen: true,
-        keywords: ["memory", "search", "find", "pattern"],
-      },
-      {
-        id: "panel.memoryScanner",
-        label: "Toggle Memory Scanner",
-        group: "Windows",
-        icon: <ScanSearch className="size-4" />,
-        keybindingAction: "panel.memoryScanner",
-        onSelect: () => toggleTabWithBackendUpdate("memory_scanner"),
-        keepOpen: true,
-        keywords: ["memory", "scanner", "scan", "cheat"],
-      },
-      {
-        id: "panel.peViewer",
-        label: "Toggle PE Viewer",
-        group: "Windows",
-        icon: <FileCode className="size-4" />,
-        keybindingAction: "panel.peViewer",
-        onSelect: () => toggleTabWithBackendUpdate("peviewer"),
-        keepOpen: true,
-        keywords: ["pe", "portable", "executable", "viewer"],
-      },
+      // Window navigation — one "Go to X" per registered tab, emitted in
+      // category order so the palette's first-seen-order grouping yields the
+      // right section order. Never closes a tab; the Windows menu does that.
+      ...SESSION_TAB_CATEGORIES.flatMap((category) =>
+        SESSION_TAB_DEFS.filter((d) => d.category === category).map((d): PaletteCommand => ({
+          id: `panel.${d.id}`,
+          label: `Go to ${d.title}`,
+          group: `Windows · ${d.category}`,
+          icon: d.icon,
+          keybindingAction: d.action,
+          onSelect: () => goToTab(d.id),
+          keywords: d.keywords ? [...d.keywords] : undefined,
+        })),
+      ),
       {
         id: "panel.addMemory",
         label: "Add Memory Window",
-        group: "Windows",
+        group: "Windows · Memory",
         icon: <Plus className="size-4" />,
         keybindingAction: "panel.addMemory",
         onSelect: handleAddNewMemoryTab,
@@ -568,7 +538,7 @@ export default function SessionDocked() {
           placeholder: "Enter address or symbol (e.g. 0x00007FF...)",
           onSubmit: handleNavigateToDisassembly,
         },
-        enabled: isPaused,
+        enabled: canUseMemoryOps,
         keywords: ["goto", "address", "disassembly", "navigate"],
       },
       {
@@ -582,52 +552,87 @@ export default function SessionDocked() {
           placeholder: "Enter address or symbol (e.g. 0x00007FF...)",
           onSubmit: handleNavigateToMemory,
         },
-        enabled: isPaused,
+        enabled: canUseMemoryOps,
         keywords: ["goto", "address", "memory", "navigate", "hex"],
       },
     ];
 
     return registerCommands(commands);
   }, [
-    canStart, canStop, canPause, canStep, isPaused, session?.current_event?.event_type,
-    handleStart, handleStop, handlePause,
+    canStart, canStop, canPause, canStep, isPaused, canUseMemoryOps, session?.current_event?.event_type,
+    handleStart, handleStop, handleRestart, handlePause,
     handleGo, handleGoPassException, handleStepIn, handleStepOver, handleStepOut,
     handleNavigateToDisassembly, handleNavigateToMemory,
-    toggleTabWithBackendUpdate, handleAddNewMemoryTab, handleResetLayout,
+    goToTab, handleAddNewMemoryTab, handleResetLayout,
     registerCommands,
   ]);
 
   const breakpointState = useBreakpoints(session?.id, isPaused, session?.breakpoints);
   const patchState = usePatches(session?.id, isPaused, session?.patches);
+  const bookmarkState = useBookmarks(session?.id, isPaused, session?.bookmarks, isTargetLive(displayStatus));
+  const watchpointState = useWatchpointTrace(session?.id, breakpointState.breakpoints, isTargetLive(displayStatus));
+
+  // "Find what reads/writes this address": arm a watchpoint access trace and open
+  // the Access Trace panel to watch accessors accumulate.
+  const handleFindAccesses = React.useCallback((address: string, mode: "Write" | "ReadWrite", size: number) => {
+    watchpointState.startTrace(address, mode, size);
+    handleOpenAccessTrace();
+  }, [watchpointState.startTrace, handleOpenAccessTrace]);
 
   const contextValue = useMemo(() => ({
     session,
     displayStatus,
+    canUseMemoryOps,
     modules,
     threads,
-    loadModules: async () => { await loadModules(); },
-    loadThreads: async () => { await loadThreads(); },
+    symbolStatuses,
+    symbolsRefreshKey,
+    // Passed through unwrapped: views depend on these in effects, and the
+    // useDebugSession callbacks are stable per session (an inline wrapper here
+    // would change identity on every session-updated event and re-fire them).
+    loadModules,
+    loadThreads,
+    loadModulePdb,
+    retryModuleSymbols,
+    unloadModuleSymbols,
     searchSymbols: async (pattern: string, limit?: number) => { return await searchSymbols(pattern, limit); },
     breakpointState,
     patchState,
+    bookmarkState,
+    watchpointState,
     onNavigateToDisassembly: handleNavigateToDisassembly,
     onNavigateToMemory: handleNavigateToMemory,
-  }), [session, displayStatus, modules, threads, loadModules, loadThreads, searchSymbols, breakpointState, patchState, handleNavigateToDisassembly, handleNavigateToMemory]);
+    onNavigateToMemoryRegion: handleNavigateToMemoryRegion,
+    onNavigateToSource: handleNavigateToSource,
+    onNavigateToType: handleNavigateToType,
+    onFindAccesses: handleFindAccesses,
+  }), [session, displayStatus, canUseMemoryOps, modules, threads, symbolStatuses, symbolsRefreshKey, loadModules, loadThreads, loadModulePdb, retryModuleSymbols, unloadModuleSymbols, searchSymbols, breakpointState, patchState, bookmarkState, watchpointState, handleNavigateToDisassembly, handleNavigateToMemory, handleNavigateToMemoryRegion, handleNavigateToSource, handleNavigateToType, handleFindAccesses]);
   
-  // Static tab content - components will update via context
-  const dynamicTabContent = useMemo(() => ({
+  // Static tab content - components will update via context.
+  // Typed against the registry, so adding a tab to SESSION_TAB_DEFS without
+  // wiring its content here is a compile error rather than a blank panel.
+  const dynamicTabContent: Record<SessionTabId, React.ReactElement> = useMemo(() => ({
     disassembly: <ContextAssemblyView />,
+    source: <ContextSourceView />,
     registers: <ContextRegisterView />,
     modules: <ContextModulesView onOpenModuleInfo={handleOpenModuleInfo} />,
     threads: <ContextThreadsView onNavigateToDisassembly={handleNavigateToDisassembly} onNavigateToMemoryPointer={handleNavigateToMemoryPointer} />,
     callstack: <ContextCallStackView onNavigateToDisassembly={handleNavigateToDisassembly} onNavigateToMemoryPointer={handleNavigateToMemoryPointer} />,
     symbols: <ContextSymbolsView />,
+    types: <ContextTypesView />,
+    memory: <ContextHexView memoryViewId="memory" />,
     memory_regions: <ContextMemoryRegionsView onNavigateToAddress={handleNavigateToMemory} />,
     breakpoints: <ContextBreakpointsView />,
     patches: <ContextPatchesView />,
+    image_patches: <ContextImagePatchesView />,
+    bookmarks: <ContextBookmarksView />,
     memory_search: <ContextMemorySearchView />,
     memory_scanner: <ContextMemoryScannerView />,
+    pointer_scan: <ContextPointerScanView />,
+    strings: <ContextStringsView />,
+    code_explorer: <ContextCodeExplorerView />,
     peviewer: <ContextModuleInfoView />,
+    access_trace: <ContextWatchpointAccessView />,
   }), [handleNavigateToMemory, handleNavigateToDisassembly, handleNavigateToMemoryPointer, handleOpenModuleInfo]);
 
   // Factory for creating dynamic tab content (e.g., memory tabs restored from storage)
@@ -641,86 +646,12 @@ export default function SessionDocked() {
 
   // Create docking configuration with dynamic content  
   const dockingConfig = useMemo(() => {
-    const sessionTabContents: { [key: string]: TabData } = {
-      disassembly: {
-        id: "disassembly",
-        title: "Disassembly",
-        content: dynamicTabContent.disassembly,
-        closable: true,
-      },
-      registers: {
-        id: "registers",
-        title: "Registers",
-        content: dynamicTabContent.registers,
-        closable: true,
-      },
-      modules: {
-        id: "modules",
-        title: "Modules",
-        content: dynamicTabContent.modules,
-        closable: true,
-      },
-      threads: {
-        id: "threads",
-        title: "Threads",
-        content: dynamicTabContent.threads,
-        closable: true,
-      },
-      callstack: {
-        id: "callstack",
-        title: "Call Stack",
-        content: dynamicTabContent.callstack,
-        closable: true,
-      },
-      symbols: {
-        id: "symbols",
-        title: "Symbols",
-        content: dynamicTabContent.symbols,
-        closable: true,
-      },
-      memory: {
-        id: "memory",
-        title: "Memory",
-        content: <ContextHexView memoryViewId="memory" />,
-        closable: true,
-      },
-      memory_regions: {
-        id: "memory_regions",
-        title: "Memory Regions",
-        content: dynamicTabContent.memory_regions,
-        closable: true,
-      },
-      breakpoints: {
-        id: "breakpoints",
-        title: "Breakpoints",
-        content: dynamicTabContent.breakpoints,
-        closable: true,
-      },
-      patches: {
-        id: "patches",
-        title: "Patches",
-        content: dynamicTabContent.patches,
-        closable: true,
-      },
-      memory_search: {
-        id: "memory_search",
-        title: "Memory Search",
-        content: dynamicTabContent.memory_search,
-        closable: true,
-      },
-      memory_scanner: {
-        id: "memory_scanner",
-        title: "Memory Scanner",
-        content: dynamicTabContent.memory_scanner,
-        closable: true,
-      },
-      peviewer: {
-        id: "peviewer",
-        title: "PE Viewer",
-        content: dynamicTabContent.peviewer,
-        closable: true,
-      },
-    };
+    const sessionTabContents: { [key: string]: TabData } = Object.fromEntries(
+      SESSION_TAB_DEFS.map((d) => [
+        d.id,
+        { id: d.id, title: d.title, content: dynamicTabContent[d.id as SessionTabId], closable: true },
+      ]),
+    );
 
     return {
       storagePrefix: "session-debugger-dock", // Shared prefix for all sessions to preserve layout
@@ -728,8 +659,9 @@ export default function SessionDocked() {
       initialTabContents: sessionTabContents,
       tabContentMap: { ...DebuggerDockingConfig.tabContentMap, ...dynamicTabContent },
       tabContentFactory,
+      placement,
     };
-  }, [sessionId, dynamicTabContent, tabContentFactory]);
+  }, [sessionId, dynamicTabContent, tabContentFactory, placement]);
 
   const getStatusBadge = (status: SessionStatus) => {
     if (typeof status === "string") {
@@ -740,6 +672,8 @@ export default function SessionDocked() {
           return <Badge variant="default" className="bg-green-600 animate-pulse">Running</Badge>;
         case "Paused":
           return <Badge variant="default" className="bg-yellow-600">Paused</Badge>;
+        case "Open":
+          return <Badge variant="default" className="bg-blue-600">Open (non-invasive)</Badge>;
         default:
           return <Badge variant="secondary">{status}</Badge>;
       }
@@ -797,17 +731,23 @@ export default function SessionDocked() {
           handleStepOver={handleStepOver}
           handleStepOut={handleStepOut}
           handleStop={handleStop}
+          handleRestart={handleRestart}
+          handleAttach={handleAttach}
           handleStart={handleStart}
           handlePause={handlePause}
+          handleDetach={handleDetach}
           canStep={canStep}
+          canPassException={canPassException}
           canStop={canStop}
           canStart={canStart}
           canPause={canPause}
+          canDetach={canDetach}
           dockingRef={dockingRef}
           getStatusBadge={getStatusBadge}
           toggleTab={toggleTabWithBackendUpdate}
           resetLayout={handleResetLayout}
           addNewMemoryTab={handleAddNewMemoryTab}
+          symbolLoadingCount={symbolStatuses.filter((s) => s.status === 'loading').length}
         />
 
         {/* Docking Layout */}
@@ -817,6 +757,7 @@ export default function SessionDocked() {
             {...dockingConfig}
             className="absolute inset-0"
             onTabsChanged={handleTabsChanged}
+            onTabSwitch={onTabSwitch}
           />
         </div>
       </div>

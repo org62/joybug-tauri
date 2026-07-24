@@ -1,18 +1,17 @@
 use tauri::{AppHandle, Emitter};
 use tracing::{debug, error, info};
 
-use super::helpers::format_bytes;
+use super::helpers::{emit_scan_error, format_bytes};
 use super::types::*;
 
 /// Processes a memory read request and emits results to the frontend
 pub(crate) fn process_memory_read(
     session: &mut DebugSession,
     app_handle_clone: &Option<AppHandle>,
-    event: &joybug2::protocol_io::DebugEvent,
+    pid: u32,
     address: u64,
     size: usize,
 ) {
-    let pid = event.pid();
     debug!("📤 Processing memory read request: pid={}, address=0x{:X}, size={}", pid, address, size);
 
     match session.read_memory(pid, address, size) {
@@ -76,11 +75,10 @@ pub(crate) fn process_memory_read(
 pub(crate) fn process_memory_write(
     session: &mut DebugSession,
     app_handle_clone: &Option<AppHandle>,
-    event: &joybug2::protocol_io::DebugEvent,
+    pid: u32,
     address: u64,
     data: &[u8],
 ) {
-    let pid = event.pid();
     debug!("📤 Processing memory write request: pid={}, address=0x{:X}, size={}", pid, address, data.len());
 
     match session.write_memory(pid, address, data.to_vec()) {
@@ -134,18 +132,21 @@ pub(crate) fn process_memory_write(
 pub(crate) fn process_memory_regions_request(
     session: &mut DebugSession,
     app_handle_clone: &Option<AppHandle>,
-    event: &joybug2::protocol_io::DebugEvent,
+    pid: u32,
 ) {
-    let pid = event.pid();
     debug!("📤 Processing memory regions request: pid={}", pid);
 
     match session.enumerate_memory_regions(pid) {
         Ok(regions) => {
             debug!("📥 Received {} memory regions", regions.len());
 
+            let annotations =
+                super::region_annotations::annotate_regions(session, pid, &regions);
+
             let serializable_regions: Vec<SerializableMemoryRegion> = regions
                 .iter()
-                .map(|r| SerializableMemoryRegion {
+                .zip(annotations)
+                .map(|(r, annotations)| SerializableMemoryRegion {
                     base_address: format!("0x{:016X}", r.base_address),
                     allocation_base: format!("0x{:016X}", r.allocation_base),
                     region_size: r.region_size,
@@ -156,6 +157,7 @@ pub(crate) fn process_memory_regions_request(
                     protect_raw: r.protect,
                     region_type: joybug2::formatting::memory::type_to_str(r.region_type).to_string(),
                     type_raw: r.region_type,
+                    annotations,
                 })
                 .collect();
 
@@ -203,11 +205,10 @@ pub(crate) fn process_memory_regions_request(
 pub(crate) fn process_memory_search(
     session: &mut DebugSession,
     app_handle_clone: &Option<AppHandle>,
-    event: &joybug2::protocol_io::DebugEvent,
+    pid: u32,
     pattern: Vec<u8>,
     max_results: usize,
 ) {
-    let pid = event.pid();
     debug!("📤 Processing memory search request: pid={}, pattern_len={}, max_results={}", pid, pattern.len(), max_results);
 
     match session.search_memory(pid, pattern, max_results) {
@@ -255,101 +256,102 @@ pub(crate) fn process_memory_search(
     }
 }
 
+/// Convert protocol dereference entries to their serializable form. Shared by the
+/// paused-loop path and the OOB command handlers in `commands/memory.rs`.
+pub(crate) fn serialize_dereference_entries(
+    entries: &[joybug2::protocol::DereferenceEntry],
+) -> Vec<SerializableDereferenceEntry> {
+    entries
+        .iter()
+        .map(|entry| {
+            let chain: Vec<SerializableDereferenceValue> = entry.chain.iter().map(|v| {
+                match v {
+                    joybug2::protocol::DereferenceValue::Pointer(addr, sym) => {
+                        SerializableDereferenceValue::Pointer {
+                            address: format!("0x{:016X}", addr),
+                            symbol: sym.clone(),
+                        }
+                    }
+                    joybug2::protocol::DereferenceValue::Value(val) => {
+                        SerializableDereferenceValue::Value {
+                            value: format!("0x{:X}", val),
+                        }
+                    }
+                    joybug2::protocol::DereferenceValue::String(s) => {
+                        SerializableDereferenceValue::String {
+                            value: s.clone(),
+                        }
+                    }
+                    joybug2::protocol::DereferenceValue::Instruction(instr, sym) => {
+                        SerializableDereferenceValue::Instruction {
+                            value: instr.clone(),
+                            symbol: sym.clone(),
+                        }
+                    }
+                    joybug2::protocol::DereferenceValue::LoopDetected(addr) => {
+                        SerializableDereferenceValue::LoopDetected {
+                            address: format!("0x{:016X}", addr),
+                        }
+                    }
+                }
+            }).collect();
+
+            SerializableDereferenceEntry {
+                address: format!("0x{:016X}", entry.address),
+                offset: entry.offset,
+                chain,
+            }
+        })
+        .collect()
+}
+
+/// Emit one `dereference-updated` event for a single address's telescoped chain.
+fn emit_dereference_updated(
+    handle: &AppHandle,
+    session_id: &str,
+    address: u64,
+    entries: &[joybug2::protocol::DereferenceEntry],
+) {
+    let result = DereferenceResult {
+        session_id: session_id.to_string(),
+        base_address: format!("0x{:016X}", address),
+        entries: serialize_dereference_entries(entries),
+    };
+    if let Err(e) = handle.emit("dereference-updated", &result) {
+        error!("Failed to emit dereference-updated event: {}", e);
+    }
+}
+
+/// Emit one `dereference-error` event for a single address.
+fn emit_dereference_error(handle: &AppHandle, session_id: &str, address: u64, error: &str) {
+    let error_result = DereferenceError {
+        session_id: session_id.to_string(),
+        address: format!("0x{:016X}", address),
+        error: error.to_string(),
+    };
+    if let Err(emit_err) = handle.emit("dereference-error", &error_result) {
+        error!("Failed to emit dereference-error event: {}", emit_err);
+    }
+}
+
 /// Processes a dereference request and emits results to the frontend
 pub(crate) fn process_dereference_request(
     session: &mut DebugSession,
     app_handle_clone: &Option<AppHandle>,
-    event: &joybug2::protocol_io::DebugEvent,
+    pid: u32,
     address: u64,
     count: usize,
 ) {
-    let pid = event.pid();
     debug!("📤 Processing dereference request: pid={}, address=0x{:X}, count={}", pid, address, count);
 
-    match session.dereference(pid, address, count, None) {
-        Ok(entries) => {
-            debug!("📥 Received {} dereference entries", entries.len());
-
-            let serializable_entries: Vec<SerializableDereferenceEntry> = entries
-                .iter()
-                .map(|entry| {
-                    let chain: Vec<SerializableDereferenceValue> = entry.chain.iter().map(|v| {
-                        match v {
-                            joybug2::protocol::DereferenceValue::Pointer(addr, sym) => {
-                                SerializableDereferenceValue::Pointer {
-                                    address: format!("0x{:016X}", addr),
-                                    symbol: sym.clone(),
-                                }
-                            }
-                            joybug2::protocol::DereferenceValue::Value(val) => {
-                                SerializableDereferenceValue::Value {
-                                    value: format!("0x{:X}", val),
-                                }
-                            }
-                            joybug2::protocol::DereferenceValue::String(s) => {
-                                SerializableDereferenceValue::String {
-                                    value: s.clone(),
-                                }
-                            }
-                            joybug2::protocol::DereferenceValue::Instruction(instr, sym) => {
-                                SerializableDereferenceValue::Instruction {
-                                    value: instr.clone(),
-                                    symbol: sym.clone(),
-                                }
-                            }
-                            joybug2::protocol::DereferenceValue::LoopDetected(addr) => {
-                                SerializableDereferenceValue::LoopDetected {
-                                    address: format!("0x{:016X}", addr),
-                                }
-                            }
-                        }
-                    }).collect();
-
-                    SerializableDereferenceEntry {
-                        address: format!("0x{:016X}", entry.address),
-                        offset: entry.offset,
-                        chain,
-                    }
-                })
-                .collect();
-
-            if let Some(ref handle) = app_handle_clone {
-                let session_id = {
-                    let state = session.state.lock().unwrap();
-                    state.id.clone()
-                };
-
-                let result = DereferenceResult {
-                    session_id,
-                    base_address: format!("0x{:016X}", address),
-                    entries: serializable_entries,
-                };
-
-                if let Err(e) = handle.emit("dereference-updated", &result) {
-                    error!("Failed to emit dereference-updated event: {}", e);
-                } else {
-                    debug!("📡 Emitted dereference-updated event with {} entries", result.entries.len());
-                }
-            }
-        }
-        Err(e) => {
-            error!("Failed to dereference at 0x{:X}: {}", address, e);
-
-            if let Some(ref handle) = app_handle_clone {
-                let session_id = {
-                    let state = session.state.lock().unwrap();
-                    state.id.clone()
-                };
-
-                let error_result = DereferenceError {
-                    session_id,
-                    address: format!("0x{:016X}", address),
-                    error: e.to_string(),
-                };
-
-                if let Err(emit_err) = handle.emit("dereference-error", &error_result) {
-                    error!("Failed to emit dereference-error event: {}", emit_err);
-                }
+    let result = session.dereference(pid, address, count, None);
+    if let Some(ref handle) = app_handle_clone {
+        let session_id = { session.state.lock().unwrap().id.clone() };
+        match result {
+            Ok(entries) => emit_dereference_updated(handle, &session_id, address, &entries),
+            Err(e) => {
+                error!("Failed to dereference at 0x{:X}: {}", address, e);
+                emit_dereference_error(handle, &session_id, address, &e.to_string());
             }
         }
     }
@@ -419,6 +421,41 @@ fn parse_scan_value(value_type: joybug2::protocol::ScanValueType, s: &str) -> Op
     }
 }
 
+/// Number of fractional digits in a typed number string ("18" → 0, "18.10" → 2).
+/// Ignores a scientific exponent; returns 0 when there's no decimal point.
+fn fractional_digits(s: &str) -> usize {
+    let mantissa = s.trim().split(['e', 'E']).next().unwrap_or("");
+    match mantissa.split_once('.') {
+        Some((_, frac)) => frac.chars().take_while(|c| c.is_ascii_digit()).count(),
+        None => 0,
+    }
+}
+
+/// Resolve the float epsilon for a scan. For a float `ExactValue` scan we derive
+/// an ABSOLUTE epsilon from the typed precision ("18" → ±0.5, "18.1" → ±0.05) so
+/// the search matches values that display as the typed number — unless the user
+/// supplied an explicit tolerance, which is used as an absolute ± override. For
+/// all other comparisons the (relative) tolerance is passed through unchanged.
+fn resolve_scan_tolerance(
+    vt: joybug2::protocol::ScanValueType,
+    ct: joybug2::protocol::ScanCompareType,
+    value_str: Option<&str>,
+    override_tol: Option<f64>,
+) -> Option<f64> {
+    use joybug2::protocol::{ScanCompareType, ScanValueType};
+    let is_float = matches!(vt, ScanValueType::F32 | ScanValueType::F64);
+    if is_float && matches!(ct, ScanCompareType::ExactValue) {
+        if override_tol.is_some() {
+            return override_tol;
+        }
+        if let Some(s) = value_str {
+            let d = fractional_digits(s);
+            return Some(0.5 * 10f64.powi(-(d as i32)));
+        }
+    }
+    override_tol
+}
+
 fn format_scan_value(val: &joybug2::protocol::ScanValue) -> ScanValueEntry {
     use joybug2::protocol::ScanValue;
     match val {
@@ -431,16 +468,30 @@ fn format_scan_value(val: &joybug2::protocol::ScanValue) -> ScanValueEntry {
     }
 }
 
-fn emit_scan_error(handle: &AppHandle, session_id: String, error: impl std::fmt::Display) {
-    let err = ScanError { session_id, error: error.to_string() };
-    let _ = handle.emit("scan-memory-error", &err);
+/// A typed value string that fails to parse must error out rather than
+/// silently become None (the scanner would report a misleading "requires a
+/// value"). Returns false (after emitting the error) when the value didn't parse.
+fn scan_value_parsed(
+    handle: &AppHandle,
+    session_id: &str,
+    vt: joybug2::protocol::ScanValueType,
+    raw: Option<&str>,
+    parsed: &Option<joybug2::protocol::ScanValue>,
+) -> bool {
+    if let Some(s) = raw {
+        if !s.trim().is_empty() && parsed.is_none() {
+            emit_scan_error(handle, "scan-memory-error", session_id.to_string(), format!("Invalid value '{}' for {:?}", s.trim(), vt));
+            return false;
+        }
+    }
+    true
 }
 
 /// Processes a scan memory start request
 pub(crate) fn process_scan_memory_start(
     session: &mut DebugSession,
-    app_handle_clone: &Option<AppHandle>,
-    event: &joybug2::protocol_io::DebugEvent,
+    handle: &AppHandle,
+    pid: u32,
     value_type_str: &str,
     compare_type_str: &str,
     value: Option<String>,
@@ -448,19 +499,25 @@ pub(crate) fn process_scan_memory_start(
     alignment: Option<usize>,
     float_tolerance: Option<f64>,
     writable_only: bool,
+    thread_count: Option<usize>,
 ) {
-    let pid = event.pid();
     let vt = parse_scan_value_type(value_type_str);
     let ct = parse_scan_compare_type(compare_type_str);
     let val = value.as_deref().and_then(|s| parse_scan_value(vt, s));
     let val2 = value2.as_deref().and_then(|s| parse_scan_value(vt, s));
+    let float_tolerance = resolve_scan_tolerance(vt, ct, value.as_deref(), float_tolerance);
 
-    debug!("📤 Processing scan memory start: pid={}, type={:?}, compare={:?}", pid, vt, ct);
+    debug!("📤 Processing scan memory start: pid={}, type={:?}, compare={:?}, threads={:?}", pid, vt, ct, thread_count);
 
-    let Some(ref handle) = app_handle_clone else { return };
     let session_id = session.state.lock().unwrap().id.clone();
 
-    match session.scan_memory_start(pid, vt, ct, val, val2, alignment, float_tolerance, writable_only) {
+    if !scan_value_parsed(handle, &session_id, vt, value.as_deref(), &val)
+        || !scan_value_parsed(handle, &session_id, vt, value2.as_deref(), &val2)
+    {
+        return;
+    }
+
+    match session.scan_memory_start(pid, vt, ct, val, val2, alignment, float_tolerance, writable_only, thread_count) {
         Ok((scan_id, match_count, scan_time_us)) => {
             info!("📥 Scan started: scan_id={}, matches={}, time={}μs", scan_id, match_count, scan_time_us);
             let result = ScanMatchResult { session_id, scan_id, match_count, scan_time_us };
@@ -470,7 +527,7 @@ pub(crate) fn process_scan_memory_start(
         }
         Err(e) => {
             error!("Scan memory start failed: {}", e);
-            emit_scan_error(handle, session_id, e);
+            emit_scan_error(handle, "scan-memory-error", session_id, e);
         }
     }
 }
@@ -478,24 +535,31 @@ pub(crate) fn process_scan_memory_start(
 /// Processes a scan memory next request
 pub(crate) fn process_scan_memory_next(
     session: &mut DebugSession,
-    app_handle_clone: &Option<AppHandle>,
+    handle: &AppHandle,
     scan_id: u64,
     value_type_str: &str,
     compare_type_str: &str,
     value: Option<String>,
     value2: Option<String>,
+    float_tolerance: Option<f64>,
 ) {
     let vt = parse_scan_value_type(value_type_str);
     let ct = parse_scan_compare_type(compare_type_str);
     let val = value.as_deref().and_then(|s| parse_scan_value(vt, s));
     let val2 = value2.as_deref().and_then(|s| parse_scan_value(vt, s));
+    let float_tolerance = resolve_scan_tolerance(vt, ct, value.as_deref(), float_tolerance);
 
     debug!("📤 Processing scan memory next: scan_id={}, compare={:?}", scan_id, ct);
 
-    let Some(ref handle) = app_handle_clone else { return };
     let session_id = session.state.lock().unwrap().id.clone();
 
-    match session.scan_memory_next(scan_id, ct, val, val2) {
+    if !scan_value_parsed(handle, &session_id, vt, value.as_deref(), &val)
+        || !scan_value_parsed(handle, &session_id, vt, value2.as_deref(), &val2)
+    {
+        return;
+    }
+
+    match session.scan_memory_next(scan_id, ct, val, val2, float_tolerance) {
         Ok((match_count, scan_time_us)) => {
             info!("📥 Scan next: scan_id={}, matches={}, time={}μs", scan_id, match_count, scan_time_us);
             let result = ScanMatchResult { session_id, scan_id, match_count, scan_time_us };
@@ -505,7 +569,7 @@ pub(crate) fn process_scan_memory_next(
         }
         Err(e) => {
             error!("Scan memory next failed: {}", e);
-            emit_scan_error(handle, session_id, e);
+            emit_scan_error(handle, "scan-memory-error", session_id, e);
         }
     }
 }
@@ -513,14 +577,13 @@ pub(crate) fn process_scan_memory_next(
 /// Processes a scan memory get results request
 pub(crate) fn process_scan_memory_get_results(
     session: &mut DebugSession,
-    app_handle_clone: &Option<AppHandle>,
+    handle: &AppHandle,
     scan_id: u64,
     offset: u64,
     count: u64,
 ) {
     debug!("📤 Processing scan memory get results: scan_id={}, offset={}, count={}", scan_id, offset, count);
 
-    let Some(ref handle) = app_handle_clone else { return };
     let session_id = session.state.lock().unwrap().id.clone();
 
     match session.scan_memory_get_results(scan_id, offset, count) {
@@ -539,7 +602,7 @@ pub(crate) fn process_scan_memory_get_results(
         }
         Err(e) => {
             error!("Scan memory get results failed: {}", e);
-            emit_scan_error(handle, session_id, e);
+            emit_scan_error(handle, "scan-memory-error", session_id, e);
         }
     }
 }
@@ -547,30 +610,52 @@ pub(crate) fn process_scan_memory_get_results(
 /// Processes a scan memory reset request
 pub(crate) fn process_scan_memory_reset(
     session: &mut DebugSession,
-    app_handle_clone: &Option<AppHandle>,
+    handle: &AppHandle,
     scan_id: u64,
 ) {
     debug!("📤 Processing scan memory reset: scan_id={}", scan_id);
 
     if let Err(e) = session.scan_memory_reset(scan_id) {
         error!("Scan memory reset failed: {}", e);
-        if let Some(ref handle) = app_handle_clone {
-            let session_id = session.state.lock().unwrap().id.clone();
-            emit_scan_error(handle, session_id, e);
-        }
+        let session_id = session.state.lock().unwrap().id.clone();
+        emit_scan_error(handle, "scan-memory-error", session_id, e);
     } else {
         debug!("📥 Scan reset complete for scan_id={}", scan_id);
     }
 }
 
-/// Processes a batch dereference request (multiple addresses in one command) and emits individual results.
+/// Processes a batch dereference request (multiple addresses in one command) and
+/// emits an individual `dereference-updated` event per address — the registers
+/// panel's listener contract is unchanged. Unlike looping `process_dereference_request`,
+/// this issues ONE server call: the server enumerates the process's memory regions
+/// once for the whole batch instead of once per address (that full address-space
+/// walk is the dominant per-step cost on large targets — ~16 registers × one walk
+/// each). A per-address emit still lets the panel update each row independently.
 pub(crate) fn process_dereference_batch(
     session: &mut DebugSession,
     app_handle_clone: &Option<AppHandle>,
-    event: &joybug2::protocol_io::DebugEvent,
+    pid: u32,
     addresses: &[u64],
 ) {
-    for &address in addresses {
-        process_dereference_request(session, app_handle_clone, event, address, 1);
+    debug!("📤 Processing dereference batch: pid={}, {} addresses", pid, addresses.len());
+
+    let result = session.dereference_batch(pid, addresses.to_vec(), 1, None);
+    let Some(handle) = app_handle_clone.as_ref() else { return };
+    let session_id = { session.state.lock().unwrap().id.clone() };
+    match result {
+        Ok(results) => {
+            // Contract: one entry list per input address, in order.
+            debug_assert_eq!(results.len(), addresses.len());
+            for (&address, entries) in addresses.iter().zip(results.iter()) {
+                emit_dereference_updated(handle, &session_id, address, entries);
+            }
+        }
+        Err(e) => {
+            error!("Failed to dereference batch: {}", e);
+            let msg = e.to_string();
+            for &address in addresses {
+                emit_dereference_error(handle, &session_id, address, &msg);
+            }
+        }
     }
 }

@@ -7,6 +7,7 @@ import {
   CommandItem,
   CommandList,
   CommandShortcut,
+  CommandSubInput,
 } from "@/components/ui/command";
 import { useCommandPaletteContext } from "@/contexts/CommandPaletteContext";
 import { useKeybindingContext } from "@/contexts/KeybindingContext";
@@ -102,7 +103,11 @@ export function CommandPalette() {
   };
 
   return (
-    <CommandDialog open={isOpen} onOpenChange={handleOpenChange}>
+    // Radix restores focus to whatever was focused before the palette opened.
+    // "Go to X" focuses the target panel's input as it closes, so let the
+    // command's own focus win; otherwise focus falls to the body, which is
+    // where it effectively went before this existed.
+    <CommandDialog open={isOpen} onOpenChange={handleOpenChange} onCloseAutoFocus={(e) => e.preventDefault()}>
       {subInput ? (
         <div className="flex flex-col">
           <div className="flex items-center gap-1.5 border-b px-3 py-2 text-xs text-muted-foreground">
@@ -110,16 +115,13 @@ export function CommandPalette() {
             <ChevronRight className="size-3" />
             <span className="text-foreground">{subInput.label}</span>
           </div>
-          <div className="flex items-center border-b px-3">
-            <input
-              className="placeholder:text-muted-foreground flex h-10 w-full rounded-md bg-transparent py-2 text-sm outline-hidden disabled:cursor-not-allowed disabled:opacity-50"
-              placeholder={subInput.placeholder}
-              value={subInputValue}
-              onChange={(e) => setSubInputValue(e.target.value)}
-              onKeyDown={handleSubInputKeyDown}
-              autoFocus
-            />
-          </div>
+          <CommandSubInput
+            placeholder={subInput.placeholder}
+            value={subInputValue}
+            onChange={(e) => setSubInputValue(e.target.value)}
+            onKeyDown={handleSubInputKeyDown}
+            autoFocus
+          />
           <div className="px-3 py-2 text-xs text-muted-foreground">
             <kbd className="rounded border px-1 py-0.5 text-[10px]">Esc</kbd>
             <span className="ml-1.5">to go back</span>

@@ -89,7 +89,7 @@ export function SettingsEvents({ searchQuery }: SettingsEventsProps) {
         <div className="mt-4">
           <div className="flex items-center justify-between mb-2">
             <h4 className="text-sm font-semibold text-muted-foreground">Exception Rules</h4>
-            <Button variant="outline" size="sm" onClick={handleAddRule}>
+            <Button variant="outline" size="xs" onClick={handleAddRule}>
               <Plus className="h-3 w-3 mr-1" />
               Add
             </Button>
@@ -143,21 +143,22 @@ function ExceptionRuleRow({
     <div className="rounded border border-border/50 px-2 py-1.5 space-y-2">
       <div className="flex items-center gap-1.5">
         <Input
-          className="h-7 text-xs font-mono flex-1"
+          inputSize="xs"
+          className="font-mono flex-1"
           placeholder="0xC0000005"
           value={codeText}
           onChange={(e) => setCodeText(e.target.value)}
           onBlur={handleCodeBlur}
         />
-        <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0" onClick={() => onRemove(index)}>
-          <Trash2 className="h-3 w-3 text-muted-foreground" />
+        <Button variant="ghost" size="icon-xs" className="shrink-0" onClick={() => onRemove(index)}>
+          <Trash2 className="text-muted-foreground" />
         </Button>
       </div>
       <div className="flex items-center gap-1.5 pr-[34px]">
         <div className="flex items-center gap-1 flex-1">
           <span className="text-xs text-muted-foreground shrink-0">1st</span>
           <Select value={rule.first_chance} onValueChange={(v) => onUpdate(index, "first_chance", v)}>
-            <SelectTrigger className="h-7 text-xs w-full">
+            <SelectTrigger size="xs" className="w-full">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -170,7 +171,7 @@ function ExceptionRuleRow({
         <div className="flex items-center gap-1 flex-1">
           <span className="text-xs text-muted-foreground shrink-0">2nd</span>
           <Select value={rule.second_chance} onValueChange={(v) => onUpdate(index, "second_chance", v)}>
-            <SelectTrigger className="h-7 text-xs w-full">
+            <SelectTrigger size="xs" className="w-full">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>

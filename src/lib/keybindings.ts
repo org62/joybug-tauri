@@ -2,22 +2,33 @@
 export type ActionId =
   // Debug stepping
   | "debug.go"
+  | "debug.goPassException"
   | "debug.stepIn"
   | "debug.stepOver"
   | "debug.stepOut"
-  // Panel toggles
+  | "debug.stop"
+  | "debug.restart"
+  | "debug.detach"
+  // Panels — these navigate to a panel; only panel.closeTab closes one
   | "panel.disassembly"
+  | "panel.source"
   | "panel.registers"
   | "panel.modules"
   | "panel.threads"
   | "panel.callstack"
   | "panel.symbols"
+  | "panel.types"
   | "panel.addMemory"
   | "panel.memoryRegions"
   | "panel.breakpoints"
   | "panel.patches"
+  | "panel.imagePatches"
+  | "panel.bookmarks"
   | "panel.memorySearch"
   | "panel.memoryScanner"
+  | "panel.pointerScan"
+  | "panel.strings"
+  | "panel.codeExplorer"
   | "panel.peViewer"
   | "panel.closeTab"
   // Navigation (global)
@@ -46,24 +57,35 @@ export interface ActionMeta {
 }
 
 export const ACTION_REGISTRY: Record<ActionId, ActionMeta> = {
-  "debug.go":        { label: "Go / Continue",    category: "Debug",    description: "Resume execution",                           scope: "session" },
+  "debug.go":        { label: "Go / Break",       category: "Debug",    description: "Continue when paused, break in while running, start when stopped", scope: "session" },
+  "debug.goPassException": { label: "Go (Pass Exception)", category: "Debug", description: "Continue and pass the current exception to the debuggee's handler", scope: "session" },
   "debug.stepIn":    { label: "Step Into",         category: "Debug",    description: "Step into the next instruction or function",  scope: "session" },
   "debug.stepOver":  { label: "Step Over",         category: "Debug",    description: "Step over the next instruction",              scope: "session" },
   "debug.stepOut":   { label: "Step Out",          category: "Debug",    description: "Step out of the current function",            scope: "session" },
+  "debug.stop":      { label: "Stop Session",      category: "Debug",    description: "Stop the session (terminates a running target)", scope: "session" },
+  "debug.restart":   { label: "Restart Session",   category: "Debug",    description: "Stop the session and start a fresh run",      scope: "session" },
+  "debug.detach":    { label: "Detach",            category: "Debug",    description: "Detach from the target and leave it running (while paused)", scope: "session" },
 
-  "panel.disassembly":   { label: "Toggle Disassembly",    category: "Panels", description: "Show or hide the Disassembly panel",    scope: "session" },
-  "panel.registers":     { label: "Toggle Registers",      category: "Panels", description: "Show or hide the Registers panel",      scope: "session" },
-  "panel.modules":       { label: "Toggle Modules",        category: "Panels", description: "Show or hide the Modules panel",        scope: "session" },
-  "panel.threads":       { label: "Toggle Threads",        category: "Panels", description: "Show or hide the Threads panel",        scope: "session" },
-  "panel.callstack":     { label: "Toggle Call Stack",     category: "Panels", description: "Show or hide the Call Stack panel",     scope: "session" },
-  "panel.symbols":       { label: "Toggle Symbols",        category: "Panels", description: "Show or hide the Symbols panel",        scope: "session" },
+  "panel.disassembly":   { label: "Go to Disassembly",    category: "Panels", description: "Open and focus the Disassembly panel",    scope: "session" },
+  "panel.source":        { label: "Go to Source",         category: "Panels", description: "Open and focus the Source panel",         scope: "session" },
+  "panel.registers":     { label: "Go to Registers",      category: "Panels", description: "Open and focus the Registers panel",      scope: "session" },
+  "panel.modules":       { label: "Go to Modules",        category: "Panels", description: "Open and focus the Modules panel",        scope: "session" },
+  "panel.threads":       { label: "Go to Threads",        category: "Panels", description: "Open and focus the Threads panel",        scope: "session" },
+  "panel.callstack":     { label: "Go to Call Stack",     category: "Panels", description: "Open and focus the Call Stack panel",     scope: "session" },
+  "panel.symbols":       { label: "Go to Symbols",        category: "Panels", description: "Open and focus the Symbols panel",        scope: "session" },
+  "panel.types":         { label: "Go to Types",          category: "Panels", description: "Open and focus the Types panel",          scope: "session" },
   "panel.addMemory":     { label: "Add Memory Window",     category: "Panels", description: "Open a new Memory hex editor tab",      scope: "session" },
-  "panel.memoryRegions": { label: "Toggle Memory Regions", category: "Panels", description: "Show or hide the Memory Regions panel", scope: "session" },
-  "panel.breakpoints":   { label: "Toggle Breakpoints",    category: "Panels", description: "Show or hide the Breakpoints panel",    scope: "session" },
-  "panel.patches":       { label: "Toggle Patches",        category: "Panels", description: "Show or hide the Patches panel",        scope: "session" },
-  "panel.memorySearch":  { label: "Toggle Memory Search",  category: "Panels", description: "Show or hide the Memory Search panel",  scope: "session" },
-  "panel.memoryScanner": { label: "Toggle Memory Scanner", category: "Panels", description: "Show or hide the Memory Scanner panel", scope: "session" },
-  "panel.peViewer":      { label: "Toggle PE Viewer",      category: "Panels", description: "Show or hide the PE Viewer panel",      scope: "session" },
+  "panel.memoryRegions": { label: "Go to Memory Regions", category: "Panels", description: "Open and focus the Memory Regions panel", scope: "session" },
+  "panel.breakpoints":   { label: "Go to Breakpoints",    category: "Panels", description: "Open and focus the Breakpoints panel",    scope: "session" },
+  "panel.patches":       { label: "Go to User Patches",   category: "Panels", description: "Open and focus the User Patches panel",   scope: "session" },
+  "panel.imagePatches":  { label: "Go to Image Patches",  category: "Panels", description: "Open and focus the Image Patches panel",  scope: "session" },
+  "panel.bookmarks":     { label: "Go to Bookmarks",      category: "Panels", description: "Open and focus the Bookmarks panel",      scope: "session" },
+  "panel.memorySearch":  { label: "Go to Memory Search",  category: "Panels", description: "Open and focus the Memory Search panel",  scope: "session" },
+  "panel.memoryScanner": { label: "Go to Memory Scanner", category: "Panels", description: "Open and focus the Memory Scanner panel", scope: "session" },
+  "panel.pointerScan":   { label: "Go to Pointer Scan",   category: "Panels", description: "Open and focus the Pointer Scan panel",   scope: "session" },
+  "panel.strings":       { label: "Go to Strings",        category: "Panels", description: "Open and focus the Strings panel",        scope: "session" },
+  "panel.codeExplorer":  { label: "Go to Code Explorer",  category: "Panels", description: "Open and focus the Code Explorer panel",  scope: "session" },
+  "panel.peViewer":      { label: "Go to PE Viewer",      category: "Panels", description: "Open and focus the PE Viewer panel",      scope: "session" },
   "panel.closeTab":      { label: "Close Active Tab",      category: "Panels", description: "Close the currently focused dock tab",     scope: "session" },
 
   "palette.open":    { label: "Command Palette",  category: "Navigation", description: "Open the command palette",                 scope: "global" },
@@ -75,8 +97,8 @@ export const ACTION_REGISTRY: Record<ActionId, ActionMeta> = {
   "nav.logs":        { label: "Go to Logs",      category: "Navigation", description: "Navigate to the Logs page",               scope: "global" },
   "nav.toggleTheme": { label: "Toggle Theme",    category: "Navigation", description: "Switch between light and dark theme",      scope: "global" },
 
-  "assembly.goBack":            { label: "Go Back",            category: "Assembly", description: "Navigate back in disassembly history",    scope: "assembly" },
-  "assembly.goForward":         { label: "Go Forward",         category: "Assembly", description: "Navigate forward in disassembly history", scope: "assembly" },
+  "assembly.goBack":            { label: "Go Back",            category: "Assembly", description: "Navigate back in history (addresses and windows)",    scope: "assembly" },
+  "assembly.goForward":         { label: "Go Forward",         category: "Assembly", description: "Navigate forward in history (addresses and windows)", scope: "assembly" },
   "assembly.toggleBreakpoint":  { label: "Toggle Breakpoint",  category: "Debug", description: "Toggle breakpoint on selected line",      scope: "assembly" },
 };
 
@@ -90,15 +112,18 @@ export type ChordString = string;
 
 const SHARED_BINDINGS: Record<string, ChordString> = {
   "panel.disassembly":   "ctrl+d",
+  "panel.source":        "ctrl+shift+s",
   "panel.registers":     "ctrl+r",
   "panel.modules":       "ctrl+m",
   "panel.threads":       "ctrl+t",
   "panel.callstack":     "ctrl+l",
   "panel.symbols":       "ctrl+s",
+  "panel.types":         "ctrl+shift+y",
   "panel.addMemory":     "ctrl+h",
   "panel.memoryRegions": "ctrl+g",
   "panel.breakpoints":   "ctrl+b",
   "panel.memorySearch":  "ctrl+shift+f",
+  "panel.codeExplorer":  "ctrl+shift+e",
   "panel.peViewer":      "ctrl+p",
   "panel.closeTab":      "ctrl+w",
 
@@ -118,17 +143,28 @@ const SHARED_BINDINGS: Record<string, ChordString> = {
 export const KEYBINDING_PRESETS: Record<PresetName, Record<ActionId, ChordString>> = {
   windbg: {
     "debug.go":       "f5",
+    "debug.goPassException": "shift+f5",
     "debug.stepIn":   "f11",
     "debug.stepOver": "f10",
     "debug.stepOut":  "shift+f11",
+    // WinDbg's Debug menu: Ctrl+Shift+F5 restarts; stop/detach are unbound by
+    // default (WinDbg's Shift+F5 "stop" collides with goPassException here).
+    "debug.stop":     "",
+    "debug.restart":  "ctrl+shift+f5",
+    "debug.detach":   "",
     "assembly.toggleBreakpoint": "f9",
     ...SHARED_BINDINGS,
   } as Record<ActionId, ChordString>,
   x64dbg: {
     "debug.go":       "f9",
+    "debug.goPassException": "shift+f9",
     "debug.stepIn":   "f7",
     "debug.stepOver": "f8",
     "debug.stepOut":  "ctrl+f9",
+    // x64dbg defaults: Ctrl+F2 restart, Alt+F2 close/stop, Ctrl+Alt+F2 detach.
+    "debug.stop":     "alt+f2",
+    "debug.restart":  "ctrl+f2",
+    "debug.detach":   "alt+ctrl+f2",
     "assembly.toggleBreakpoint": "f2",
     ...SHARED_BINDINGS,
   } as Record<ActionId, ChordString>,

@@ -16,19 +16,25 @@ import { NavigationChannel } from '@/lib/navigationStore';
  * first, allowing the initialization effect to detect (via refs/state) that
  * navigation already happened.
  */
-export function useNavigationChannel(
-  channel: NavigationChannel,
-  onNavigate: (address: string) => void,
+export function useNavigationChannel<T = string>(
+  channel: NavigationChannel<T>,
+  onNavigate: (payload: T) => void,
+  /** On shared channels, claim only matching payloads (consumeIf) — without it
+   *  the first subscriber to run would eat every payload. */
+  match?: (payload: T) => boolean,
 ) {
   const onNavigateRef = useRef(onNavigate);
   onNavigateRef.current = onNavigate;
+  const matchRef = useRef(match);
+  matchRef.current = match;
 
   // Re-render when a navigation is requested (batched with layout changes)
   const version = useSyncExternalStore(channel.subscribe, channel.getSnapshot);
 
   // Consume pending address on mount or when a new request arrives
   useEffect(() => {
-    const pending = channel.consume();
+    const m = matchRef.current;
+    const pending = m ? channel.consumeIf(m) : channel.consume();
     if (pending) {
       onNavigateRef.current(pending);
     }

@@ -1,12 +1,19 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
+import { Virtualizer } from '@tanstack/react-virtual';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { useSessionContext } from '@/contexts/SessionContext';
-import { formatTauriError } from '@/lib/sessionHelpers';
+import { formatTauriError, isTargetLive } from '@/lib/sessionHelpers';
+import { formatBytesAsHex } from '@/lib/hexUtils';
+import { cn, CHANGED_VALUE_CLASS } from '@/lib/utils';
+import { useLiveRefresh } from '@/hooks/useLiveRefresh';
 import { useContextMenu } from '@/hooks/useContextMenu';
-import { Input } from '@/components/ui/input';
+import { usePanelFocus } from '@/hooks/usePanelFocus';
+import { HistoryInput } from '@/components/ui/history-input';
+import { pushInputHistory } from '@/lib/inputHistory';
 import { Button } from '@/components/ui/button';
-import { ScrollArea } from '@/components/ui/scroll-area';
+import { DockPanel, PanelToolbar } from '@/components/ui/panel';
+import { ContextMenu, ContextMenuItem } from '@/components/ui/context-menu';
 import { VirtualizedList } from '@/components/ui/virtualized-list';
 import { Search, HardDrive, Loader2, AlertTriangle } from 'lucide-react';
 
@@ -36,8 +43,47 @@ function stringToUtf16Le(input: string): Uint8Array {
   return new Uint8Array(buf);
 }
 
+const SearchResultRow = ({
+  address,
+  preview,
+  changed,
+  onMissingPreview,
+  onClick,
+  onContextMenu,
+}: {
+  address: string;
+  preview: string | null | undefined;
+  changed: boolean;
+  onMissingPreview: () => void;
+  onClick: () => void;
+  onContextMenu: (e: React.MouseEvent) => void;
+}) => {
+  // Rows scrolled into view have no preview yet; ask for a (debounced) fetch.
+  const missing = preview === undefined;
+  useEffect(() => {
+    if (missing) onMissingPreview();
+  }, [missing, onMissingPreview]);
+
+  return (
+    <div
+      className="w-full h-full px-2 py-0.5 hover:bg-gray-50 dark:hover:bg-gray-900 cursor-pointer font-mono text-sm flex items-center"
+      onClick={onClick}
+      onContextMenu={onContextMenu}
+    >
+      <span className="w-[170px] shrink-0">{address}</span>
+      <span
+        data-changed={changed || undefined}
+        className={cn("flex-1 truncate", changed ? CHANGED_VALUE_CLASS : "text-muted-foreground")}
+      >
+        {preview === null ? '<unreadable>' : preview ?? ''}
+      </span>
+    </div>
+  );
+};
+
 export const ContextMemorySearchView = () => {
   const sessionData = useSessionContext();
+  const focusRef = usePanelFocus<HTMLInputElement>('memory_search');
   const [searchTerm, setSearchTerm] = useState('');
   const [searchMode, setSearchMode] = useState<SearchMode>('hex');
   const [addresses, setAddresses] = useState<string[]>([]);
@@ -45,26 +91,117 @@ export const ContextMemorySearchView = () => {
   const [isSearching, setIsSearching] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Hex byte previews per result address, for the rows currently on screen
+  // (null = address became unreadable), plus the addresses whose preview
+  // differs from the previous read (red highlight). One state so the previous
+  // previews double as the change-detection baseline.
+  const [previewState, setPreviewState] = useState<{
+    previews: Map<string, string | null>;
+    changed: Set<string>;
+  }>({ previews: new Map(), changed: new Set() });
 
-  const displayStatus = sessionData?.displayStatus;
-  const isPaused = displayStatus === 'Paused';
+  const canUse = sessionData.canUseMemoryOps;
   const sessionId = sessionData?.session?.id;
+  const isLive = isTargetLive(sessionData.displayStatus);
+
+  const virtualizerRef = useRef<Virtualizer<HTMLDivElement, Element> | null>(null);
+  const addressesRef = useRef<string[]>([]);
+  addressesRef.current = addresses;
+  // Bytes shown per row: the matched pattern, with a floor/cap to stay readable.
+  const previewLenRef = useRef(8);
+  const fetchInFlightRef = useRef(false);
+
+  // Fetch byte previews for the rows currently rendered by the virtualizer.
+  const fetchPreviews = useCallback(async () => {
+    if (!sessionId || fetchInFlightRef.current) return;
+    const all = addressesRef.current;
+    if (all.length === 0) return;
+    const virtualizer = virtualizerRef.current;
+    const visible = virtualizer
+      ? virtualizer.getVirtualItems().map((row) => all[row.index]).filter(Boolean)
+      : all.slice(0, 64);
+    if (visible.length === 0) return;
+
+    fetchInFlightRef.current = true;
+    try {
+      const data = await invoke<(number[] | null)[]>('read_memory_batch', {
+        sessionId,
+        addresses: visible,
+        size: previewLenRef.current,
+      });
+      const values = visible.map((_, i) =>
+        data[i] ? formatBytesAsHex(new Uint8Array(data[i]!)) : null,
+      );
+      // The previous previews are the change baseline: a refreshed address that
+      // differs turns red; identical again → cleared. Addresses first seen this
+      // fetch don't flash. Bail out when nothing changed so the 500ms live poll
+      // doesn't re-render the whole result list with identical previews.
+      setPreviewState((prev) => {
+        let mutated = false;
+        const previews = new Map(prev.previews);
+        const changed = new Set(prev.changed);
+        visible.forEach((addr, i) => {
+          const value = values[i];
+          const had = prev.previews.has(addr);
+          if (!had || prev.previews.get(addr) !== value) {
+            previews.set(addr, value);
+            mutated = true;
+          }
+          const isChanged = had && prev.previews.get(addr) !== value;
+          if (isChanged && !changed.has(addr)) { changed.add(addr); mutated = true; }
+          else if (!isChanged && changed.has(addr)) { changed.delete(addr); mutated = true; }
+        });
+        return mutated ? { previews, changed } : prev;
+      });
+    } catch {
+      // Background preview read; keep last known bytes on failure.
+    } finally {
+      fetchInFlightRef.current = false;
+    }
+  }, [sessionId]);
+
+  // Debounced fetch for rows scrolled into view that have no preview yet.
+  const scheduleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const schedulePreviewFetch = useCallback(() => {
+    if (scheduleTimerRef.current) return;
+    scheduleTimerRef.current = setTimeout(() => {
+      scheduleTimerRef.current = null;
+      fetchPreviews();
+    }, 100);
+  }, [fetchPreviews]);
+  useEffect(() => () => {
+    if (scheduleTimerRef.current) clearTimeout(scheduleTimerRef.current);
+  }, []);
+
+  // Fresh previews when results change (new baseline — a fresh search doesn't
+  // flash red); poll while the target runs live and refresh after each step —
+  // same cadence as the memory window.
+  useEffect(() => {
+    setPreviewState({ previews: new Map(), changed: new Set() });
+    if (addresses.length > 0) fetchPreviews();
+  }, [addresses, fetchPreviews]);
+
+  useLiveRefresh(sessionId, isLive, () => {
+    if (addressesRef.current.length > 0) fetchPreviews();
+  });
 
   const onNavigateToDisassembly = sessionData.onNavigateToDisassembly;
   const onNavigateToMemory = sessionData.onNavigateToMemory;
+  const { addBookmark } = sessionData.bookmarkState;
 
-  const { contextMenu, contextMenuRef, openContextMenu, closeContextMenu } = useContextMenu<{ address: string }>();
+  const { contextMenu, openContextMenu, closeContextMenu } = useContextMenu<{ address: string }>();
 
-  // Clear results when session changes or is not paused
+  // Clear results when session changes or no process is available
   useEffect(() => {
-    if (!sessionId || !isPaused) {
+    if (!sessionId || !canUse) {
       setAddresses([]);
       setCapped(false);
       setHasSearched(false);
       setIsSearching(false);
       setError(null);
+      setPreviewState({ previews: new Map(), changed: new Set() });
     }
-  }, [sessionId, isPaused]);
+  }, [sessionId, canUse]);
 
   // Listen for search results
   useEffect(() => {
@@ -101,7 +238,7 @@ export const ContextMemorySearchView = () => {
   }, [sessionId]);
 
   const handleSearch = useCallback(async () => {
-    if (!sessionId || !isPaused) return;
+    if (!sessionId || !canUse) return;
 
     const trimmed = searchTerm.trim();
     if (trimmed.length === 0) return;
@@ -120,9 +257,11 @@ export const ContextMemorySearchView = () => {
       pattern = Array.from(stringToAsciiBytes(trimmed));
     }
 
+    pushInputHistory(`memsearch-${searchMode}`, trimmed);
     setIsSearching(true);
     setError(null);
     setHasSearched(false);
+    previewLenRef.current = Math.min(Math.max(pattern.length, 8), 16);
 
     try {
       await invoke('request_memory_search', {
@@ -134,7 +273,7 @@ export const ContextMemorySearchView = () => {
       setError(formatTauriError(e));
       setIsSearching(false);
     }
-  }, [sessionId, isPaused, searchTerm, searchMode]);
+  }, [sessionId, canUse, searchTerm, searchMode]);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Enter') {
@@ -144,13 +283,13 @@ export const ContextMemorySearchView = () => {
   }, [handleSearch]);
 
   const renderContent = () => {
-    if (sessionData.session && !isPaused) {
+    if (sessionData.session && !canUse) {
       return (
         <div className="flex flex-col items-center justify-center h-full text-muted-foreground p-4">
           <div className="text-center">
             <HardDrive className="h-12 w-12 mx-auto mb-4 opacity-50" />
             <p className="text-base font-medium">Memory search unavailable</p>
-            <p className="text-sm mt-1">Session must be paused to search memory</p>
+            <p className="text-sm mt-1">Open or run a process to search memory</p>
           </div>
         </div>
       );
@@ -206,28 +345,33 @@ export const ContextMemorySearchView = () => {
         items={addresses}
         rowHeight={28}
         className="h-full"
+        virtualizerRef={virtualizerRef}
         renderItem={(address) => (
-          <div
-            className="w-full h-full px-2 py-0.5 hover:bg-gray-50 dark:hover:bg-gray-900 cursor-pointer font-mono text-sm"
+          <SearchResultRow
+            address={address}
+            preview={previewState.previews.get(address)}
+            changed={previewState.changed.has(address)}
+            onMissingPreview={schedulePreviewFetch}
             onClick={() => onNavigateToMemory?.(address)}
             onContextMenu={(e) => openContextMenu(e, { address })}
-          >
-            {address}
-          </div>
+          />
         )}
       />
     );
   };
 
   return (
-    <div className="flex flex-col h-full">
-      <div className="p-2 border-b space-y-1">
+    <DockPanel>
+      <PanelToolbar stack>
         <div className="flex gap-1">
-          <Input
+          <HistoryInput
+            historyKey={`memsearch-${searchMode}`}
+            ref={focusRef}
             type="text"
+            inputSize="xs"
             placeholder={
-              !isPaused
-                ? 'Session must be paused'
+              !canUse
+                ? 'No process open'
                 : searchMode === 'hex'
                 ? 'Hex bytes: 48 8B 05 or 488B05'
                 : searchMode === 'utf16'
@@ -238,36 +382,28 @@ export const ContextMemorySearchView = () => {
             onChange={(e) => setSearchTerm(e.target.value)}
             onKeyDown={handleKeyDown}
             className="flex-1"
-            disabled={!sessionId || !isPaused}
+            disabled={!sessionId || !canUse}
           />
           <Button
-            size="sm"
+            size="icon-xs"
             variant="outline"
             onClick={handleSearch}
-            disabled={!sessionId || !isPaused || isSearching || searchTerm.trim().length === 0}
+            disabled={!sessionId || !canUse || isSearching || searchTerm.trim().length === 0}
           >
-            <Search className="h-4 w-4" />
+            <Search />
           </Button>
         </div>
-        <div className="flex items-center gap-2 text-xs">
-          <button
-            className={`px-1.5 py-0.5 rounded ${searchMode === 'hex' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-accent'}`}
-            onClick={() => setSearchMode('hex')}
-          >
-            Hex
-          </button>
-          <button
-            className={`px-1.5 py-0.5 rounded ${searchMode === 'ascii' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-accent'}`}
-            onClick={() => setSearchMode('ascii')}
-          >
-            ASCII
-          </button>
-          <button
-            className={`px-1.5 py-0.5 rounded ${searchMode === 'utf16' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-accent'}`}
-            onClick={() => setSearchMode('utf16')}
-          >
-            UTF-16
-          </button>
+        <div className="flex items-center gap-1 text-xs">
+          {(['hex', 'ascii', 'utf16'] as const).map((mode) => (
+            <Button
+              key={mode}
+              size="xs"
+              variant={searchMode === mode ? 'default' : 'ghost'}
+              onClick={() => setSearchMode(mode)}
+            >
+              {mode === 'hex' ? 'Hex' : mode === 'ascii' ? 'ASCII' : 'UTF-16'}
+            </Button>
+          ))}
           {hasSearched && addresses.length > 0 && (
             <span className="ml-auto text-muted-foreground">
               {addresses.length.toLocaleString()} result{addresses.length !== 1 ? 's' : ''}
@@ -279,46 +415,31 @@ export const ContextMemorySearchView = () => {
             </span>
           )}
         </div>
-      </div>
+      </PanelToolbar>
       <div className="flex-1 min-h-0">
-        {addresses.length > 0 ? renderContent() : (
-          <ScrollArea className="h-full">
-            {renderContent()}
-          </ScrollArea>
-        )}
+        {renderContent()}
       </div>
 
       {/* Context Menu */}
       {contextMenu && (
-        <div
-          ref={contextMenuRef}
-          className="fixed z-50 bg-popover text-popover-foreground rounded-md border shadow-md py-1 min-w-[180px]"
-          style={{ left: contextMenu.x, top: contextMenu.y }}
-        >
+        <ContextMenu x={contextMenu.x} y={contextMenu.y} onClose={closeContextMenu} className="min-w-[180px]">
           {onNavigateToDisassembly && (
-            <button
-              className="w-full px-3 py-1.5 text-sm text-left hover:bg-accent hover:text-accent-foreground"
-              onClick={() => {
-                onNavigateToDisassembly(contextMenu.data.address);
-                closeContextMenu();
-              }}
-            >
+            <ContextMenuItem onClick={() => onNavigateToDisassembly(contextMenu.data.address)}>
               Go to Disassembly
-            </button>
+            </ContextMenuItem>
           )}
           {onNavigateToMemory && (
-            <button
-              className="w-full px-3 py-1.5 text-sm text-left hover:bg-accent hover:text-accent-foreground"
-              onClick={() => {
-                onNavigateToMemory(contextMenu.data.address);
-                closeContextMenu();
-              }}
-            >
+            <ContextMenuItem onClick={() => onNavigateToMemory(contextMenu.data.address)}>
               Go to Memory View
-            </button>
+            </ContextMenuItem>
           )}
-        </div>
+          <ContextMenuItem
+            onClick={() => addBookmark({ kind: 'value', address: contextMenu.data.address, valueType: 'U32' })}
+          >
+            Add to Bookmarks
+          </ContextMenuItem>
+        </ContextMenu>
       )}
-    </div>
+    </DockPanel>
   );
 };

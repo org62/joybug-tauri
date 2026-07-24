@@ -5,7 +5,9 @@ import { listen } from '@tauri-apps/api/event';
 import { useSessionContext } from '@/contexts/SessionContext';
 import { formatTauriError } from '@/lib/sessionHelpers';
 import { Badge } from '@/components/ui/badge';
-import { ScrollArea } from '@/components/ui/scroll-area';
+import { TruncatedSymbol } from '@/components/ui/truncated-symbol';
+import { VirtualizedList } from '@/components/ui/virtualized-list';
+import { DockPanel } from '@/components/ui/panel';
 import { Cpu, Loader2 } from 'lucide-react';
 import { CallStackFrameList, CallStackFrame } from '@/components/CallStackFrameList';
 
@@ -21,14 +23,23 @@ interface ContextThreadsViewProps {
   onNavigateToMemoryPointer?: (address: string) => void;
 }
 
+// Fixed row height (px) for the virtualized thread list. Rows are uniform (3 lines
+// of truncated text: title/status, Start, TEB), so a fixed height avoids per-row
+// getBoundingClientRect measurement.
+const THREAD_ROW_HEIGHT = 68;
+
 export const ContextThreadsView = ({ onNavigateToDisassembly, onNavigateToMemoryPointer }: ContextThreadsViewProps) => {
   const sessionData = useSessionContext();
   const sessionId = sessionData?.session?.id;
   const displayStatus = sessionData?.displayStatus;
+  // Call stacks are available whenever a process is (paused, running, or the
+  // non-invasive Open session), since they run over the OOB connection.
+  const canUse = sessionData.canUseMemoryOps;
 
   // Context-level navigation (reuses existing memory tab, like symbols view)
   const onNavigateToDisassemblyCtx = sessionData.onNavigateToDisassembly;
   const onNavigateToMemoryCtx = sessionData.onNavigateToMemory;
+  const onNavigateToTypeCtx = sessionData.onNavigateToType;
 
   // Hover popover state
   const [hoveredThreadId, setHoveredThreadId] = useState<number | null>(null);
@@ -47,6 +58,12 @@ export const ContextThreadsView = ({ onNavigateToDisassembly, onNavigateToMemory
 
   // Thread symbol resolution
   const [threadSymbols, setThreadSymbols] = useState<Map<number, ThreadSymbolInfo>>(new Map());
+
+  // Per-thread TEB base addresses (tid → hex), fetched over OOB when threads load.
+  const [threadTebs, setThreadTebs] = useState<Map<number, string>>(new Map());
+  // Tids already asked for (including those that yielded no TEB), so a thread-set
+  // change with no new threads (e.g. a thread exit) doesn't refetch everything.
+  const queriedTebTidsRef = useRef<Set<number>>(new Set());
 
   // Keep refs in sync with state
   const setLoadingThread = useCallback((tid: number | null) => {
@@ -74,13 +91,41 @@ export const ContextThreadsView = ({ onNavigateToDisassembly, onNavigateToMemory
     }
   }, [sessionData?.session?.id, sessionData?.session?.status, sessionData?.session?.current_event]);
 
-  // Request symbol resolution when threads change and session is paused
+  // Request symbol resolution when threads change and session is paused. Also
+  // re-request when symbolsRefreshKey flips: the backend resolves only
+  // already-loaded modules (so it never blocks on a pending PDB parse), so once
+  // a module's symbols finish loading we must ask again to upgrade raw
+  // addresses to names.
   useEffect(() => {
     if (!sessionId || displayStatus !== 'Paused' || !sessionData?.threads?.length) return;
     invoke('request_resolve_thread_symbols', { sessionId }).catch((err) => {
       console.error('Failed to request thread symbol resolution:', err);
     });
-  }, [sessionId, displayStatus, sessionData?.threads]);
+  }, [sessionId, displayStatus, sessionData?.threads, sessionData?.symbolsRefreshKey]);
+
+  // Fetch per-thread TEB addresses over OOB (works Paused/Running/Open). TEB bases
+  // are stable for a thread's lifetime, so fetch only when an unseen tid appears.
+  useEffect(() => {
+    if (!sessionId || !canUse || !sessionData?.threads?.length) return;
+    if (sessionData.threads.every((t) => queriedTebTidsRef.current.has(t.id))) return;
+    let cancelled = false;
+    invoke<Array<{ tid: number; teb: string | null }>>('get_session_thread_tebs', { sessionId })
+      .then((entries) => {
+        if (cancelled) return;
+        for (const e of entries) queriedTebTidsRef.current.add(e.tid);
+        setThreadTebs((prev) => {
+          const map = new Map(prev);
+          for (const e of entries) {
+            if (e.teb) map.set(e.tid, e.teb);
+          }
+          return map;
+        });
+      })
+      .catch((err) => {
+        console.error('Failed to fetch thread TEB addresses:', err);
+      });
+    return () => { cancelled = true; };
+  }, [sessionId, canUse, sessionData?.threads]);
 
   // Listen for thread symbol resolution results
   useEffect(() => {
@@ -141,9 +186,10 @@ export const ContextThreadsView = ({ onNavigateToDisassembly, onNavigateToMemory
     };
   }, [sessionId, setLoadingThread, setThreadCallStacksCb]);
 
-  // Session cleanup: clear all hover/cache state when session ends or resumes
+  // Session cleanup: clear all hover/cache state when the session ends or the
+  // process becomes unavailable (Stopped/Error). Kept while paused/running/open.
   useEffect(() => {
-    if (!sessionId || displayStatus !== 'Paused') {
+    if (!sessionId || !canUse) {
       setHoveredThread(null);
       setPopoverPos(null);
       setThreadCallStacks(new Map());
@@ -151,11 +197,13 @@ export const ContextThreadsView = ({ onNavigateToDisassembly, onNavigateToMemory
       setLoadingThread(null);
       setCallstackError(null);
       setThreadSymbols(new Map());
+      setThreadTebs(new Map());
+      queriedTebTidsRef.current = new Set();
       popoverHoveredRef.current = false;
       if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
       if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
     }
-  }, [sessionId, displayStatus, setLoadingThread, setHoveredThread]);
+  }, [sessionId, canUse, setLoadingThread, setHoveredThread]);
 
   const clearHoverTimers = useCallback(() => {
     if (hoverTimerRef.current) {
@@ -179,6 +227,23 @@ export const ContextThreadsView = ({ onNavigateToDisassembly, onNavigateToMemory
     }, 150);
   }, [setHoveredThread]);
 
+  // Show the call-stack popover at (x, y) and fetch the thread's stack.
+  // Always refetch: stacks change while the target runs (or across steps).
+  // The cached frames stay visible until the fresh ones arrive.
+  const showThreadCallstack = useCallback((tid: number, x: number, y: number) => {
+    setHoveredThread(tid);
+    setPopoverPos({ x: x + 16, y: y - 8 });
+    setCallstackError(null);
+    if (sessionId && canUse) {
+      setLoadingThread(tid);
+      invoke('request_thread_callstack', { sessionId, tid }).catch((err) => {
+        console.error('Failed to request thread callstack:', err);
+        setLoadingThread(null);
+        setCallstackError({ tid, message: formatTauriError(err) });
+      });
+    }
+  }, [sessionId, canUse, setLoadingThread, setHoveredThread]);
+
   const handleThreadMouseEnter = useCallback((tid: number, e: React.MouseEvent) => {
     // Clear any pending hide
     if (hideTimerRef.current) {
@@ -200,21 +265,16 @@ export const ContextThreadsView = ({ onNavigateToDisassembly, onNavigateToMemory
     const mouseY = e.clientY;
 
     hoverTimerRef.current = setTimeout(() => {
-      setHoveredThread(tid);
-      setPopoverPos({ x: mouseX + 16, y: mouseY - 8 });
-      setCallstackError(null);
-
-      // Fetch callstack if not cached
-      if (!threadCallStacksRef.current.has(tid) && sessionId && displayStatus === 'Paused') {
-        setLoadingThread(tid);
-        invoke('request_thread_callstack', { sessionId, tid }).catch((err) => {
-          console.error('Failed to request thread callstack:', err);
-          setLoadingThread(null);
-          setCallstackError({ tid, message: formatTauriError(err) });
-        });
-      }
+      showThreadCallstack(tid, mouseX, mouseY);
     }, 400);
-  }, [sessionId, displayStatus, setLoadingThread, setHoveredThread]);
+  }, [showThreadCallstack]);
+
+  // Clicking a thread opens its call stack immediately (no hover delay).
+  const handleThreadClick = useCallback((tid: number, e: React.MouseEvent) => {
+    if (hoverTimerRef.current) { clearTimeout(hoverTimerRef.current); hoverTimerRef.current = null; }
+    if (hideTimerRef.current) { clearTimeout(hideTimerRef.current); hideTimerRef.current = null; }
+    showThreadCallstack(tid, e.clientX, e.clientY);
+  }, [showThreadCallstack]);
 
   const handleThreadMouseLeave = useCallback(() => {
     if (hoverTimerRef.current) {
@@ -269,63 +329,81 @@ export const ContextThreadsView = ({ onNavigateToDisassembly, onNavigateToMemory
   };
 
   const cachedFrames = hoveredThreadId !== null ? threadCallStacks.get(hoveredThreadId) : undefined;
-  const isLoadingPopover = hoveredThreadId !== null && loadingThreadId === hoveredThreadId;
+  // Spinner only when there's nothing to show yet; a refetch of an already
+  // cached stack keeps the previous frames visible until fresh ones arrive.
+  const isLoadingPopover = hoveredThreadId !== null && loadingThreadId === hoveredThreadId && !cachedFrames;
   const popoverError = hoveredThreadId !== null && callstackError?.tid === hoveredThreadId ? callstackError.message : null;
 
-  return (
-    <div className="h-full">
-      <ScrollArea className="h-full">
-        {sessionData?.threads && sessionData.threads.length > 0 ? (
-          <div className="space-y-1">
-            {sessionData.threads.map((thread, index) => {
-              const symInfo = threadSymbols.get(thread.id);
-              const displayText = symInfo?.symbol_info ?? thread.start_address;
-              const isFunction = symInfo?.is_function ?? true;
-              const clickColor = isFunction
-                ? 'hover:text-blue-600 dark:hover:text-blue-400'
-                : 'hover:text-green-600 dark:hover:text-green-400';
+  const threads = sessionData?.threads ?? [];
 
-              return (
-                <div
-                  key={index}
-                  className="flex items-center justify-between px-2 py-1 border-b hover:bg-gray-50 dark:hover:bg-gray-900"
-                  onMouseEnter={(e) => handleThreadMouseEnter(thread.id, e)}
-                  onMouseLeave={handleThreadMouseLeave}
-                >
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-1">
-                      <h3 className="font-medium text-sm">Thread {thread.id}</h3>
-                      <Badge
-                        variant="outline"
-                        className={`${getThreadStatusColor(thread.status)} border text-xs px-1 py-0`}
-                      >
-                        {thread.status}
-                      </Badge>
-                    </div>
-                    <p className="text-xs text-muted-foreground truncate">
-                      Start:{' '}
-                      <button
-                        className={`font-mono ${clickColor} hover:underline cursor-pointer`}
-                        onClick={(e) => { e.stopPropagation(); handleStartAddressClick(thread.start_address, isFunction); }}
-                      >
-                        {displayText}
-                      </button>
-                    </p>
+  return (
+    <DockPanel>
+      {threads.length > 0 ? (
+        <VirtualizedList
+          items={threads}
+          rowHeight={THREAD_ROW_HEIGHT}
+          overscan={15}
+          className="flex-1 min-h-0"
+          getItemKey={(_thread, index) => index}
+          renderItem={(thread) => {
+            const symInfo = threadSymbols.get(thread.id);
+            const displayText = symInfo?.symbol_info ?? thread.start_address;
+            const isFunction = symInfo?.is_function ?? true;
+            const clickColor = isFunction
+              ? 'hover:text-blue-600 dark:hover:text-blue-400'
+              : 'hover:text-green-600 dark:hover:text-green-400';
+            const tebAddress = threadTebs.get(thread.id);
+
+            return (
+              <div
+                className="flex items-center justify-between px-2 py-1 border-b hover:bg-gray-50 dark:hover:bg-gray-900 h-full cursor-pointer"
+                onMouseEnter={(e) => handleThreadMouseEnter(thread.id, e)}
+                onMouseLeave={handleThreadMouseLeave}
+                onClick={(e) => handleThreadClick(thread.id, e)}
+              >
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 mb-1">
+                    <h3 className="font-medium text-sm">Thread {thread.id}</h3>
+                    <Badge
+                      variant="outline"
+                      size="xs"
+                      className={getThreadStatusColor(thread.status)}
+                    >
+                      {thread.status}
+                    </Badge>
                   </div>
+                  <p className="text-xs text-muted-foreground flex items-center gap-1 min-w-0">
+                    <span className="shrink-0">Start:</span>
+                    <TruncatedSymbol
+                      text={displayText}
+                      className={`font-mono cursor-pointer hover:underline ${clickColor}`}
+                      onClick={(e) => { e.stopPropagation(); handleStartAddressClick(thread.start_address, isFunction); }}
+                    />
+                  </p>
+                  {tebAddress && (
+                    <p className="text-xs text-muted-foreground flex items-center gap-1 min-w-0">
+                      <span className="shrink-0">TEB:</span>
+                      <TruncatedSymbol
+                        text={tebAddress}
+                        className="font-mono cursor-pointer hover:underline hover:text-purple-600 dark:hover:text-purple-400"
+                        onClick={(e) => { e.stopPropagation(); onNavigateToTypeCtx?.('_TEB', tebAddress); }}
+                      />
+                    </p>
+                  )}
                 </div>
-              );
-            })}
+              </div>
+            );
+          }}
+        />
+      ) : (
+        <div className="flex flex-col items-center justify-center h-full text-muted-foreground p-4">
+          <div className="text-center">
+            <Cpu className="h-12 w-12 mx-auto mb-4 opacity-50" />
+            <p className="text-base font-medium">No threads found</p>
+            <p className="text-sm mt-1">Open, attach to, or run a process to list threads</p>
           </div>
-        ) : (
-          <div className="flex flex-col items-center justify-center h-full text-muted-foreground p-4">
-            <div className="text-center">
-              <Cpu className="h-12 w-12 mx-auto mb-4 opacity-50" />
-              <p className="text-base font-medium">No threads found</p>
-              <p className="text-sm mt-1">Threads will appear here during debugging</p>
-            </div>
-          </div>
-        )}
-      </ScrollArea>
+        </div>
+      )}
 
       {/* Hover popover - portaled to body to escape rc-dock transforms */}
       {hoveredThreadId !== null && popoverPos && createPortal(
@@ -357,6 +435,6 @@ export const ContextThreadsView = ({ onNavigateToDisassembly, onNavigateToMemory
         </div>,
         document.body
       )}
-    </div>
+    </DockPanel>
   );
 };

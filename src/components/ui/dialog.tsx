@@ -3,6 +3,7 @@ import * as DialogPrimitive from "@radix-ui/react-dialog"
 import { XIcon } from "lucide-react"
 
 import { cn } from "@/lib/utils"
+import { isHistoryDropdownOpen } from "@/components/ui/history-input"
 
 function Dialog({
   ...props
@@ -48,6 +49,7 @@ function DialogContent({
   className,
   children,
   showCloseButton = true,
+  onEscapeKeyDown,
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Content> & {
   showCloseButton?: boolean
@@ -55,10 +57,24 @@ function DialogContent({
   return (
     <DialogPortal data-slot="dialog-portal">
       <DialogOverlay />
+      {/* z-[51]: one rank above the overlay, not cosmetic. Radix's DialogPortal
+          gives the overlay and the content their own portals, and on re-open React
+          can commit them in either DOM order. At equal z-index a content-then-overlay
+          order puts the overlay on top, where it silently swallows every click. */}
       <DialogPrimitive.Content
         data-slot="dialog-content"
+        // A HistoryInput's open recall dropdown owns Escape (the input's own
+        // handler closes it); Radix sees the key on the document capture phase
+        // first and would close the whole dialog, losing the draft.
+        onEscapeKeyDown={(e) => {
+          if (isHistoryDropdownOpen()) {
+            e.preventDefault()
+            return
+          }
+          onEscapeKeyDown?.(e)
+        }}
         className={cn(
-          "bg-background data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 fixed top-[50%] left-[50%] z-50 grid w-full max-w-[calc(100%-2rem)] translate-x-[-50%] translate-y-[-50%] gap-4 rounded-lg border p-6 shadow-lg duration-200 sm:max-w-lg",
+          "bg-background data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 fixed top-[50%] left-[50%] z-[51] grid grid-cols-[minmax(0,1fr)] w-full max-w-[calc(100%-2rem)] translate-x-[-50%] translate-y-[-50%] gap-4 rounded-lg border p-6 shadow-lg duration-200 sm:max-w-lg",
           className
         )}
         {...props}

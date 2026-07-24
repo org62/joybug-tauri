@@ -1,17 +1,29 @@
-import { useState } from 'react';
 import { useSessionContext } from '@/contexts/SessionContext';
+import { isTargetLive } from '@/lib/sessionHelpers';
+import { cn, CHANGED_VALUE_CLASS } from '@/lib/utils';
 import { useMemoryScanner, FIRST_SCAN_COMPARE_TYPES, NEXT_SCAN_COMPARE_TYPES, needsValue, needsSecondValue, ScanValueType, ScanCompareType } from '@/hooks/useMemoryScanner';
-import { usePinnedAddresses } from '@/hooks/usePinnedAddresses';
 import { useContextMenu } from '@/hooks/useContextMenu';
-import { Input } from '@/components/ui/input';
+import { usePanelFocus } from '@/hooks/usePanelFocus';
+import { HistoryInput } from '@/components/ui/history-input';
+import { pushInputHistory } from '@/lib/inputHistory';
 import { Button } from '@/components/ui/button';
+import { DockPanel, PanelToolbar } from '@/components/ui/panel';
+import { PaginationFooter } from '@/components/ui/pagination-footer';
+import { ContextMenu, ContextMenuItem } from '@/components/ui/context-menu';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { VirtualizedList } from '@/components/ui/virtualized-list';
-import { ScanSearch, Loader2, AlertTriangle, ChevronLeft, ChevronRight, X, Pin } from 'lucide-react';
+import { ScanSearch, Loader2, AlertTriangle } from 'lucide-react';
 
 const VALUE_TYPES: ScanValueType[] = ['U8', 'U16', 'U32', 'U64', 'F32', 'F64'];
+
+// Compare types whose float comparison uses the ± tolerance. For
+// UnknownInitialValue it isn't used to match, but it is stored with the scan
+// and inherited by later Changed/Unchanged/By next scans.
+const TOLERANCE_COMPARE_TYPES: ScanCompareType[] = [
+  'ExactValue', 'UnknownInitialValue', 'IncreasedValueBy', 'DecreasedValueBy', 'Changed', 'Unchanged',
+];
 
 const COMPARE_LABELS: Record<ScanCompareType, string> = {
   ExactValue: 'Exact Value',
@@ -29,57 +41,61 @@ const COMPARE_LABELS: Record<ScanCompareType, string> = {
 
 export const ContextMemoryScannerView = () => {
   const sessionData = useSessionContext();
-  const displayStatus = sessionData?.displayStatus;
-  const isPaused = displayStatus === 'Paused';
+  const focusRef = usePanelFocus<HTMLInputElement>('memory_scanner');
+  const canUse = sessionData.canUseMemoryOps;
+  // Live = the target keeps running (invasive Running or non-invasive Open), so
+  // scan values must be polled; Paused is static and refreshes only after a step.
+  const isLive = isTargetLive(sessionData.displayStatus);
   const sessionId = sessionData?.session?.id;
   const onNavigateToDisassembly = sessionData.onNavigateToDisassembly;
   const onNavigateToMemory = sessionData.onNavigateToMemory;
+  const { addBookmark } = sessionData.bookmarkState;
 
-  const scanner = useMemoryScanner(sessionId, isPaused);
-  const { pinnedAddresses, addPin, confirmPinRaw, removePin } = usePinnedAddresses(sessionId);
-  const { contextMenu, contextMenuRef, openContextMenu, closeContextMenu } = useContextMenu<{ address: string }>();
-
-  // State for raw address confirmation dialog
-  const [rawPinDialog, setRawPinDialog] = useState<{ address: string; valueType: string } | null>(null);
+  const scanner = useMemoryScanner(sessionId, canUse, isLive);
+  const { contextMenu, openContextMenu, closeContextMenu } = useContextMenu<{ address: string }>();
 
   const compareTypes = scanner.isFirstScan ? FIRST_SCAN_COMPARE_TYPES : NEXT_SCAN_COMPARE_TYPES;
   const showValue = needsValue(scanner.compareType);
   const showValue2 = needsSecondValue(scanner.compareType);
+  const isDeltaCompare = scanner.compareType === 'IncreasedValueBy' || scanner.compareType === 'DecreasedValueBy';
+  const isFloatType = scanner.valueType === 'F32' || scanner.valueType === 'F64';
+  const showTolerance = isFloatType && TOLERANCE_COMPARE_TYPES.includes(scanner.compareType);
+  const tolerancePlaceholder = scanner.compareType === 'ExactValue'
+    ? 'auto (from decimals typed)'
+    : scanner.isFirstScan ? 'auto (1e-6)' : 'auto (inherited from first scan)';
+
+  // Single scan entry point (Enter and both scan buttons) so submitted values
+  // are recorded for history recall; push ignores blanks.
+  const runScan = () => {
+    pushInputHistory('memscan-value', scanner.value);
+    pushInputHistory('memscan-value2', scanner.value2);
+    pushInputHistory('memscan-tolerance', scanner.floatTolerance);
+    if (scanner.isFirstScan) {
+      scanner.handleFirstScan();
+    } else {
+      scanner.handleNextScan();
+    }
+  };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter') {
       e.preventDefault();
-      if (scanner.isFirstScan) {
-        scanner.handleFirstScan();
-      } else {
-        scanner.handleNextScan();
-      }
+      runScan();
     }
   };
 
-  const handlePinAddress = async (address: string) => {
-    const result = await addPin(address, scanner.valueType);
-    if (!result.in_module) {
-      setRawPinDialog({ address, valueType: scanner.valueType });
-    }
-    closeContextMenu();
-  };
-
-  const handleConfirmRawPin = async () => {
-    if (rawPinDialog) {
-      await confirmPinRaw(rawPinDialog.address, rawPinDialog.valueType);
-      setRawPinDialog(null);
-    }
+  const handleAddBookmark = (address: string) => {
+    addBookmark({ kind: 'value', address, valueType: scanner.valueType });
   };
 
   const renderContent = () => {
-    if (sessionData.session && !isPaused) {
+    if (sessionData.session && !canUse) {
       return (
         <div className="flex flex-col items-center justify-center h-full text-muted-foreground p-4">
           <div className="text-center">
             <ScanSearch className="h-12 w-12 mx-auto mb-4 opacity-50" />
             <p className="text-base font-medium">Memory scanner unavailable</p>
-            <p className="text-sm mt-1">Session must be paused to scan memory</p>
+            <p className="text-sm mt-1">Open or run a process to scan memory</p>
           </div>
         </div>
       );
@@ -155,7 +171,10 @@ export const ContextMemoryScannerView = () => {
             onContextMenu={(e) => openContextMenu(e, { address: entry.address })}
           >
             <span className="w-[170px] shrink-0 text-muted-foreground">{entry.address}</span>
-            <span className="flex-1 truncate">{entry.value.display}</span>
+            <span
+              data-changed={scanner.changedAddresses.has(entry.address) || undefined}
+              className={cn("flex-1 truncate", scanner.changedAddresses.has(entry.address) && CHANGED_VALUE_CLASS)}
+            >{entry.value.display}</span>
           </div>
         )}
       />
@@ -163,27 +182,28 @@ export const ContextMemoryScannerView = () => {
   };
 
   return (
-    <div className="flex flex-col h-full">
+    <DockPanel>
       {/* Toolbar */}
-      <div className="p-2 border-b space-y-1">
+      <PanelToolbar stack>
         {/* Value type selector */}
         <div className="flex items-center gap-1 text-xs">
           {VALUE_TYPES.map((vt) => (
-            <button
+            <Button
               key={vt}
-              className={`px-1.5 py-0.5 rounded ${scanner.valueType === vt ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-accent'}`}
+              size="xs"
+              variant={scanner.valueType === vt ? 'default' : 'ghost'}
               onClick={() => scanner.setValueType(vt)}
               disabled={!scanner.isFirstScan}
             >
               {vt}
-            </button>
+            </Button>
           ))}
         </div>
 
         {/* Compare type + value inputs */}
         <div className="flex gap-1">
-          <Select value={scanner.compareType} onValueChange={(v) => scanner.setCompareType(v as ScanCompareType)} disabled={!isPaused}>
-            <SelectTrigger size="sm" className="flex-shrink-0">
+          <Select value={scanner.compareType} onValueChange={(v) => scanner.setCompareType(v as ScanCompareType)} disabled={!canUse}>
+            <SelectTrigger size="xs" className="flex-shrink-0">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -193,50 +213,79 @@ export const ContextMemoryScannerView = () => {
             </SelectContent>
           </Select>
           {showValue && (
-            <Input
+            <HistoryInput
+              historyKey="memscan-value"
+              ref={focusRef}
               type="text"
-              placeholder={showValue2 ? 'Min / Value' : 'Value (dec or 0x hex)'}
+              inputSize="xs"
+              placeholder={showValue2 ? 'Min' : isDeltaCompare ? 'Amount' : 'Value (dec or 0x hex)'}
               value={scanner.value}
               onChange={(e) => scanner.setValue(e.target.value)}
               onKeyDown={handleKeyDown}
               className="flex-1"
-              disabled={!isPaused}
+              disabled={!canUse}
             />
           )}
           {showValue2 && (
-            <Input
+            <HistoryInput
+              historyKey="memscan-value2"
               type="text"
-              placeholder="Max / Amount"
+              inputSize="xs"
+              placeholder="Max"
               value={scanner.value2}
               onChange={(e) => scanner.setValue2(e.target.value)}
               onKeyDown={handleKeyDown}
               className="flex-1"
-              disabled={!isPaused}
+              disabled={!canUse}
             />
           )}
         </div>
 
+        {showTolerance && (
+          <div className="flex items-center gap-1.5">
+            <TooltipProvider delayDuration={200}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span className="text-xs text-muted-foreground whitespace-nowrap cursor-help underline decoration-dotted underline-offset-2">± tolerance</span>
+                </TooltipTrigger>
+                <TooltipContent side="bottom" align="start" className="max-w-sm text-xs">
+                  <p>How far off a value may be and still count as a match. A match is anything from (your number − tolerance) to (your number + tolerance).</p>
+                  <p className="mt-1.5">Searching Exact Value <span className="font-mono">100</span>:</p>
+                  <ul className="mt-0.5 ml-3 list-disc space-y-0.5">
+                    <li>tolerance <span className="font-mono">1</span> → finds 99 to 101</li>
+                    <li>tolerance <span className="font-mono">0.1</span> → finds 99.9 to 100.1</li>
+                    <li>tolerance <span className="font-mono">0</span> → finds only exactly 100</li>
+                  </ul>
+                  <p className="mt-1.5">For Unchanged / Changed it is how much a value may drift and still count as "same". With tolerance <span className="font-mono">1</span>: 100 → 100.8 is Unchanged, 100 → 102 is Changed.</p>
+                  <p className="mt-1.5">Blank = automatic. For Exact Value it matches whatever displays as your number: typing <span className="font-mono">100</span> finds 99.5 to 100.5, typing <span className="font-mono">100.0</span> finds 99.95 to 100.05. Next scans keep using the first scan's tolerance.</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+            <HistoryInput
+              historyKey="memscan-tolerance"
+              type="text"
+              inputSize="xs"
+              placeholder={tolerancePlaceholder}
+              value={scanner.floatTolerance}
+              onChange={(e) => scanner.setFloatTolerance(e.target.value)}
+              onKeyDown={handleKeyDown}
+              className="flex-1"
+              disabled={!canUse}
+            />
+          </div>
+        )}
+
         {/* Action buttons */}
         <div className="flex gap-1 items-center">
-          {scanner.isFirstScan ? (
-            <Button
-              size="sm"
-              onClick={scanner.handleFirstScan}
-              disabled={!isPaused || scanner.isScanning || (showValue && !scanner.value.trim())}
-            >
-              First Scan
-            </Button>
-          ) : (
-            <Button
-              size="sm"
-              onClick={scanner.handleNextScan}
-              disabled={!isPaused || scanner.isScanning || (showValue && !scanner.value.trim())}
-            >
-              Next Scan
-            </Button>
-          )}
           <Button
-            size="sm"
+            size="xs"
+            onClick={runScan}
+            disabled={!canUse || scanner.isScanning || (showValue && !scanner.value.trim())}
+          >
+            {scanner.isFirstScan ? 'First Scan' : 'Next Scan'}
+          </Button>
+          <Button
+            size="xs"
             variant="outline"
             onClick={scanner.handleNewScan}
             disabled={scanner.isFirstScan && scanner.scanId === null}
@@ -245,7 +294,7 @@ export const ContextMemoryScannerView = () => {
           </Button>
 
           <div className="flex items-center gap-1.5 ml-auto">
-            <Switch checked={scanner.writableOnly} onCheckedChange={scanner.setWritableOnly} disabled={!scanner.isFirstScan} />
+            <Switch size="xs" checked={scanner.writableOnly} onCheckedChange={scanner.setWritableOnly} disabled={!scanner.isFirstScan} />
             <span className="text-xs text-muted-foreground">Writable</span>
           </div>
         </div>
@@ -257,42 +306,7 @@ export const ContextMemoryScannerView = () => {
             {scanner.scanTimeUs > 0 && ` (${(scanner.scanTimeUs / 1000).toFixed(1)}ms)`}
           </div>
         )}
-      </div>
-
-      {/* Pinned Addresses */}
-      {pinnedAddresses.length > 0 && (
-        <div className="border-b">
-          <div className="px-2 py-1 text-xs text-muted-foreground flex items-center gap-1">
-            <Pin className="h-3 w-3" />
-            Pinned Addresses
-          </div>
-          {pinnedAddresses.map((pin, i) => (
-            <div
-              key={`${pin.address_hex}-${i}`}
-              className={`flex items-center gap-2 px-2 py-0.5 text-sm hover:bg-accent ${!pin.is_resolved ? 'opacity-50' : ''}`}
-            >
-              <span
-                className="font-mono text-xs cursor-pointer hover:underline shrink-0"
-                onClick={() => pin.is_resolved && onNavigateToMemory?.(pin.address_hex)}
-              >
-                {pin.address_hex}
-              </span>
-              <span className="text-xs text-muted-foreground shrink-0">
-                {pin.module_name ?? 'raw'}
-              </span>
-              <span className="text-xs text-muted-foreground shrink-0">{pin.value_type}</span>
-              {pin.label && <span className="text-xs truncate">{pin.label}</span>}
-              {!pin.is_resolved && <span className="text-xs text-muted-foreground">(unresolved)</span>}
-              <button
-                className="ml-auto p-0.5 rounded hover:bg-accent text-muted-foreground hover:text-foreground shrink-0"
-                onClick={() => removePin(pin.address_hex, pin.module_name)}
-              >
-                <X className="h-3 w-3" />
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
+      </PanelToolbar>
 
       {/* Results */}
       <div className="flex-1 min-h-0">
@@ -300,80 +314,27 @@ export const ContextMemoryScannerView = () => {
       </div>
 
       {/* Pagination */}
-      {scanner.totalPages > 1 && (
-        <div className="p-1 border-t flex items-center justify-between text-xs text-muted-foreground">
-          <Button
-            size="sm"
-            variant="ghost"
-            className="h-6 px-2"
-            disabled={scanner.currentPage === 0}
-            onClick={() => scanner.loadPage(scanner.currentPage - 1)}
-          >
-            <ChevronLeft className="h-3 w-3" />
-          </Button>
-          <span>
-            Page {scanner.currentPage + 1} of {scanner.totalPages} ({scanner.totalCount.toLocaleString()} total)
-          </span>
-          <Button
-            size="sm"
-            variant="ghost"
-            className="h-6 px-2"
-            disabled={scanner.currentPage >= scanner.totalPages - 1}
-            onClick={() => scanner.loadPage(scanner.currentPage + 1)}
-          >
-            <ChevronRight className="h-3 w-3" />
-          </Button>
-        </div>
-      )}
+      <PaginationFooter currentPage={scanner.currentPage} totalPages={scanner.totalPages}
+        totalCount={scanner.totalCount} onPageChange={scanner.loadPage} />
 
       {/* Context Menu */}
       {contextMenu && (
-        <div
-          ref={contextMenuRef}
-          className="fixed z-50 bg-popover text-popover-foreground rounded-md border shadow-md py-1 min-w-[180px]"
-          style={{ left: contextMenu.x, top: contextMenu.y }}
-        >
+        <ContextMenu x={contextMenu.x} y={contextMenu.y} onClose={closeContextMenu} className="min-w-[180px]">
           {onNavigateToDisassembly && (
-            <button
-              className="w-full px-3 py-1.5 text-sm text-left hover:bg-accent hover:text-accent-foreground"
-              onClick={() => { onNavigateToDisassembly(contextMenu.data.address); closeContextMenu(); }}
-            >
+            <ContextMenuItem onClick={() => onNavigateToDisassembly(contextMenu.data.address)}>
               Go to Disassembly
-            </button>
+            </ContextMenuItem>
           )}
           {onNavigateToMemory && (
-            <button
-              className="w-full px-3 py-1.5 text-sm text-left hover:bg-accent hover:text-accent-foreground"
-              onClick={() => { onNavigateToMemory(contextMenu.data.address); closeContextMenu(); }}
-            >
+            <ContextMenuItem onClick={() => onNavigateToMemory(contextMenu.data.address)}>
               Go to Memory View
-            </button>
+            </ContextMenuItem>
           )}
-          <button
-            className="w-full px-3 py-1.5 text-sm text-left hover:bg-accent hover:text-accent-foreground"
-            onClick={() => handlePinAddress(contextMenu.data.address)}
-          >
-            Pin Address
-          </button>
-        </div>
+          <ContextMenuItem onClick={() => handleAddBookmark(contextMenu.data.address)}>
+            Add to Bookmarks
+          </ContextMenuItem>
+        </ContextMenu>
       )}
-
-      {/* Raw Address Confirmation Dialog */}
-      <Dialog open={rawPinDialog !== null} onOpenChange={(open) => { if (!open) setRawPinDialog(null); }}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Pin Non-Module Address</DialogTitle>
-            <DialogDescription>
-              The address <span className="font-mono">{rawPinDialog?.address}</span> is not within any loaded module.
-              It will be saved as a raw address and won't survive ASLR across restarts.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setRawPinDialog(null)}>Cancel</Button>
-            <Button onClick={handleConfirmRawPin}>Pin Anyway</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </div>
+    </DockPanel>
   );
 };

@@ -6,8 +6,8 @@ use crate::state::{
 use joybug2::protocol::DebuggerRequest;
 use std::sync::{Arc, Mutex};
 use std::thread;
-use tauri::{State, Emitter};
-use tracing::{error, info};
+use tauri::{State, Emitter, Manager};
+use tracing::{error, info, warn};
 
 #[tauri::command]
 pub fn greet(name: &str) -> String {
@@ -21,12 +21,15 @@ pub fn create_debug_session(
     launch_command: String,
     working_directory: Option<String>,
     is_local_run: bool,
+    attach_pid: Option<u32>,
+    non_invasive: Option<bool>,
     session_states: State<'_, SessionStatesMap>,
     app_handle: tauri::AppHandle,
 ) -> std::result::Result<String, String> {
+    let non_invasive = non_invasive.unwrap_or(false);
     let mut states = session_states.lock().unwrap();
 
-    if !is_local_run {
+    if !is_local_run && attach_pid.is_none() {
         for session_state in states.values() {
             let state = session_state.lock().unwrap();
             if !state.is_local_run && state.server_url == server_url && state.launch_command == launch_command {
@@ -52,12 +55,16 @@ pub fn create_debug_session(
         launch_command,
         working_directory,
         is_local_run,
+        attach_pid,
+        non_invasive,
     )));
 
     {
         let mut state = session_state_arc.lock().unwrap();
         state.breakpoints = crate::breakpoint_store::load_breakpoints(&state.launch_command);
         state.patches = crate::patch_store::load_patches(&state.launch_command);
+        state.symbol_overrides = crate::symbol_store::load_symbol_overrides(&state.launch_command);
+        state.bookmarks = crate::bookmark_store::load_bookmarks(&state.launch_command);
     }
 
     states.insert(session_id.clone(), session_state_arc.clone());
@@ -84,12 +91,15 @@ pub fn update_debug_session(
     launch_command: String,
     working_directory: Option<String>,
     is_local_run: bool,
+    attach_pid: Option<u32>,
+    non_invasive: Option<bool>,
     session_states: State<'_, SessionStatesMap>,
     app_handle: tauri::AppHandle,
 ) -> std::result::Result<(), String> {
+    let non_invasive = non_invasive.unwrap_or(false);
     let states = session_states.lock().unwrap();
 
-    if !is_local_run {
+    if !is_local_run && attach_pid.is_none() {
         for (id, session_state) in states.iter() {
             if id != &session_id {
                 let state = session_state.lock().unwrap();
@@ -112,6 +122,8 @@ pub fn update_debug_session(
         state.server_url = if is_local_run { String::new() } else { server_url };
         state.launch_command = launch_command;
         state.working_directory = working_directory.filter(|w| !w.trim().is_empty());
+        state.attach_pid = attach_pid;
+        state.non_invasive = non_invasive;
 
         let session_state_arc = session_state.clone();
 
@@ -194,7 +206,12 @@ pub fn start_debug_session(
         let mut state = session_state.lock().unwrap();
         if state.is_local_run {
             info!("Starting embedded server for local run session: {}", session_id);
-            let server_handle = LocalServer::start()
+            let symbol_cfg = {
+                let settings = app_handle.state::<crate::settings::SettingsState>();
+                let settings = settings.lock().unwrap();
+                settings.symbol_config()
+            };
+            let server_handle = LocalServer::start_with_config(symbol_cfg)
                 .map_err(|e| Error::ConnectionFailed(format!("Failed to start embedded server: {}", e)))?;
 
             let port = server_handle.port();
@@ -209,6 +226,46 @@ pub fn start_debug_session(
         }
     }
 
+    // Non-invasive session: open the target for memory/enumeration only. Resolve
+    // the live PID, mark the session Open, and return without a debug loop.
+    {
+        let (non_invasive, server_url, attach_pid, launch_command) = {
+            let state = session_state.lock().unwrap();
+            (state.non_invasive, state.server_url.clone(), state.attach_pid, state.launch_command.clone())
+        };
+        if non_invasive {
+            let stored_pid = attach_pid.ok_or_else(|| {
+                Error::InvalidSessionState("Non-invasive session requires a target PID".to_string())
+            })?;
+            // Resolve the live PID and register the process with the server
+            // non-invasively — one temp connection for both — so modules, threads,
+            // symbols, disassembly, PE info and call stacks are available without
+            // attaching a debugger.
+            let pid = {
+                let mut client = connect_temp_client(&server_url)?;
+                let pid = resolve_open_pid(&mut client, stored_pid, &launch_command)?;
+                client
+                    .open_process(pid)
+                    .map_err(|e| Error::ConnectionFailed(format!("Failed to open process {}: {}", pid, e)))?;
+                pid
+            };
+            {
+                let mut state = session_state.lock().unwrap();
+                state.attach_pid = Some(pid);
+                state.open_pid = Some(pid);
+                state.status = SessionStatusUI::Open;
+            }
+            emit_session_event(&session_state, &app_handle);
+            crate::ui_logger::log_info(
+                &app_handle,
+                &format!("Opened process {} non-invasively for session {}", pid, session_id),
+                Some(session_id.clone()),
+            );
+            info!("Non-invasive session {} opened pid {}", session_id, pid);
+            return Ok(());
+        }
+    }
+
     emit_session_event(&session_state, &app_handle);
 
     crate::ui_logger::log_info(
@@ -217,39 +274,99 @@ pub fn start_debug_session(
         Some(session_id.clone()),
     );
 
-    let session_state_for_thread = session_state.clone();
-    let app_handle_for_thread = app_handle.clone();
-    let session_id_for_thread = session_id.clone();
+    spawn_debug_loop(session_state, app_handle, session_id);
 
-    thread::spawn(move || {
-        let result = run_debug_session(session_state_for_thread.clone(), Some(app_handle_for_thread.clone()));
+    Ok(())
+}
 
-        {
-            let mut state = session_state_for_thread.lock().unwrap();
-            match &result {
-                Ok(_) => {
-                    if !matches!(state.status, SessionStatusUI::Stopped) {
-                        state.status = SessionStatusUI::Stopped;
+/// Spawn the blocking debug-session loop on its own thread and record the final
+/// status when it exits. Shared by `start_debug_session` and `attach_open_session`.
+fn spawn_debug_loop(
+    session_state: Arc<Mutex<SessionStateUI>>,
+    app_handle: tauri::AppHandle,
+    session_id: String,
+) {
+    let handle = thread::spawn({
+        let session_state = session_state.clone();
+        move || {
+            let result = run_debug_session(session_state.clone(), Some(app_handle.clone()));
+
+            {
+                let mut state = session_state.lock().unwrap();
+                match &result {
+                    Ok(_) => {
+                        if !matches!(state.status, SessionStatusUI::Stopped) {
+                            state.status = SessionStatusUI::Stopped;
+                        }
+                        info!("Debug session {} completed successfully", session_id);
                     }
-                    info!("Debug session {} completed successfully", session_id_for_thread);
+                    Err(e) => {
+                        // A user-initiated stop marks the session Stopped up front and
+                        // then tears down the server, which surfaces here as a
+                        // connection error. Keep it Stopped rather than flipping to a
+                        // spurious Error.
+                        if matches!(state.status, SessionStatusUI::Stopped) {
+                            info!("Debug session {} stopped by user", session_id);
+                        } else {
+                            state.status = SessionStatusUI::Error(e.to_string());
+                            let error_message = format!("Debug session {} failed: {}", session_id, e);
+                            error!("{}", &error_message);
+                            crate::ui_logger::log_error(&app_handle, &error_message, Some(session_id.clone()));
+                        }
+                    }
                 }
-                Err(e) => {
-                    state.status = SessionStatusUI::Error(e.to_string());
-                    let error_message = format!("Debug session {} failed: {}", session_id_for_thread, e);
-                    error!("{}", &error_message);
-                    crate::ui_logger::log_error(
-                        &app_handle_for_thread,
-                        &error_message,
-                        Some(session_id_for_thread.clone()),
-                    );
-                }
+                state.debug_result = Some(result.map_err(|e| e.to_string()));
             }
-            state.debug_result = Some(result.map_err(|e| e.to_string()));
+
+            emit_session_event(&session_state, &app_handle);
         }
-
-        emit_session_event(&session_state_for_thread, &app_handle_for_thread);
     });
+    session_state.lock().unwrap().debug_loop_handle = Some(handle);
+}
 
+/// Promote a non-invasive `Open` session to a full attached debug session on the
+/// same PID: release the non-invasive registration, then run the debug loop
+/// (which attaches via `attach_pid`). Enables breakpoints, stepping and Detach.
+#[tauri::command]
+pub fn attach_open_session(
+    session_id: String,
+    session_states: State<'_, SessionStatesMap>,
+    oob_pool: State<'_, super::OobPool>,
+    app_handle: tauri::AppHandle,
+) -> Result<()> {
+    let session_state = {
+        let states = session_states.lock().unwrap();
+        states.get(&session_id).cloned().ok_or_else(|| Error::SessionNotFound(session_id.clone()))?
+    };
+
+    let (server_url, pid) = {
+        let state = session_state.lock().unwrap();
+        if !state.non_invasive || !matches!(state.status, SessionStatusUI::Open) {
+            return Err(Error::InvalidSessionState("Session is not a non-invasive Open session".to_string()));
+        }
+        let pid = state.open_pid.or(state.attach_pid)
+            .ok_or_else(|| Error::InvalidSessionState("No target PID to attach to".to_string()))?;
+        (state.server_url.clone(), pid)
+    };
+
+    // Drop the pooled OOB connections and release the non-invasive process entry so
+    // the debug loop's DebugActiveProcess can take over cleanly.
+    oob_pool.remove(&session_id);
+    if let Ok(mut client) = connect_temp_client(&server_url) {
+        let _ = client.close_process(pid);
+    }
+
+    {
+        let mut state = session_state.lock().unwrap();
+        state.non_invasive = false;
+        state.open_pid = None;
+        state.attach_pid = Some(pid);
+        state.status = SessionStatusUI::Running;
+    }
+    emit_session_event(&session_state, &app_handle);
+    crate::ui_logger::log_info(&app_handle, &format!("Attaching to process {}", pid), Some(session_id.clone()));
+
+    spawn_debug_loop(session_state, app_handle, session_id);
     Ok(())
 }
 
@@ -258,6 +375,7 @@ pub fn stop_debug_session(
     session_id: String,
     session_states: State<'_, SessionStatesMap>,
     embedded_servers: State<'_, EmbeddedServersMap>,
+    oob_pool: State<'_, super::OobPool>,
     app_handle: tauri::AppHandle,
 ) -> Result<()> {
     let session_state = {
@@ -265,22 +383,123 @@ pub fn stop_debug_session(
         states.get(&session_id).cloned()
     };
 
+    // Drop any pooled live-poll connection so its socket and server-side
+    // connection are released along with the session.
+    oob_pool.remove(&session_id);
+
     if let Some(session_state) = session_state {
+        // Snapshot the target before teardown.
+        let (pid, server_url, non_invasive, already_stopped) = {
+            let state = session_state.lock().unwrap();
+            let pid = state.current_event.as_ref().map(|ev| ev.pid()).or(state.open_pid).unwrap_or(0);
+            (pid, state.server_url.clone(), state.non_invasive, matches!(state.status, SessionStatusUI::Stopped))
+        };
+
+        // Terminate an invasive target so stopping a *running* session doesn't
+        // leak the debuggee, and so a debug loop blocked in WaitForDebugEvent
+        // unwinds on the resulting exit event (paused loops unwind via the Stop
+        // command below). Sent over a fresh OOB connection while the server is
+        // still up. Non-invasive sessions only opened the process read-only, so
+        // they are left running (see [[server-side-continuous-ops]]).
+        if pid != 0 && !non_invasive && !already_stopped {
+            if let Err(e) = send_out_of_band_request(&server_url, DebuggerRequest::TerminateProcess { pid }) {
+                warn!("stop: terminating target pid {} failed (already gone?): {}", pid, e);
+            }
+        }
+
         {
             let mut state = session_state.lock().unwrap();
             if let Some(sender) = state.ui_sender.take() {
                 info!("Stopping session by dropping the step_sender.");
                 let _ = sender.send(UICommand::Stop);
             }
+            // Mark the session Stopped immediately (not only for non-invasive
+            // sessions). A running target's debug-loop thread only flips the
+            // status once it unwinds; until then, the still-mounted UI keeps
+            // firing background OOB polls that slow-fail against the dying
+            // server and serialise ahead of this stop/delete. Marking Stopped
+            // now makes those polls short-circuit (see `oob_pid`) and updates
+            // the UI at once.
+            state.status = SessionStatusUI::Stopped;
+            // Free the per-run heap caches now, not on the next start — a
+            // stopped session must not keep holding module images, event
+            // history, or annotation caches for a dead target. (The debug-loop
+            // thread may still be unwinding; its clean-exit path clears again.)
+            state.clear_runtime_caches();
         }
 
-        if let Some(mut server_handle) = embedded_servers.lock().unwrap().remove(&session_id) {
+        // Bind the handle out of the map lock before stopping it, so a slow
+        // server shutdown never holds the embedded-servers mutex.
+        let server_handle = embedded_servers.lock().unwrap().remove(&session_id);
+        if let Some(mut server_handle) = server_handle {
             info!("Stopping embedded server for session {}", session_id);
             server_handle.stop();
         }
 
         emit_session_event(&session_state, &app_handle);
     }
+    Ok(())
+}
+
+/// Restart a session: stop it (terminating the target), wait for the old
+/// debug-loop thread to fully unwind, then start a fresh run. The wait happens
+/// on a background thread — the command returns immediately and the UI follows
+/// along via `session-updated` events.
+#[tauri::command]
+pub fn restart_debug_session(
+    session_id: String,
+    session_states: State<'_, SessionStatesMap>,
+    embedded_servers: State<'_, EmbeddedServersMap>,
+    oob_pool: State<'_, super::OobPool>,
+    app_handle: tauri::AppHandle,
+) -> Result<()> {
+    let session_state = super::get_session_arc(&session_id, &session_states)?;
+
+    stop_debug_session(
+        session_id.clone(),
+        session_states,
+        embedded_servers,
+        oob_pool,
+        app_handle.clone(),
+    )?;
+
+    // The old loop thread flips status/debug_result when it exits; starting a
+    // new run before that write would let it clobber the fresh run's state.
+    let old_loop = session_state.lock().unwrap().debug_loop_handle.take();
+
+    thread::spawn(move || {
+        if let Some(handle) = old_loop {
+            // Join with a deadline: a helper thread joins the loop and signals
+            // by dropping its channel end (no polling). If the loop hangs past
+            // the deadline the helper stays parked on the join and dies with
+            // the process — the same leak the old sleep-poll had.
+            let (exit_tx, exit_rx) = std::sync::mpsc::channel::<()>();
+            thread::spawn(move || {
+                let _ = handle.join();
+                drop(exit_tx);
+            });
+            if let Err(std::sync::mpsc::RecvTimeoutError::Timeout) =
+                exit_rx.recv_timeout(std::time::Duration::from_secs(15))
+            {
+                let msg = format!(
+                    "Restart aborted: session {} did not stop within 15s",
+                    session_id
+                );
+                error!("{}", msg);
+                crate::ui_logger::toast_error(&app_handle, &msg);
+                return;
+            }
+        }
+
+        let states = app_handle.state::<SessionStatesMap>();
+        let servers = app_handle.state::<EmbeddedServersMap>();
+        if let Err(e) = start_debug_session(session_id.clone(), states, servers, app_handle.clone()) {
+            let msg = format!("Restart failed to start session {}: {}", session_id, e);
+            error!("{}", msg);
+            crate::ui_logger::toast_error(&app_handle, &msg);
+        }
+    });
+
     Ok(())
 }
 
@@ -346,17 +565,94 @@ pub fn pause_debug_session(
     }
 }
 
-fn send_out_of_band_request(server_url: &str, req: DebuggerRequest) -> Result<()> {
-    let tmp_state = std::sync::Arc::new(std::sync::Mutex::new(crate::state::SessionStateUI::new(
-        format!("tmp_oob_{}", chrono::Utc::now().timestamp_millis()),
+/// Detach the debugger from the target, leaving it running. Requires the session
+/// to be paused: the detach request is sent over the session's own connection from
+/// inside the paused debug loop, then the loop exits cleanly.
+#[tauri::command]
+pub fn detach_debug_session(
+    session_id: String,
+    session_states: State<'_, SessionStatesMap>,
+    oob_pool: State<'_, super::OobPool>,
+    app_handle: tauri::AppHandle,
+) -> Result<()> {
+    // Release any pooled live-poll connection before the session ends.
+    oob_pool.remove(&session_id);
+
+    super::send_paused_command(&session_id, &session_states, UICommand::Detach)?;
+
+    crate::ui_logger::log_info(&app_handle, "Detach requested", Some(session_id));
+    Ok(())
+}
+
+/// Enumerate running processes so the UI can offer an attach target. Connects to
+/// `server_url` when given (remote server); otherwise spins up a short-lived
+/// embedded server just to list processes locally.
+#[tauri::command]
+pub fn list_processes(
+    server_url: Option<String>,
+) -> std::result::Result<Vec<joybug2::protocol::ProcessInfo>, String> {
+    let url = server_url.filter(|s| !s.trim().is_empty());
+
+    let mut temp_server: Option<LocalServer> = None;
+    let effective_url = match url {
+        Some(u) => u,
+        None => {
+            let server = LocalServer::start()
+                .map_err(|e| format!("Failed to start embedded server: {}", e))?;
+            let u = format!("127.0.0.1:{}", server.port());
+            temp_server = Some(server);
+            u
+        }
+    };
+
+    let result = (|| {
+        let mut client = connect_temp_client(&effective_url).map_err(|e| e.to_string())?;
+        let mut processes = client.list_processes().map_err(|e| e.to_string())?;
+        processes.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+        Ok::<_, String>(processes)
+    })();
+
+    if let Some(mut server) = temp_server {
+        server.stop();
+    }
+
+    result
+}
+
+/// Connect a throwaway joybug2 client to `server_url` for a single one-shot
+/// request. The temp session state is untracked and carries no launch command.
+fn connect_temp_client(server_url: &str) -> Result<crate::session::types::DebugSession> {
+    let tmp_state = Arc::new(Mutex::new(SessionStateUI::new(
+        format!("tmp_{}", chrono::Utc::now().timestamp_millis()),
         "tmp".to_string(),
         server_url.to_string(),
         "".to_string(),
         None,
         false,
+        None,
+        false,
     )));
-    let mut client = joybug2::protocol_io::DebugSession::new(tmp_state, Some(server_url))
-        .map_err(|e| Error::ConnectionFailed(e.to_string()))?;
+    joybug2::protocol_io::DebugSession::new(tmp_state, Some(server_url))
+        .map_err(|e| Error::ConnectionFailed(e.to_string()))
+}
+
+/// Resolve which live PID a non-invasive session should open. Same policy as
+/// `runner::resolve_attach_pid`: prefer the stored PID if still alive, else match
+/// uniquely by image name (zero/several matches are surfaced as an error).
+fn resolve_open_pid(
+    client: &mut crate::session::types::DebugSession,
+    stored_pid: u32,
+    target_name: &str,
+) -> Result<u32> {
+    let processes = client
+        .list_processes()
+        .map_err(|e| Error::ConnectionFailed(format!("Failed to list processes: {}", e)))?;
+    crate::session::helpers::match_target_pid(&processes, stored_pid, target_name)
+        .map_err(Error::InvalidSessionState)
+}
+
+fn send_out_of_band_request(server_url: &str, req: DebuggerRequest) -> Result<()> {
+    let mut client = connect_temp_client(server_url)?;
     match req {
         DebuggerRequest::BreakInto { pid } => {
             client
@@ -378,9 +674,10 @@ pub fn delete_debug_session(
     session_id: String,
     session_states: State<'_, SessionStatesMap>,
     embedded_servers: State<'_, EmbeddedServersMap>,
+    oob_pool: State<'_, super::OobPool>,
     app_handle: tauri::AppHandle,
 ) -> Result<()> {
-    let _ = stop_debug_session(session_id.clone(), session_states.clone(), embedded_servers.clone(), app_handle.clone());
+    let _ = stop_debug_session(session_id.clone(), session_states.clone(), embedded_servers.clone(), oob_pool.clone(), app_handle.clone());
 
     if session_states.lock().unwrap().remove(&session_id).is_some() {
         info!("Successfully deleted session: {}", session_id);

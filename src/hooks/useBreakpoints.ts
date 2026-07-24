@@ -16,9 +16,13 @@ export interface Breakpoint {
   symbol: string | null;
   enabled: boolean;
   is_active: boolean;
-  bp_kind: string;            // "software" | "hardware"
+  bp_kind: string;            // "software" | "hardware" | "watchpoint"
   hw_type: string | null;     // "Execute" | "Write" | "ReadWrite"
   hw_size: number | null;     // 1, 2, 4, 8
+  tracing: boolean;           // derived: an active watchpoint is armed & collecting
+  source_file: string | null; // resolved source file (display only)
+  source_line: number | null; // resolved source line (display only)
+  single_shot: boolean;       // one-shot: auto-removed after first hit
 }
 
 interface BreakpointsUpdatedPayload {
@@ -40,6 +44,10 @@ function convertBreakpoints(raw: RawBreakpoint[]): Breakpoint[] {
     bp_kind: bp.bp_kind ?? "software",
     hw_type: bp.hw_type ?? null,
     hw_size: bp.hw_size ?? null,
+    tracing: (bp.bp_kind ?? "software") === "watchpoint" && bp.is_active,
+    source_file: bp.source_file ?? null,
+    source_line: bp.source_line ?? null,
+    single_shot: bp.single_shot ?? false,
   }));
 }
 
@@ -51,12 +59,14 @@ export function useBreakpoints(sessionId?: string, isPaused?: boolean, sessionBr
   const sessionBpRef = useRef(sessionBreakpoints);
   sessionBpRef.current = sessionBreakpoints;
 
-  // Session cleanup / seed: clear when session ends,
-  // seed from session context when isPaused becomes true.
+  // Session cleanup / seed: clear when session ends, seed from session context
+  // when the session appears and re-seed on pause transitions. Not gated on
+  // isPaused — a non-invasive Open session never pauses but still has
+  // persisted breakpoints to show.
   useEffect(() => {
     if (!sessionId) {
       setBreakpoints([]);
-    } else if (isPaused && sessionBpRef.current && sessionBpRef.current.length > 0) {
+    } else if (sessionBpRef.current && sessionBpRef.current.length > 0) {
       setBreakpoints(convertBreakpoints(sessionBpRef.current));
     }
   }, [sessionId, isPaused]);
@@ -76,10 +86,10 @@ export function useBreakpoints(sessionId?: string, isPaused?: boolean, sessionBr
     };
   }, [sessionId]);
 
-  const toggleBreakpoint = useCallback(async (address: string) => {
+  const toggleBreakpoint = useCallback(async (address: string, singleShot = false) => {
     if (!sessionId) return;
     try {
-      await invokeToggleBreakpoint(sessionId, address);
+      await invokeToggleBreakpoint(sessionId, address, singleShot);
     } catch (e) {
       console.error('Failed to toggle breakpoint:', e);
     }

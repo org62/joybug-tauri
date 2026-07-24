@@ -77,12 +77,39 @@ pub struct DebugSettings {
     pub stop_on_process_create: bool,
     #[serde(default)]
     pub stop_on_debug_output: bool,
+    /// Plant a single-shot breakpoint at each loaded user module's entry point (DllMain/OEP).
+    #[serde(default)]
+    pub break_on_user_module_entry: bool,
+    /// Plant a single-shot breakpoint at each loaded system (System32/SysWOW64) module's entry point.
+    #[serde(default)]
+    pub break_on_system_module_entry: bool,
+    /// Plant single-shot breakpoints at each loaded user module's TLS callbacks.
+    #[serde(default)]
+    pub break_on_user_tls_callbacks: bool,
+    /// Plant single-shot breakpoints at each loaded system (System32/SysWOW64) module's TLS callbacks.
+    #[serde(default)]
+    pub break_on_system_tls_callbacks: bool,
     #[serde(default)]
     pub keybindings: KeybindingSettings,
     #[serde(default)]
     pub exception_rules: Vec<ExceptionRule>,
     #[serde(default)]
     pub debugger_hiding: DebuggerHidingSettings,
+    /// Number of threads to use for memory scanning. `0` = all CPU cores.
+    #[serde(default)]
+    pub scan_thread_count: usize,
+    /// Symbol path in `_NT_SYMBOL_PATH` syntax. Empty = env var / Microsoft symbol server.
+    /// Applies to locally launched sessions, starting with the next session.
+    #[serde(default)]
+    pub symbol_path: String,
+    /// When true, never download symbols; local caches still resolve.
+    #[serde(default)]
+    pub symbol_offline: bool,
+    /// Source path substitutions for the source view: `(from, to)` prefix pairs
+    /// applied case-insensitively when a compile-time path from the PDB doesn't
+    /// exist on this machine (like WinDbg's srcpath mapping).
+    #[serde(default)]
+    pub source_map: Vec<(String, String)>,
 }
 
 impl Default for DebugSettings {
@@ -95,9 +122,30 @@ impl Default for DebugSettings {
             stop_on_initial_breakpoint: true,
             stop_on_process_create: true,
             stop_on_debug_output: false,
+            break_on_user_module_entry: false,
+            break_on_system_module_entry: false,
+            break_on_user_tls_callbacks: false,
+            break_on_system_tls_callbacks: false,
             keybindings: KeybindingSettings::default(),
             exception_rules: Vec::new(),
             debugger_hiding: DebuggerHidingSettings::default(),
+            scan_thread_count: 0, // 0 = all cores
+            symbol_path: String::new(),
+            symbol_offline: false,
+            source_map: Vec::new(),
+        }
+    }
+}
+
+impl DebugSettings {
+    /// Symbol configuration for an embedded server. An empty `symbol_path`
+    /// means unset (env var / Microsoft symbol server).
+    pub fn symbol_config(&self) -> joybug2::SymbolConfig {
+        joybug2::SymbolConfig {
+            symbol_path: Some(self.symbol_path.trim())
+                .filter(|s| !s.is_empty())
+                .map(String::from),
+            offline: self.symbol_offline,
         }
     }
 }

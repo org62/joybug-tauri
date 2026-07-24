@@ -1,4 +1,4 @@
-name: Build
+name: Build & E2E
 
 on:
   push:
@@ -10,7 +10,7 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build:
+  build-and-test:
     strategy:
       matrix:
         arch: [ARM64, X64]
@@ -22,13 +22,18 @@ jobs:
     - uses: actions/checkout@v4
       with:
         submodules: recursive
-    
+
     - name: Install frontend dependencies
       run: npm ci
-    
+
     - name: Build Tauri app
       run: npm run tauri build
-    
+
+    - name: Run E2E tests
+      run: npm run test:e2e
+      env:
+        JOYBUG_E2E_RELEASE: "1"
+
     - name: Rename executable for architecture
       run: |
         if ("${{ matrix.arch }}" -eq "X64") {
@@ -37,9 +42,17 @@ jobs:
           Rename-Item -Path "src-tauri/target/release/joybug-tauri.exe" -NewName "joybug-tauri-aarch64.exe"
         }
       shell: powershell
-    
+
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
       with:
         name: tauri-app-${{ matrix.arch }}
         path: src-tauri/target/release/joybug-tauri-*.exe
+
+    - name: Upload Playwright report
+      uses: actions/upload-artifact@v4
+      if: ${{ !cancelled() }}
+      with:
+        name: playwright-report-${{ matrix.arch }}
+        path: playwright-report/
+        retention-days: 14

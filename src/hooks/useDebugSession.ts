@@ -2,16 +2,34 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { toast } from 'sonner';
-import { DebugSession, Module, Thread, Symbol, SessionStatus } from '@/contexts/SessionContext';
+import { DebugSession, Module, ModuleSymbolStatus, PdbLoadResult, Thread, Symbol, SessionStatus } from '@/contexts/SessionContext';
+import { isProcessAvailable, isTargetLive, formatTauriError } from '@/lib/sessionHelpers';
+
+// The 1s live poll returns fresh arrays every tick even when nothing changed;
+// keeping the previous reference when contents match stops every context
+// consumer from re-rendering each second.
+function sameModules(a: Module[], b: Module[]): boolean {
+  return a.length === b.length && a.every((m, i) => m.base_address === b[i].base_address && m.name === b[i].name && m.size === b[i].size);
+}
+
+function sameThreads(a: Thread[], b: Thread[]): boolean {
+  return a.length === b.length && a.every((t, i) => t.id === b[i].id && t.start_address === b[i].start_address);
+}
+
+function sameSymbolStatuses(a: ModuleSymbolStatus[], b: ModuleSymbolStatus[]): boolean {
+  return a.length === b.length && a.every((s, i) =>
+    s.base_address === b[i].base_address && s.status === b[i].status && s.symbol_count === b[i].symbol_count);
+}
 
 export function useDebugSession(sessionId: string | undefined) {
   const [session, setSession] = useState<DebugSession | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [busyAction, setBusyAction] = useState<
-    "go" | "stepIn" | "stepOut" | "stepOver" | "stop" | "pause" | null
+    "go" | "stepIn" | "stepOut" | "stepOver" | "stop" | "restart" | "pause" | "detach" | "attach" | null
   >(null);
   const [modules, setModules] = useState<Module[]>([]);
   const [threads, setThreads] = useState<Thread[]>([]);
+  const [symbolStatuses, setSymbolStatuses] = useState<ModuleSymbolStatus[]>([]);
 
   // Debounced display status - prevents UI flicker during quick stepping operations
   const [displayStatus, setDisplayStatus] = useState<SessionStatus>("Stopped");
@@ -70,7 +88,7 @@ export function useDebugSession(sessionId: string | undefined) {
   const canStep = useMemo(() => displayStatus === "Paused", [displayStatus]);
   const canStop = useMemo(() => {
     if (!session || typeof session.status !== "string") return false;
-    return ["Running", "Paused"].includes(session.status);
+    return isProcessAvailable(session.status);
   }, [session]);
   const canStart = useMemo(() => {
     if (!session || typeof session.status !== "string") return false;
@@ -82,10 +100,19 @@ export function useDebugSession(sessionId: string | undefined) {
     return ["Running"].includes(session.status);
   }, [session]);
 
+  // Detach is sent over the session's own connection from the paused debug loop,
+  // so it's only available while paused.
+  const canDetach = useMemo(() => {
+    if (!session || typeof session.status !== "string") return false;
+    return ["Paused"].includes(session.status);
+  }, [session]);
+
   const loadModules = useCallback(async () => {
     if (!sessionId) return [];
     try {
-      return await invoke<Module[]>("get_session_modules", { sessionId });
+      const mods = await invoke<Module[]>("get_session_modules", { sessionId });
+      setModules(prev => sameModules(prev, mods) ? prev : mods);
+      return mods;
     } catch (error) {
       const errorMessage = `Failed to load modules: ${error}`;
       toast.error(errorMessage);
@@ -97,7 +124,9 @@ export function useDebugSession(sessionId: string | undefined) {
   const loadThreads = useCallback(async () => {
     if (!sessionId) return [];
     try {
-      return await invoke<Thread[]>("get_session_threads", { sessionId });
+      const thrs = await invoke<Thread[]>("get_session_threads", { sessionId });
+      setThreads(prev => sameThreads(prev, thrs) ? prev : thrs);
+      return thrs;
     } catch (error) {
       const errorMessage = `Failed to load threads: ${error}`;
       toast.error(errorMessage);
@@ -105,6 +134,61 @@ export function useDebugSession(sessionId: string | undefined) {
       return [];
     }
   }, [sessionId]);
+
+  // Advisory data polled every second — failures are silent (the backend already
+  // degrades errors to an empty list) so a transient hiccup never toast-spams.
+  const loadSymbolStatuses = useCallback(async () => {
+    if (!sessionId) return;
+    try {
+      const statuses = await invoke<ModuleSymbolStatus[]>("get_session_symbol_status", { sessionId });
+      setSymbolStatuses(prev => sameSymbolStatuses(prev, statuses) ? prev : statuses);
+    } catch (error) {
+      console.error(`Failed to load symbol statuses: ${error}`);
+    }
+  }, [sessionId]);
+
+  const loadModulePdb = useCallback(async (baseAddress: string, pdbPath: string, force: boolean): Promise<PdbLoadResult> => {
+    if (!sessionId) return { loaded: false };
+    const result = await invoke<PdbLoadResult>("load_module_pdb", {
+      sessionId,
+      moduleBase: baseAddress,
+      pdbPath,
+      force,
+    });
+    await loadSymbolStatuses();
+    return result;
+  }, [sessionId, loadSymbolStatuses]);
+
+  const retryModuleSymbols = useCallback(async (baseAddress: string) => {
+    if (!sessionId) return;
+    await invoke("retry_module_symbols", { sessionId, moduleBase: baseAddress });
+    await loadSymbolStatuses();
+  }, [sessionId, loadSymbolStatuses]);
+
+  const unloadModuleSymbols = useCallback(async (baseAddress: string) => {
+    if (!sessionId) return;
+    try {
+      await invoke("unload_module_symbols", { sessionId, moduleBase: baseAddress });
+      toast.success("Symbols unloaded");
+    } catch (error) {
+      const errorMessage = `Failed to unload symbols: ${formatTauriError(error)}`;
+      toast.error(errorMessage);
+      console.error(errorMessage);
+    }
+    await loadSymbolStatuses();
+  }, [sessionId, loadSymbolStatuses]);
+
+  // Identity of the set of modules whose symbols are loaded. Consumers refresh
+  // symbol-derived views (e.g. disassembly) when it changes so raw addresses
+  // upgrade to symbol names as background downloads land.
+  const symbolsRefreshKey = useMemo(
+    () => symbolStatuses
+      .filter((s) => s.status === 'loaded')
+      .map((s) => s.base_address)
+      .sort()
+      .join(','),
+    [symbolStatuses],
+  );
 
   const searchSymbols = useCallback(async (pattern: string, limit?: number): Promise<Symbol[]> => {
     if (!sessionId) return [];
@@ -227,26 +311,62 @@ export function useDebugSession(sessionId: string | undefined) {
   }, [sessionId, handleSessionUpdate]);
 
   useEffect(() => {
-    let isCancelled = false;
-
-    if (session?.status === "Paused" || session?.status === "Running") {
-      const fetchData = async () => {
-        const [mods, thrs] = await Promise.all([loadModules(), loadThreads()]);
-        if (!isCancelled) {
-          setModules(mods);
-          setThreads(thrs);
-        }
-      };
-      fetchData();
+    if (isProcessAvailable(session?.status)) {
+      loadModules();
+      loadThreads();
+      loadSymbolStatuses();
     } else if (session?.status === "Stopped" || typeof session?.status === 'object') {
       setModules([]);
       setThreads([]);
+      setSymbolStatuses([]);
     }
+  }, [session?.status, loadModules, loadThreads, loadSymbolStatuses]);
 
-    return () => {
-      isCancelled = true;
-    };
-  }, [session?.status, loadModules, loadThreads]);
+  // Poll modules/threads while the target runs live (Running or non-invasive
+  // Open): thread/module churn produces no status transition to re-trigger the
+  // effect above, and in Open mode no dll events arrive at all.
+  //
+  // Also re-read the session status here as a self-heal: a `session-updated`
+  // event (e.g. the transition to Paused) can be missed if it fires during the
+  // listener-registration window, and a paused session emits no further status
+  // events — which would leave the UI stuck on "Running" until an unrelated
+  // action forced a refetch. Re-reading the session catches that within a
+  // second; the effect stops as soon as the status is no longer live.
+  useEffect(() => {
+    if (!isTargetLive(session?.status)) return;
+    const interval = setInterval(() => {
+      loadModules();
+      loadThreads();
+      if (sessionId) {
+        invoke<DebugSession>("get_debug_session", { sessionId })
+          .then((s) => {
+            // Commit ONLY the transition the self-heal exists for: live → not
+            // live. An unconditional commit would hand React a fresh session
+            // object every second (re-rendering every consumer and re-firing
+            // object-identity effects); and a stale still-"Running" response
+            // arriving after a real `session-updated` Paused event must never
+            // overwrite it — this direction check makes that impossible.
+            if (s && !isTargetLive(s.status)) handleSessionUpdate(s);
+          })
+          .catch(() => {});
+      }
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [session?.status, sessionId, loadModules, loadThreads, handleSessionUpdate]);
+
+  // Poll symbol statuses while PDB downloads are in flight (also while Paused —
+  // downloads continue in the background) and while the target runs live (in
+  // Open mode new modules appear without dll events). Once every module has
+  // settled on a paused target the poll stops; the dll-loaded listener and the
+  // explicit refreshes in loadModulePdb/retryModuleSymbols re-arm it.
+  useEffect(() => {
+    const loading = symbolStatuses.some((s) => s.status === 'loading');
+    if (!isTargetLive(session?.status) && !(loading && isProcessAvailable(session?.status))) return;
+    const interval = setInterval(() => {
+      loadSymbolStatuses();
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [session?.status, symbolStatuses, loadSymbolStatuses]);
 
   // Listen for dll load/unload targeted events to refresh modules quickly
   useEffect(() => {
@@ -258,16 +378,14 @@ export function useDebugSession(sessionId: string | undefined) {
         "dll-unloaded",
         async (event) => {
           if (event.payload.session_id !== sessionId) return;
-          const mods = await loadModules();
-          setModules(mods);
+          await loadModules();
         }
       );
       unlistenLoad = await listen<{ session_id: string; pid: number; tid: number; dll_name: string; base_of_dll: number; size_of_dll?: number }>(
         "dll-loaded",
         async (event) => {
           if (event.payload.session_id !== sessionId) return;
-          const mods = await loadModules();
-          setModules(mods);
+          await Promise.all([loadModules(), loadSymbolStatuses()]);
         }
       );
     };
@@ -276,7 +394,7 @@ export function useDebugSession(sessionId: string | undefined) {
       if (unlistenUnload) unlistenUnload();
       if (unlistenLoad) unlistenLoad();
     };
-  }, [sessionId, loadModules]);
+  }, [sessionId, loadModules, loadSymbolStatuses]);
 
   const handleGo = useCallback(async () => {
     if (!sessionId || !canStep) return;
@@ -382,6 +500,23 @@ export function useDebugSession(sessionId: string | undefined) {
     }
   }, [sessionId, canStop, session]);
 
+  // Restart = stop + start, orchestrated by the backend (it waits for the old
+  // debug loop to unwind before starting the new run).
+  const handleRestart = useCallback(async () => {
+    if (!sessionId || !canStop) return;
+    setBusyAction("restart");
+    try {
+      await invoke("restart_debug_session", { sessionId });
+      toast.success("Restarting session…");
+    } catch (error) {
+      const errorMessage = `Failed to restart session: ${formatTauriError(error)}`;
+      toast.error(errorMessage);
+      console.error(errorMessage);
+    } finally {
+      setBusyAction(null);
+    }
+  }, [sessionId, canStop]);
+
   const handlePause = useCallback(async () => {
     if (!sessionId || !canPause) return;
     setBusyAction("pause");
@@ -397,6 +532,37 @@ export function useDebugSession(sessionId: string | undefined) {
     }
   }, [sessionId, canPause]);
 
+  const handleDetach = useCallback(async () => {
+    if (!sessionId || !canDetach) return;
+    setBusyAction("detach");
+    try {
+      await invoke("detach_debug_session", { sessionId });
+      toast.success("Detached — target left running");
+    } catch (error) {
+      const errorMessage = `Failed to detach: ${error}`;
+      toast.error(errorMessage);
+      console.error(errorMessage);
+    } finally {
+      setBusyAction(null);
+    }
+  }, [sessionId, canDetach]);
+
+  // Promote a non-invasive Open session to a full attached debug session.
+  const handleAttach = useCallback(async () => {
+    if (!sessionId || session?.status !== "Open") return;
+    setBusyAction("attach");
+    try {
+      await invoke("attach_open_session", { sessionId });
+      toast.success("Attaching to process…");
+    } catch (error) {
+      const errorMessage = `Failed to attach: ${error}`;
+      toast.error(errorMessage);
+      console.error(errorMessage);
+    } finally {
+      setBusyAction(null);
+    }
+  }, [sessionId, session?.status]);
+
   return {
     session,
     displayStatus,
@@ -404,8 +570,13 @@ export function useDebugSession(sessionId: string | undefined) {
     busyAction,
     modules,
     threads,
+    symbolStatuses,
+    symbolsRefreshKey,
     loadModules,
     loadThreads,
+    loadModulePdb,
+    retryModuleSymbols,
+    unloadModuleSymbols,
     searchSymbols,
     handleGo,
     handleGoPassException,
@@ -414,10 +585,14 @@ export function useDebugSession(sessionId: string | undefined) {
     handleStepOver,
     handleStop,
     handleStart,
+    handleRestart,
     handlePause,
+    handleDetach,
+    handleAttach,
     canStep,
     canStop,
     canStart,
     canPause,
+    canDetach,
   };
 } 

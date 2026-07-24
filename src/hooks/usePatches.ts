@@ -23,6 +23,9 @@ export interface Patch {
 interface PatchesUpdatedPayload {
   session_id: string;
   patches: RawPatch[];
+  /// Bumped by the backend only on view-affecting changes; the every-pause
+  /// re-broadcast keeps it stable (used by useAssemblyView to skip re-decodes).
+  revision: number;
 }
 
 interface AssemblePatchErrorPayload {
@@ -52,11 +55,12 @@ export function usePatches(sessionId?: string, isPaused?: boolean, sessionPatche
   const sessionPatchRef = useRef(sessionPatches);
   sessionPatchRef.current = sessionPatches;
 
-  // Session cleanup / seed
+  // Session cleanup / seed: not gated on isPaused — a non-invasive Open
+  // session never pauses but still has persisted patches to show.
   useEffect(() => {
     if (!sessionId) {
       setPatches([]);
-    } else if (isPaused && sessionPatchRef.current && sessionPatchRef.current.length > 0) {
+    } else if (sessionPatchRef.current && sessionPatchRef.current.length > 0) {
       setPatches(convertPatches(sessionPatchRef.current));
     }
   }, [sessionId, isPaused]);
@@ -144,6 +148,19 @@ export function usePatches(sessionId?: string, isPaused?: boolean, sessionPatche
     }
   }, [sessionId]);
 
+  // Restore the original bytes at a patched address. The backend undoes a
+  // tracked UI patch when one covers the address, else raw-restores from the
+  // on-disk image (external hook, self-modifying code). It emits
+  // patches-updated, which refreshes the assembly view.
+  const restoreImageBytes = useCallback(async (address: string) => {
+    if (!sessionId) return;
+    try {
+      await invoke('restore_image_bytes', { sessionId, address });
+    } catch (e) {
+      console.error('Failed to restore image bytes:', e);
+    }
+  }, [sessionId]);
+
   return useMemo(() => ({
     patches,
     assemblePatch,
@@ -152,7 +169,8 @@ export function usePatches(sessionId?: string, isPaused?: boolean, sessionPatche
     enablePatch,
     updatePatch,
     enablePatchGroup,
-  }), [patches, assemblePatch, undoPatch, undoPatches, enablePatch, updatePatch, enablePatchGroup]);
+    restoreImageBytes,
+  }), [patches, assemblePatch, undoPatch, undoPatches, enablePatch, updatePatch, enablePatchGroup, restoreImageBytes]);
 }
 
 export type PatchState = ReturnType<typeof usePatches>;

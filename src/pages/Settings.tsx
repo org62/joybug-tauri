@@ -9,6 +9,7 @@ import { SettingsGeneral } from "@/components/settings/SettingsGeneral";
 import { SettingsKeybindings } from "@/components/settings/SettingsKeybindings";
 import { SettingsEvents } from "@/components/settings/SettingsEvents";
 import { SettingsDebuggerHiding } from "@/components/settings/SettingsDebuggerHiding";
+import { SettingsSymbols } from "@/components/settings/SettingsSymbols";
 
 const SECTION_GRID = "grid gap-x-6 gap-y-5 items-start";
 const SECTION_GRID_COLS = { gridTemplateColumns: "repeat(auto-fill, minmax(20rem, 1fr))" };
@@ -68,6 +69,7 @@ export default function Settings() {
               <ScrollArea className="h-full">
                 <div className={SECTION_GRID} style={SECTION_GRID_COLS}>
                   <SettingsGeneral searchQuery={searchQuery} />
+                  <SettingsSymbols searchQuery={searchQuery} />
                   <SettingsEvents searchQuery={searchQuery} />
                   <SettingsDebuggerHiding searchQuery={searchQuery} />
                   <SettingsKeybindings searchQuery={searchQuery} embedded />
@@ -80,6 +82,7 @@ export default function Settings() {
               <ScrollArea className="h-full">
                 <div className={SECTION_GRID} style={SECTION_GRID_COLS}>
                   <SettingsGeneral searchQuery={searchQuery} />
+                  <SettingsSymbols searchQuery={searchQuery} />
                 </div>
               </ScrollArea>
             </TabsContent>

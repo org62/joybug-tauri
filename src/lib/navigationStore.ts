@@ -11,23 +11,30 @@
 
 type Listener = () => void;
 
-export class NavigationChannel {
-  private _pending: string | null = null;
+export class NavigationChannel<T = string> {
+  private _pending: T | null = null;
   private _version = 0;
   private _listeners = new Set<Listener>();
 
   /** Set a pending navigation target and notify subscribers. */
-  request(address: string) {
-    this._pending = address;
+  request(payload: T) {
+    this._pending = payload;
     this._version++;
     this._listeners.forEach(l => l());
   }
 
   /** Consume the pending navigation target (returns null if already consumed). */
-  consume(): string | null {
-    const addr = this._pending;
+  consume(): T | null {
+    const payload = this._pending;
     this._pending = null;
-    return addr;
+    return payload;
+  }
+
+  /** Consume only if the pending payload matches. Lets many subscribers share one
+   *  channel — without the guard the first one to run would eat every payload. */
+  consumeIf(match: (payload: T) => boolean): T | null {
+    if (this._pending === null || !match(this._pending)) return null;
+    return this.consume();
   }
 
   /** For useSyncExternalStore — subscribe to store changes. */
@@ -40,5 +47,34 @@ export class NavigationChannel {
   getSnapshot = (): number => this._version;
 }
 
+/** Memory/hex navigation with an optional byte range to select at the target. */
+export interface MemoryNavRequest {
+  address: string;
+  selectLength?: number;
+}
+
 export const disassemblyNavigation = new NavigationChannel();
-export const memoryNavigation = new NavigationChannel();
+// "Go to memory region" → the Memory Regions tab scrolls to and highlights the
+// region containing this address (hex string).
+export const memoryRegionsNavigation = new NavigationChannel<string>();
+export const memoryNavigation = new NavigationChannel<string | MemoryNavRequest>();
+// Disassembly row click → source view scrolls/highlights the matching line
+// (passive sync; does not steal the active tab).
+export const sourceNavigation = new NavigationChannel();
+// "Go to X" → focus the primary input of tab X. Payload is the dock tab id
+// (including dynamic ones like "memory-2"), so every subscribed view shares this
+// one channel and claims the payload via consumeIf. See hooks/usePanelFocus.
+export const panelFocus = new NavigationChannel<string>();
+// Modules list "PE Viewer" click → the PE viewer tab selects that module
+// (payload is the module base address). A channel rather than a DOM event so a
+// freshly-opened tab consumes it on mount instead of racing its listener.
+export const peviewerModuleNavigation = new NavigationChannel<string>();
+
+/** Open the Types tab with a named type overlaid on an address (e.g. a thread's
+ *  TEB → `{ typeName: "_TEB", address }`). The channel's version bump re-fires the
+ *  load even when the same type+address is requested twice. */
+export interface TypeNavRequest {
+  typeName: string;
+  address: string;
+}
+export const typesNavigation = new NavigationChannel<TypeNavRequest>();

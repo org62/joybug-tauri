@@ -1,20 +1,33 @@
 import React from "react";
-import { LayoutData, TabData } from "rc-dock";
+import { LayoutData } from "rc-dock";
 import { DockingConfig } from "@/hooks/useDocking";
-import { RegisterView as StaticRegisterView, SerializableThreadContext } from "@/components/RegisterView";
+import type { HomePanelId } from "@/lib/sessionTabs";
+import {
+  RegisterView as StaticRegisterView,
+  SerializableThreadContext,
+  X64_REGISTERS,
+  X64_XMM_REGISTERS,
+  X64_DEBUG_REGISTERS,
+} from "@/components/RegisterView";
 
-const mockContext: SerializableThreadContext = {
+// Zero-valued x64 context for the static tab preview, derived from the
+// register defs so it never drifts when registers are added.
+const mockContext = {
   arch: "X64",
-  rax: "0x0", rbx: "0x0", rcx: "0x0", rdx: "0x0",
-  rsi: "0x0", rdi: "0x0", rbp: "0x0", rsp: "0x0",
-  rip: "0x0",
-  r8: "0x0", r9: "0x0", r10: "0x0", r11: "0x0",
-  r12: "0x0", r13: "0x0", r14: "0x0", r15: "0x0",
-  eflags: "0x0",
-};
+  ...Object.fromEntries(
+    [...X64_REGISTERS, ...X64_XMM_REGISTERS, ...X64_DEBUG_REGISTERS].map((d) => [d.field, "0x0"]),
+  ),
+} as SerializableThreadContext;
 
-export const DebuggerDockingConfig: DockingConfig = {
-  storagePrefix: "debugger-dock",
+// SessionDocked builds its own storage prefix and tab contents from
+// SESSION_TAB_DEFS; this module owns only the default layout and the static
+// registers preview.
+export const DebuggerDockingConfig = {
+  // Reset Layout restores this bare-minimum set — a usable debugger, not all 20
+  // tabs stacked in one panel. Everything else opens on demand into its home
+  // panel (see SessionTabDef.home). The panel ids are what `home` resolves to;
+  // `satisfies HomePanelId` makes renaming one here without updating
+  // lib/sessionTabs.tsx a compile error.
   initialLayout: {
     dockbox: {
       mode: "horizontal" as const,
@@ -23,57 +36,27 @@ export const DebuggerDockingConfig: DockingConfig = {
           mode: "vertical" as const,
           size: 80,
           children: [
-            {
-              tabs: [{ id: "modules" }],
-              activeId: "modules",
-            },
-            {
-              tabs: [{ id: "threads" }],
-              activeId: "threads",
-            },
-            {
-              tabs: [{ id: "symbols" }],
-              activeId: "symbols",
-            },
+            { id: "panel-left-top" satisfies HomePanelId, tabs: [{ id: "modules" }], activeId: "modules" },
+            { id: "panel-left-bottom" satisfies HomePanelId, tabs: [{ id: "threads" }], activeId: "threads" },
           ],
         },
         {
-          tabs: [{ id: "disassembly" }, { id: "memory" }, { id: "memory_regions" }, { id: "breakpoints" }, { id: "patches" }, { id: "memory_search" }, { id: "memory_scanner" }, { id: "peviewer" }],
+          id: "panel-center" satisfies HomePanelId,
+          tabs: [{ id: "disassembly" }, { id: "memory" }],
           activeId: "disassembly",
         },
         {
           mode: "vertical" as const,
           size: 80,
           children: [
-            {
-              tabs: [{ id: "registers" }],
-              activeId: "registers",
-            },
-            {
-              tabs: [{ id: "callstack" }],
-              activeId: "callstack",
-            },
+            { id: "panel-right-top" satisfies HomePanelId, tabs: [{ id: "registers" }], activeId: "registers" },
+            { id: "panel-right-bottom" satisfies HomePanelId, tabs: [{ id: "callstack" }], activeId: "callstack" },
           ],
         },
       ],
     },
   } as LayoutData,
-  initialTabContents: {
-    disassembly: { id: "disassembly", title: "Disassembly", content: <div>Disassembly placeholder</div> },
-    registers: { id: "registers", title: "Registers", content: <StaticRegisterView context={mockContext} /> },
-    modules: { id: "modules", title: "Modules", content: <div>Modules placeholder</div> },
-    threads: { id: "threads", title: "Threads", content: <div>Threads placeholder</div> },
-    callstack: { id: "callstack", title: "Call Stack", content: <div>Call Stack placeholder</div> },
-    symbols: { id: "symbols", title: "Symbols", content: <div>Symbols placeholder</div> },
-    memory: { id: "memory", title: "Memory", content: <div>Memory placeholder</div> },
-    memory_regions: { id: "memory_regions", title: "Memory Regions", content: <div>Memory Regions placeholder</div> },
-    breakpoints: { id: "breakpoints", title: "Breakpoints", content: <div>Breakpoints placeholder</div> },
-    patches: { id: "patches", title: "Patches", content: <div>Patches placeholder</div> },
-    memory_search: { id: "memory_search", title: "Memory Search", content: <div>Memory Search placeholder</div> },
-    memory_scanner: { id: "memory_scanner", title: "Memory Scanner", content: <div>Memory Scanner placeholder</div> },
-    peviewer: { id: "peviewer", title: "PE Viewer", content: <div>PE Viewer placeholder</div> },
-  } as { [key: string]: TabData },
   tabContentMap: {
     registers: <StaticRegisterView context={mockContext} />,
   } as { [key: string]: React.ReactElement },
-}; 
+} satisfies Pick<DockingConfig, "initialLayout" | "tabContentMap">;

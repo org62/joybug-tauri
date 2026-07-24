@@ -24,12 +24,23 @@ export interface DebugSettings {
   stop_on_initial_breakpoint: boolean;
   stop_on_process_create: boolean;
   stop_on_debug_output: boolean;
+  break_on_user_module_entry: boolean;
+  break_on_system_module_entry: boolean;
+  break_on_user_tls_callbacks: boolean;
+  break_on_system_tls_callbacks: boolean;
   exception_rules: ExceptionRule[];
   debugger_hiding: DebuggerHidingSettings;
+  scan_thread_count: number; // 0 = all CPU cores
+  symbol_path: string; // _NT_SYMBOL_PATH syntax; empty = env var / Microsoft symbol server
+  symbol_offline: boolean; // never download symbols
 }
 
+// Keys whose value is a boolean, derived structurally so new settings never
+// require editing a hand-maintained exclusion list.
+type BooleanSettingKey = { [K in keyof DebugSettings]: DebugSettings[K] extends boolean ? K : never }[keyof DebugSettings];
+
 export interface EventSettingItem {
-  key: keyof Omit<DebugSettings, 'exception_rules' | 'debugger_hiding'>;
+  key: BooleanSettingKey;
   id: string;
   label: string;
   keywords: string[];
@@ -43,6 +54,10 @@ export const EVENT_ITEMS: EventSettingItem[] = [
   { key: "stop_on_dll_unload", id: "event.dllUnload", label: "DLL Unload", keywords: ["event", "dll", "module", "unload", "exception"] },
   { key: "stop_on_initial_breakpoint", id: "event.initialBreakpoint", label: "Initial Breakpoint", keywords: ["event", "breakpoint", "initial", "launch", "attach", "exception"] },
   { key: "stop_on_debug_output", id: "event.debugOutput", label: "Debug Output (OutputDebugString)", keywords: ["event", "output", "debug", "string", "print"] },
+  { key: "break_on_user_module_entry", id: "event.moduleEntryUser", label: "Module Entry (user modules)", keywords: ["event", "module", "entry", "point", "dllmain", "oep", "break", "breakpoint", "user", "single-shot"] },
+  { key: "break_on_system_module_entry", id: "event.moduleEntrySystem", label: "Module Entry (system32)", keywords: ["event", "module", "entry", "point", "dllmain", "oep", "break", "breakpoint", "system", "system32", "syswow64", "single-shot"] },
+  { key: "break_on_user_tls_callbacks", id: "event.tlsCallbacksUser", label: "TLS Callbacks (user modules)", keywords: ["event", "tls", "callback", "break", "breakpoint", "user", "single-shot"] },
+  { key: "break_on_system_tls_callbacks", id: "event.tlsCallbacksSystem", label: "TLS Callbacks (system32)", keywords: ["event", "tls", "callback", "break", "breakpoint", "system", "system32", "syswow64", "single-shot"] },
 ];
 
 const DEFAULT_HIDING: DebuggerHidingSettings = {
@@ -62,8 +77,15 @@ const DEFAULTS: DebugSettings = {
   stop_on_initial_breakpoint: true,
   stop_on_process_create: true,
   stop_on_debug_output: false,
+  break_on_user_module_entry: false,
+  break_on_system_module_entry: false,
+  break_on_user_tls_callbacks: false,
+  break_on_system_tls_callbacks: false,
   exception_rules: [],
   debugger_hiding: DEFAULT_HIDING,
+  scan_thread_count: 0,
+  symbol_path: "",
+  symbol_offline: false,
 };
 
 export function useDebugSettings() {
@@ -78,10 +100,12 @@ export function useDebugSettings() {
     }
   }, []);
 
-  const toggle = useCallback(async (key: keyof Omit<DebugSettings, 'exception_rules' | 'debugger_hiding'>) => {
+  // Shared set-and-persist: apply the change optimistically, then write the
+  // whole settings object to the backend.
+  const update = useCallback(async (updater: (prev: DebugSettings) => DebugSettings) => {
     let next!: DebugSettings;
     setSettings(prev => {
-      next = { ...prev, [key]: !prev[key] };
+      next = updater(prev);
       return next;
     });
     try {
@@ -95,32 +119,25 @@ export function useDebugSettings() {
     load();
   }, [load]);
 
-  const updateExceptionRules = useCallback(async (rules: ExceptionRule[]) => {
-    let next!: DebugSettings;
-    setSettings(prev => {
-      next = { ...prev, exception_rules: rules };
-      return next;
-    });
-    try {
-      await invoke("update_debug_settings", { newSettings: next });
-    } catch (e) {
-      console.error("Failed to update exception rules:", e);
-    }
-  }, []);
+  const toggle = useCallback((key: BooleanSettingKey) =>
+    update(prev => ({ ...prev, [key]: !prev[key] })), [update]);
 
-  const toggleHiding = useCallback(async (key: keyof DebuggerHidingSettings) => {
-    let next!: DebugSettings;
-    setSettings(prev => {
+  const updateExceptionRules = useCallback((rules: ExceptionRule[]) =>
+    update(prev => ({ ...prev, exception_rules: rules })), [update]);
+
+  const toggleHiding = useCallback((key: keyof DebuggerHidingSettings) =>
+    update(prev => {
       const hiding = { ...(prev.debugger_hiding ?? DEFAULT_HIDING), [key]: !(prev.debugger_hiding ?? DEFAULT_HIDING)[key] };
-      next = { ...prev, debugger_hiding: hiding };
-      return next;
-    });
-    try {
-      await invoke("update_debug_settings", { newSettings: next });
-    } catch (e) {
-      console.error("Failed to update debugger hiding settings:", e);
-    }
-  }, []);
+      return { ...prev, debugger_hiding: hiding };
+    }), [update]);
 
-  return { settings, toggle, updateExceptionRules, toggleHiding };
+  const setScanThreadCount = useCallback((count: number) => {
+    const sanitized = Number.isFinite(count) && count > 0 ? Math.floor(count) : 0;
+    return update(prev => ({ ...prev, scan_thread_count: sanitized }));
+  }, [update]);
+
+  const setSymbolPath = useCallback((path: string) =>
+    update(prev => ({ ...prev, symbol_path: path })), [update]);
+
+  return { settings, toggle, updateExceptionRules, toggleHiding, setScanThreadCount, setSymbolPath };
 }

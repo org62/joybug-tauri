@@ -255,6 +255,15 @@ export function parseAddress(str: string): bigint | null {
 }
 
 /**
+ * Parse an address string to a JS number, for values that travel over IPC as
+ * numbers. Returns null for unparseable input or values above 2^53.
+ */
+export function parseAddressToNumber(str: string): number | null {
+  const v = parseAddress(str);
+  return v !== null && v <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(v) : null;
+}
+
+/**
  * Convert a byte to its ASCII character representation
  * Returns '.' for non-printable characters
  */

@@ -5,33 +5,52 @@ use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, Manager};
 use tracing::{debug, error, info};
 
-use super::breakpoints::{deactivate_breakpoints_for_module, emit_breakpoints_event, reapply_breakpoints_for_module};
+use super::bookmarks::reapply_bookmarks_for_module;
+use super::breakpoints::{apply_auto_module_breakpoints, deactivate_breakpoints_for_module, emit_breakpoints_event, reapply_breakpoints_for_module};
 use super::patches::{deactivate_patches_for_module, emit_patches_event, reapply_patches_for_module};
 use super::dispatch::handle_ui_commands;
 use super::helpers::{module_short_name, update_session_from_event};
+use super::symbols::reapply_symbols_for_module;
 use super::types::DebugSession;
+
+/// Reapply a manual PDB, patches, breakpoints, bookmarks, and settings-driven auto
+/// breakpoints for a freshly loaded module. Patches must come BEFORE breakpoints so
+/// patches read real binary bytes (not 0xCC) and breakpoints store patched bytes as
+/// originals. A persisted manual PDB is kicked off first but loads asynchronously
+/// (off the debug loop); breakpoints re-resolve their source lines here without it
+/// and again when the async load lands (see `reapply_symbols_for_module`).
+/// `state` must NOT be locked when calling this.
+fn reapply_for_loaded_module(
+    session: &mut DebugSession,
+    app_handle_clone: &Option<AppHandle>,
+    pid: u32,
+    name: &str,
+    base: u64,
+) {
+    let short = module_short_name(name);
+    reapply_symbols_for_module(session, app_handle_clone, pid, &short, base);
+    reapply_patches_for_module(session, pid, &short, base);
+    reapply_breakpoints_for_module(session, pid, &short, base);
+    reapply_bookmarks_for_module(session, pid, &short);
+    apply_auto_module_breakpoints(session, app_handle_clone, pid, base);
+}
 
 /// Reapply or deactivate breakpoints and patches in response to module load/unload events.
 /// `state` must NOT be locked when calling this.
 fn handle_event_breakpoints(
     session: &mut DebugSession,
+    app_handle_clone: &Option<AppHandle>,
     event: &joybug2::protocol_io::DebugEvent,
     unloaded_module_name: &Option<String>,
 ) {
     match event {
         joybug2::protocol_io::DebugEvent::DllLoaded { dll_name, base_of_dll, .. } => {
             let name = dll_name.as_deref().unwrap_or("<unknown>");
-            let short = module_short_name(name);
-            // Patches must be applied BEFORE breakpoints so that patches read real
-            // binary bytes (not 0xCC) and breakpoints store patched bytes as originals.
-            reapply_patches_for_module(session, event.pid(), &short, *base_of_dll);
-            reapply_breakpoints_for_module(session, event.pid(), &short, *base_of_dll);
+            reapply_for_loaded_module(session, app_handle_clone, event.pid(), name, *base_of_dll);
         }
         joybug2::protocol_io::DebugEvent::ProcessCreated { image_file_name, base_of_image, .. } => {
             let name = image_file_name.as_deref().unwrap_or("main.exe");
-            let short = module_short_name(name);
-            reapply_patches_for_module(session, event.pid(), &short, *base_of_image);
-            reapply_breakpoints_for_module(session, event.pid(), &short, *base_of_image);
+            reapply_for_loaded_module(session, app_handle_clone, event.pid(), name, *base_of_image);
         }
         joybug2::protocol_io::DebugEvent::DllUnloaded { .. } => {
             if let Some(ref name) = unloaded_module_name {
@@ -78,6 +97,7 @@ fn emit_dll_events(
                 None => format!("DLL unloaded @ 0x{:X}", base_of_dll),
             };
             crate::ui_logger::log_info(handle, &message, Some(session_id.to_string()));
+            // The frontend dispatcher coalesces bursts of these into a summary toast.
             crate::ui_logger::toast_info(handle, &message);
         }
         joybug2::protocol_io::DebugEvent::DllLoaded { pid, tid, dll_name, base_of_dll, size_of_dll } => {
@@ -109,6 +129,7 @@ fn emit_dll_events(
                 None => format!("DLL loaded: {} @ 0x{:X}", name, base_of_dll),
             };
             crate::ui_logger::log_info(handle, &message, Some(session_id.to_string()));
+            // The frontend dispatcher coalesces bursts of these into a summary toast.
             crate::ui_logger::toast_info(handle, &message);
         }
         _ => {}
@@ -189,13 +210,26 @@ fn apply_debugger_hiding(
     }
 }
 
+/// Resolve which PID an attach session should target.
+///
+/// Prefers the stored PID when it's still alive. Otherwise (the target was
+/// restarted and got a new PID) it falls back to matching by image name:
+/// exactly one match re-attaches automatically; zero or several matches are an
+/// error the caller surfaces (for several, the UI offers a picker).
+fn resolve_attach_pid(session: &mut DebugSession, stored_pid: u32, target_name: &str) -> Result<u32> {
+    let processes = session
+        .list_processes()
+        .map_err(|e| Error::DebugLoop(format!("Failed to list processes: {}", e)))?;
+    super::helpers::match_target_pid(&processes, stored_pid, target_name).map_err(Error::DebugLoop)
+}
+
 pub fn run_debug_session(
     session_state: Arc<Mutex<SessionStateUI>>,
     app_handle: Option<AppHandle>,
 ) -> Result<()> {
-    let (session_id, server_url, launch_command, working_directory) = {
+    let (session_id, server_url, launch_command, working_directory, attach_pid) = {
         let state = session_state.lock().unwrap();
-        (state.id.clone(), state.server_url.clone(), state.launch_command.clone(), state.working_directory.clone())
+        (state.id.clone(), state.server_url.clone(), state.launch_command.clone(), state.working_directory.clone(), state.attach_pid)
     };
 
     info!("Starting debug session: {}", session_id);
@@ -221,7 +255,7 @@ pub fn run_debug_session(
     let app_handle_clone = app_handle.clone();
     let app_handle_for_exception = app_handle.clone();
 
-    let _final_state = joybug2::protocol_io::DebugSession::new(session_state.clone(), Some(&server_url))
+    let mut session_builder = joybug2::protocol_io::DebugSession::new(session_state.clone(), Some(&server_url))
         .map_err(|e| Error::ConnectionFailed(e.to_string()))?
         .on_exception(move |session, _pid, _tid, code, _address, first_chance, _parameters| {
             // Read and clear pass_exception_on_continue flag from state
@@ -270,18 +304,47 @@ pub fn run_debug_session(
                 &format!("Received debug event: {}", event),
                 Some(session.state.lock().unwrap().id.clone()),
             );
-            let is_internal_single_step = matches!(
-                event,
-                joybug2::protocol_io::DebugEvent::Exception { code, first_chance: true, .. }
-                    if *code == 0x80000004
-            );
+            // Toast for events here; Output/DllLoaded/DllUnloaded are toasted separately
+            // below / above (with richer messages). The frontend dispatcher coalesces any
+            // bursts (e.g. thousands of thread-creates) into a single summary toast.
             if !matches!(
                 event,
                 joybug2::protocol_io::DebugEvent::Output { .. }
                     | joybug2::protocol_io::DebugEvent::DllLoaded { .. }
                     | joybug2::protocol_io::DebugEvent::DllUnloaded { .. }
-            ) && !is_internal_single_step {
-                crate::ui_logger::toast_info(handle, &format!("{}", event));
+            ) {
+                // For breakpoint hits, name the group + module (entry/TLS) or the user's
+                // label instead of the raw "Breakpoint(pid=…, address=0x…)" tuple.
+                let msg = match event {
+                    joybug2::protocol_io::DebugEvent::Breakpoint { address, .. }
+                    | joybug2::protocol_io::DebugEvent::SingleShotBreakpoint { address, .. }
+                    | joybug2::protocol_io::DebugEvent::HardwareBreakpoint { address, .. } => {
+                        super::breakpoints::breakpoint_hit_message(session, *address)
+                            .unwrap_or_else(|| format!("{}", event))
+                    }
+                    _ => format!("{}", event),
+                };
+                crate::ui_logger::toast_info(handle, &msg);
+            }
+
+            // A single-shot breakpoint is auto-removed server-side on its one hit; drop
+            // its UI row too so the list stays in sync (whether we pause or continue).
+            if let joybug2::protocol_io::DebugEvent::SingleShotBreakpoint { address, .. } = event {
+                if super::breakpoints::remove_single_shot_row_on_hit(session, *address) {
+                    emit_breakpoints_event(session, &app_handle_clone);
+                }
+            }
+
+            // Drive an in-progress source-line step: keep single-stepping without
+            // pausing the UI until the PC leaves the starting source line. When it
+            // returns Some(true) the next step is already armed, so we resume; the
+            // final step falls through to the normal pause path below.
+            if let joybug2::protocol_io::DebugEvent::StepComplete { pid, tid, address, .. } = event {
+                if let Some(keep_going) = super::dispatch::advance_source_line_step(session, *pid, *tid, *address) {
+                    if keep_going {
+                        return Ok(true);
+                    }
+                }
             }
 
             // Apply "Hide from PEB" at the initial breakpoint, before the target's
@@ -299,6 +362,7 @@ pub fn run_debug_session(
                 };
                 let output = format!("OutputDebugString: {}", output);
                 crate::ui_logger::log_info(handle, &output, Some(session_id));
+                // The frontend dispatcher coalesces bursts of these into a summary toast.
                 crate::ui_logger::toast_info(handle, &output);
 
                 {
@@ -355,8 +419,11 @@ pub fn run_debug_session(
                     joybug2::protocol_io::DebugEvent::DllLoaded { .. } => settings.stop_on_dll_load,
                     joybug2::protocol_io::DebugEvent::DllUnloaded { .. } => settings.stop_on_dll_unload,
                     joybug2::protocol_io::DebugEvent::InitialBreakpoint { .. } => settings.stop_on_initial_breakpoint,
-                    joybug2::protocol_io::DebugEvent::Exception { code, first_chance: true, .. }
-                        if *code == 0x80000004 => false,
+                    // A single-step exception (0x80000004) reaching the client is
+                    // always program-raised: debugger-initiated steps surface as
+                    // StepComplete and internal re-arms are consumed server-side. So
+                    // it flows through the normal per-code exception-rule path below
+                    // (default: pause), letting the user choose Go (Pass Exception).
                     joybug2::protocol_io::DebugEvent::Exception { code, first_chance, .. } => {
                         // Check per-code exception rules
                         let mut found = false;
@@ -386,7 +453,7 @@ pub fn run_debug_session(
                         state.status = SessionStatusUI::Running;
                     }
 
-                    handle_event_breakpoints(session, event, &unloaded_module_name);
+                    handle_event_breakpoints(session, &app_handle_clone, event, &unloaded_module_name);
 
                     let session_id = session.state.lock().unwrap().id.clone();
                     emit_dll_events(handle, &session_id, event, unloaded_module_name);
@@ -434,24 +501,10 @@ pub fn run_debug_session(
                     update_session_from_event(&mut state, event);
                 }
 
-                // Reapply patches then breakpoints for newly loaded modules.
-                // Patches first so they read real binary bytes; breakpoints then store
-                // patched bytes as originals. (DllUnloaded already handled above with state locked)
-                match event {
-                    joybug2::protocol_io::DebugEvent::DllLoaded { dll_name, base_of_dll, .. } => {
-                        let name = dll_name.as_deref().unwrap_or("<unknown>");
-                        let short = module_short_name(name);
-                        reapply_patches_for_module(session, event.pid(), &short, *base_of_dll);
-                        reapply_breakpoints_for_module(session, event.pid(), &short, *base_of_dll);
-                    }
-                    joybug2::protocol_io::DebugEvent::ProcessCreated { image_file_name, base_of_image, .. } => {
-                        let name = image_file_name.as_deref().unwrap_or("main.exe");
-                        let short = module_short_name(name);
-                        reapply_patches_for_module(session, event.pid(), &short, *base_of_image);
-                        reapply_breakpoints_for_module(session, event.pid(), &short, *base_of_image);
-                    }
-                    _ => {}
-                }
+                // Reapply patches then breakpoints for newly loaded modules. Passing
+                // `&None` makes the DllUnloaded arm a no-op — deactivation already
+                // happened above with the state locked.
+                handle_event_breakpoints(session, &app_handle_clone, event, &None);
 
                 let session_id = session.state.lock().unwrap().id.clone();
                 emit_dll_events(handle, &session_id, event, unloaded_module_name);
@@ -461,7 +514,8 @@ pub fn run_debug_session(
             // Emit session events
             emit_session_event(&session.state, handle);
             emit_breakpoints_event(session, &app_handle_clone);
-            emit_patches_event(session, &app_handle_clone);
+            emit_patches_event(session, &app_handle_clone, false);
+            super::bookmarks::emit_bookmarks_event(session, event.pid(), &app_handle_clone);
 
             info!("Debug event received, waiting for user command");
 
@@ -477,9 +531,42 @@ pub fn run_debug_session(
                     return Ok(false);
                 }
             }
-        })
-        .launch_in_dir(launch_command, working_directory)
-        .map_err(|e| Error::DebugLoop(e.to_string()))?;
+        });
+
+    // Suppress auto-download for modules whose symbol download failed in a
+    // previous run: a restart must never re-try them on its own — only an
+    // explicit user retry does (which also clears the persisted entry).
+    {
+        let denied = crate::symbol_store::load_failed_symbols(&launch_command);
+        if !denied.is_empty() {
+            if let Err(e) = session_builder.set_symbol_deny_list(denied) {
+                // Older external servers don't know the request — degrade quietly.
+                info!("Symbol deny list not applied (server too old?): {}", e);
+            }
+        }
+    }
+
+    // Attach to an existing process, or launch the configured command.
+    let _final_state = match attach_pid {
+        Some(stored_pid) => {
+            // The stored PID may be stale (target restarted → new PID). Resolve
+            // it: keep it if still alive, else fall back to a unique match by the
+            // target's image name so a restarted single instance re-attaches
+            // automatically.
+            let pid = resolve_attach_pid(&mut session_builder, stored_pid, &launch_command)?;
+            if pid != stored_pid {
+                info!("Stored attach pid {} not found; re-attaching to pid {} ({})", stored_pid, pid, launch_command);
+                session_state.lock().unwrap().attach_pid = Some(pid);
+            }
+            info!("Attaching debug session {} to pid {}", session_id, pid);
+            session_builder
+                .attach(pid)
+                .map_err(|e| Error::DebugLoop(e.to_string()))?
+        }
+        None => session_builder
+            .launch_in_dir(launch_command, working_directory)
+            .map_err(|e| Error::DebugLoop(e.to_string()))?,
+    };
 
     // Mark session as finished
     {

@@ -1,10 +1,10 @@
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
-import { ScrollArea } from "@/components/ui/scroll-area";
+import { Page } from "@/components/ui/page";
 import reactLogo from "../assets/react.svg";
 
 export default function About() {
   return (
-    <ScrollArea className="h-full">
+    <Page container={false}>
     <div className="container mx-auto p-6 flex justify-center">
       <div className="max-w-2xl w-full">
         <Card className="overflow-hidden">
@@ -74,6 +74,6 @@ export default function About() {
         </Card>
       </div>
     </div>
-    </ScrollArea>
+    </Page>
   );
 }
