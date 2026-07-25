@@ -4,7 +4,7 @@
 
 # Joybug
 
-**A modern Windows debugger — x64 and ARM64 — with a UI that isn't from 2003.**
+**A modern Windows debugger for x64 and ARM64, with a UI that's a pleasure to work in.**
 
 ![Platform](https://img.shields.io/badge/platform-Windows-0078D4)
 ![Architecture](https://img.shields.io/badge/arch-x64%20%7C%20ARM64-6E4AFF)
@@ -20,11 +20,11 @@
 
 ## Why Joybug
 
-**A real UI.** Dockable, tiled panels you drag where you want them — and that stay there, per session. A `Ctrl+K` command palette that reaches every panel and every debug action. Both **WinDbg and x64dbg keybinding presets** shipped side by side, fully rebindable, so you don't relearn anything. Light and dark themes, UI zoom, drag-and-drop an EXE onto the window to start debugging it. It's a native Rust binary rendering through the OS WebView — not Electron.
+**A UI you can arrange.** Dockable, tiled panels you drag where you want them — and that stay there, per session. A `Ctrl+K` command palette that reaches every panel and every debug action. Both **WinDbg and x64dbg keybinding presets** ship side by side, fully rebindable, so you don't have to relearn anything. Light and dark themes, UI zoom, and drag-and-drop an EXE onto the window to start debugging it. Under the hood it's a native Rust binary rendering through the OS WebView, so it stays light.
 
-**ARM64 Windows, properly.** Not a port afterthought: ARM64 is first-class in the disassembler, the register views (NEON `V0`–`V31` alongside x64's XMM), hardware breakpoints and watchpoints, the emulator, and the PE parser. Every commit builds *and runs the full E2E suite* on both ARM64 and x64 Windows runners.
+**ARM64 Windows feels at home.** ARM64 gets the same attention as x64 throughout — the disassembler, the register views (NEON `V0`–`V31` alongside x64's XMM), hardware breakpoints and watchpoints, the emulator, and the PE parser. CI builds and runs the E2E suite on both ARM64 and x64 Windows runners, so the two stay in step.
 
-**Analysis built in.** CPU emulation, module-wide code coverage, inline-hook detection, and Cheat Engine-style memory scanning are dock tabs — not plugins you go hunting for. Joybug borrows liberally from the tools it admires; see [Prior art & inspiration](#prior-art--inspiration).
+**Analysis built in.** CPU emulation, module-wide code coverage, inline-hook detection, and Cheat Engine-style memory scanning are all dock tabs, ready when you want them. Joybug borrows liberally from the tools it admires; see [Prior art & inspiration](#prior-art--inspiration).
 
 ---
 
@@ -33,8 +33,8 @@
 ### Analysis
 
 - **Emulation** — Unicorn-backed forward emulation of the *live* process state. A footer under the disassembly answers "where does this land, which syscall does it hit, which module does it transition to" without executing anything. Five modes: Basic, InstructionTrace, BasicBlock, ModuleTransition or until first Syscall.
-- **Image Patches** — continuously diffs every loaded module's executable sections against its on-disk PE. Inline hooks, EDR/AV detours, packers, and self-modifying code get highlighted right in the disassembly and listed in their own panel, with one-click restore of the original bytes. Where x64dbg's patch manager tracks the edits *you* made, this diffs against the on-disk image — so it catches everyone else's too.
-- **Code Explorer** — a module-wide execution map. Arms coverage breakpoints across every function in a module and shows live hit counts, first-execution ordering, and which threads hit what. Normally a DynamoRIO/Pin/Lighthouse workflow; here it's a tab.
+- **Image Patches** — continuously diffs every loaded module's executable sections against its on-disk PE. Inline hooks, EDR/AV detours, packers, and self-modifying code get highlighted right in the disassembly and listed in their own panel, with one-click restore of the original bytes. Because it diffs against the on-disk image rather than tracking your own edits, it surfaces changes you didn't make as well as ones you did.
+- **Code Explorer** — a module-wide execution map. Arms coverage breakpoints across every function in a module and shows live hit counts, first-execution ordering, and which threads hit what — a workflow that usually means reaching for DynamoRIO, Pin, or Lighthouse, available here as a tab.
 - **Access Trace** — Cheat Engine's "find out what accesses this address," brought into a debugger. A silent hardware watchpoint accumulates every distinct accessing instruction — with symbol, disassembly, hit count and thread — while the target keeps running. On x86, where the CPU traps *after* the access, Joybug back-steps to attribute the real accessing instruction.
 - **Scanning** — the Cheat Engine workflow, natively: an iterative value scanner (11 compare types including Unknown Initial Value and float tolerance), a multi-level pointer-path scanner with filter and rescan, and bookmarks with server-side value freeze. Plus a string scanner over selectable scopes (one module / all modules / readable / writable / executable / private / mapped / custom range) and byte-pattern search.
 
@@ -51,7 +51,7 @@
 
 - **Launch, attach by PID, or open non-invasively** — a non-invasive session uses only `OpenProcess`: no `DebugActiveProcess`, so nothing detects a debugger and detaching can't kill the target. Browse memory, modules, strings, and scans — then **promote it to a full attach in place** when you want breakpoints. Restart the target, or detach and leave it running.
 - **Most panels keep working while the target runs.** An out-of-band connection pool means memory reads, module lists, symbol status, bookmark values, scans, and coverage all update live — you don't have to break in first.
-- **Anti-anti-debug** — PEB hiding (`BeingDebugged`, `NtGlobalFlag`, heap flags, StartupInfo, OS build number) is a settings toggle, not a plugin.
+- **Anti-anti-debug** — PEB hiding (`BeingDebugged`, `NtGlobalFlag`, heap flags, StartupInfo, OS build number) is a settings toggle.
 - **Remote debugging by design** — the debug core is a JSON-framed TCP server and the UI is just a client, so a session can point at another machine. Local runs spin up an embedded server on a loopback port.
 
 ### Standalone PE reader
@@ -147,7 +147,7 @@ See [`CLAUDE.md`](CLAUDE.md) for architecture notes and project conventions.
 
 ## Prior art & inspiration
 
-Very little here is a new idea. Joybug's contribution is putting these workflows in one place, on a modern UI, with ARM64 treated as a first-class target — the ideas themselves are borrowed, gratefully:
+Very little here is a new idea. Joybug mostly gathers workflows that already exist into one place, on a modern UI, with ARM64 along for the ride — the ideas themselves are borrowed, gratefully:
 
 - **[x64dbg](https://x64dbg.com)** — the benchmark for an approachable Windows user-mode debugger. Its keyboard layout ships as a built-in preset, and its patch manager, inline assembler, and general panel vocabulary shaped the equivalents here.
 - **[Cheat Engine](https://cheatengine.org)** — the source of the whole scanning workflow: iterative first/next scans with unknown-initial-value, multi-level pointer scanning, value freezing, and "find out what accesses this address." Memory Scanner, Pointer Scan, Bookmarks, and Access Trace are all descendants.
