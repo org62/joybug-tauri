@@ -14,6 +14,7 @@ mod stepping;
 mod symbols;
 pub(crate) mod types;
 mod type_system;
+mod updates;
 mod watchpoints;
 mod window_state;
 
@@ -32,6 +33,7 @@ pub use source::*;
 pub use stepping::*;
 pub use symbols::*;
 pub use type_system::*;
+pub use updates::*;
 pub use watchpoints::*;
 pub use window_state::*;
 

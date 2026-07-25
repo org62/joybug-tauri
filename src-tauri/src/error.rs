@@ -17,6 +17,8 @@ pub enum Error {
     SessionAlreadyExists,
     #[error("Invalid parameter: {0}")]
     InvalidParameter(String),
+    #[error("Update check failed: {0}")]
+    UpdateCheck(String),
 }
 
 pub type Result<T> = std::result::Result<T, Error>; 

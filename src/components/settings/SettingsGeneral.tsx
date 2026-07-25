@@ -8,6 +8,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
 import { useDebugSettings } from "@/hooks/useDebugSettings";
 import { applyZoom, getStoredZoom, ZOOM_CHANGED_EVENT, ZOOM_STEPS } from "@/lib/uiZoom";
 
@@ -21,6 +22,7 @@ const SETTING_ITEMS: SettingItem[] = [
   { key: "theme", label: "Theme", keywords: ["dark", "light", "system", "appearance", "color"] },
   { key: "uiScale", label: "UI scale", keywords: ["zoom", "scale", "ui", "enlarge", "bigger", "size", "font", "magnify", "text", "large", "small"] },
   { key: "scanThreads", label: "Memory scan threads (0 = all cores)", keywords: ["scan", "thread", "threads", "memory", "performance", "cores", "parallel", "cpu"] },
+  { key: "autoUpdateCheck", label: "Automatically check for updates", keywords: ["update", "updates", "upgrade", "version", "release", "releases", "check", "github", "new"] },
 ];
 
 interface SettingsGeneralProps {
@@ -30,7 +32,7 @@ interface SettingsGeneralProps {
 /** Renders a "General" category block matching the keybinding section style. */
 export function SettingsGeneral({ searchQuery }: SettingsGeneralProps) {
   const { theme, setTheme } = useTheme();
-  const { settings, setScanThreadCount } = useDebugSettings();
+  const { settings, setScanThreadCount, toggle } = useDebugSettings();
   const [scanThreadsDraft, setScanThreadsDraft] = useState<string | null>(null);
   const [uiScale, setUiScale] = useState(() => getStoredZoom());
 
@@ -112,6 +114,14 @@ export function SettingsGeneral({ searchQuery }: SettingsGeneralProps) {
                     setScanThreadsDraft(null);
                   }
                 }}
+              />
+            )}
+            {item.key === "autoUpdateCheck" && (
+              <Switch
+                size="xs"
+                checked={settings.auto_update_check}
+                onCheckedChange={() => toggle("auto_update_check")}
+                aria-label={item.label}
               />
             )}
           </div>

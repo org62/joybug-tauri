@@ -12,6 +12,9 @@ import { keyboardEventToChord } from "@/lib/keybindings";
 import { CommandPaletteContext, useCommandPaletteContext } from "@/contexts/CommandPaletteContext";
 import { useCommandPalette } from "@/hooks/useCommandPalette";
 import { CommandPalette } from "@/components/CommandPalette";
+import { WelcomeDialog } from "@/components/WelcomeDialog";
+import { UpdateDialog } from "@/components/UpdateDialog";
+import { useStartupDialogs } from "@/hooks/useStartupDialogs";
 import { applyZoom, getStoredZoom, nudgeZoom } from "@/lib/uiZoom";
 import { useDebugSettings, EVENT_ITEMS } from "@/hooks/useDebugSettings";
 import { Home as HomeIcon, Bug, ScrollText, Settings as SettingsIcon, Info, Sun, Moon, Keyboard, Bell, Zap, Plus, Eye, FileSearch } from "lucide-react";
@@ -35,6 +38,10 @@ function AppContent() {
   const { resolvedTheme, setTheme } = useTheme();
   const { reverseLookup } = useKeybindingContext();
   const { toggle, registerCommands } = useCommandPaletteContext();
+  // First-run beta notice and the automatic update prompt, sequenced so they
+  // never stack on top of each other.
+  const { welcome, dismissWelcome, update, dismissUpdate } =
+    useStartupDialogs();
 
   // Apply the saved UI scale on startup, and handle zoom hotkeys
   // (Ctrl/Cmd +/-/0) — persisted via uiZoom so the choice survives restarts.
@@ -264,6 +271,8 @@ function AppContent() {
       <RcDockThemeLoader />
       <Header />
       <CommandPalette />
+      {welcome && <WelcomeDialog state={welcome} onDismissed={dismissWelcome} />}
+      <UpdateDialog info={update} onClose={dismissUpdate} />
       <main className="flex-1 min-h-0 overflow-hidden">
         <Suspense fallback={
           <div className="flex justify-center items-center h-64">
