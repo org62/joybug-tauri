@@ -21,7 +21,7 @@ interface WatchpointAccessRow {
   thread_ids: number[];
 }
 
-// The core silent-collect behavior is proven by the joybug2 jlua test
+// The core silent-collect behavior is proven by the joybug-core jlua test
 // (tests/lua/breakpoints/watchpoint_trace.lua). This spec verifies the Tauri
 // command wiring + breakpoint model end to end through the real backend:
 // arm → the target runs freely and collects accessors → poll → stop retains

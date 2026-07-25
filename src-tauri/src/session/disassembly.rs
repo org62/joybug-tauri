@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
-use joybug2::interfaces::{Architecture, DisassemblerProvider};
-use joybug2::windows_platform::disassembler::CapstoneDisassembler;
+use joybug_core::interfaces::{Architecture, DisassemblerProvider};
+use joybug_core::windows_platform::disassembler::CapstoneDisassembler;
 use tauri::{AppHandle, Emitter};
 use tracing::{debug, error};
 
@@ -96,7 +96,7 @@ fn disasm_original_at(
 /// the frontend renders those as label rows above the instruction; the first
 /// column always shows the raw address.
 pub(crate) fn serialize_instructions(
-    instructions: &[joybug2::interfaces::Instruction],
+    instructions: &[joybug_core::interfaces::Instruction],
     patched_ranges: &[(u64, u64)],
     image_diff: Option<&ImageDiff>,
 ) -> Vec<SerializableInstruction> {
@@ -167,7 +167,7 @@ pub(crate) fn process_disassembly_request(
     session: &mut DebugSession,
     app_handle_clone: &Option<AppHandle>,
     pid: u32,
-    arch: joybug2::interfaces::Architecture,
+    arch: joybug_core::interfaces::Architecture,
     address: u64,
     count: u32,
     compare_image: bool,
@@ -260,7 +260,7 @@ pub(crate) fn process_disassembly_backward_request(
     session: &mut DebugSession,
     app_handle_clone: &Option<AppHandle>,
     pid: u32,
-    arch: joybug2::interfaces::Architecture,
+    arch: joybug_core::interfaces::Architecture,
     target: u64,
     count: u32,
     compare_image: bool,
@@ -299,7 +299,7 @@ pub(crate) fn process_function_disassembly_request(
     session: &mut DebugSession,
     app_handle_clone: &Option<AppHandle>,
     pid: u32,
-    arch: joybug2::interfaces::Architecture,
+    arch: joybug_core::interfaces::Architecture,
     address: u64,
     max_instructions: u32,
     compare_image: bool,

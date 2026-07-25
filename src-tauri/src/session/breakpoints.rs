@@ -6,12 +6,12 @@ use super::helpers::{format_symbol, is_system_module_path, module_short_name};
 use super::types::DebugSession;
 use crate::state::SessionStateUI;
 
-/// Convert hw_type string to joybug2 HardwareBreakpointType
-fn parse_hw_type(hw_type: &str) -> Option<joybug2::protocol::HardwareBreakpointType> {
+/// Convert hw_type string to joybug-core HardwareBreakpointType
+fn parse_hw_type(hw_type: &str) -> Option<joybug_core::protocol::HardwareBreakpointType> {
     match hw_type {
-        "Execute" => Some(joybug2::protocol::HardwareBreakpointType::Execute),
-        "Write" => Some(joybug2::protocol::HardwareBreakpointType::Write),
-        "ReadWrite" => Some(joybug2::protocol::HardwareBreakpointType::ReadWrite),
+        "Execute" => Some(joybug_core::protocol::HardwareBreakpointType::Execute),
+        "Write" => Some(joybug_core::protocol::HardwareBreakpointType::Write),
+        "ReadWrite" => Some(joybug_core::protocol::HardwareBreakpointType::ReadWrite),
         _ => None,
     }
 }
@@ -24,13 +24,13 @@ fn resolve_source_line(session: &mut DebugSession, pid: u32, address: u64) -> (O
     }
 }
 
-/// Convert hw_size u8 to joybug2 HardwareBreakpointSize
-fn parse_hw_size(hw_size: u8) -> Option<joybug2::protocol::HardwareBreakpointSize> {
+/// Convert hw_size u8 to joybug-core HardwareBreakpointSize
+fn parse_hw_size(hw_size: u8) -> Option<joybug_core::protocol::HardwareBreakpointSize> {
     match hw_size {
-        1 => Some(joybug2::protocol::HardwareBreakpointSize::Byte1),
-        2 => Some(joybug2::protocol::HardwareBreakpointSize::Byte2),
-        4 => Some(joybug2::protocol::HardwareBreakpointSize::Byte4),
-        8 => Some(joybug2::protocol::HardwareBreakpointSize::Byte8),
+        1 => Some(joybug_core::protocol::HardwareBreakpointSize::Byte1),
+        2 => Some(joybug_core::protocol::HardwareBreakpointSize::Byte2),
+        4 => Some(joybug_core::protocol::HardwareBreakpointSize::Byte4),
+        8 => Some(joybug_core::protocol::HardwareBreakpointSize::Byte8),
         _ => None,
     }
 }
@@ -54,7 +54,7 @@ fn arm_software_breakpoint(session: &mut DebugSession, pid: u32, address: u64, s
         session.set_single_shot_breakpoint_at(pid, address, |_s, _p, _t, _a| Ok(()))
     } else {
         session.set_breakpoint_at(pid, address, None, |_s, _p, _t, _a| {
-            Ok(joybug2::protocol_io::BreakpointDecision::Keep)
+            Ok(joybug_core::protocol_io::BreakpointDecision::Keep)
         })
     }
     .map_err(|e| e.to_string())
@@ -67,15 +67,15 @@ fn arm_bp_of_kind(session: &mut DebugSession, pid: u32, address: u64, bp_kind: &
     match bp_kind {
         "hardware" | "watchpoint" => {
             let t = hw_type.and_then(parse_hw_type)
-                .unwrap_or(joybug2::protocol::HardwareBreakpointType::Execute);
+                .unwrap_or(joybug_core::protocol::HardwareBreakpointType::Execute);
             let s = hw_size.and_then(parse_hw_size)
-                .unwrap_or(joybug2::protocol::HardwareBreakpointSize::Byte1);
+                .unwrap_or(joybug_core::protocol::HardwareBreakpointSize::Byte1);
             if bp_kind == "watchpoint" {
                 session.start_watchpoint_trace(pid, address, t, s)
                     .map_err(|e| e.to_string())
             } else {
                 session.set_hardware_breakpoint_at(pid, address, t, s, |_s, _p, _t, _a| {
-                    Ok(joybug2::protocol_io::BreakpointDecision::Keep)
+                    Ok(joybug_core::protocol_io::BreakpointDecision::Keep)
                 })
                 .map_err(|e| e.to_string())
             }
@@ -839,7 +839,7 @@ fn arm_hardware_at(
         session.start_watchpoint_trace(pid, address, hw_type, hw_size)
     } else {
         session.set_hardware_breakpoint_at(pid, address, hw_type, hw_size, |_session, _pid, _tid, _addr| {
-            Ok(joybug2::protocol_io::BreakpointDecision::Keep)
+            Ok(joybug_core::protocol_io::BreakpointDecision::Keep)
         })
     };
     match arm_result {

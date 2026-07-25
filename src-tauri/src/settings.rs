@@ -145,8 +145,8 @@ impl Default for DebugSettings {
 impl DebugSettings {
     /// Symbol configuration for an embedded server. An empty `symbol_path`
     /// means unset (env var / Microsoft symbol server).
-    pub fn symbol_config(&self) -> joybug2::SymbolConfig {
-        joybug2::SymbolConfig {
+    pub fn symbol_config(&self) -> joybug_core::SymbolConfig {
+        joybug_core::SymbolConfig {
             symbol_path: Some(self.symbol_path.trim())
                 .filter(|s| !s.is_empty())
                 .map(String::from),

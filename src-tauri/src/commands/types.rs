@@ -51,7 +51,7 @@ pub struct PdbLoadResultData {
 // ---------------------------------------------------------------------------
 // Type system (PDB TPI + user-defined) frontend DTOs.
 //
-// Mirror joybug2's `TypeLayout`/`TypeSummary`/`TypeRef`, but with 64-bit addresses
+// Mirror joybug-core's `TypeLayout`/`TypeSummary`/`TypeRef`, but with 64-bit addresses
 // as hex strings (JS number precision) and a `source` tag so PDB and custom types
 // render through the same UI.
 // ---------------------------------------------------------------------------
@@ -128,8 +128,8 @@ pub struct TypeSummaryData {
     pub source: String,
 }
 
-fn udt_kind_str(kind: joybug2::protocol_io::UdtKind) -> &'static str {
-    use joybug2::protocol_io::UdtKind;
+fn udt_kind_str(kind: joybug_core::protocol_io::UdtKind) -> &'static str {
+    use joybug_core::protocol_io::UdtKind;
     match kind {
         UdtKind::Struct => "struct",
         UdtKind::Class => "class",
@@ -138,9 +138,9 @@ fn udt_kind_str(kind: joybug2::protocol_io::UdtKind) -> &'static str {
     }
 }
 
-impl From<joybug2::protocol_io::TypeClass> for TypeClassData {
-    fn from(c: joybug2::protocol_io::TypeClass) -> Self {
-        use joybug2::protocol_io::TypeClass;
+impl From<joybug_core::protocol_io::TypeClass> for TypeClassData {
+    fn from(c: joybug_core::protocol_io::TypeClass) -> Self {
+        use joybug_core::protocol_io::TypeClass;
         match c {
             TypeClass::Int => TypeClassData::Int,
             TypeClass::UInt => TypeClassData::UInt,
@@ -163,8 +163,8 @@ impl From<joybug2::protocol_io::TypeClass> for TypeClassData {
     }
 }
 
-impl From<joybug2::protocol_io::TypeRef> for TypeRefData {
-    fn from(r: joybug2::protocol_io::TypeRef) -> Self {
+impl From<joybug_core::protocol_io::TypeRef> for TypeRefData {
+    fn from(r: joybug_core::protocol_io::TypeRef) -> Self {
         TypeRefData {
             name: r.name,
             size: r.size,
@@ -173,8 +173,8 @@ impl From<joybug2::protocol_io::TypeRef> for TypeRefData {
     }
 }
 
-impl From<joybug2::protocol_io::TypeMember> for TypeMemberData {
-    fn from(m: joybug2::protocol_io::TypeMember) -> Self {
+impl From<joybug_core::protocol_io::TypeMember> for TypeMemberData {
+    fn from(m: joybug_core::protocol_io::TypeMember) -> Self {
         TypeMemberData {
             name: m.name,
             offset: m.offset,
@@ -187,8 +187,8 @@ impl From<joybug2::protocol_io::TypeMember> for TypeMemberData {
     }
 }
 
-impl From<joybug2::protocol_io::TypeLayout> for TypeLayoutData {
-    fn from(l: joybug2::protocol_io::TypeLayout) -> Self {
+impl From<joybug_core::protocol_io::TypeLayout> for TypeLayoutData {
+    fn from(l: joybug_core::protocol_io::TypeLayout) -> Self {
         TypeLayoutData {
             name: l.name,
             size: l.size,
@@ -206,8 +206,8 @@ impl From<joybug2::protocol_io::TypeLayout> for TypeLayoutData {
     }
 }
 
-impl From<joybug2::protocol_io::TypeSummary> for TypeSummaryData {
-    fn from(s: joybug2::protocol_io::TypeSummary) -> Self {
+impl From<joybug_core::protocol_io::TypeSummary> for TypeSummaryData {
+    fn from(s: joybug_core::protocol_io::TypeSummary) -> Self {
         TypeSummaryData {
             name: s.name,
             size: s.size,

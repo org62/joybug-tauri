@@ -7,10 +7,10 @@ use crate::state::Serializablex64ThreadContext;
 use crate::state::SerializableArm64ThreadContext;
 
 pub fn convert_raw_context_to_serializable(
-    raw_context: joybug2::protocol::ThreadContext,
+    raw_context: joybug_core::protocol::ThreadContext,
 ) -> SerializableThreadContext {
     match raw_context {
-        joybug2::protocol::ThreadContext::Win32RawContext(ctx) => {
+        joybug_core::protocol::ThreadContext::Win32RawContext(ctx) => {
             // Check target architecture at compile time
             #[cfg(target_arch = "x86_64")]
             {
@@ -128,8 +128,8 @@ pub fn convert_raw_context_to_serializable(
     }
 }
 
-pub fn debug_event_to_info(event: &joybug2::protocol_io::DebugEvent) -> DebugEventInfo {
-    use joybug2::protocol_io::DebugEvent;
+pub fn debug_event_to_info(event: &joybug_core::protocol_io::DebugEvent) -> DebugEventInfo {
+    use joybug_core::protocol_io::DebugEvent;
 
     match event {
         DebugEvent::InitialBreakpoint { pid, tid, address } => DebugEventInfo {
@@ -296,7 +296,7 @@ pub fn debug_event_to_info(event: &joybug2::protocol_io::DebugEvent) -> DebugEve
             // For Write/ReadWrite HW breakpoints, the address is the *data* address that
             // was accessed, not the instruction pointer.  Leave address as None so the
             // frontend falls back to RIP from the thread context.
-            let is_execute = *bp_type == joybug2::protocol::HardwareBreakpointType::Execute;
+            let is_execute = *bp_type == joybug_core::protocol::HardwareBreakpointType::Execute;
             DebugEventInfo {
                 event_type: "HardwareBreakpoint".to_string(),
                 process_id: *pid,

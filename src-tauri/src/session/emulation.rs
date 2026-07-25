@@ -23,7 +23,7 @@ fn disassemble_addresses(
     session: &mut DebugSession,
     pid: u32,
     addresses: &[u64],
-    arch: joybug2::interfaces::Architecture,
+    arch: joybug_core::interfaces::Architecture,
 ) -> Vec<EmulationInstructionInfo> {
     let modules = get_modules_snapshot(session);
     let mut info = Vec::with_capacity(addresses.len());
@@ -99,10 +99,10 @@ fn symbolize_stop_reason(
 pub(crate) fn process_emulation_request(
     session: &mut DebugSession,
     app_handle_clone: &Option<AppHandle>,
-    event: &joybug2::protocol_io::DebugEvent,
+    event: &joybug_core::protocol_io::DebugEvent,
     max_instructions: usize,
-    mode: joybug2::protocol_io::EmulationMode,
-    exit_condition: Option<joybug2::protocol_io::TraceExitCondition>,
+    mode: joybug_core::protocol_io::EmulationMode,
+    exit_condition: Option<joybug_core::protocol_io::TraceExitCondition>,
     request_id: Option<String>,
     memory_reads: Vec<(u64, usize)>,
 ) {
@@ -122,30 +122,30 @@ pub(crate) fn process_emulation_request(
             let arch = {
                 let state = session.state.lock().unwrap();
                 match &state.current_context {
-                    Some(crate::state::SerializableThreadContext::X64(_)) => joybug2::interfaces::Architecture::X64,
-                    Some(crate::state::SerializableThreadContext::Arm64(_)) => joybug2::interfaces::Architecture::Arm64,
+                    Some(crate::state::SerializableThreadContext::X64(_)) => joybug_core::interfaces::Architecture::X64,
+                    Some(crate::state::SerializableThreadContext::Arm64(_)) => joybug_core::interfaces::Architecture::Arm64,
                     None => {
                         #[cfg(target_arch = "x86_64")]
-                        { joybug2::interfaces::Architecture::X64 }
+                        { joybug_core::interfaces::Architecture::X64 }
                         #[cfg(target_arch = "aarch64")]
-                        { joybug2::interfaces::Architecture::Arm64 }
+                        { joybug_core::interfaces::Architecture::Arm64 }
                         #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-                        { joybug2::interfaces::Architecture::X64 }
+                        { joybug_core::interfaces::Architecture::X64 }
                     }
                 }
             };
 
             let needs_disassembly = matches!(mode,
-                joybug2::protocol_io::EmulationMode::BasicBlock |
-                joybug2::protocol_io::EmulationMode::InstructionTrace
+                joybug_core::protocol_io::EmulationMode::BasicBlock |
+                joybug_core::protocol_io::EmulationMode::InstructionTrace
             );
 
             let unique_addrs: Vec<u64> = if needs_disassembly {
                 let raw_addrs: Vec<u64> = match &result {
-                    joybug2::protocol_io::EmulateResult::Emulation(data) => {
+                    joybug_core::protocol_io::EmulateResult::Emulation(data) => {
                         data.basic_blocks.clone()
                     }
-                    joybug2::protocol_io::EmulateResult::Trace(trace) => {
+                    joybug_core::protocol_io::EmulateResult::Trace(trace) => {
                         extract_pcs_from_tenet(&trace.trace_text)
                     }
                 };
@@ -164,7 +164,7 @@ pub(crate) fn process_emulation_request(
 
             if let Some(ref handle) = app_handle_clone {
                 let payload = match result {
-                    joybug2::protocol_io::EmulateResult::Emulation(data) => {
+                    joybug_core::protocol_io::EmulateResult::Emulation(data) => {
                         let stop_reason = symbolize_stop_reason(session, pid, &data.stop_reason);
                         let memory_snapshots = data.memory_snapshots.into_iter()
                             .map(|(addr, bytes)| MemorySnapshotEntry {
@@ -189,7 +189,7 @@ pub(crate) fn process_emulation_request(
                             memory_snapshots,
                         }
                     }
-                    joybug2::protocol_io::EmulateResult::Trace(trace) => {
+                    joybug_core::protocol_io::EmulateResult::Trace(trace) => {
                         let stop_reason = symbolize_stop_reason(session, pid, &trace.stop_reason);
                         EmulationResultPayload {
                             session_id,

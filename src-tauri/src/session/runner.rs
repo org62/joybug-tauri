@@ -40,19 +40,19 @@ fn reapply_for_loaded_module(
 fn handle_event_breakpoints(
     session: &mut DebugSession,
     app_handle_clone: &Option<AppHandle>,
-    event: &joybug2::protocol_io::DebugEvent,
+    event: &joybug_core::protocol_io::DebugEvent,
     unloaded_module_name: &Option<String>,
 ) {
     match event {
-        joybug2::protocol_io::DebugEvent::DllLoaded { dll_name, base_of_dll, .. } => {
+        joybug_core::protocol_io::DebugEvent::DllLoaded { dll_name, base_of_dll, .. } => {
             let name = dll_name.as_deref().unwrap_or("<unknown>");
             reapply_for_loaded_module(session, app_handle_clone, event.pid(), name, *base_of_dll);
         }
-        joybug2::protocol_io::DebugEvent::ProcessCreated { image_file_name, base_of_image, .. } => {
+        joybug_core::protocol_io::DebugEvent::ProcessCreated { image_file_name, base_of_image, .. } => {
             let name = image_file_name.as_deref().unwrap_or("main.exe");
             reapply_for_loaded_module(session, app_handle_clone, event.pid(), name, *base_of_image);
         }
-        joybug2::protocol_io::DebugEvent::DllUnloaded { .. } => {
+        joybug_core::protocol_io::DebugEvent::DllUnloaded { .. } => {
             if let Some(ref name) = unloaded_module_name {
                 let mut state = session.state.lock().unwrap();
                 deactivate_breakpoints_for_module(&mut state, &module_short_name(name));
@@ -67,11 +67,11 @@ fn handle_event_breakpoints(
 fn emit_dll_events(
     handle: &AppHandle,
     session_id: &str,
-    event: &joybug2::protocol_io::DebugEvent,
+    event: &joybug_core::protocol_io::DebugEvent,
     unloaded_module_name: Option<String>,
 ) {
     match event {
-        joybug2::protocol_io::DebugEvent::DllUnloaded { pid, tid, base_of_dll } => {
+        joybug_core::protocol_io::DebugEvent::DllUnloaded { pid, tid, base_of_dll } => {
             #[derive(serde::Serialize)]
             struct DllUnloadedEvent {
                 session_id: String,
@@ -100,7 +100,7 @@ fn emit_dll_events(
             // The frontend dispatcher coalesces bursts of these into a summary toast.
             crate::ui_logger::toast_info(handle, &message);
         }
-        joybug2::protocol_io::DebugEvent::DllLoaded { pid, tid, dll_name, base_of_dll, size_of_dll } => {
+        joybug_core::protocol_io::DebugEvent::DllLoaded { pid, tid, dll_name, base_of_dll, size_of_dll } => {
             #[derive(serde::Serialize)]
             struct DllLoadedEvent<'a> {
                 session_id: String,
@@ -139,16 +139,16 @@ fn emit_dll_events(
 /// Extracts the module name for a DllUnloaded event from session state.
 fn get_unloaded_module_name(
     state: &SessionStateUI,
-    event: &joybug2::protocol_io::DebugEvent,
+    event: &joybug_core::protocol_io::DebugEvent,
 ) -> Option<String> {
-    if let joybug2::protocol_io::DebugEvent::DllUnloaded { base_of_dll, .. } = event {
+    if let joybug_core::protocol_io::DebugEvent::DllUnloaded { base_of_dll, .. } = event {
         state.modules.iter().find(|m| m.base == *base_of_dll).map(|m| m.name.clone())
     } else {
         None
     }
 }
 
-/// If the "Hide from PEB" setting is enabled, ask joybug2 to overwrite the
+/// If the "Hide from PEB" setting is enabled, ask joybug-core to overwrite the
 /// configured PEB fields in the target. Called on the initial breakpoint:
 /// by then ntdll has finished loader/heap initialization, so the values we
 /// write (NtGlobalFlag, heap flags, etc.) won't be overwritten afterwards.
@@ -170,7 +170,7 @@ fn apply_debugger_hiding(
         return;
     }
 
-    let opts = joybug2::anti_anti_debug::PebHideOptions {
+    let opts = joybug_core::anti_anti_debug::PebHideOptions {
         being_debugged:  cfg.being_debugged,
         heap_flags:      cfg.heap_flags,
         nt_global_flag:  cfg.nt_global_flag,
@@ -255,7 +255,7 @@ pub fn run_debug_session(
     let app_handle_clone = app_handle.clone();
     let app_handle_for_exception = app_handle.clone();
 
-    let mut session_builder = joybug2::protocol_io::DebugSession::new(session_state.clone(), Some(&server_url))
+    let mut session_builder = joybug_core::protocol_io::DebugSession::new(session_state.clone(), Some(&server_url))
         .map_err(|e| Error::ConnectionFailed(e.to_string()))?
         .on_exception(move |session, _pid, _tid, code, _address, first_chance, _parameters| {
             // Read and clear pass_exception_on_continue flag from state
@@ -267,7 +267,7 @@ pub fn run_debug_session(
             };
 
             if pass {
-                return Ok(joybug2::protocol_io::ExceptionAction::PassToApplication);
+                return Ok(joybug_core::protocol_io::ExceptionAction::PassToApplication);
             }
 
             // Check per-code exception rules from settings
@@ -277,16 +277,16 @@ pub fn run_debug_session(
                     if rule.code == code {
                         let action_str = if first_chance { &rule.first_chance } else { &rule.second_chance };
                         return Ok(match action_str.as_str() {
-                            "pass" => joybug2::protocol_io::ExceptionAction::PassToApplication,
-                            "handled" => joybug2::protocol_io::ExceptionAction::HandledByDebugger,
-                            _ => joybug2::protocol_io::ExceptionAction::HandledByDebugger, // "stop" → handled (on_event controls pausing)
+                            "pass" => joybug_core::protocol_io::ExceptionAction::PassToApplication,
+                            "handled" => joybug_core::protocol_io::ExceptionAction::HandledByDebugger,
+                            _ => joybug_core::protocol_io::ExceptionAction::HandledByDebugger, // "stop" → handled (on_event controls pausing)
                         });
                     }
                 }
             }
 
             // Default: handled by debugger (on_event controls whether we pause)
-            Ok(joybug2::protocol_io::ExceptionAction::HandledByDebugger)
+            Ok(joybug_core::protocol_io::ExceptionAction::HandledByDebugger)
         })
         .on_event(move |session, event| {
             debug!("📥 Received debug event from server: {}", event);
@@ -309,16 +309,16 @@ pub fn run_debug_session(
             // bursts (e.g. thousands of thread-creates) into a single summary toast.
             if !matches!(
                 event,
-                joybug2::protocol_io::DebugEvent::Output { .. }
-                    | joybug2::protocol_io::DebugEvent::DllLoaded { .. }
-                    | joybug2::protocol_io::DebugEvent::DllUnloaded { .. }
+                joybug_core::protocol_io::DebugEvent::Output { .. }
+                    | joybug_core::protocol_io::DebugEvent::DllLoaded { .. }
+                    | joybug_core::protocol_io::DebugEvent::DllUnloaded { .. }
             ) {
                 // For breakpoint hits, name the group + module (entry/TLS) or the user's
                 // label instead of the raw "Breakpoint(pid=…, address=0x…)" tuple.
                 let msg = match event {
-                    joybug2::protocol_io::DebugEvent::Breakpoint { address, .. }
-                    | joybug2::protocol_io::DebugEvent::SingleShotBreakpoint { address, .. }
-                    | joybug2::protocol_io::DebugEvent::HardwareBreakpoint { address, .. } => {
+                    joybug_core::protocol_io::DebugEvent::Breakpoint { address, .. }
+                    | joybug_core::protocol_io::DebugEvent::SingleShotBreakpoint { address, .. }
+                    | joybug_core::protocol_io::DebugEvent::HardwareBreakpoint { address, .. } => {
                         super::breakpoints::breakpoint_hit_message(session, *address)
                             .unwrap_or_else(|| format!("{}", event))
                     }
@@ -329,7 +329,7 @@ pub fn run_debug_session(
 
             // A single-shot breakpoint is auto-removed server-side on its one hit; drop
             // its UI row too so the list stays in sync (whether we pause or continue).
-            if let joybug2::protocol_io::DebugEvent::SingleShotBreakpoint { address, .. } = event {
+            if let joybug_core::protocol_io::DebugEvent::SingleShotBreakpoint { address, .. } = event {
                 if super::breakpoints::remove_single_shot_row_on_hit(session, *address) {
                     emit_breakpoints_event(session, &app_handle_clone);
                 }
@@ -339,7 +339,7 @@ pub fn run_debug_session(
             // pausing the UI until the PC leaves the starting source line. When it
             // returns Some(true) the next step is already armed, so we resume; the
             // final step falls through to the normal pause path below.
-            if let joybug2::protocol_io::DebugEvent::StepComplete { pid, tid, address, .. } = event {
+            if let joybug_core::protocol_io::DebugEvent::StepComplete { pid, tid, address, .. } = event {
                 if let Some(keep_going) = super::dispatch::advance_source_line_step(session, *pid, *tid, *address) {
                     if keep_going {
                         return Ok(true);
@@ -350,12 +350,12 @@ pub fn run_debug_session(
             // Apply "Hide from PEB" at the initial breakpoint, before the target's
             // main() runs. This happens regardless of whether the initial breakpoint
             // is configured to pause, so anti-debug checks always see clean values.
-            if matches!(event, joybug2::protocol_io::DebugEvent::InitialBreakpoint { .. }) {
+            if matches!(event, joybug_core::protocol_io::DebugEvent::InitialBreakpoint { .. }) {
                 apply_debugger_hiding(session, event.pid(), handle);
             }
 
             // Special handling for OutputDebugString
-            if let joybug2::protocol_io::DebugEvent::Output { output, .. } = event {
+            if let joybug_core::protocol_io::DebugEvent::Output { output, .. } = event {
                 let session_id = {
                     let state = session.state.lock().unwrap();
                     state.id.clone()
@@ -379,7 +379,7 @@ pub fn run_debug_session(
             }
 
             // ProcessExited: always finalize/continue
-            if matches!(event, joybug2::protocol_io::DebugEvent::ProcessExited { .. }) {
+            if matches!(event, joybug_core::protocol_io::DebugEvent::ProcessExited { .. }) {
                 {
                     let mut state = session.state.lock().unwrap();
                     state.current_event = Some(event.clone());
@@ -391,7 +391,7 @@ pub fn run_debug_session(
             }
 
             // ThreadExited: respect settings whether to pause or not
-            if let joybug2::protocol_io::DebugEvent::ThreadExited { .. } = event {
+            if let joybug_core::protocol_io::DebugEvent::ThreadExited { .. } = event {
                 let should_pause_on_thread_exit = {
                     let s = handle.state::<SettingsState>();
                     let s = s.lock().unwrap();
@@ -413,18 +413,18 @@ pub fn run_debug_session(
             {
                 let settings = handle.state::<SettingsState>().inner().lock().unwrap().clone();
                 let should_pause = match event {
-                    joybug2::protocol_io::DebugEvent::ProcessCreated { .. } => settings.stop_on_process_create,
-                    joybug2::protocol_io::DebugEvent::ThreadCreated { .. } => settings.stop_on_thread_create,
-                    joybug2::protocol_io::DebugEvent::ThreadExited { .. } => settings.stop_on_thread_exit,
-                    joybug2::protocol_io::DebugEvent::DllLoaded { .. } => settings.stop_on_dll_load,
-                    joybug2::protocol_io::DebugEvent::DllUnloaded { .. } => settings.stop_on_dll_unload,
-                    joybug2::protocol_io::DebugEvent::InitialBreakpoint { .. } => settings.stop_on_initial_breakpoint,
+                    joybug_core::protocol_io::DebugEvent::ProcessCreated { .. } => settings.stop_on_process_create,
+                    joybug_core::protocol_io::DebugEvent::ThreadCreated { .. } => settings.stop_on_thread_create,
+                    joybug_core::protocol_io::DebugEvent::ThreadExited { .. } => settings.stop_on_thread_exit,
+                    joybug_core::protocol_io::DebugEvent::DllLoaded { .. } => settings.stop_on_dll_load,
+                    joybug_core::protocol_io::DebugEvent::DllUnloaded { .. } => settings.stop_on_dll_unload,
+                    joybug_core::protocol_io::DebugEvent::InitialBreakpoint { .. } => settings.stop_on_initial_breakpoint,
                     // A single-step exception (0x80000004) reaching the client is
                     // always program-raised: debugger-initiated steps surface as
                     // StepComplete and internal re-arms are consumed server-side. So
                     // it flows through the normal per-code exception-rule path below
                     // (default: pause), letting the user choose Go (Pass Exception).
-                    joybug2::protocol_io::DebugEvent::Exception { code, first_chance, .. } => {
+                    joybug_core::protocol_io::DebugEvent::Exception { code, first_chance, .. } => {
                         // Check per-code exception rules
                         let mut found = false;
                         let mut should_stop = true;
@@ -438,7 +438,7 @@ pub fn run_debug_session(
                         }
                         if found { should_stop } else { true }
                     }
-                    joybug2::protocol_io::DebugEvent::Unknown { .. } => false,
+                    joybug_core::protocol_io::DebugEvent::Unknown { .. } => false,
                     _ => true,
                 };
 
@@ -463,8 +463,8 @@ pub fn run_debug_session(
                     // and doesn't need a full session state update while running.
                     let is_dll_event = matches!(
                         event,
-                        joybug2::protocol_io::DebugEvent::DllLoaded { .. }
-                            | joybug2::protocol_io::DebugEvent::DllUnloaded { .. }
+                        joybug_core::protocol_io::DebugEvent::DllLoaded { .. }
+                            | joybug_core::protocol_io::DebugEvent::DllUnloaded { .. }
                     );
                     if !is_dll_event {
                         emit_session_event(&session.state, handle);

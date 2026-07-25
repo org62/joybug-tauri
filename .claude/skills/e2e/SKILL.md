@@ -34,7 +34,7 @@ $env:CMAKE_GENERATOR = "Ninja"
 ```
 If a prior failed build left a stale cache, delete it first: `rm -rf src-tauri/target/debug/build/keystone-engine-*/out` (error: "generator ... Does not match the generator used previously"). See memory `build-keystone-cmake4`.
 
-The joybug2 submodule builds/tests the same way but needs `LIBCLANG_PATH`; see `external/joybug2/CLAUDE.md` for its one-liners.
+The joybug-core submodule builds/tests the same way but needs `LIBCLANG_PATH`; see `external/joybug-core/CLAUDE.md` for its one-liners.
 
 ## 2. Run the suite
 
@@ -50,7 +50,7 @@ Background it and tee to a log for long runs; interim output is buffered until t
 
 ## 3. Fixtures must match the DEBUGGER's architecture
 
-The C fixtures (`hello_c.exe`, `watch_c.exe`) are the debugged **target**. joybug2 is a native debugger — it writes breakpoints/single-steps for its own arch and does NOT correctly debug an emulated cross-arch target. `build.mjs` builds the C fixtures for the host arch (detected via `PROCESSOR_IDENTIFIER`, which survives emulation) and stamps `<name>.arch`. If you ever see breakpoint/step/watchpoint tests hang or the target fault with `STATUS_ILLEGAL_INSTRUCTION`, suspect an arch-mismatched fixture (e.g. a stale x64 `e2e/fixtures/bin/` on ARM64). `hello_asm.exe` stays x64 on purpose. See memory `e2e-fixtures-host-arch`.
+The C fixtures (`hello_c.exe`, `watch_c.exe`) are the debugged **target**. joybug-core is a native debugger — it writes breakpoints/single-steps for its own arch and does NOT correctly debug an emulated cross-arch target. `build.mjs` builds the C fixtures for the host arch (detected via `PROCESSOR_IDENTIFIER`, which survives emulation) and stamps `<name>.arch`. If you ever see breakpoint/step/watchpoint tests hang or the target fault with `STATUS_ILLEGAL_INSTRUCTION`, suspect an arch-mismatched fixture (e.g. a stale x64 `e2e/fixtures/bin/` on ARM64). `hello_asm.exe` stays x64 on purpose. See memory `e2e-fixtures-host-arch`.
 
 ## 4. Stray-process cleanup (breaks the NEXT run)
 
@@ -65,7 +65,7 @@ Symptom of leftovers: a run where every test after ~#15 fails instantly (~350ms 
 
 ## 5. Debugging a failing test — capture backend trace
 
-The debug binary logs to stdout with a `RUST_LOG` env filter, but global-setup only forwards `ERROR`/`panic` lines. To capture full backend trace, temporarily tee the spawned binary's stdout+stderr in `global-setup.ts` (guard it behind an env var so it's easy to revert), set `RUST_LOG` (e.g. `joybug2::windows_platform=trace,joybug2::protocol_io=trace`), run the one failing test, then grep the log. Revert the global-setup edit afterward. This is how you see the actual Step/Breakpoint/exception sequence the UI can't show you.
+The debug binary logs to stdout with a `RUST_LOG` env filter, but global-setup only forwards `ERROR`/`panic` lines. To capture full backend trace, temporarily tee the spawned binary's stdout+stderr in `global-setup.ts` (guard it behind an env var so it's easy to revert), set `RUST_LOG` (e.g. `joybug_core::windows_platform=trace,joybug_core::protocol_io=trace`), run the one failing test, then grep the log. Revert the global-setup edit afterward. This is how you see the actual Step/Breakpoint/exception sequence the UI can't show you.
 
 ## 6. ARM64 host performance note
 

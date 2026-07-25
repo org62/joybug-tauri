@@ -93,12 +93,12 @@ fn value_to_plain(vt: &str, bytes: &[u8]) -> String {
 use crate::state::bookmark_static_address as static_base;
 
 /// Resolve the absolute address a bookmark points at, following the pointer chain
-/// for "pointer" bookmarks (joybug2 convention:
+/// for "pointer" bookmarks (joybug-core convention:
 /// `addr = base; for off in offsets { addr = read_u64(addr) + off }`).
 fn resolve_address(
     session: &mut DebugSession,
     pid: u32,
-    modules: &[joybug2::protocol_io::ModuleInfo],
+    modules: &[joybug_core::protocol_io::ModuleInfo],
     bm: &BookmarkInfo,
 ) -> Option<u64> {
     let base = static_base(bm, modules)?;
@@ -125,7 +125,7 @@ fn resolve_address(
 /// the (moving) target each tick. For other kinds it's the fixed resolved address
 /// with no chain. Falls back to the fixed `addr` if the base can't be resolved.
 fn freeze_target(
-    modules: &[joybug2::protocol_io::ModuleInfo],
+    modules: &[joybug_core::protocol_io::ModuleInfo],
     bm: &BookmarkInfo,
     addr: u64,
 ) -> (u64, Vec<u64>) {

@@ -5,7 +5,7 @@
 //! from disk. The file bytes are held in memory (`PeFilesState`, keyed by path)
 //! so the hex view can edit them and `pe_save` can write them back.
 //!
-//! Symbol resolution runs fully in-process via joybug2's offline
+//! Symbol resolution runs fully in-process via joybug-core's offline
 //! `WindowsSymbolProvider` (no debug session, no dbghelp) — the PDB is loaded
 //! from an explicit path, from next to the file, or from the symbol server.
 //!
@@ -21,15 +21,15 @@ use tracing::info;
 
 use crate::error::{Error, Result};
 use crate::session::types::{SerializableInstruction, SymbolData};
-use joybug2::interfaces::{
+use joybug_core::interfaces::{
     Architecture, DisassemblerProvider, ModuleSymbol, SymbolConfig, SymbolInfo, SymbolProvider,
 };
-use joybug2::pe_types::ModuleExtraInfo;
-use joybug2::protocol::{StringEncodingFilter, StringHit};
-use joybug2::windows_platform::disassembler::CapstoneDisassembler;
-use joybug2::windows_platform::{parse_module_extra_info_from_bytes, parse_pdb_matching_pe, WindowsSymbolProvider};
+use joybug_core::pe_types::ModuleExtraInfo;
+use joybug_core::protocol::{StringEncodingFilter, StringHit};
+use joybug_core::windows_platform::disassembler::CapstoneDisassembler;
+use joybug_core::windows_platform::{parse_module_extra_info_from_bytes, parse_pdb_matching_pe, WindowsSymbolProvider};
 
-use joybug2::pe_image::{rva_to_offset_loose, SectionMap};
+use joybug_core::pe_image::{rva_to_offset_loose, SectionMap};
 
 const IMAGE_FILE_MACHINE_AMD64: u16 = 0x8664;
 const IMAGE_FILE_MACHINE_ARM64: u16 = 0xAA64;
@@ -468,7 +468,7 @@ pub async fn pe_string_scan(
     let pe_files = pe_files.inner().clone();
     run_blocking(move || with_file(&pe_files, &path, |file| {
         let enc: StringEncodingFilter = encodings.parse().unwrap_or_default();
-        let mut hits = joybug2::string_scanner::scan_bytes(
+        let mut hits = joybug_core::string_scanner::scan_bytes(
             &file.bytes,
             0,
             min_length.max(1),

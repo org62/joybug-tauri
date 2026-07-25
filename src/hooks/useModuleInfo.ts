@@ -4,7 +4,7 @@ import { listen } from '@tauri-apps/api/event';
 import { toastError } from '@/lib/logger';
 import { formatTauriError } from '@/lib/sessionHelpers';
 
-// TypeScript interfaces mirroring joybug2::pe_types
+// TypeScript interfaces mirroring joybug_core::pe_types
 
 export interface ImageDataDirectory {
   VirtualAddress: number;

@@ -3,7 +3,7 @@ use crate::session::{run_debug_session, emit_session_event, LocalServer, UIComma
 use crate::state::{
     DebugSessionUI, EmbeddedServersMap, SessionStateUI, SessionStatesMap, SessionStatusUI,
 };
-use joybug2::protocol::DebuggerRequest;
+use joybug_core::protocol::DebuggerRequest;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use tauri::{State, Emitter, Manager};
@@ -590,7 +590,7 @@ pub fn detach_debug_session(
 #[tauri::command]
 pub fn list_processes(
     server_url: Option<String>,
-) -> std::result::Result<Vec<joybug2::protocol::ProcessInfo>, String> {
+) -> std::result::Result<Vec<joybug_core::protocol::ProcessInfo>, String> {
     let url = server_url.filter(|s| !s.trim().is_empty());
 
     let mut temp_server: Option<LocalServer> = None;
@@ -619,7 +619,7 @@ pub fn list_processes(
     result
 }
 
-/// Connect a throwaway joybug2 client to `server_url` for a single one-shot
+/// Connect a throwaway joybug-core client to `server_url` for a single one-shot
 /// request. The temp session state is untracked and carries no launch command.
 fn connect_temp_client(server_url: &str) -> Result<crate::session::types::DebugSession> {
     let tmp_state = Arc::new(Mutex::new(SessionStateUI::new(
@@ -632,7 +632,7 @@ fn connect_temp_client(server_url: &str) -> Result<crate::session::types::DebugS
         None,
         false,
     )));
-    joybug2::protocol_io::DebugSession::new(tmp_state, Some(server_url))
+    joybug_core::protocol_io::DebugSession::new(tmp_state, Some(server_url))
         .map_err(|e| Error::ConnectionFailed(e.to_string()))
 }
 

@@ -1,10 +1,10 @@
 //! Session-state cache of original on-disk module images (built by
-//! `joybug2::pe_image`), used to detect in-memory code that differs from the
+//! `joybug_core::pe_image`), used to detect in-memory code that differs from the
 //! file it was loaded from (patches, hooks, self-modifying code).
 
 use std::sync::{Arc, Mutex};
 
-pub use joybug2::pe_image::OriginalModuleImage;
+pub use joybug_core::pe_image::OriginalModuleImage;
 
 use crate::state::SessionStateUI;
 

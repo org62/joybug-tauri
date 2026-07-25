@@ -33,7 +33,7 @@ tauri-plugin-opener = "2"
 tauri-plugin-window-state = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-joybug2 = { path = "../external/joybug2" }
+joybug-core = { path = "../external/joybug-core" }
 tokio = { version = "1.0", features = ["full"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }

@@ -151,11 +151,11 @@ pub(crate) fn process_memory_regions_request(
                     allocation_base: format!("0x{:016X}", r.allocation_base),
                     region_size: r.region_size,
                     region_size_formatted: format_bytes(r.region_size),
-                    state: joybug2::formatting::memory::state_to_str(r.state).to_string(),
+                    state: joybug_core::formatting::memory::state_to_str(r.state).to_string(),
                     state_raw: r.state,
-                    protect: joybug2::formatting::memory::protect_to_str(r.protect).to_string(),
+                    protect: joybug_core::formatting::memory::protect_to_str(r.protect).to_string(),
                     protect_raw: r.protect,
-                    region_type: joybug2::formatting::memory::type_to_str(r.region_type).to_string(),
+                    region_type: joybug_core::formatting::memory::type_to_str(r.region_type).to_string(),
                     type_raw: r.region_type,
                     annotations,
                 })
@@ -259,36 +259,36 @@ pub(crate) fn process_memory_search(
 /// Convert protocol dereference entries to their serializable form. Shared by the
 /// paused-loop path and the OOB command handlers in `commands/memory.rs`.
 pub(crate) fn serialize_dereference_entries(
-    entries: &[joybug2::protocol::DereferenceEntry],
+    entries: &[joybug_core::protocol::DereferenceEntry],
 ) -> Vec<SerializableDereferenceEntry> {
     entries
         .iter()
         .map(|entry| {
             let chain: Vec<SerializableDereferenceValue> = entry.chain.iter().map(|v| {
                 match v {
-                    joybug2::protocol::DereferenceValue::Pointer(addr, sym) => {
+                    joybug_core::protocol::DereferenceValue::Pointer(addr, sym) => {
                         SerializableDereferenceValue::Pointer {
                             address: format!("0x{:016X}", addr),
                             symbol: sym.clone(),
                         }
                     }
-                    joybug2::protocol::DereferenceValue::Value(val) => {
+                    joybug_core::protocol::DereferenceValue::Value(val) => {
                         SerializableDereferenceValue::Value {
                             value: format!("0x{:X}", val),
                         }
                     }
-                    joybug2::protocol::DereferenceValue::String(s) => {
+                    joybug_core::protocol::DereferenceValue::String(s) => {
                         SerializableDereferenceValue::String {
                             value: s.clone(),
                         }
                     }
-                    joybug2::protocol::DereferenceValue::Instruction(instr, sym) => {
+                    joybug_core::protocol::DereferenceValue::Instruction(instr, sym) => {
                         SerializableDereferenceValue::Instruction {
                             value: instr.clone(),
                             symbol: sym.clone(),
                         }
                     }
-                    joybug2::protocol::DereferenceValue::LoopDetected(addr) => {
+                    joybug_core::protocol::DereferenceValue::LoopDetected(addr) => {
                         SerializableDereferenceValue::LoopDetected {
                             address: format!("0x{:016X}", addr),
                         }
@@ -310,7 +310,7 @@ fn emit_dereference_updated(
     handle: &AppHandle,
     session_id: &str,
     address: u64,
-    entries: &[joybug2::protocol::DereferenceEntry],
+    entries: &[joybug_core::protocol::DereferenceEntry],
 ) {
     let result = DereferenceResult {
         session_id: session_id.to_string(),
@@ -357,37 +357,37 @@ pub(crate) fn process_dereference_request(
     }
 }
 
-fn parse_scan_value_type(s: &str) -> joybug2::protocol::ScanValueType {
+fn parse_scan_value_type(s: &str) -> joybug_core::protocol::ScanValueType {
     match s {
-        "U8" => joybug2::protocol::ScanValueType::U8,
-        "U16" => joybug2::protocol::ScanValueType::U16,
-        "U32" => joybug2::protocol::ScanValueType::U32,
-        "U64" => joybug2::protocol::ScanValueType::U64,
-        "F32" => joybug2::protocol::ScanValueType::F32,
-        "F64" => joybug2::protocol::ScanValueType::F64,
-        _ => joybug2::protocol::ScanValueType::U32,
+        "U8" => joybug_core::protocol::ScanValueType::U8,
+        "U16" => joybug_core::protocol::ScanValueType::U16,
+        "U32" => joybug_core::protocol::ScanValueType::U32,
+        "U64" => joybug_core::protocol::ScanValueType::U64,
+        "F32" => joybug_core::protocol::ScanValueType::F32,
+        "F64" => joybug_core::protocol::ScanValueType::F64,
+        _ => joybug_core::protocol::ScanValueType::U32,
     }
 }
 
-fn parse_scan_compare_type(s: &str) -> joybug2::protocol::ScanCompareType {
+fn parse_scan_compare_type(s: &str) -> joybug_core::protocol::ScanCompareType {
     match s {
-        "ExactValue" => joybug2::protocol::ScanCompareType::ExactValue,
-        "UnknownInitialValue" => joybug2::protocol::ScanCompareType::UnknownInitialValue,
-        "BiggerThan" => joybug2::protocol::ScanCompareType::BiggerThan,
-        "SmallerThan" => joybug2::protocol::ScanCompareType::SmallerThan,
-        "ValueBetween" => joybug2::protocol::ScanCompareType::ValueBetween,
-        "IncreasedValue" => joybug2::protocol::ScanCompareType::IncreasedValue,
-        "DecreasedValue" => joybug2::protocol::ScanCompareType::DecreasedValue,
-        "IncreasedValueBy" => joybug2::protocol::ScanCompareType::IncreasedValueBy,
-        "DecreasedValueBy" => joybug2::protocol::ScanCompareType::DecreasedValueBy,
-        "Changed" => joybug2::protocol::ScanCompareType::Changed,
-        "Unchanged" => joybug2::protocol::ScanCompareType::Unchanged,
-        _ => joybug2::protocol::ScanCompareType::ExactValue,
+        "ExactValue" => joybug_core::protocol::ScanCompareType::ExactValue,
+        "UnknownInitialValue" => joybug_core::protocol::ScanCompareType::UnknownInitialValue,
+        "BiggerThan" => joybug_core::protocol::ScanCompareType::BiggerThan,
+        "SmallerThan" => joybug_core::protocol::ScanCompareType::SmallerThan,
+        "ValueBetween" => joybug_core::protocol::ScanCompareType::ValueBetween,
+        "IncreasedValue" => joybug_core::protocol::ScanCompareType::IncreasedValue,
+        "DecreasedValue" => joybug_core::protocol::ScanCompareType::DecreasedValue,
+        "IncreasedValueBy" => joybug_core::protocol::ScanCompareType::IncreasedValueBy,
+        "DecreasedValueBy" => joybug_core::protocol::ScanCompareType::DecreasedValueBy,
+        "Changed" => joybug_core::protocol::ScanCompareType::Changed,
+        "Unchanged" => joybug_core::protocol::ScanCompareType::Unchanged,
+        _ => joybug_core::protocol::ScanCompareType::ExactValue,
     }
 }
 
-fn parse_scan_value(value_type: joybug2::protocol::ScanValueType, s: &str) -> Option<joybug2::protocol::ScanValue> {
-    use joybug2::protocol::{ScanValue, ScanValueType};
+fn parse_scan_value(value_type: joybug_core::protocol::ScanValueType, s: &str) -> Option<joybug_core::protocol::ScanValue> {
+    use joybug_core::protocol::{ScanValue, ScanValueType};
     let s = s.trim();
     if s.is_empty() {
         return None;
@@ -437,12 +437,12 @@ fn fractional_digits(s: &str) -> usize {
 /// supplied an explicit tolerance, which is used as an absolute ± override. For
 /// all other comparisons the (relative) tolerance is passed through unchanged.
 fn resolve_scan_tolerance(
-    vt: joybug2::protocol::ScanValueType,
-    ct: joybug2::protocol::ScanCompareType,
+    vt: joybug_core::protocol::ScanValueType,
+    ct: joybug_core::protocol::ScanCompareType,
     value_str: Option<&str>,
     override_tol: Option<f64>,
 ) -> Option<f64> {
-    use joybug2::protocol::{ScanCompareType, ScanValueType};
+    use joybug_core::protocol::{ScanCompareType, ScanValueType};
     let is_float = matches!(vt, ScanValueType::F32 | ScanValueType::F64);
     if is_float && matches!(ct, ScanCompareType::ExactValue) {
         if override_tol.is_some() {
@@ -456,8 +456,8 @@ fn resolve_scan_tolerance(
     override_tol
 }
 
-fn format_scan_value(val: &joybug2::protocol::ScanValue) -> ScanValueEntry {
-    use joybug2::protocol::ScanValue;
+fn format_scan_value(val: &joybug_core::protocol::ScanValue) -> ScanValueEntry {
+    use joybug_core::protocol::ScanValue;
     match val {
         ScanValue::U8(v) => ScanValueEntry { value_type: "U8".to_string(), display: format!("{} (0x{:02X})", v, v) },
         ScanValue::U16(v) => ScanValueEntry { value_type: "U16".to_string(), display: format!("{} (0x{:04X})", v, v) },
@@ -474,9 +474,9 @@ fn format_scan_value(val: &joybug2::protocol::ScanValue) -> ScanValueEntry {
 fn scan_value_parsed(
     handle: &AppHandle,
     session_id: &str,
-    vt: joybug2::protocol::ScanValueType,
+    vt: joybug_core::protocol::ScanValueType,
     raw: Option<&str>,
-    parsed: &Option<joybug2::protocol::ScanValue>,
+    parsed: &Option<joybug_core::protocol::ScanValue>,
 ) -> bool {
     if let Some(s) = raw {
         if !s.trim().is_empty() && parsed.is_none() {

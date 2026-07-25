@@ -134,7 +134,7 @@ pub(crate) fn handle_ui_commands(
     ui_receiver: &std::sync::mpsc::Receiver<UICommand>,
     session: &mut DebugSession,
     app_handle_clone: &Option<AppHandle>,
-    event: &joybug2::protocol_io::DebugEvent,
+    event: &joybug_core::protocol_io::DebugEvent,
 ) -> Result<bool> {
     loop {
         // Block until at least one command arrives
@@ -227,7 +227,7 @@ pub(crate) fn advance_source_line_step(
         // Arm the next single step; the debug loop's auto-continue resumes execution.
         if session
             .step(pid, tid, kind, |_s, _pid, _tid, _addr, _kind| {
-                Ok(joybug2::protocol_io::StepAction::Stop)
+                Ok(joybug_core::protocol_io::StepAction::Stop)
             })
             .is_ok()
         {
@@ -244,7 +244,7 @@ fn process_command(
     command: UICommand,
     session: &mut DebugSession,
     app_handle_clone: &Option<AppHandle>,
-    event: &joybug2::protocol_io::DebugEvent,
+    event: &joybug_core::protocol_io::DebugEvent,
 ) -> CommandResult {
     match command {
         UICommand::Go => {
@@ -275,10 +275,10 @@ fn process_command(
 
             if let Err(e) = session.step(
                 pid, tid,
-                joybug2::protocol_io::StepKind::Into,
+                joybug_core::protocol_io::StepKind::Into,
                 |_s, _pid, _tid, _addr, _kind| {
                     debug!("📥 StepIn handler called");
-                    Ok(joybug2::protocol_io::StepAction::Stop)
+                    Ok(joybug_core::protocol_io::StepAction::Stop)
                 },
             ) {
                 let msg = format!("Step in failed: {}", e);
@@ -302,10 +302,10 @@ fn process_command(
 
             if let Err(e) = session.step(
                 pid, tid,
-                joybug2::protocol_io::StepKind::Over,
+                joybug_core::protocol_io::StepKind::Over,
                 |_s, _pid, _tid, _addr, _kind| {
                     debug!("📥 StepOver handler called");
-                    Ok(joybug2::protocol_io::StepAction::Stop)
+                    Ok(joybug_core::protocol_io::StepAction::Stop)
                 },
             ) {
                 let msg = format!("Step over failed: {}", e);
@@ -329,10 +329,10 @@ fn process_command(
 
             if let Err(e) = session.step(
                 pid, tid,
-                joybug2::protocol_io::StepKind::Out,
+                joybug_core::protocol_io::StepKind::Out,
                 |_s, _pid, _tid, _addr, _kind| {
                     debug!("📥 StepOut handler called");
-                    Ok(joybug2::protocol_io::StepAction::Stop)
+                    Ok(joybug_core::protocol_io::StepAction::Stop)
                 },
             ) {
                 let msg = format!("Step out failed: {}", e);
@@ -353,8 +353,8 @@ fn process_command(
             let pid = event.pid();
             let tid = event.tid();
             let (kind, label) = match command {
-                UICommand::StepIntoLine => (joybug2::protocol_io::StepKind::Into, "StepIntoLine"),
-                _ => (joybug2::protocol_io::StepKind::Over, "StepOverLine"),
+                UICommand::StepIntoLine => (joybug_core::protocol_io::StepKind::Into, "StepIntoLine"),
+                _ => (joybug_core::protocol_io::StepKind::Over, "StepOverLine"),
             };
             debug!("📤 {} command - pid={}, tid={}", label, pid, tid);
 
@@ -373,7 +373,7 @@ fn process_command(
             // Kick off the first underlying step. The loop continuation lives in
             // runner::on_event so it plays nicely with the pause/continue machinery.
             if let Err(e) = session.step(pid, tid, kind, |_s, _pid, _tid, _addr, _kind| {
-                Ok(joybug2::protocol_io::StepAction::Stop)
+                Ok(joybug_core::protocol_io::StepAction::Stop)
             }) {
                 session.state.lock().unwrap().source_step = None;
                 let msg = format!("{} failed: {}", label, e);
@@ -574,7 +574,7 @@ fn process_command(
             let pid = event.pid();
             info!("Detach command received for pid {}", pid);
             let session_id = session.state.lock().unwrap().id.clone();
-            match session.send_and_receive(&joybug2::protocol::DebuggerRequest::Detach { pid }) {
+            match session.send_and_receive(&joybug_core::protocol::DebuggerRequest::Detach { pid }) {
                 Ok(_) => {
                     if let Some(handle) = app_handle_clone.as_ref() {
                         crate::ui_logger::log_info(handle, &format!("Detached from process {}", pid), Some(session_id.clone()));

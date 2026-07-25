@@ -79,7 +79,7 @@ pub fn get_session_modules(
     let session_arc = super::get_session_arc(&session_id, &session_states)?;
     // Polled every second while live — map the cached list under the lock instead
     // of cloning the whole Vec, and only fall back to OOB when the cache is empty.
-    let to_data = |module: &joybug2::protocol_io::ModuleInfo| ModuleData {
+    let to_data = |module: &joybug_core::protocol_io::ModuleInfo| ModuleData {
         name: module.name.clone(),
         base_address: format!("0x{:X}", module.base),
         size: module.size.unwrap_or(0),
@@ -102,7 +102,7 @@ pub fn get_session_threads(
 ) -> Result<Vec<ThreadData>> {
     let session_arc = super::get_session_arc(&session_id, &session_states)?;
     // Same polled pattern as get_session_modules: map under the lock, no Vec clone.
-    let to_data = |thread: &joybug2::protocol_io::ThreadInfo| ThreadData {
+    let to_data = |thread: &joybug_core::protocol_io::ThreadInfo| ThreadData {
         id: thread.tid,
         status: "Running".to_string(),
         start_address: format!("0x{:X}", thread.start_address),

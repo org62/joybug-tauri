@@ -26,7 +26,7 @@ const NO_VALUE_COMPARE_TYPES: ScanCompareType[] = [
 ];
 
 // IncreasedValueBy/DecreasedValueBy take their amount in the FIRST value slot
-// (joybug2 compares against `value`; `value2` is ignored for them).
+// (joybug-core compares against `value`; `value2` is ignored for them).
 const TWO_VALUE_COMPARE_TYPES: ScanCompareType[] = [
   'ValueBetween',
 ];

@@ -2214,34 +2214,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8eaf4bc02d17cbdd7ff4c7438cafcdf7fb9a4613313ad11b4f8fefe7d3fa0130"
 
 [[package]]
-name = "joybug-tauri"
-version = "0.0.0"
-dependencies = [
- "chrono",
- "dirs 6.0.0",
- "joybug2",
- "md-5",
- "reqwest",
- "semver",
- "serde",
- "serde_json",
- "sha1",
- "sha2",
- "tauri",
- "tauri-build",
- "tauri-plugin-dialog",
- "tauri-plugin-opener",
- "tauri-plugin-window-state",
- "thiserror 2.0.12",
- "tokio",
- "tracing",
- "tracing-appender",
- "tracing-subscriber",
- "uuid",
-]
-
-[[package]]
-name = "joybug2"
+name = "joybug-core"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -2250,7 +2223,7 @@ dependencies = [
  "cc",
  "clap",
  "dirs 5.0.1",
- "joybug2-veh-shared",
+ "joybug-core-veh-shared",
  "keystone-engine",
  "memmap2",
  "mlua",
@@ -2273,8 +2246,35 @@ dependencies = [
 ]
 
 [[package]]
-name = "joybug2-veh-shared"
+name = "joybug-core-veh-shared"
 version = "0.1.0"
+
+[[package]]
+name = "joybug-tauri"
+version = "0.0.0"
+dependencies = [
+ "chrono",
+ "dirs 6.0.0",
+ "joybug-core",
+ "md-5",
+ "reqwest",
+ "semver",
+ "serde",
+ "serde_json",
+ "sha1",
+ "sha2",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-dialog",
+ "tauri-plugin-opener",
+ "tauri-plugin-window-state",
+ "thiserror 2.0.12",
+ "tokio",
+ "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
+ "uuid",
+]
 
 [[package]]
 name = "js-sys"

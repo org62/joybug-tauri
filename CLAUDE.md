@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Joybug UI — a Tauri v2 desktop debugger for Windows. Rust backend manages debug sessions via the joybug2 library; React/TypeScript frontend renders the debugging UI.
+Joybug UI — a Tauri v2 desktop debugger for Windows. Rust backend manages debug sessions via the joybug-core library; React/TypeScript frontend renders the debugging UI.
 
 ## Build & Dev Commands
 
@@ -24,7 +24,7 @@ Run `npx playwright test --config e2e/playwright.config.ts` after every major co
 
 **Zero tolerance for flaky tests.** A test that passes only on retry is a bug, not noise — treat a flaky result exactly like a failure. When a flake appears, investigate and fix it immediately (reproduce with `--repeat-each=N`, find the actual race, fix the root cause); never re-run to make it "go away" or lean on Playwright's `retries`. `retries` exists only to keep CI green while a flake is being fixed, not to hide it. Every fix must target a concrete cause — an unsynchronized wait, a command sent before the session is ready, cross-test state left behind (persisted patches/breakpoints, an open PE file), a too-tight timeout on a cold-start path — not a blanket timeout bump. After fixing, re-run the affected spec with `--repeat-each` to prove it's stable.
 
-The joybug2 external crate has integration tests (`external/joybug2/tests/`) that require Windows with debugging privileges.
+The joybug-core external crate has integration tests (`external/joybug-core/tests/`) that require Windows with debugging privileges.
 
 ## Project Structure
 
@@ -42,7 +42,7 @@ The joybug2 external crate has integration tests (`external/joybug2/tests/`) tha
     - `updates.rs` — GitHub-releases update check + first-run welcome state
   - `lib.rs` — App setup, command registration, global state
   - `state.rs` — `SessionStateUI`, serializable types
-  - `events.rs` — joybug2 context → serializable conversion
+  - `events.rs` — joybug-core context → serializable conversion
   - `breakpoint_store.rs` — Breakpoint persistence
   - `app_state_store.rs` — `app_state.json`: welcome-seen version, skipped update, last update check
   - `error.rs` — Error types
@@ -55,7 +55,7 @@ The joybug2 external crate has integration tests (`external/joybug2/tests/`) tha
   - `hooks/` — Custom hooks (`useDebugSession`, `useAssemblyView`, `useBreakpoints`, etc.)
   - `lib/` — Utilities (`dockingConfigs.tsx` for dock layout, `hexUtils.ts`, `sessionHelpers.ts`)
   - `contexts/SessionContext.ts` — Session data context type definitions
-- `external/joybug2/` — Git submodule, the debugger core library
+- `external/joybug-core/` — Git submodule, the debugger core library
 
 ## Architecture
 
@@ -108,7 +108,7 @@ The joybug2 external crate has integration tests (`external/joybug2/tests/`) tha
 
 Both repos are trunk-based: one long-lived branch, **`main`**, plus short-lived feature branches that PR into it. Released versions are identified by tags, not by a branch.
 
-A change spanning both repos: land the core side on core `main` first, then in the parent move the gitlink to that commit (`git -C external/joybug2 checkout main && git -C external/joybug2 pull`) and PR the parent side. Because the parent pins core by SHA, core `main` moving ahead never affects a released build.
+A change spanning both repos: land the core side on core `main` first, then in the parent move the gitlink to that commit (`git -C external/joybug-core checkout main && git -C external/joybug-core pull`) and PR the parent side. Because the parent pins core by SHA, core `main` moving ahead never affects a released build.
 
 **Cutting a release** — tag `main`, that's all:
 ```bash

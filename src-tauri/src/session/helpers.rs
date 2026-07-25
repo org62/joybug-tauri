@@ -39,7 +39,7 @@ pub(crate) fn format_bytes(bytes: u64) -> String {
 /// resolves automatically; zero or several matches are an error the caller
 /// surfaces (for several, the UI offers a picker).
 pub(crate) fn match_target_pid(
-    processes: &[joybug2::protocol::ProcessInfo],
+    processes: &[joybug_core::protocol::ProcessInfo],
     stored_pid: u32,
     target_name: &str,
 ) -> std::result::Result<u32, String> {
@@ -74,12 +74,12 @@ pub(crate) fn extract_module_name(module_path: &str) -> String {
 }
 
 /// Clones the current module list from the shared session state.
-pub(crate) fn get_modules_snapshot(session: &DebugSession) -> Vec<joybug2::protocol_io::ModuleInfo> {
+pub(crate) fn get_modules_snapshot(session: &DebugSession) -> Vec<joybug_core::protocol_io::ModuleInfo> {
     session.state.lock().unwrap().modules.clone()
 }
 
 /// Finds the module containing the given address, returns (short_name, offset_from_base)
-pub(crate) fn find_module_for_address(modules: &[joybug2::protocol_io::ModuleInfo], address: u64) -> Option<(String, u64)> {
+pub(crate) fn find_module_for_address(modules: &[joybug_core::protocol_io::ModuleInfo], address: u64) -> Option<(String, u64)> {
     for module in modules {
         if let Some(size) = module.size {
             if address >= module.base && address < module.base + size {
@@ -109,10 +109,10 @@ pub(crate) fn module_offset_label(module: &str, offset: u64) -> String {
     format!("{}+0x{:x}", module, offset)
 }
 
-/// Final operand text for an instruction. joybug2 substitutes only exact-symbol
+/// Final operand text for an instruction. joybug-core substitutes only exact-symbol
 /// (offset 0) operand targets; every other target stays raw hex by design
 /// (strict mode) — no module+offset fallback.
-pub(crate) fn effective_op_str(inst: &joybug2::interfaces::Instruction) -> String {
+pub(crate) fn effective_op_str(inst: &joybug_core::interfaces::Instruction) -> String {
     inst.symbolized_op_str.clone().unwrap_or_else(|| inst.op_str.clone())
 }
 
@@ -149,9 +149,9 @@ pub(crate) fn is_system_module_path(full_path: &str) -> bool {
 /// short file name (e.g. "ntdll.dll"). The one resolution rule for commands
 /// that take a module name from the frontend.
 pub(crate) fn find_module_by_name<'a>(
-    modules: &'a [joybug2::protocol_io::ModuleInfo],
+    modules: &'a [joybug_core::protocol_io::ModuleInfo],
     name: &str,
-) -> Option<&'a joybug2::protocol_io::ModuleInfo> {
+) -> Option<&'a joybug_core::protocol_io::ModuleInfo> {
     modules.iter().find(|m| {
         m.name.eq_ignore_ascii_case(name)
             || module_short_name(&m.name).eq_ignore_ascii_case(name)
@@ -175,11 +175,11 @@ pub(crate) fn report_step_error(
 }
 
 /// Updates session state (modules and threads) based on debug events
-pub(crate) fn update_session_from_event(state: &mut SessionStateUI, event: &joybug2::protocol_io::DebugEvent) {
+pub(crate) fn update_session_from_event(state: &mut SessionStateUI, event: &joybug_core::protocol_io::DebugEvent) {
     match event {
-        joybug2::protocol_io::DebugEvent::DllLoaded { dll_name, base_of_dll, size_of_dll, .. } => {
+        joybug_core::protocol_io::DebugEvent::DllLoaded { dll_name, base_of_dll, size_of_dll, .. } => {
             let module_name = dll_name.clone().unwrap_or_else(|| format!("Unknown_0x{:X}", base_of_dll));
-            let module = joybug2::protocol_io::ModuleInfo {
+            let module = joybug_core::protocol_io::ModuleInfo {
                 name: module_name.clone(),
                 base: *base_of_dll,
                 size: *size_of_dll,
@@ -189,8 +189,8 @@ pub(crate) fn update_session_from_event(state: &mut SessionStateUI, event: &joyb
                 info!("Added module: {} at 0x{:X}", module_name, base_of_dll);
             }
         }
-        joybug2::protocol_io::DebugEvent::ThreadCreated { tid, start_address, .. } => {
-            let thread = joybug2::protocol_io::ThreadInfo {
+        joybug_core::protocol_io::DebugEvent::ThreadCreated { tid, start_address, .. } => {
+            let thread = joybug_core::protocol_io::ThreadInfo {
                 tid: *tid,
                 start_address: *start_address,
             };
@@ -199,9 +199,9 @@ pub(crate) fn update_session_from_event(state: &mut SessionStateUI, event: &joyb
                 info!("Added thread: {} at 0x{:X}", tid, start_address);
             }
         }
-        joybug2::protocol_io::DebugEvent::ProcessCreated { pid, tid, image_file_name, base_of_image, size_of_image, .. } => {
+        joybug_core::protocol_io::DebugEvent::ProcessCreated { pid, tid, image_file_name, base_of_image, size_of_image, .. } => {
             let module_name = image_file_name.clone().unwrap_or_else(|| "main.exe".to_string());
-            let module = joybug2::protocol_io::ModuleInfo {
+            let module = joybug_core::protocol_io::ModuleInfo {
                 name: module_name.clone(),
                 base: *base_of_image,
                 size: *size_of_image,
@@ -211,7 +211,7 @@ pub(crate) fn update_session_from_event(state: &mut SessionStateUI, event: &joyb
                 info!("Added main executable module: {} at 0x{:X}", module_name, base_of_image);
             }
 
-            let thread = joybug2::protocol_io::ThreadInfo {
+            let thread = joybug_core::protocol_io::ThreadInfo {
                 tid: *tid,
                 start_address: *base_of_image,
             };
@@ -220,18 +220,18 @@ pub(crate) fn update_session_from_event(state: &mut SessionStateUI, event: &joyb
                 info!("Added initial thread: {} for process {} at 0x{:X}", tid, pid, base_of_image);
             }
         }
-        joybug2::protocol_io::DebugEvent::ThreadExited { tid, .. } => {
+        joybug_core::protocol_io::DebugEvent::ThreadExited { tid, .. } => {
             state.threads.retain(|t| t.tid != *tid);
             state.region_annotation_cache.threads.remove(tid);
             info!("Removed thread: {}", tid);
         }
-        joybug2::protocol_io::DebugEvent::DllUnloaded { base_of_dll, .. } => {
+        joybug_core::protocol_io::DebugEvent::DllUnloaded { base_of_dll, .. } => {
             state.modules.retain(|m| m.base != *base_of_dll);
             state.original_images.remove(base_of_dll);
             state.region_annotation_cache.sections.remove(base_of_dll);
             info!("Removed module at 0x{:X}", base_of_dll);
         }
-        joybug2::protocol_io::DebugEvent::ProcessExited { .. } => {
+        joybug_core::protocol_io::DebugEvent::ProcessExited { .. } => {
             state.modules.clear();
             state.threads.clear();
             state.original_images.clear();
