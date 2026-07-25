@@ -1,9 +1,7 @@
 [submodule "external/joybug2"]
 	path = external/joybug2
 	url = https://github.com/org62/joybug-core.git
-	# "." = track the branch of the same name as the superproject's, so
-	# `git submodule update --remote` follows core's develop while you are on
-	# develop and core's main while you are on main. Requires both repos to use
-	# the same branch names (main + develop). Builds always use the pinned
-	# gitlink; --remote is an explicit "pull in the latest core" action.
-	branch = .
+	# joybug2 has a single long-lived branch, so `git submodule update --remote`
+	# always means "pull in the latest core". Builds use the pinned gitlink; only
+	# an explicit --remote moves it.
+	branch = main

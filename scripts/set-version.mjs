@@ -8,7 +8,7 @@
 //   node scripts/set-version.mjs 0.2.0          # write
 //   node scripts/set-version.mjs --check 0.2.0  # verify only, non-zero on mismatch
 //
-// Run from the repo root. After bumping, commit the result on `develop`.
+// Run from the repo root. Commit the result, merge it to main, then tag main.
 
 import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";

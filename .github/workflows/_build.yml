@@ -37,6 +37,12 @@ jobs:
       with:
         submodules: recursive
 
+    # Cheap gate before the ~15 minute build: catches "tagged v0.3.0 but forgot
+    # to bump the manifests", which is the one release mistake that is easy to make.
+    - name: Verify version files match the tag
+      if: inputs.version != ''
+      run: node scripts/set-version.mjs --check ${{ inputs.version }}
+
     - name: Install frontend dependencies
       run: npm ci
 

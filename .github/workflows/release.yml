@@ -1,10 +1,9 @@
 # Releases are cut by tagging a commit on `main`:
 #
-#   node scripts/set-version.mjs 0.2.0   # on develop, commit, PR -> main
-#   git tag -a v0.2.0 -m "v0.2.0" && git push origin v0.2.0
+#   node scripts/set-version.mjs 0.2.0   # commit, PR -> main, merge
+#   git tag v0.2.0 && git push origin v0.2.0
 #
-# The tag triggers this workflow: it re-validates the release preconditions,
-# runs the full build + E2E suite on both arches, and only then publishes.
+# The tag runs the same build + E2E as CI, then publishes the binaries.
 name: Release
 
 on:
@@ -15,50 +14,10 @@ permissions:
   contents: write
 
 jobs:
-  verify:
-    runs-on:
-      - self-hosted
-      - Windows
-      - X64
-    steps:
-    - uses: actions/checkout@v4
-      with:
-        submodules: recursive
-        fetch-depth: 0
-
-    - name: Verify tag is on main
-      shell: powershell
-      run: |
-        $ErrorActionPreference = "Stop"
-        git fetch origin main
-        $sha = (git rev-parse HEAD).Trim()
-        git merge-base --is-ancestor $sha FETCH_HEAD
-        if ($LASTEXITCODE -ne 0) {
-          Write-Host "::error::Tag ${{ github.ref_name }} does not point at a commit on main. Merge to main before tagging."
-          exit 1
-        }
-
-    - name: Verify version files match the tag
-      run: node scripts/set-version.mjs --check ${{ github.ref_name }}
-
-    - name: Verify joybug-core pin is on core main
-      shell: powershell
-      run: |
-        $ErrorActionPreference = "Stop"
-        Push-Location external/joybug2
-        $pinned = (git rev-parse HEAD).Trim()
-        git fetch origin main
-        git merge-base --is-ancestor $pinned FETCH_HEAD
-        if ($LASTEXITCODE -ne 0) {
-          Write-Host "::error::joybug-core is pinned to $pinned, which is not on core's main branch."
-          exit 1
-        }
-        Pop-Location
-
   build:
-    needs: verify
     uses: ./.github/workflows/_build.yml
     with:
+      # Enables release naming, SHA256 sidecars, and the version-vs-tag check.
       version: ${{ github.ref_name }}
       retention-days: 90
 

@@ -1,50 +1,18 @@
 name: CI
 
 on:
+  # Only main is listed under `push`. Feature branches are covered by
+  # pull_request (which builds the merge preview), so a PR gets exactly one run
+  # instead of two.
   push:
-    branches: [ "main", "develop" ]
+    branches: [ "main" ]
   pull_request:
-    branches: [ "main", "develop" ]
+    branches: [ "main" ]
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  # Guards the invariant that makes the two-repo release scheme safe: a commit on
-  # `main` may only pin a joybug-core commit that is itself reachable from
-  # joybug-core's `main`. Without this, a merge to main can silently ship a core
-  # revision that only exists on core's develop branch.
-  submodule-sync:
-    if: github.event_name == 'pull_request' && github.base_ref == 'main'
-    runs-on:
-      - self-hosted
-      - Windows
-      - X64
-    steps:
-    - uses: actions/checkout@v4
-      with:
-        submodules: recursive
-        # Full history: `merge-base --is-ancestor` needs real history in the
-        # submodule, and the default shallow submodule clone doesn't have it.
-        fetch-depth: 0
-
-    - name: Verify joybug-core pin is on core main
-      shell: powershell
-      run: |
-        $ErrorActionPreference = "Stop"
-        Push-Location external/joybug2
-        $pinned = (git rev-parse HEAD).Trim()
-        git fetch origin main
-        if ($LASTEXITCODE -ne 0) { throw "could not fetch joybug-core main" }
-        git merge-base --is-ancestor $pinned FETCH_HEAD
-        if ($LASTEXITCODE -ne 0) {
-          Write-Host "::error::joybug-core is pinned to $pinned, which is not on core's main branch."
-          Write-Host "::error::Merge joybug-core develop -> main first, then re-pin this PR to that commit."
-          exit 1
-        }
-        Write-Host "joybug-core pin $pinned is on core main - ok"
-        Pop-Location
-
   build:
     uses: ./.github/workflows/_build.yml
