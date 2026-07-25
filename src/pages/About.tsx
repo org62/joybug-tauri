@@ -1,8 +1,22 @@
+import { useEffect, useState } from "react";
+import { getVersion } from "@tauri-apps/api/app";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Page } from "@/components/ui/page";
 import reactLogo from "../assets/react.svg";
 
 export default function About() {
+  // Comes from tauri.conf.json, which release CI stamps from the git tag - so
+  // this is the real version in a release build and the 0.0.0 placeholder in a
+  // local one. Never hardcode it here.
+  const [version, setVersion] = useState<string | null>(null);
+  useEffect(() => {
+    // Stays null on failure, which just drops the version from the footer -
+    // cosmetic, so it logs rather than toasts.
+    getVersion()
+      .then(setVersion)
+      .catch((error) => console.error("Failed to read app version:", error));
+  }, []);
+
   return (
     <Page container={false}>
     <div className="container mx-auto p-6 flex justify-center">
@@ -67,7 +81,7 @@ export default function About() {
             
             <div className="text-center pt-4 border-t">
               <p className="text-sm text-gray-500">
-                Version 0.1.0 • Built with ❤️ using modern web technologies
+                {version && <>Version {version} • </>}Built with ❤️ using modern web technologies
               </p>
             </div>
           </CardContent>

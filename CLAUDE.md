@@ -102,6 +102,26 @@ The joybug2 external crate has integration tests (`external/joybug2/tests/`) tha
 ### Git
 - Never stage files (`git add`) unless explicitly asked to do so.
 
+### Branching & Releases
+
+Both repos are trunk-based: one long-lived branch, **`main`**, plus short-lived feature branches that PR into it. Released versions are identified by tags, not by a branch.
+
+A change spanning both repos: land the core side on core `main` first, then in the parent move the gitlink to that commit (`git -C external/joybug2 checkout main && git -C external/joybug2 pull`) and PR the parent side. Because the parent pins core by SHA, core `main` moving ahead never affects a released build.
+
+**Cutting a release** — tag `main`, that's all:
+```bash
+git checkout main && git pull
+git tag v0.2.0 && git push origin v0.2.0
+```
+A tag containing `-` (e.g. `v0.2.0-rc.1`) ships as a prerelease.
+
+**Versioning:** the git tag is the only source of truth. Every version field in the repo (`tauri.conf.json`, `Cargo.toml`, `package.json`, both lockfiles) reads `0.0.0` and stays that way — release CI stamps the real version into `tauri.conf.json` before building, so nothing has to be committed at release time. A local build reporting `0.0.0` is correct: it isn't a release. Never hardcode a version in the UI; `About.tsx` reads it at runtime via `getVersion()` from `@tauri-apps/api/app`.
+
+**CI** (`.github/workflows/`):
+- `_build.yml` — reusable build + E2E (ARM64 + X64 self-hosted). Not triggered directly. When given a `version` it stamps `tauri.conf.json`, names artifacts `Joybug-UI-<version>-<arch>.exe`, and writes SHA256 sidecars.
+- `ci.yml` — push on `main` + PRs into `main`. Feature branches are absent from `push` so a PR builds once, not twice.
+- `release.yml` — `v*` tags: build + E2E on both arches, then publish a GitHub Release with the binaries.
+
 ### Adding a New Dock Tab
 1. Build the view as `<DockPanel><PanelToolbar/><PanelBody/></DockPanel>` (from `@/components/ui/panel`); use `size="xs"` controls and `<ContextMenu>` for right-click menus (see UI layout primitives above)
 2. Add a row to `SESSION_TAB_DEFS` in `src/lib/sessionTabs.tsx` (id, title, category, home panel, icon, palette keywords, optional keybinding action). The Windows menu, command palette, and panel chords all derive from this table.

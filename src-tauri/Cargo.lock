@@ -2215,7 +2215,7 @@ checksum = "8eaf4bc02d17cbdd7ff4c7438cafcdf7fb9a4613313ad11b4f8fefe7d3fa0130"
 
 [[package]]
 name = "joybug-tauri"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "chrono",
  "dirs 6.0.0",
