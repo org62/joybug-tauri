@@ -102,6 +102,27 @@ The joybug2 external crate has integration tests (`external/joybug2/tests/`) tha
 ### Git
 - Never stage files (`git add`) unless explicitly asked to do so.
 
+### Branching & Releases
+
+Both repos (`joybug-tauri` and its `joybug-core` submodule) use the same two branches: **`main`** (released code) and **`develop`** (integration). Feature branches fork from `develop` and PR back into it.
+
+**The invariant:** a commit on the parent's `main` may only pin a core commit that is reachable from core's `main`. On `develop` the pin may point at core's `develop`. `.gitmodules` sets `branch = .`, so `git submodule update --remote` follows the same-named branch in core automatically; builds always use the pinned gitlink, never `--remote`.
+
+Day-to-day, a change that spans both repos: PR the core side into core `develop`, then in the parent on `develop` move the gitlink to that core commit and PR the parent side into parent `develop`.
+
+**Cutting a release** (order matters — core first, always):
+1. In `external/joybug2`: merge core `develop` → core `main`, then tag core `vX.Y.Z`.
+2. In the parent on `develop`: re-pin the submodule to that core `main` commit (`git -C external/joybug2 fetch origin main && git -C external/joybug2 checkout FETCH_HEAD`), and bump the version with `node scripts/set-version.mjs X.Y.Z`. Commit both.
+3. PR `develop` → `main`. The `submodule-sync` job blocks the merge if the pin isn't on core's `main`.
+4. Tag the merge commit on `main`: `git tag -a vX.Y.Z -m "vX.Y.Z" && git push origin vX.Y.Z`.
+
+**CI** (`.github/workflows/`):
+- `_build.yml` — reusable build + E2E job (ARM64 + X64 self-hosted). Not triggered directly.
+- `ci.yml` — push/PR on `main` and `develop`. Runs `_build.yml`; adds `submodule-sync` on PRs targeting `main`.
+- `release.yml` — fires on `v*` tags. Verifies the tag is on `main`, that all five version fields match the tag (`scripts/set-version.mjs --check`), and that the core pin is on core `main`; then builds + runs E2E on both arches and publishes a GitHub Release with `Joybug-UI-<version>-{x64,aarch64}.exe` plus SHA256 sidecars. A tag containing `-` (e.g. `v0.2.0-rc.1`) publishes as a prerelease.
+
+`scripts/set-version.mjs` is the only way to bump the version — it keeps `package.json`, `package-lock.json`, `tauri.conf.json`, `Cargo.toml` and `Cargo.lock` in sync, and release CI hard-fails on any drift.
+
 ### Adding a New Dock Tab
 1. Build the view as `<DockPanel><PanelToolbar/><PanelBody/></DockPanel>` (from `@/components/ui/panel`); use `size="xs"` controls and `<ContextMenu>` for right-click menus (see UI layout primitives above)
 2. Add a row to `SESSION_TAB_DEFS` in `src/lib/sessionTabs.tsx` (id, title, category, home panel, icon, palette keywords, optional keybinding action). The Windows menu, command palette, and panel chords all derive from this table.

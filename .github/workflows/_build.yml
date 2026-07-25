@@ -1,0 +1,89 @@
+# Reusable build + E2E job. Called by ci.yml (every push/PR) and release.yml
+# (tag builds), so CI and releases always run the exact same steps.
+name: Build & E2E
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: >-
+          Release version, with or without a leading "v". When set, artifacts are
+          named Joybug-UI-<version>-<arch>.exe and get a SHA256 sidecar. When
+          empty, dev naming (joybug-tauri-<arch>.exe) is used instead.
+        type: string
+        required: false
+        default: ''
+      retention-days:
+        type: number
+        required: false
+        default: 14
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-and-test:
+    strategy:
+      # Both arches always report; one failing arch shouldn't mask the other.
+      fail-fast: false
+      matrix:
+        arch: [ARM64, X64]
+    runs-on:
+      - self-hosted
+      - Windows
+      - ${{ matrix.arch }}
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Install frontend dependencies
+      run: npm ci
+
+    - name: Build Tauri app
+      run: npm run tauri build
+
+    - name: Run E2E tests
+      run: npm run test:e2e
+      env:
+        JOYBUG_E2E_RELEASE: "1"
+
+    - name: Stage artifacts
+      shell: powershell
+      run: |
+        $ErrorActionPreference = "Stop"
+        if ("${{ matrix.arch }}" -eq "X64") { $arch = "x64" } else { $arch = "aarch64" }
+        $version = "${{ inputs.version }}" -replace '^v', ''
+
+        $src = "src-tauri/target/release/joybug-tauri.exe"
+        if (-not (Test-Path $src)) { throw "build output not found: $src" }
+
+        Remove-Item -Recurse -Force artifacts -ErrorAction SilentlyContinue
+        New-Item -ItemType Directory -Force artifacts | Out-Null
+
+        if ($version) { $name = "Joybug-UI-$version-$arch.exe" }
+        else          { $name = "joybug-tauri-$arch.exe" }
+        Copy-Item $src "artifacts/$name"
+
+        if ($version) {
+          # sha256sum-compatible sidecar: lowercase hash, two spaces, LF ending.
+          $hash = (Get-FileHash "artifacts/$name" -Algorithm SHA256).Hash.ToLower()
+          [IO.File]::WriteAllText("$PWD/artifacts/$name.sha256", "$hash  $name`n")
+        }
+        Get-ChildItem artifacts | Format-Table Name, Length
+
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: joybug-ui-${{ matrix.arch }}
+        path: artifacts/*
+        retention-days: ${{ inputs.retention-days }}
+        if-no-files-found: error
+
+    - name: Upload Playwright report
+      uses: actions/upload-artifact@v4
+      if: ${{ !cancelled() }}
+      with:
+        name: playwright-report-${{ matrix.arch }}
+        path: playwright-report/
+        retention-days: 14
