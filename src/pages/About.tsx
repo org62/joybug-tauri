@@ -1,7 +1,20 @@
 import { useEffect, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
+import { toast } from "sonner";
+import { Bug, Github, Loader2, RefreshCw } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Page } from "@/components/ui/page";
+import { UpdateDialog } from "@/components/UpdateDialog";
+import { formatTauriError } from "@/lib/sessionHelpers";
+import {
+  checkForUpdates,
+  openExternal,
+  GITHUB_CORE_URL,
+  GITHUB_ISSUES_URL,
+  GITHUB_UI_URL,
+  type UpdateInfo,
+} from "@/lib/updates";
 import reactLogo from "../assets/react.svg";
 
 export default function About() {
@@ -16,6 +29,32 @@ export default function About() {
       .then(setVersion)
       .catch((error) => console.error("Failed to read app version:", error));
   }, []);
+
+  // Manual update check. Unlike the automatic one this always runs — including
+  // on an unstamped local build — and always reports what it found.
+  const [checking, setChecking] = useState(false);
+  const [update, setUpdate] = useState<UpdateInfo | null>(null);
+
+  const handleCheckForUpdates = async () => {
+    setChecking(true);
+    try {
+      const info = await checkForUpdates();
+      // Dev-build check comes first: an unstamped 0.0.0 build is "older" than
+      // every release, so update_available is true and the dialog would offer
+      // an upgrade that isn't one.
+      if (info.is_dev_build) {
+        toast.info(`Development build — latest release is ${info.latest_version}`);
+      } else if (info.update_available) {
+        setUpdate(info);
+      } else {
+        toast.success(`You're running the latest version (${info.current_version})`);
+      }
+    } catch (error) {
+      toast.error(`Update check failed: ${formatTauriError(error)}`);
+    } finally {
+      setChecking(false);
+    }
+  };
 
   return (
     <Page container={false}>
@@ -79,15 +118,57 @@ export default function About() {
                 </div>
             </div>
             
-            <div className="text-center pt-4 border-t">
+            <div className="text-center pt-4 border-t space-y-3">
               <p className="text-sm text-gray-500">
                 {version && <>Version {version} • </>}Built with ❤️ using modern web technologies
               </p>
+              {/* openExternal (the opener plugin), never a raw <a target="_blank">
+                  — WebView2 has no tab to open one in. */}
+              <div className="flex flex-wrap justify-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => openExternal(GITHUB_UI_URL)}
+                >
+                  <Github className="size-4" />
+                  joybug-tauri
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => openExternal(GITHUB_CORE_URL)}
+                >
+                  <Github className="size-4" />
+                  joybug-core
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => openExternal(GITHUB_ISSUES_URL)}
+                >
+                  <Bug className="size-4" />
+                  Report an issue
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleCheckForUpdates}
+                  disabled={checking}
+                >
+                  {checking ? (
+                    <Loader2 className="size-4 animate-spin" />
+                  ) : (
+                    <RefreshCw className="size-4" />
+                  )}
+                  Check for updates
+                </Button>
+              </div>
             </div>
           </CardContent>
         </Card>
       </div>
     </div>
+    <UpdateDialog info={update} onClose={() => setUpdate(null)} />
     </Page>
   );
 }

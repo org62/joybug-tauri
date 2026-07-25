@@ -7,9 +7,11 @@ on:
     inputs:
       version:
         description: >-
-          Release version, with or without a leading "v". When set, artifacts are
-          named Joybug-UI-<version>-<arch>.exe and get a SHA256 sidecar. When
-          empty, dev naming (joybug-tauri-<arch>.exe) is used instead.
+          Release version, with or without a leading "v". When set, it is stamped
+          into tauri.conf.json and the artifacts get a SHA256 sidecar. Artifact
+          names are Joybug-UI-<arch>.exe either way - deliberately version-free,
+          so releases/latest/download/Joybug-UI-x64.exe is a stable permalink and
+          the in-app update check can construct a download URL.
         type: string
         required: false
         default: ''
@@ -83,8 +85,9 @@ jobs:
         Remove-Item -Recurse -Force artifacts -ErrorAction SilentlyContinue
         New-Item -ItemType Directory -Force artifacts | Out-Null
 
-        if ($version) { $name = "Joybug-UI-$version-$arch.exe" }
-        else          { $name = "joybug-tauri-$arch.exe" }
+        # Version-free on purpose: keeps the releases/latest/download/<name>
+        # permalink stable, which is what the in-app update check links to.
+        $name = "Joybug-UI-$arch.exe"
         Copy-Item $src "artifacts/$name"
 
         if ($version) {

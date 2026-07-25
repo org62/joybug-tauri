@@ -110,6 +110,10 @@ pub struct DebugSettings {
     /// exist on this machine (like WinDbg's srcpath mapping).
     #[serde(default)]
     pub source_map: Vec<(String, String)>,
+    /// Ask GitHub Releases for a newer version on startup. Only affects the
+    /// automatic check; the About page's manual check always runs.
+    #[serde(default = "default_true")]
+    pub auto_update_check: bool,
 }
 
 impl Default for DebugSettings {
@@ -133,6 +137,7 @@ impl Default for DebugSettings {
             symbol_path: String::new(),
             symbol_offline: false,
             source_map: Vec::new(),
+            auto_update_check: true,
         }
     }
 }

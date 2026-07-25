@@ -33,6 +33,7 @@ export interface DebugSettings {
   scan_thread_count: number; // 0 = all CPU cores
   symbol_path: string; // _NT_SYMBOL_PATH syntax; empty = env var / Microsoft symbol server
   symbol_offline: boolean; // never download symbols
+  auto_update_check: boolean; // ask GitHub Releases for a newer version on startup
 }
 
 // Keys whose value is a boolean, derived structurally so new settings never
@@ -86,6 +87,7 @@ const DEFAULTS: DebugSettings = {
   scan_thread_count: 0,
   symbol_path: "",
   symbol_offline: false,
+  auto_update_check: true,
 };
 
 export function useDebugSettings() {

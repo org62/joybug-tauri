@@ -102,6 +102,13 @@ async function globalSetup(): Promise<void> {
       ...process.env,
       WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: "--remote-debugging-port=9222",
       JOYBUG_DATA_DIR: e2eDataDir,
+      // The app is launched once here and every test attaches to the page it's
+      // already mounted, so a startup modal or network call happens before any
+      // fixture could suppress it. Gate both at the source: the welcome dialog
+      // would block every test, and the update check would make the suite
+      // depend on api.github.com.
+      JOYBUG_NO_WELCOME: "1",
+      JOYBUG_NO_UPDATE_CHECK: "1",
     },
     stdio: "pipe",
   });

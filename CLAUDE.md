@@ -39,10 +39,12 @@ The joybug2 external crate has integration tests (`external/joybug2/tests/`) tha
     - `session_lifecycle.rs` — Session CRUD (create, start, stop, delete)
     - `stepping.rs` — Go, StepIn, StepOver, StepOut
     - `disassembly.rs`, `memory.rs`, `breakpoints.rs`, `emulation.rs`, `symbols.rs`, `logging.rs`, `settings.rs`, `window_state.rs` — Per-domain commands
+    - `updates.rs` — GitHub-releases update check + first-run welcome state
   - `lib.rs` — App setup, command registration, global state
   - `state.rs` — `SessionStateUI`, serializable types
   - `events.rs` — joybug2 context → serializable conversion
   - `breakpoint_store.rs` — Breakpoint persistence
+  - `app_state_store.rs` — `app_state.json`: welcome-seen version, skipped update, last update check
   - `error.rs` — Error types
   - `settings.rs` — Debug settings
   - `ui_logger.rs` — UI logging utilities
@@ -117,8 +119,20 @@ A tag containing `-` (e.g. `v0.2.0-rc.1`) ships as a prerelease.
 
 **Versioning:** the git tag is the only source of truth. Every version field in the repo (`tauri.conf.json`, `Cargo.toml`, `package.json`, both lockfiles) reads `0.0.0` and stays that way — release CI stamps the real version into `tauri.conf.json` before building, so nothing has to be committed at release time. A local build reporting `0.0.0` is correct: it isn't a release. Never hardcode a version in the UI; `About.tsx` reads it at runtime via `getVersion()` from `@tauri-apps/api/app`.
 
+**Update check & first-run dialog.** The app is a portable `.exe` (`bundle.active: false`), so
+Tauri's updater plugin doesn't apply — `commands/updates.rs` queries the GitHub releases API and
+links to the release page instead. The startup check is throttled to once per 24h
+(`last_update_check` in `app_state.json`), is opt-out via `auto_update_check` in Settings, and
+self-suppresses on a `0.0.0` local build. The welcome dialog re-shows on every version bump.
+Both honour hard env kill switches — `JOYBUG_NO_UPDATE_CHECK` and `JOYBUG_NO_WELCOME`, set by
+`e2e/global-setup.ts`. **Do not remove them**: the suite attaches to an already-mounted app, so a
+startup modal or network call can't be suppressed by a test fixture.
+
+Release artifacts are deliberately **version-free** (`Joybug-UI-x64.exe`) so
+`releases/latest/download/<name>` stays a stable permalink for that download link.
+
 **CI** (`.github/workflows/`):
-- `_build.yml` — reusable build + E2E (ARM64 + X64 self-hosted). Not triggered directly. When given a `version` it stamps `tauri.conf.json`, names artifacts `Joybug-UI-<version>-<arch>.exe`, and writes SHA256 sidecars.
+- `_build.yml` — reusable build + E2E (ARM64 + X64 self-hosted). Not triggered directly. Artifacts are always named `Joybug-UI-<arch>.exe`; when given a `version` it also stamps `tauri.conf.json` and writes SHA256 sidecars.
 - `ci.yml` — push on `main` + PRs into `main`. Feature branches are absent from `push` so a PR builds once, not twice.
 - `release.yml` — `v*` tags: build + E2E on both arches, then publish a GitHub Release with the binaries.
 

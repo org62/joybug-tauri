@@ -44,5 +44,6 @@ export default defineConfig({
     "memory-regions.spec.ts",
     "code-explorer.spec.ts",
     "watchpoint-trace.spec.ts",
+    "updates.spec.ts",
   ],
 });

@@ -2221,6 +2221,8 @@ dependencies = [
  "dirs 6.0.0",
  "joybug2",
  "md-5",
+ "reqwest",
+ "semver",
  "serde",
  "serde_json",
  "sha1",

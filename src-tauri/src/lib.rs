@@ -1,3 +1,4 @@
+mod app_state_store;
 mod bookmark_store;
 mod breakpoint_store;
 mod commands;
@@ -121,6 +122,11 @@ pub fn run() {
             commands::update_window_state,
             commands::get_debug_settings,
             commands::update_debug_settings,
+            commands::check_for_updates,
+            commands::startup_update_check,
+            commands::skip_update_version,
+            commands::get_welcome_state,
+            commands::dismiss_welcome,
             commands::toggle_breakpoint,
             commands::set_breakpoints,
             commands::remove_breakpoint,
