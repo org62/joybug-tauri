@@ -21,7 +21,7 @@ export function ResizableHeaderCell({
     <span className={cn("shrink-0 truncate relative pr-1", className)} style={{ width }}>
       {children}
       <div
-        className="absolute right-0 top-0 h-full w-1 cursor-col-resize hover:bg-blue-500/40 active:bg-blue-500/60"
+        className="absolute right-0 top-0 h-full w-1 cursor-col-resize hover:bg-ring/40 active:bg-ring/60"
         onMouseDown={onResizeStart}
       />
     </span>

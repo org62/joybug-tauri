@@ -1,6 +1,7 @@
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Button } from '@/components/ui/button';
 import { TruncatedSymbol } from '@/components/ui/truncated-symbol';
+import { LINK_VALUE_CLASS } from '@/lib/utils';
 
 export interface CallStackFrame {
   frame_number: number;
@@ -22,26 +23,19 @@ function formatSymbol(symbol: string | null) {
   return symbol || 'Unknown';
 }
 
-const MONO_LINK_COLOR = {
-  blue: 'hover:text-blue-600 dark:hover:text-blue-400',
-  green: 'hover:text-green-600 dark:hover:text-green-400',
-} as const;
-
 /** Monospace address that becomes a link button when a handler is provided. */
 function MonoAddress({
   value,
-  color,
   onClick,
 }: {
   value: string;
-  color: keyof typeof MONO_LINK_COLOR;
   onClick?: (value: string) => void;
 }) {
   if (!onClick) return <span className="font-mono">{value}</span>;
   return (
     <Button
       variant="link"
-      className={`h-auto p-0 font-mono text-muted-foreground cursor-pointer ${MONO_LINK_COLOR[color]}`}
+      className={`h-auto p-0 font-mono text-[length:inherit] ${LINK_VALUE_CLASS}`}
       onClick={() => onClick(value)}
     >
       {value}
@@ -55,7 +49,7 @@ export function CallStackFrameList({ frames, onClickAddress, onClickMemory, comp
       {frames.map((frame) => (
         <div
           key={frame.frame_number}
-          className={`flex items-center justify-between px-2 border-b hover:bg-gray-50 dark:hover:bg-gray-900 ${compact ? 'py-0.5' : 'py-1'}`}
+          className={`flex items-center justify-between font-mono px-2 border-b hover:bg-gray-50 dark:hover:bg-gray-900 ${compact ? 'py-0.5' : 'py-1'}`}
         >
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 mb-0.5">
@@ -63,7 +57,7 @@ export function CallStackFrameList({ frames, onClickAddress, onClickMemory, comp
               {onClickAddress ? (
                 <TruncatedSymbol
                   text={formatSymbol(frame.symbol_info)}
-                  className="font-medium cursor-pointer hover:underline hover:text-blue-600 dark:hover:text-blue-400"
+                  className={`font-medium ${LINK_VALUE_CLASS}`}
                   onClick={() => onClickAddress(frame.instruction_pointer)}
                 />
               ) : (
@@ -72,11 +66,11 @@ export function CallStackFrameList({ frames, onClickAddress, onClickMemory, comp
             </div>
             <p className={`text-muted-foreground truncate ${compact ? 'text-[10px]' : 'text-xs'}`}>
               RIP:{' '}
-              <MonoAddress value={frame.instruction_pointer} color="blue" onClick={onClickAddress} />
+              <MonoAddress value={frame.instruction_pointer} onClick={onClickAddress} />
               {' | SP: '}
-              <MonoAddress value={frame.stack_pointer} color="green" onClick={onClickMemory} />
+              <MonoAddress value={frame.stack_pointer} onClick={onClickMemory} />
               {' | FP: '}
-              <MonoAddress value={frame.frame_pointer} color="green" onClick={onClickMemory} />
+              <MonoAddress value={frame.frame_pointer} onClick={onClickMemory} />
             </p>
           </div>
         </div>

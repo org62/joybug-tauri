@@ -11,7 +11,7 @@ import { Switch } from "./ui/switch";
 import { Label } from "./ui/label";
 import { Cpu, ArrowLeft, ArrowRight, RefreshCw, ChevronRight, Circle, CircleDot, Wrench, Copy, Bookmark, FileCode, HardDrive, LocateFixed, Zap, Undo2 } from "lucide-react";
 import { sourceNavigation } from "@/lib/navigationStore";
-import { cn } from "@/lib/utils";
+import { cn, LINK_VALUE_CLASS, PC_ROW_HIGHLIGHT_CLASS } from "@/lib/utils";
 import { useAssemblyView, buildAsmRows, Instruction, AsmDisassembleFn } from "@/hooks/useAssemblyView";
 import { NavHistoryStore } from "@/lib/navHistory";
 import { RegisterContext, SymbolResolver } from "@/lib/hexUtils";
@@ -381,7 +381,8 @@ export function AssemblyView({ sessionId, isPaused, canLoad, address, registers,
           registers={registers}
           resolveSymbol={resolveSymbol}
           sessionId={sessionId}
-          inputClassName="w-48"
+          className="flex-1 max-w-md"
+          inputClassName="flex-1"
           historyKey="disasm-goto"
         />
 
@@ -472,7 +473,7 @@ export function AssemblyView({ sessionId, isPaused, canLoad, address, registers,
               defaultValue={assembleTarget.defaultText}
               placeholder="e.g. nop, mov eax, 1"
               inputSize="xs"
-              className={cn("flex-1 font-mono", assembleError && "border-red-500 focus-visible:ring-red-500")}
+              className={cn("flex-1 font-mono", assembleError && "border-syn-invalid focus-visible:ring-syn-invalid")}
               onChange={() => { if (assembleError) setAssembleError(null); }}
               onKeyDown={async (e) => {
                 if (e.key === "Enter") {
@@ -516,7 +517,7 @@ export function AssemblyView({ sessionId, isPaused, canLoad, address, registers,
             </Button>
           </div>
           {assembleError && (
-            <div className="px-2 pb-1.5 text-xs text-red-500 font-mono truncate" title={assembleError}>
+            <div className="px-2 pb-1.5 text-xs text-syn-invalid font-mono truncate" title={assembleError}>
               {assembleError}
             </div>
           )}
@@ -534,15 +535,15 @@ export function AssemblyView({ sessionId, isPaused, canLoad, address, registers,
             <span className="w-4 shrink-0" />
             <span className="w-4 shrink-0" />
             <span className="shrink-0 truncate" style={{ width: columnWidths.symbol }}>Address</span>
-            <div className="w-1 shrink-0 self-stretch cursor-col-resize hover:bg-blue-500/30 active:bg-blue-500/50 mx-px" onMouseDown={(e) => handleColumnResizeStart("symbol", e)} />
+            <div className={COLUMN_GRIP_CLASS} onMouseDown={(e) => handleColumnResizeStart("symbol", e)} />
             {showBytes && (
               <>
                 <span className="shrink-0 truncate" style={{ width: columnWidths.bytes }}>Bytes</span>
-                <div className="w-1 shrink-0 self-stretch cursor-col-resize hover:bg-blue-500/30 active:bg-blue-500/50 mx-px" onMouseDown={(e) => handleColumnResizeStart("bytes", e)} />
+                <div className={COLUMN_GRIP_CLASS} onMouseDown={(e) => handleColumnResizeStart("bytes", e)} />
               </>
             )}
             <span className="shrink-0 truncate" style={{ width: columnWidths.mnemonic }}>Mnemonic</span>
-            <div className="w-1 shrink-0 self-stretch cursor-col-resize hover:bg-blue-500/30 active:bg-blue-500/50 mx-px" onMouseDown={(e) => handleColumnResizeStart("mnemonic", e)} />
+            <div className={COLUMN_GRIP_CLASS} onMouseDown={(e) => handleColumnResizeStart("mnemonic", e)} />
             <span className="flex-1">Operands</span>
           </div>
         </div>
@@ -605,7 +606,7 @@ export function AssemblyView({ sessionId, isPaused, canLoad, address, registers,
             </div>
           )}
           {showErrorState && (
-            <div className="flex items-center justify-center h-full text-red-500 p-4">
+            <div className="flex items-center justify-center h-full text-syn-invalid p-4">
               <div className="text-center">
                 <p>Error loading disassembly:</p>
                 <p className="text-sm mt-1 font-mono">{error}</p>
@@ -631,7 +632,7 @@ export function AssemblyView({ sessionId, isPaused, canLoad, address, registers,
         <ContextMenu x={contextMenu.x} y={contextMenu.y} onClose={closeContextMenu} className="min-w-[180px]">
           {onToggleBreakpoint && (
             <ContextMenuItem
-              icon={<Circle className="text-red-500" />}
+              icon={<Circle className="text-destructive" />}
               onClick={() => onToggleBreakpoint(contextMenu.data.address)}
             >
               {breakpointAddresses?.has(contextMenu.data.address.toUpperCase()) ? "Remove Breakpoint" : "Toggle Breakpoint"}
@@ -639,7 +640,7 @@ export function AssemblyView({ sessionId, isPaused, canLoad, address, registers,
           )}
           {onToggleSingleShotBreakpoint && !breakpointAddresses?.has(contextMenu.data.address.toUpperCase()) && (
             <ContextMenuItem
-              icon={<Zap className="text-red-500" />}
+              icon={<Zap className="text-destructive" />}
               onClick={() => onToggleSingleShotBreakpoint(contextMenu.data.address)}
             >
               Add Single-Shot Breakpoint
@@ -647,7 +648,7 @@ export function AssemblyView({ sessionId, isPaused, canLoad, address, registers,
           )}
           {onSetHardwareBreakpoint && (
             <ContextMenuItem
-              icon={<CircleDot className="text-orange-500" />}
+              icon={<CircleDot className="text-destructive" />}
               onClick={() => onSetHardwareBreakpoint(contextMenu.data.address, "Execute", 1)}
             >
               Add Hardware Breakpoint
@@ -655,7 +656,7 @@ export function AssemblyView({ sessionId, isPaused, canLoad, address, registers,
           )}
           {onAssemblePatch && (
             <ContextMenuItem
-              icon={<Wrench className="text-purple-500" />}
+              icon={<Wrench className="text-syn-patched" />}
               onClick={() => {
                 const defaultText = `${contextMenu.data.mnemonic} ${contextMenu.data.op_str}`.trim();
                 setAssembleTarget({ address: contextMenu.data.address, defaultText });
@@ -666,7 +667,7 @@ export function AssemblyView({ sessionId, isPaused, canLoad, address, registers,
           )}
           {contextMenu.data.is_patched && onRestoreImageBytes && (
             <ContextMenuItem
-              icon={<Undo2 className="text-purple-500" />}
+              icon={<Undo2 className="text-syn-patched" />}
               onClick={() => onRestoreImageBytes(contextMenu.data.address)}
             >
               Restore Original Bytes
@@ -674,7 +675,7 @@ export function AssemblyView({ sessionId, isPaused, canLoad, address, registers,
           )}
           {onAddBookmark && (
             <ContextMenuItem
-              icon={<Bookmark className="text-blue-400" />}
+              icon={<Bookmark className="text-syn-link" />}
               onClick={() => {
                 const asm = `${contextMenu.data.mnemonic} ${contextMenu.data.op_str}`.trim();
                 onAddBookmark(contextMenu.data.address, asm);
@@ -685,7 +686,7 @@ export function AssemblyView({ sessionId, isPaused, canLoad, address, registers,
           )}
           {onNavigateToSource && (
             <ContextMenuItem
-              icon={<FileCode className="text-blue-400" />}
+              icon={<FileCode className="text-syn-link" />}
               onClick={() => onNavigateToSource(contextMenu.data.address)}
             >
               Show Source
@@ -693,7 +694,7 @@ export function AssemblyView({ sessionId, isPaused, canLoad, address, registers,
           )}
           {onShowInMemoryRegions && (
             <ContextMenuItem
-              icon={<HardDrive className="text-blue-400" />}
+              icon={<HardDrive className="text-syn-link" />}
               onClick={() => onShowInMemoryRegions(contextMenu.data.address)}
             >
               Go to Memory Region
@@ -721,7 +722,7 @@ const LabelRow = memo(function LabelRow({ symbol, address }: { symbol: string; a
   return (
     <div
       data-testid="asm-label-row"
-      className="flex items-center px-2 cursor-default"
+      className="flex items-center font-mono text-xs px-2 cursor-default"
       style={{ height: ASSEMBLY_ROW_HEIGHT }}
       title={address}
     >
@@ -751,15 +752,23 @@ interface InstructionRowProps {
   addressFormatter?: (va: bigint) => string;
 }
 
+// Grip between resizable header columns; mirrors ResizableHeaderCell's grip tint.
+const COLUMN_GRIP_CLASS = "w-1 shrink-0 self-stretch cursor-col-resize hover:bg-ring/40 active:bg-ring/60 mx-px";
+
 // Row background per highlight state. Precedence is the order of the ladder in
 // InstructionRow — a new state slots in as one line there plus one entry here.
 type RowHighlight = "selected" | "hover-target" | "pc" | "patched" | "executed";
+// Tints are a *light* hue at *low* alpha rather than a dark hue at medium alpha:
+// over the near-black dark background, dark-hue fills (yellow-900/40 and friends)
+// desaturate into mud, while a light hue at ~10% stays chromatic and clean.
 const ROW_HIGHLIGHT_BG: Record<RowHighlight, string> = {
   selected: "bg-accent/50",
-  "hover-target": "bg-blue-100 dark:bg-blue-900/40",
-  pc: "bg-yellow-100 dark:bg-yellow-900/40",
-  patched: "bg-purple-100 dark:bg-purple-900/30",
-  executed: "bg-green-100 dark:bg-green-900/30",
+  "hover-target": "bg-syn-link/10",
+  pc: PC_ROW_HIGHLIGHT_CLASS,
+  patched: "bg-syn-patched/10",
+  // Weakest of the ladder on purpose: `executed` is a bulk state spanning many
+  // consecutive rows, so it must not outshout the single PC row sitting in it.
+  executed: "bg-syn-covered/[0.07]",
 };
 
 const InstructionRow = memo(function InstructionRow({ instruction, isPC, isExecuted, isSelected, isHighlighted, isHoverTarget, hasBreakpoint, isPatched, showBytes, columnWidths, onClick, onJumpTargetClick, onJumpTargetHover, onContextMenu, addressFormatter }: InstructionRowProps) {
@@ -774,7 +783,7 @@ const InstructionRow = memo(function InstructionRow({ instruction, isPC, isExecu
     if (jump_target && (is_jump || is_call)) {
       return (
         <span
-          className="text-blue-400 cursor-pointer hover:underline hover:text-blue-300"
+          className={LINK_VALUE_CLASS}
           onClick={() => onJumpTargetClick(jump_target, instruction.address)}
           onMouseEnter={() => onJumpTargetHover(jump_target)}
           onMouseLeave={() => onJumpTargetHover(null)}
@@ -803,22 +812,26 @@ const InstructionRow = memo(function InstructionRow({ instruction, isPC, isExecu
       data-highlight={highlight}
       data-invalid={is_invalid ? "" : undefined}
       className={cn(
-        "flex items-center hover:bg-muted/30 px-2 cursor-default",
+        "flex items-center font-mono text-xs hover:bg-muted/30 px-2 cursor-default",
         highlight && ROW_HIGHLIGHT_BG[highlight],
         isHighlighted && "animate-highlight-fade"
       )}
-      style={{ height: ASSEMBLY_ROW_HEIGHT }}
+      // lineHeight is pinned to the row height rather than left to the font's own
+      // metrics: several columns use `truncate` (overflow-hidden), so a line box
+      // shorter than the glyph box would clip descenders. Deriving it from the
+      // constant keeps the two in step if the row height ever changes.
+      style={{ height: ASSEMBLY_ROW_HEIGHT, lineHeight: `${ASSEMBLY_ROW_HEIGHT}px` }}
       onClick={() => onClick(instruction.address)}
       onContextMenu={(e) => onContextMenu(e, instruction.address, instruction.mnemonic, instruction.op_str, isPatched)}
     >
       {/* PC indicator */}
-      <span className="w-4 shrink-0 text-yellow-600 dark:text-yellow-400">
+      <span className="w-4 shrink-0 text-syn-state">
         {isPC && <ChevronRight className="h-3 w-3" />}
       </span>
 
       {/* Breakpoint indicator */}
       <span className="w-4 shrink-0 flex items-center justify-center">
-        {hasBreakpoint && <Circle className="h-2.5 w-2.5 fill-red-500 text-red-500" />}
+        {hasBreakpoint && <Circle className="h-2.5 w-2.5 fill-destructive text-destructive" />}
       </span>
 
       {/* Address column — mr-1.5 mirrors the header's 6px resize
@@ -836,14 +849,18 @@ const InstructionRow = memo(function InstructionRow({ instruction, isPC, isExecu
       )}
 
       {/* Mnemonic - color coded */}
+      {/* Three states, not five. call / jmp / ret used to get a hue each, but they
+          all mean the same thing to someone scanning a function — control leaves
+          here — and which one it is, the mnemonic text already says. Everything
+          else (mov, lea, cmp, test, add — the large majority of any listing) is
+          deliberately uncoloured: when 80% of rows are tinted, the tint stops
+          carrying information, and the branches are what you're actually hunting. */}
       <span
         className={cn(
           "shrink-0 mr-1.5",
-          is_invalid ? "text-red-500 font-semibold"
-            : is_call ? "text-green-500"
-            : is_jump ? "text-blue-500"
-            : is_ret ? "text-red-500"
-            : "text-blue-400"
+          is_invalid ? "text-syn-invalid font-semibold"
+            : (is_call || is_jump || is_ret) ? "text-syn-flow"
+            : "text-foreground"
         )}
         style={{ width: columnWidths.mnemonic }}
       >
@@ -851,7 +868,7 @@ const InstructionRow = memo(function InstructionRow({ instruction, isPC, isExecu
       </span>
 
       {/* Operands */}
-      <span className={cn("flex-1 truncate", is_invalid && "text-red-400/80")}>
+      <span className={cn("flex-1 truncate", is_invalid && "text-syn-invalid/80")}>
         {renderOperands()}
       </span>
     </div>

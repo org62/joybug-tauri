@@ -59,6 +59,15 @@ const KIND_TYPE_OVERLAY: Record<string, string> = {
 };
 
 // Badge color per annotation kind (muted, dark-theme friendly).
+//
+// Deliberately NOT drawn from the --syn-* palette in App.css. Those tokens encode
+// a fixed set of meanings ("changed", "control flow", …) and every view must stick
+// to them; this is the other kind of colour use — a categorical scale, where the
+// hues are arbitrary and their only job is to be told apart. Collapsing these onto
+// the semantic tokens would merge kinds that need distinguishing. The set is closed,
+// labelled, confined to one panel, and each swatch sits next to its own text, which
+// is what keeps it a legend rather than a hue free-for-all.
+/* eslint-disable no-restricted-syntax -- categorical scale, exempt from the raw-hue ban (see above) */
 const KIND_BADGE_CLASS: Record<string, string> = {
   module: 'bg-sky-500/15 text-sky-500 border-sky-500/30',
   section: 'bg-violet-500/15 text-violet-400 border-violet-500/30',
@@ -68,6 +77,7 @@ const KIND_BADGE_CLASS: Record<string, string> = {
   stack: 'bg-emerald-500/15 text-emerald-500 border-emerald-500/30',
   kuser: 'bg-cyan-500/15 text-cyan-500 border-cyan-500/30',
 };
+/* eslint-enable no-restricted-syntax */
 
 interface RegionAnnotation {
   kind: string;
@@ -419,14 +429,14 @@ export function ContextMemoryRegionsView({ onNavigateToAddress }: ContextMemoryR
       {contextMenu && (
         <ContextMenu x={contextMenu.x} y={contextMenu.y} onClose={closeContextMenu}>
           <ContextMenuItem
-            icon={<Eye className="text-blue-400" />}
+            icon={<Eye className="text-syn-link" />}
             onClick={() => onNavigateToAddress?.(contextMenu.data.base_address)}
           >
             View in Memory
           </ContextMenuItem>
           {sessionData.onNavigateToDisassembly && (
             <ContextMenuItem
-              icon={<Code className="text-green-400" />}
+              icon={<Code className="text-syn-link" />}
               onClick={() => sessionData.onNavigateToDisassembly?.(contextMenu.data.base_address)}
             >
               View in Disassembly

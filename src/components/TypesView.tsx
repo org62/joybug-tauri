@@ -516,7 +516,7 @@ function TypeNode({ ts, layout, address, depth, refreshTick, onNavigateToMemory 
               </span>
               <span className="w-14 shrink-0 text-muted-foreground">+0x{m.offset.toString(16)}</span>
               <span className="shrink-0">{m.name}</span>
-              <span className="shrink-0 text-blue-600 dark:text-blue-400">
+              <span className="shrink-0 text-syn-link">
                 {m.type_ref.name}
                 {bitNote}
               </span>
@@ -529,7 +529,7 @@ function TypeNode({ ts, layout, address, depth, refreshTick, onNavigateToMemory 
                     changedMemberKeys.has(key)
                       ? CHANGED_VALUE_CLASS
                       : val.pointer
-                        ? "text-emerald-600 dark:text-emerald-400"
+                        ? "text-syn-link"
                         : "text-foreground",
                     val.pointer && "cursor-pointer hover:underline",
                   )}
@@ -552,7 +552,7 @@ function TypeNode({ ts, layout, address, depth, refreshTick, onNavigateToMemory 
                       className="px-1 py-0.5 font-mono text-muted-foreground"
                       style={{ paddingLeft: (depth + 1) * 12 + 4 }}
                     >
-                      {child.label} <span className="text-blue-600 dark:text-blue-400">{child.layout.name}</span>
+                      {child.label} <span className="text-syn-link">{child.layout.name}</span>
                     </div>
                   )}
                   <TypeNode

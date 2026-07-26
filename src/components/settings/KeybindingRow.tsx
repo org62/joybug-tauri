@@ -68,8 +68,8 @@ export function KeybindingRow({ actionId, currentChord, preset, checkConflict, o
             onClick={() => setIsCapturing(true)}
             className={cn(
               "font-mono",
-              "hover:border-blue-500 hover:bg-blue-500/5",
-              isCustomized && "border-yellow-500/50 bg-yellow-500/5",
+              "hover:border-ring hover:bg-accent/50",
+              isCustomized && "border-syn-state/50 bg-syn-state/5",
               !currentChord && "text-muted-foreground italic"
             )}
           >

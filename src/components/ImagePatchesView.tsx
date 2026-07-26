@@ -5,7 +5,7 @@ import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { DockPanel, PanelToolbar, PanelBody } from "./ui/panel";
 import { EmptyState } from "./ui/empty-state";
-import { cn } from "@/lib/utils";
+import { cn, LINK_VALUE_CLASS } from "@/lib/utils";
 import { usePanelFocus } from "@/hooks/usePanelFocus";
 import type { ImagePatch } from "@/hooks/useImagePatches";
 
@@ -103,7 +103,7 @@ export function ImagePatchesView({
             >
               <div className="flex items-center gap-2 min-w-0">
                 <span
-                  className="text-blue-400 cursor-pointer hover:underline shrink-0"
+                  className={cn("shrink-0", LINK_VALUE_CLASS)}
                   onClick={() => onNavigateToDisassembly?.(p.address)}
                   title="Go to disassembly"
                 >
@@ -136,7 +136,7 @@ export function ImagePatchesView({
                 <span className="w-44 shrink-0 truncate" title={p.original_bytes}>{p.original_bytes}</span>
                 <span className="truncate min-w-0" title={p.original_disasm}>{p.original_disasm}</span>
               </div>
-              <div className="flex items-baseline gap-2 pl-4 text-purple-500 min-w-0">
+              <div className="flex items-baseline gap-2 pl-4 text-syn-patched min-w-0">
                 <span className="shrink-0 select-none">+</span>
                 <span className="w-44 shrink-0 truncate" title={p.current_bytes}>{p.current_bytes}</span>
                 <span className="truncate min-w-0" title={p.current_disasm}>{p.current_disasm}</span>

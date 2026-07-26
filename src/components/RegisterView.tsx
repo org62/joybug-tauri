@@ -80,21 +80,24 @@ interface RegisterPairProps {
 }
 
 const RegisterPair = ({ name, field, value, dereferenceEntry, showDereference = true, isChanged, nameWidthClass, onRegisterEdit }: RegisterPairProps) => {
-  const handleDoubleClick = useCallback(() => {
+  const handleEditClick = useCallback(() => {
     onRegisterEdit?.(field, value);
   }, [onRegisterEdit, field, value]);
 
+  // font-mono sits on the row, not just the value: the name and the dereference
+  // text are data too, and mixing a proportional name column with a mono value
+  // column leaves the values starting at a different x on every row.
   return (
-    <div className="flex items-center py-0.5 px-1 hover:bg-muted/50 rounded-sm text-xs min-w-0 overflow-hidden">
+    <div className="flex items-center font-mono py-0.5 px-1 hover:bg-muted/50 rounded-sm text-xs min-w-0 overflow-hidden">
       <span className={cn("font-semibold text-muted-foreground shrink-0", nameWidthClass)}>{name}</span>
       <span
         data-changed={isChanged || undefined}
         className={cn(
-          "font-mono ml-1 shrink-0",
+          "ml-1 shrink-0",
           isChanged && CHANGED_VALUE_CLASS,
           onRegisterEdit && "cursor-pointer hover:underline"
         )}
-        onDoubleClick={handleDoubleClick}
+        onClick={handleEditClick}
       >
         {value}
       </span>

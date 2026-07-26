@@ -4,7 +4,7 @@ import { InlineEditInput } from "./ui/inline-edit-input";
 import { ResizableHeaderCell } from "./ui/resizable-header-cell";
 import { Badge } from "./ui/badge";
 import { Trash2, Plus } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { cn, LINK_VALUE_CLASS } from "@/lib/utils";
 import { Breakpoint } from "@/hooks/useBreakpoints";
 import { useContextMenu } from "@/hooks/useContextMenu";
 import { useColumnWidths } from "@/hooks/useColumnWidths";
@@ -36,8 +36,8 @@ interface BreakpointsViewProps {
 
 /** Breakpoint dot color depends on bp_kind: red software, amber hardware, violet watchpoint (access trace) */
 function BreakpointDot({ enabled, isActive, kind, onClick }: { enabled: boolean; isActive: boolean; kind: string; onClick: () => void }) {
-  const activeColor = kind === "watchpoint" ? "bg-violet-500" : kind === "hardware" ? "bg-amber-500" : "bg-red-500";
-  const pendingColor = kind === "watchpoint" ? "border-violet-500" : kind === "hardware" ? "border-amber-500" : "border-red-500";
+  const activeColor = kind === "watchpoint" ? "bg-syn-patched" : kind === "hardware" ? "bg-syn-state" : "bg-destructive";
+  const pendingColor = kind === "watchpoint" ? "border-syn-patched" : kind === "hardware" ? "border-syn-state" : "border-destructive";
   const prefix = kind === "watchpoint" ? "Watch: " : kind === "hardware" ? "HW: " : "";
 
   return (
@@ -190,7 +190,7 @@ export function BreakpointsView({
           <span
             className={cn(
               "block truncate",
-              onNavigateToDisassembly ? "text-blue-400 cursor-pointer hover:underline" : "text-muted-foreground",
+              onNavigateToDisassembly ? LINK_VALUE_CLASS : "text-muted-foreground",
             )}
             title={bp.address}
             onClick={() => onNavigateToDisassembly?.(bp.address)}
@@ -205,8 +205,8 @@ export function BreakpointsView({
             <Badge size="xs" className={cn(
               "text-[10px] shrink-0",
               isWatchpoint
-                ? "bg-violet-500/20 text-violet-600 dark:text-violet-400"
-                : "bg-amber-500/20 text-amber-600 dark:text-amber-400",
+                ? "bg-syn-patched/15 text-syn-patched"
+                : "bg-syn-state/15 text-syn-state",
             )}>
               {hwInfo}
             </Badge>
@@ -215,19 +215,19 @@ export function BreakpointsView({
             <Badge size="xs" className={cn(
               "text-[10px] shrink-0",
               bp.tracing
-                ? "bg-violet-500/20 text-violet-600 dark:text-violet-400 animate-pulse"
+                ? "bg-syn-patched/15 text-syn-patched animate-pulse"
                 : "bg-muted text-muted-foreground",
             )}>
               {bp.tracing ? "tracing…" : "stopped"}
             </Badge>
           )}
           {bp.single_shot && (
-            <Badge size="xs" className="bg-red-500/15 text-red-600 dark:text-red-400 text-[10px] shrink-0" title="One-shot breakpoint — auto-removed after the first hit">
+            <Badge size="xs" className="bg-destructive/15 text-destructive text-[10px] shrink-0" title="One-shot breakpoint — auto-removed after the first hit">
               1-shot
             </Badge>
           )}
           {sourceLabel && (
-            <Badge size="xs" className="bg-blue-500/15 text-blue-600 dark:text-blue-400 text-[10px] shrink-0" title={`${bp.source_file}:${bp.source_line ?? "?"}`}>
+            <Badge size="xs" className="bg-syn-link/15 text-syn-link text-[10px] shrink-0" title={`${bp.source_file}:${bp.source_line ?? "?"}`}>
               {sourceLabel}
             </Badge>
           )}

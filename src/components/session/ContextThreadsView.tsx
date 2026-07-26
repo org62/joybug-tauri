@@ -4,6 +4,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { useSessionContext } from '@/contexts/SessionContext';
 import { formatTauriError } from '@/lib/sessionHelpers';
+import { LINK_VALUE_CLASS } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { TruncatedSymbol } from '@/components/ui/truncated-symbol';
 import { VirtualizedList } from '@/components/ui/virtualized-list';
@@ -315,16 +316,12 @@ export const ContextThreadsView = ({ onNavigateToDisassembly, onNavigateToMemory
 
   const getThreadStatusColor = (status: string) => {
     switch (status) {
-      case "Running":
-        return "bg-green-100 text-green-800 border-green-200";
       case "Suspended":
-        return "bg-yellow-100 text-yellow-800 border-yellow-200";
-      case "Waiting":
-        return "bg-blue-100 text-blue-800 border-blue-200";
+        return "bg-syn-state/15 text-syn-state border-syn-state/30";
       case "Terminated":
-        return "bg-red-100 text-red-800 border-red-200";
+        return "bg-destructive/15 text-destructive border-destructive/30";
       default:
-        return "bg-gray-100 text-gray-800 border-gray-200";
+        return "bg-muted text-muted-foreground border-border";
     }
   };
 
@@ -349,14 +346,11 @@ export const ContextThreadsView = ({ onNavigateToDisassembly, onNavigateToMemory
             const symInfo = threadSymbols.get(thread.id);
             const displayText = symInfo?.symbol_info ?? thread.start_address;
             const isFunction = symInfo?.is_function ?? true;
-            const clickColor = isFunction
-              ? 'hover:text-blue-600 dark:hover:text-blue-400'
-              : 'hover:text-green-600 dark:hover:text-green-400';
             const tebAddress = threadTebs.get(thread.id);
 
             return (
               <div
-                className="flex items-center justify-between px-2 py-1 border-b hover:bg-gray-50 dark:hover:bg-gray-900 h-full cursor-pointer"
+                className="flex items-center justify-between font-mono px-2 py-1 border-b hover:bg-gray-50 dark:hover:bg-gray-900 h-full cursor-pointer"
                 onMouseEnter={(e) => handleThreadMouseEnter(thread.id, e)}
                 onMouseLeave={handleThreadMouseLeave}
                 onClick={(e) => handleThreadClick(thread.id, e)}
@@ -376,7 +370,7 @@ export const ContextThreadsView = ({ onNavigateToDisassembly, onNavigateToMemory
                     <span className="shrink-0">Start:</span>
                     <TruncatedSymbol
                       text={displayText}
-                      className={`font-mono cursor-pointer hover:underline ${clickColor}`}
+                      className={`font-mono ${LINK_VALUE_CLASS}`}
                       onClick={(e) => { e.stopPropagation(); handleStartAddressClick(thread.start_address, isFunction); }}
                     />
                   </p>
@@ -385,7 +379,7 @@ export const ContextThreadsView = ({ onNavigateToDisassembly, onNavigateToMemory
                       <span className="shrink-0">TEB:</span>
                       <TruncatedSymbol
                         text={tebAddress}
-                        className="font-mono cursor-pointer hover:underline hover:text-purple-600 dark:hover:text-purple-400"
+                        className={`font-mono ${LINK_VALUE_CLASS}`}
                         onClick={(e) => { e.stopPropagation(); onNavigateToTypeCtx?.('_TEB', tebAddress); }}
                       />
                     </p>

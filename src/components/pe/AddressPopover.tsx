@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { copyToClipboard } from "@/lib/clipboard";
 import { usePopoverDismiss } from "@/hooks/usePopoverDismiss";
 import { AddrTriple, AddrMode, ADDR_MODE_LABELS, formatAddr } from "@/lib/peAddress";
+import { LINK_VALUE_CLASS } from "@/lib/utils";
 
 interface PeAddressLinkProps {
   triple: AddrTriple;
@@ -75,7 +76,7 @@ export const PeAddressLink: React.FC<PeAddressLinkProps> = ({ triple, mode, isCo
         <Button
           variant="link"
           onClick={navigate}
-          className={`h-auto p-0 font-mono text-blue-500 hover:text-blue-400 ${className ?? ""}`}
+          className={`h-auto p-0 font-mono text-xs ${LINK_VALUE_CLASS} ${className ?? ""}`}
         >
           {formatAddr(triple, mode)}
         </Button>

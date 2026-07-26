@@ -128,14 +128,14 @@ function VirtualizedTraceLines({
             {line.address.length > 35 ? line.address.slice(0, 34) + "\u2026" : line.address}
           </span>
           <span className="shrink-0 mr-3" style={{ minWidth: 140 }}>
-            <span className="text-blue-400">{line.mnemonic}</span>
+            {line.mnemonic}
             {line.opStr && <> {line.opStr}</>}
           </span>
           {(line.changes || line.memory) && (
             <>
-              {line.changes && <span className="text-yellow-500 mr-1">{line.changes}</span>}
+              {line.changes && <span className="text-syn-accent mr-1">{line.changes}</span>}
               {line.changes && line.memory && <span className="text-muted-foreground mr-1">, </span>}
-              {line.memory && <span className="text-blue-500">{line.memory}</span>}
+              {line.memory && <span className="text-foreground">{line.memory}</span>}
             </>
           )}
         </div>
@@ -406,7 +406,7 @@ export const EmulationQuickView = memo(function EmulationQuickView({ emulation, 
     <div ref={rootRef} className="shrink-0 border-t border-border bg-muted/20">
       {/* Resize handle */}
       <div
-        className="h-1 cursor-row-resize hover:bg-blue-500/30 active:bg-blue-500/50 transition-colors"
+        className="h-1 cursor-row-resize hover:bg-ring/40 active:bg-ring/60 transition-colors"
         onMouseDown={handleResizeStart}
       />
       {/* Header */}
@@ -450,8 +450,8 @@ export const EmulationQuickView = memo(function EmulationQuickView({ emulation, 
               <span className="text-muted-foreground w-24 shrink-0">Next Syscall:</span>
               <span
                 className={cn(
-                  syscall.muted ? "text-muted-foreground" : "text-green-500",
-                  !syscall.muted && onNavigateToAddress && syscall.finalPc && "cursor-pointer hover:underline hover:text-green-400"
+                  syscall.muted ? "text-muted-foreground" : "text-syn-link",
+                  !syscall.muted && onNavigateToAddress && syscall.finalPc && "cursor-pointer hover:underline"
                 )}
                 onClick={() => {
                   if (!syscall.muted && onNavigateToAddress && syscall.finalPc) {
@@ -471,8 +471,8 @@ export const EmulationQuickView = memo(function EmulationQuickView({ emulation, 
               <span className="text-muted-foreground w-24 shrink-0">Next Module:</span>
               <span
                 className={cn(
-                  module.muted ? "text-muted-foreground" : "text-green-500",
-                  !module.muted && onNavigateToAddress && module.finalPc && "cursor-pointer hover:underline hover:text-green-400"
+                  module.muted ? "text-muted-foreground" : "text-syn-link",
+                  !module.muted && onNavigateToAddress && module.finalPc && "cursor-pointer hover:underline"
                 )}
                 onClick={() => {
                   if (!module.muted && onNavigateToAddress && module.finalPc) {
@@ -619,7 +619,7 @@ export const EmulationQuickView = memo(function EmulationQuickView({ emulation, 
             }}
           >
             {isTruncated && (
-              <div className="text-green-500 mb-1">{line.address}</div>
+              <div className="text-foreground mb-1">{line.address}</div>
             )}
             <div className="text-muted-foreground mb-1">
               {traceMode === "InstructionTrace"

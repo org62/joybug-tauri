@@ -668,7 +668,7 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
                             isSelected
                               ? "bg-primary text-primary-foreground"
                               : hasPendingChange
-                              ? "bg-yellow-200 dark:bg-yellow-800"
+                              ? "bg-syn-state/20"
                               : hasChangedByte
                               ? `${CHANGED_VALUE_CLASS} hover:bg-muted/50`
                               : "hover:bg-muted/50"
@@ -705,7 +705,7 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
                             isSelected
                               ? "bg-primary text-primary-foreground"
                               : hasPending
-                              ? "bg-yellow-200 dark:bg-yellow-800"
+                              ? "bg-syn-state/20"
                               : hasChanged
                               ? CHANGED_VALUE_CLASS
                               : ""
@@ -918,6 +918,8 @@ function HexToolbar({
         resolveSymbol={resolveSymbol}
         sessionId={sessionId}
         focusTabId={memoryViewId}
+        className="flex-1 max-w-md"
+        inputClassName="flex-1"
         historyKey="hex-goto"
         buttonLabel={
           <>
@@ -948,7 +950,7 @@ function HexToolbar({
       {/* Pending changes actions */}
       {pendingChanges.size > 0 && (
         <div className="flex items-center gap-1">
-          <span className="text-xs text-yellow-600 dark:text-yellow-400">
+          <span className="text-xs text-syn-state">
             {pendingChanges.size} pending
           </span>
           <Button
@@ -1059,7 +1061,7 @@ function HexStatusBar({
 
       {/* Pending changes count */}
       {pendingChanges.size > 0 && (
-        <span className="text-yellow-600 dark:text-yellow-400">
+        <span className="text-syn-state">
           {pendingChanges.size} unsaved changes
         </span>
       )}

@@ -250,8 +250,8 @@ export function GroupedItemList<T extends GroupableItem>({
   const activeDragItem = activeDragId ? items.find((i) => i.id === activeDragId) : null;
 
   // Dot color classes
-  const dotActive = groupDotColor === "purple" ? "bg-purple-500" : "bg-red-500";
-  const dotPartial = groupDotColor === "purple" ? "bg-purple-500/50" : "bg-red-500/50";
+  const dotActive = groupDotColor === "purple" ? "bg-syn-patched" : "bg-destructive";
+  const dotPartial = groupDotColor === "purple" ? "bg-syn-patched/50" : "bg-destructive/50";
 
   const renderGroupedContent = () => (
     <DndContext

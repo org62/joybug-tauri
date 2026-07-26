@@ -408,7 +408,7 @@ export const ContextMemorySearchView = () => {
             <span className="ml-auto text-muted-foreground">
               {addresses.length.toLocaleString()} result{addresses.length !== 1 ? 's' : ''}
               {capped && (
-                <span className="text-yellow-500 ml-1" title="Results were capped at the limit">
+                <span className="text-syn-state ml-1" title="Results were capped at the limit">
                   (capped)
                 </span>
               )}

@@ -24,10 +24,15 @@ export async function waitForStatus(
   }).toPass({ timeout, intervals: [100, 250, 500] });
 }
 
+/** The session status badge, matched on its semantic attribute rather than on
+ *  its styling. This used to be `.bg-yellow-600`, which quietly made a purely
+ *  visual restyle of the badge fail nearly every test in the suite. */
+const pausedBadge = (page: Page) => page.locator('[data-session-status="Paused"]');
+
 /**
  * Wait until the session reaches "Paused" status by polling the backend.
  * Uses short-lived evaluate calls with retry to survive context resets.
- * Falls back to CSS badge check if no sessionId provided.
+ * Falls back to the badge check if no sessionId provided.
  */
 export async function waitForPaused(
   page: Page,
@@ -40,7 +45,7 @@ export async function waitForPaused(
 
     // 2. Wait for UI to reflect the Paused state (React processes session-updated event)
     try {
-      await expect(page.locator(".bg-yellow-600")).toBeVisible({ timeout: 5_000 });
+      await expect(pausedBadge(page)).toBeVisible({ timeout: 5_000 });
     } catch {
       // UI didn't sync — the session-updated event was likely missed.
       // Force a re-mount by navigating away and back, which makes the
@@ -55,10 +60,10 @@ export async function waitForPaused(
         window.history.pushState({}, "", p);
         window.dispatchEvent(new PopStateEvent("popstate"));
       }, sessionPath);
-      await expect(page.locator(".bg-yellow-600")).toBeVisible({ timeout: 10_000 });
+      await expect(pausedBadge(page)).toBeVisible({ timeout: 10_000 });
     }
   } else {
-    await expect(page.locator(".bg-yellow-600")).toBeVisible({ timeout });
+    await expect(pausedBadge(page)).toBeVisible({ timeout });
   }
 }
 

@@ -19,7 +19,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import { Badge } from "@/components/ui/badge";
+import { SessionStatusBadge } from "@/components/session/SessionStatusBadge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Page } from "@/components/ui/page";
 import { Plus, Play, Eye, Pencil, Trash2, XSquare, FileCode2, FolderOpen, Unplug, RefreshCw, Search } from "lucide-react";
@@ -596,25 +596,7 @@ export default function Debugger() {
     );
   }, [processes, processFilter]);
 
-  const getStatusBadge = (status: SessionStatus) => {
-    if (typeof status === "string") {
-      switch (status) {
-        case "Stopped":
-          return <Badge variant="secondary">Stopped</Badge>;
-        case "Running":
-          return <Badge variant="default" className="bg-green-600 animate-pulse">Running</Badge>;
-        case "Paused":
-          return <Badge variant="default" className="bg-yellow-600">Paused</Badge>;
-        case "Open":
-          return <Badge variant="default" className="bg-blue-600">Open</Badge>;
-        default:
-          return <Badge variant="secondary">{status}</Badge>;
-      }
-    } else {
-      // Error case
-      return <Badge variant="destructive">Error</Badge>;
-    }
-  };
+  const getStatusBadge = (status: SessionStatus) => <SessionStatusBadge status={status} />;
 
   const getStatusDescription = (status: SessionStatus) => {
     if (typeof status === "string") {

@@ -477,8 +477,8 @@ export default function PeReader() {
           )}
           <div className="ml-2 flex-1 min-w-0 text-sm font-mono truncate text-muted-foreground" title={path ?? undefined}>
             {path ? moduleBasename(path) : "No PE file open"}
-            {dirty && <span className="ml-1 text-yellow-500">●</span>}
-            {summary?.symbols_loaded && <span className="ml-2 text-xs text-green-500">{summary.symbol_count} symbols</span>}
+            {dirty && <span className="ml-1 text-syn-state">●</span>}
+            {summary?.symbols_loaded && <span className="ml-2 text-xs text-muted-foreground">{summary.symbol_count} symbols</span>}
           </div>
           <DockWindowsMenu dockingRef={dockingRef} tabs={PE_TABS} />
         </div>

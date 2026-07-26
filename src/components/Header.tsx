@@ -28,7 +28,7 @@ export default function Header() {
           to={item.path}
           className={`${
             location.pathname === item.path
-              ? "text-blue-600 dark:text-amber-400 font-medium"
+              ? "text-foreground font-medium"
               : "text-gray-600 dark:text-neutral-300 hover:text-gray-900 dark:hover:text-neutral-100"
           } ${mobile ? "block py-2" : ""} transition-colors`}
         >

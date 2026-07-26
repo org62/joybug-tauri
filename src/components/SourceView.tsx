@@ -15,7 +15,7 @@ import {
   SelectValue,
 } from "./ui/select";
 import { FileCode, ChevronRight, Circle, RefreshCw, AlertTriangle, FolderSearch, ArrowRightToLine, CornerDownRight, ArrowDownToLine } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { cn, PC_ROW_HIGHLIGHT_CLASS } from "@/lib/utils";
 import { useSourceView } from "@/hooks/useSourceView";
 import { useContextMenu } from "@/hooks/useContextMenu";
 import { Virtualizer } from "@tanstack/react-virtual";
@@ -299,7 +299,7 @@ export function SourceView({
         </Button>
 
         {checksumMismatch && (
-          <span className="flex items-center gap-1 text-xs text-amber-600 dark:text-amber-400" title="On-disk source differs from the build recorded in the PDB">
+          <span className="flex items-center gap-1 text-xs text-syn-state" title="On-disk source differs from the build recorded in the PDB">
             <AlertTriangle className="h-3.5 w-3.5" />
             Source differs
           </span>
@@ -396,7 +396,7 @@ export function SourceView({
         <ContextMenu x={contextMenu.x} y={contextMenu.y} onClose={closeContextMenu} className="min-w-[180px]">
           {onToggleBreakpoint && contextMenu.data.hasCode && (
             <ContextMenuItem
-              icon={<Circle className="text-red-500" />}
+              icon={<Circle className="text-destructive" />}
               onClick={() => toggleBreakpoint(contextMenu.data.line)}
             >
               Toggle Breakpoint
@@ -404,7 +404,7 @@ export function SourceView({
           )}
           {onNavigateToDisassembly && contextMenu.data.hasCode && (
             <ContextMenuItem
-              icon={<ArrowRightToLine className="text-blue-400" />}
+              icon={<ArrowRightToLine className="text-syn-link" />}
               onClick={() => goToDisassembly(contextMenu.data.line)}
             >
               Go to Disassembly
@@ -457,8 +457,8 @@ function SourceRow({
         // bleed into the neighbouring row. Prefer the UI-scale zoom for enlarging.
         "flex items-center overflow-hidden hover:bg-muted/30 cursor-default font-mono text-xs",
         isSelected && "bg-accent/50",
-        isPC && !isSelected && "bg-yellow-100 dark:bg-yellow-900/40",
-        isNavTarget && !isPC && !isSelected && "bg-blue-100 dark:bg-blue-900/40",
+        isPC && !isSelected && PC_ROW_HIGHLIGHT_CLASS,
+        isNavTarget && !isPC && !isSelected && "bg-syn-link/10",
         isFlashing && "animate-highlight-fade",
       )}
       style={style}
@@ -473,14 +473,14 @@ function SourceRow({
         title={hasCode ? "Toggle breakpoint" : undefined}
       >
         {hasBreakpoint ? (
-          <Circle className="h-2.5 w-2.5 fill-red-500 text-red-500" />
+          <Circle className="h-2.5 w-2.5 fill-destructive text-destructive" />
         ) : hasCode ? (
           <Circle className="h-2 w-2 text-muted-foreground/30" />
         ) : null}
       </span>
 
       {/* PC indicator */}
-      <span className="w-4 shrink-0 text-yellow-600 dark:text-yellow-400">
+      <span className="w-4 shrink-0 text-syn-state">
         {isPC && <ChevronRight className="h-3 w-3" />}
       </span>
 
