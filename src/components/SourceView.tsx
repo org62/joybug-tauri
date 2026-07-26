@@ -15,13 +15,13 @@ import {
   SelectValue,
 } from "./ui/select";
 import { FileCode, ChevronRight, Circle, RefreshCw, AlertTriangle, FolderSearch, ArrowRightToLine, CornerDownRight, ArrowDownToLine } from "lucide-react";
-import { cn, PC_ROW_HIGHLIGHT_CLASS } from "@/lib/utils";
+import { cn, DATA_ROW_HEIGHT, PC_ROW_HIGHLIGHT_CLASS } from "@/lib/utils";
 import { useSourceView } from "@/hooks/useSourceView";
 import { useContextMenu } from "@/hooks/useContextMenu";
 import { Virtualizer } from "@tanstack/react-virtual";
 import { languageForPath, highlightToLines, type SyntaxLine } from "@/lib/syntaxHighlight";
 
-const SOURCE_ROW_HEIGHT = 24;
+const SOURCE_ROW_HEIGHT = DATA_ROW_HEIGHT;
 
 interface SourceLine {
   n: number;
@@ -455,7 +455,7 @@ function SourceRow({
         // overflow-hidden: rows are a fixed px height in a virtualized list, so
         // clip rather than let an over-tall line (e.g. under OS text scaling)
         // bleed into the neighbouring row. Prefer the UI-scale zoom for enlarging.
-        "flex items-center overflow-hidden hover:bg-muted/30 cursor-default font-mono text-xs",
+        "flex items-center overflow-hidden hover:bg-muted/30 cursor-default font-mono text-data",
         isSelected && "bg-accent/50",
         isPC && !isSelected && PC_ROW_HIGHLIGHT_CLASS,
         isNavTarget && !isPC && !isSelected && "bg-syn-link/10",

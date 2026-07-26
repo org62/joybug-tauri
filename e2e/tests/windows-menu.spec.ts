@@ -1,5 +1,5 @@
 import { test, expect } from "../helpers/test-fixtures";
-import { createAndStartSession, cleanupSession, goToWindow, openWindowsSubmenu } from "../helpers/session-helpers";
+import { createAndStartSession, cleanupSession, goToWindow, clickWindowsMenuItem } from "../helpers/session-helpers";
 import { waitForPaused } from "../helpers/wait-helpers";
 import type { Page } from "@playwright/test";
 
@@ -103,15 +103,11 @@ test.describe("Windows: navigation, grouping, and reset", () => {
     try {
       await waitForPaused(page, sessionId);
 
-      await openWindowsSubmenu(page, "Debug");
-      await page.getByRole("menuitemcheckbox", { name: "User Patches" }).click();
-      await page.keyboard.press("Escape");
+      await clickWindowsMenuItem(page, "Debug", "User Patches");
       await expect(page.locator("[id$='-tab-patches']")).toHaveCount(1, { timeout: 5_000 });
 
       // Unchecking is the one affordance that closes a window.
-      await openWindowsSubmenu(page, "Debug");
-      await page.getByRole("menuitemcheckbox", { name: "User Patches" }).click();
-      await page.keyboard.press("Escape");
+      await clickWindowsMenuItem(page, "Debug", "User Patches");
       await expect(page.locator("[id$='-tab-patches']")).toHaveCount(0, { timeout: 5_000 });
     } finally {
       await cleanupSession(page, sessionId);

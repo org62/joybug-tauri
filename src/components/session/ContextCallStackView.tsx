@@ -77,11 +77,12 @@ export function ContextCallStackView({ onNavigateToDisassembly, onNavigateToMemo
 
     // Also reflect the thread the user selects in the Threads window, so clicking a
     // thread "redirects" its call stack here (the primary path in non-invasive mode,
-    // which has no single current thread).
-    const unlistenThread = listen<{ session_id: string; tid: number; frames: CallStackFrame[] }>(
+    // which has no single current thread). Hover-preview fetches (the Threads
+    // popover) carry preview=true and must NOT retarget this panel.
+    const unlistenThread = listen<{ session_id: string; tid: number; preview: boolean; frames: CallStackFrame[] }>(
       'thread-callstack-updated',
       (event) => {
-        if (event.payload.session_id === sessionData?.session?.id) {
+        if (event.payload.session_id === sessionData?.session?.id && !event.payload.preview) {
           setSelectedTid(event.payload.tid);
           setCallStack(event.payload.frames);
           setError(null);
@@ -116,7 +117,7 @@ export function ContextCallStackView({ onNavigateToDisassembly, onNavigateToMemo
   }
 
   return (
-    <DockPanel>
+    <DockPanel data-testid="callstack-panel">
       {callStack.length > 0 ? (
         <>
           {selectedTid !== null && (

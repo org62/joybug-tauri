@@ -215,8 +215,12 @@ export interface UseAssemblyViewOptions {
 // Instructions requested per file disassembly (no function bounds available).
 const FILE_DISASM_COUNT = 512;
 
-// Instructions fetched per scroll-driven extension (prepend above / append below).
-const EXTEND_CHUNK = 64;
+// Instructions fetched per scroll-driven extension (prepend above / append
+// below). AssemblyView extends when it is within one viewport of an edge, so a
+// chunk must cover a full viewport or the append lands still inside the
+// threshold and immediately fires a second request. At DATA_ROW_HEIGHT (18px)
+// this covers ~2300px — enough for a maximized panel on a 4K display.
+const EXTEND_CHUNK = 128;
 // Hard cap on total loaded rows so infinite scrolling can't grow the array unbounded.
 const MAX_LOADED_INSTRUCTIONS = 20000;
 

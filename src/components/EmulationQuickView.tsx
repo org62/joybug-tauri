@@ -6,7 +6,7 @@ import { VirtualizedList } from "./ui/virtualized-list";
 import { Button } from "./ui/button";
 import { HistoryInput } from "./ui/history-input";
 import { pushInputHistory } from "@/lib/inputHistory";
-import { cn } from "@/lib/utils";
+import { cn, DATA_ROW_HEIGHT } from "@/lib/utils";
 import { QuickEmulationState, QuickEmulationResult } from "@/hooks/useQuickEmulation";
 import { parseTenetTrace } from "@/lib/tenetParser";
 
@@ -75,7 +75,7 @@ interface TraceLine {
   tooltip: string;
 }
 
-const TRACE_ROW_HEIGHT = 18;
+const TRACE_ROW_HEIGHT = DATA_ROW_HEIGHT;
 
 function VirtualizedTraceLines({
   height,
@@ -443,7 +443,7 @@ export const EmulationQuickView = memo(function EmulationQuickView({ emulation, 
 
       {/* Body */}
       {!collapsed && (
-        <div className={`text-xs font-mono ${dimmed ? "opacity-50" : ""}`}>
+        <div className={`text-data font-mono ${dimmed ? "opacity-50" : ""}`}>
           {/* Summary rows - fixed above scroll */}
           <div className="px-3 py-1 space-y-0.5 border-b border-border/50">
             <div className="flex items-center gap-2">

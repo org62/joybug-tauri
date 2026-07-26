@@ -190,12 +190,29 @@ export async function goToWindow(page: Page, title: string): Promise<void> {
 }
 
 /**
- * Open the Windows menu and enter one of its submenus (e.g. "Debug"). The next
- * click should be a `menuitemcheckbox` with the window's title.
+ * Toggle a window's checkbox item inside the Windows menu's `group` submenu,
+ * then close the menu. Owns the whole open → submenu → click sequence and
+ * restarts it from scratch if the menu collapses mid-flight: under heavy UI
+ * churn (e.g. a disassembly refresh right after a memory write) Radix's
+ * hover-grace timers can fire late and close the submenu underneath the
+ * pointer, which a bare item click can never recover from.
+ *
+ * Only for tests that are *about* the Windows menu — to merely open a window,
+ * use `goToWindow`, which goes through the palette and can't hit this race.
  */
-export async function openWindowsSubmenu(page: Page, group: string): Promise<void> {
-  await page.getByRole("button", { name: "Windows" }).click();
-  await page.getByRole("menuitem", { name: group }).click();
+export async function clickWindowsMenuItem(page: Page, group: string, item: string): Promise<void> {
+  await expect(async () => {
+    // Clean slate each attempt: Escape closes any half-open menu, so the
+    // trigger click below always opens (never toggles closed). Every click is
+    // bounded so a stuck attempt fails fast into the next one instead of
+    // hanging until the test timeout (actionTimeout is unset = no limit).
+    await page.keyboard.press("Escape");
+    await page.getByRole("button", { name: "Windows" }).click({ timeout: 2_000 });
+    await page.getByRole("menuitem", { name: group }).click({ timeout: 2_000 });
+    await page.getByRole("menuitemcheckbox", { name: item }).click({ timeout: 2_000 });
+  }).toPass({ timeout: 20_000, intervals: [100, 250, 500] });
+  // Checkbox items keep the menu open for multi-toggling; dismiss it.
+  await page.keyboard.press("Escape");
 }
 
 /**

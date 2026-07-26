@@ -1,7 +1,7 @@
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Button } from '@/components/ui/button';
 import { TruncatedSymbol } from '@/components/ui/truncated-symbol';
-import { LINK_VALUE_CLASS } from '@/lib/utils';
+import { cn, LINK_VALUE_CLASS } from '@/lib/utils';
 
 export interface CallStackFrame {
   frame_number: number;
@@ -17,10 +17,6 @@ interface CallStackFrameListProps {
   onClickMemory?: (address: string) => void;
   compact?: boolean;
   maxHeight?: number;
-}
-
-function formatSymbol(symbol: string | null) {
-  return symbol || 'Unknown';
 }
 
 /** Monospace address that becomes a link button when a handler is provided. */
@@ -44,34 +40,31 @@ function MonoAddress({
 }
 
 export function CallStackFrameList({ frames, onClickAddress, onClickMemory, compact, maxHeight }: CallStackFrameListProps) {
+  // Two lines per frame: the title line is the symbol alone (or the raw
+  // address when unresolved) and IS the frame's RIP link — it navigates to the
+  // instruction pointer, so there is no separate RIP entry. SP/FP live on the
+  // muted second line.
   const content = (
-    <div className={compact ? 'space-y-0' : 'space-y-1'}>
+    <div>
       {frames.map((frame) => (
         <div
           key={frame.frame_number}
-          className={`flex items-center justify-between font-mono px-2 border-b hover:bg-gray-50 dark:hover:bg-gray-900 ${compact ? 'py-0.5' : 'py-1'}`}
+          data-testid="callstack-frame"
+          className={`font-mono text-xs px-2 border-b hover:bg-muted/30 ${compact ? 'py-0' : 'py-0.5'}`}
         >
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 mb-0.5">
-              <span className="text-muted-foreground text-xs shrink-0">#{frame.frame_number}</span>
-              {onClickAddress ? (
-                <TruncatedSymbol
-                  text={formatSymbol(frame.symbol_info)}
-                  className={`font-medium ${LINK_VALUE_CLASS}`}
-                  onClick={() => onClickAddress(frame.instruction_pointer)}
-                />
-              ) : (
-                <TruncatedSymbol text={formatSymbol(frame.symbol_info)} className="font-medium" />
-              )}
-            </div>
-            <p className={`text-muted-foreground truncate ${compact ? 'text-[10px]' : 'text-xs'}`}>
-              RIP:{' '}
-              <MonoAddress value={frame.instruction_pointer} onClick={onClickAddress} />
-              {' | SP: '}
-              <MonoAddress value={frame.stack_pointer} onClick={onClickMemory} />
-              {' | FP: '}
-              <MonoAddress value={frame.frame_pointer} onClick={onClickMemory} />
-            </p>
+          <div className="flex items-center gap-2">
+            <span className="text-muted-foreground shrink-0">#{frame.frame_number}</span>
+            <TruncatedSymbol
+              // Symbol when resolved, raw address otherwise.
+              text={frame.symbol_info || frame.instruction_pointer}
+              className={cn('flex-1 font-medium', onClickAddress && LINK_VALUE_CLASS)}
+              onClick={onClickAddress && (() => onClickAddress(frame.instruction_pointer))}
+            />
+          </div>
+          <div className="truncate text-muted-foreground">
+            SP: <MonoAddress value={frame.stack_pointer} onClick={onClickMemory} />
+            {' FP: '}
+            <MonoAddress value={frame.frame_pointer} onClick={onClickMemory} />
           </div>
         </div>
       ))}

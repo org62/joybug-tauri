@@ -88,7 +88,9 @@ const RegisterPair = ({ name, field, value, dereferenceEntry, showDereference = 
   // text are data too, and mixing a proportional name column with a mono value
   // column leaves the values starting at a different x on every row.
   return (
-    <div className="flex items-center font-mono py-0.5 px-1 hover:bg-muted/50 rounded-sm text-xs min-w-0 overflow-hidden">
+    // text-data carries the shared data density (13px/18px) — its line-height
+    // alone sets the row height, so there is no vertical padding.
+    <div className="flex items-center font-mono text-data px-1 hover:bg-muted/30 rounded-sm min-w-0 overflow-hidden">
       <span className={cn("font-semibold text-muted-foreground shrink-0", nameWidthClass)}>{name}</span>
       <span
         data-changed={isChanged || undefined}
@@ -314,7 +316,7 @@ export function RegisterView({
         <PanelBody>
           {/* w-0 min-w-full: zero the intrinsic max-content width so long
               deref chains can't widen the panel (same idiom as GroupedItemList) */}
-          <div className="p-1 flex flex-col gap-0.5 w-0 min-w-full">
+          <div className="p-1 flex flex-col w-0 min-w-full">
             {renderRegisterRows(registers, ARM64_REGISTERS, getDeref, isChanged, "w-8", onRegisterEdit)}
             {showXmm && (
               <VectorRegisterSection
@@ -357,7 +359,7 @@ export function RegisterView({
         <PanelBody>
           {/* w-0 min-w-full: zero the intrinsic max-content width so long
               deref chains can't widen the panel (same idiom as GroupedItemList) */}
-          <div className="p-1 flex flex-col gap-0.5 w-0 min-w-full">
+          <div className="p-1 flex flex-col w-0 min-w-full">
             {renderRegisterRows(registers, X64_REGISTERS, getDeref, isChanged, "w-8", onRegisterEdit)}
             {showXmm && (
               <VectorRegisterSection

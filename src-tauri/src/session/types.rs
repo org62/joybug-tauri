@@ -43,7 +43,9 @@ pub enum UICommand {
     SetHardwareBreakpoint { address: u64, hw_type: String, hw_size: u8 },
     StartWatchpointTrace { address: u64, hw_type: String, hw_size: u8 },
     StopWatchpointTrace { breakpoint_id: String },
-    GetThreadCallStack { tid: u32 },
+    // `preview` marks a hover-preview fetch (Threads popover); the Call Stack
+    // panel only follows non-preview (explicit selection) results.
+    GetThreadCallStack { tid: u32, preview: bool },
     ResolveThreadSymbols,
     GetModuleExtraInfo { module_base: u64 },
     ResolveAddressToLine { address: u64 },

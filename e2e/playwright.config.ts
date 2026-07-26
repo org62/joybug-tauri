@@ -39,6 +39,7 @@ export default defineConfig({
     "stepping.spec.ts",
     "source-view.spec.ts",
     "attach-detach.spec.ts",
+    "callstack.spec.ts",
     "non-invasive.spec.ts",
     "strings-view.spec.ts",
     "memory-regions.spec.ts",

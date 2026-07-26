@@ -12,7 +12,7 @@ import {
 import { Binary, Save, X, ArrowRight, Copy, ClipboardPaste, Crosshair, Bookmark, Fingerprint, HardDrive } from "lucide-react";
 import { useHexEditor, ExtendStatus, HexDataSource } from "@/hooks/useHexEditor";
 import { isProcessAvailable } from "@/lib/sessionHelpers";
-import { CHANGED_VALUE_CLASS } from "@/lib/utils";
+import { CHANGED_VALUE_CLASS, DATA_ROW_HEIGHT } from "@/lib/utils";
 import { useNavigationChannel } from "@/hooks/useNavigationChannel";
 import { memoryNavigation } from "@/lib/navigationStore";
 import {
@@ -60,7 +60,7 @@ const VIEWMODE_VALUE_TYPE: Record<ViewMode, string> = {
   byte: 'U8', word: 'U16', dword: 'U32', qword: 'U64', float: 'F32', pointer: 'U64',
 };
 
-const ROW_HEIGHT = 28;
+const ROW_HEIGHT = DATA_ROW_HEIGHT;
 // Scrolling within this distance of the top/bottom edge extends the memory
 // window in that direction (infinite scroll).
 const EDGE_EXTEND_THRESHOLD = ROW_HEIGHT * 6;
@@ -589,7 +589,7 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
         <VirtualizedList
           items={rowIndices}
           rowHeight={ROW_HEIGHT}
-          className="h-full font-mono text-sm"
+          className="h-full font-mono text-data"
           minContentWidth={rowMinWidth}
           onViewportScroll={handleViewportScroll}
           virtualizerRef={virtualizerRef}
@@ -601,7 +601,7 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
             return (
               <div className="flex items-center hover:bg-muted/30 h-full px-2 select-none">
                 {/* Address column */}
-                <span className="w-36 shrink-0 text-muted-foreground text-xs">
+                <span className="w-36 shrink-0 text-muted-foreground">
                   {fmtAddr(rowAddress)}
                 </span>
 

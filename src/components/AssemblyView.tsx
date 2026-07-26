@@ -11,7 +11,7 @@ import { Switch } from "./ui/switch";
 import { Label } from "./ui/label";
 import { Cpu, ArrowLeft, ArrowRight, RefreshCw, ChevronRight, Circle, CircleDot, Wrench, Copy, Bookmark, FileCode, HardDrive, LocateFixed, Zap, Undo2 } from "lucide-react";
 import { sourceNavigation } from "@/lib/navigationStore";
-import { cn, LINK_VALUE_CLASS, PC_ROW_HIGHLIGHT_CLASS } from "@/lib/utils";
+import { cn, DATA_ROW_HEIGHT, LINK_VALUE_CLASS, PC_ROW_HIGHLIGHT_CLASS } from "@/lib/utils";
 import { useAssemblyView, buildAsmRows, Instruction, AsmDisassembleFn } from "@/hooks/useAssemblyView";
 import { NavHistoryStore } from "@/lib/navHistory";
 import { RegisterContext, SymbolResolver } from "@/lib/hexUtils";
@@ -32,7 +32,7 @@ const NOP_PAD_KEY = "assembly-nop-pad";
 type ColumnWidths = { symbol: number; bytes: number; mnemonic: number };
 
 const DEFAULT_COLUMN_WIDTHS: ColumnWidths = { symbol: 320, bytes: 144, mnemonic: 64 };
-const ASSEMBLY_ROW_HEIGHT = 24;
+const ASSEMBLY_ROW_HEIGHT = DATA_ROW_HEIGHT;
 
 interface AssemblyViewProps {
   sessionId?: string;
@@ -722,7 +722,7 @@ const LabelRow = memo(function LabelRow({ symbol, address }: { symbol: string; a
   return (
     <div
       data-testid="asm-label-row"
-      className="flex items-center font-mono text-xs px-2 cursor-default"
+      className="flex items-center font-mono text-data px-2 cursor-default"
       style={{ height: ASSEMBLY_ROW_HEIGHT }}
       title={address}
     >
@@ -812,7 +812,7 @@ const InstructionRow = memo(function InstructionRow({ instruction, isPC, isExecu
       data-highlight={highlight}
       data-invalid={is_invalid ? "" : undefined}
       className={cn(
-        "flex items-center font-mono text-xs hover:bg-muted/30 px-2 cursor-default",
+        "flex items-center font-mono text-data hover:bg-muted/30 px-2 cursor-default",
         highlight && ROW_HIGHLIGHT_BG[highlight],
         isHighlighted && "animate-highlight-fade"
       )}

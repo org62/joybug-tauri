@@ -42,6 +42,13 @@
      Windows fallbacks so a failed font load still lands on something monospaced
      rather than collapsing hex columns into a proportional font. */
   --font-mono: "JetBrains Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+  /* The density of every data listing (disassembly, source, hex, registers,
+     emulation trace). One token so the views can't drift apart: the line-height
+     is also the virtualized row height — see DATA_ROW_HEIGHT in lib/utils.ts.
+     18px is the snug fit for JetBrains Mono at 13px (ascent+descent ≈ 17.2px);
+     anything lower clips descenders. */
+  --text-data: 13px;
+  --text-data--line-height: 18px;
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);

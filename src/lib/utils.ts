@@ -22,3 +22,10 @@ export const LINK_VALUE_CLASS = "text-syn-link cursor-pointer hover:underline"
 export const PC_ROW_HIGHLIGHT_CLASS =
   "bg-syn-state/[0.12] shadow-[inset_2px_0_0_var(--syn-state)]"
 
+// Row height for every virtualized data listing (disassembly, source, hex,
+// emulation trace) — they are the same kind of data and must read equally
+// dense. This is the numeric half of the `text-data` token in App.css: the
+// token's line-height and this constant are the same 18px, so a row is exactly
+// one line of text. Change both together.
+export const DATA_ROW_HEIGHT = 18
+

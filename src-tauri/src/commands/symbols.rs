@@ -172,13 +172,14 @@ pub fn request_resolve_thread_symbols(
 pub fn request_thread_callstack(
     session_id: String,
     tid: u32,
+    preview: bool,
     session_states: State<'_, SessionStatesMap>,
     oob_pool: State<'_, super::OobPool>,
     app_handle: tauri::AppHandle,
 ) -> Result<()> {
     let handle = Some(app_handle);
-    super::paused_or_oob(&session_id, &session_states, &oob_pool, UICommand::GetThreadCallStack { tid }, |client, pid| {
-        crate::session::callstack::process_thread_callstack_request(client, &handle, pid, tid);
+    super::paused_or_oob(&session_id, &session_states, &oob_pool, UICommand::GetThreadCallStack { tid, preview }, |client, pid| {
+        crate::session::callstack::process_thread_callstack_request(client, &handle, pid, tid, preview);
     })?;
     info!("Thread callstack processed for session {}, tid {}", session_id, tid);
     Ok(())

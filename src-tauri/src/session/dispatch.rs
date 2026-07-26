@@ -494,8 +494,8 @@ fn process_command(
             process_stop_watchpoint_trace(session, app_handle_clone, event.pid(), breakpoint_id);
             CommandResult::Continue
         }
-        UICommand::GetThreadCallStack { tid } => {
-            process_thread_callstack_request(session, app_handle_clone, event.pid(), tid);
+        UICommand::GetThreadCallStack { tid, preview } => {
+            process_thread_callstack_request(session, app_handle_clone, event.pid(), tid, preview);
             CommandResult::Continue
         }
         UICommand::ResolveThreadSymbols => {

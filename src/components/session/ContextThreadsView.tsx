@@ -231,13 +231,15 @@ export const ContextThreadsView = ({ onNavigateToDisassembly, onNavigateToMemory
   // Show the call-stack popover at (x, y) and fetch the thread's stack.
   // Always refetch: stacks change while the target runs (or across steps).
   // The cached frames stay visible until the fresh ones arrive.
-  const showThreadCallstack = useCallback((tid: number, x: number, y: number) => {
+  // `preview: true` marks a hover fetch — the Call Stack panel ignores those
+  // and only follows explicit clicks, so hovering can't hijack it.
+  const showThreadCallstack = useCallback((tid: number, x: number, y: number, preview: boolean) => {
     setHoveredThread(tid);
     setPopoverPos({ x: x + 16, y: y - 8 });
     setCallstackError(null);
     if (sessionId && canUse) {
       setLoadingThread(tid);
-      invoke('request_thread_callstack', { sessionId, tid }).catch((err) => {
+      invoke('request_thread_callstack', { sessionId, tid, preview }).catch((err) => {
         console.error('Failed to request thread callstack:', err);
         setLoadingThread(null);
         setCallstackError({ tid, message: formatTauriError(err) });
@@ -266,7 +268,7 @@ export const ContextThreadsView = ({ onNavigateToDisassembly, onNavigateToMemory
     const mouseY = e.clientY;
 
     hoverTimerRef.current = setTimeout(() => {
-      showThreadCallstack(tid, mouseX, mouseY);
+      showThreadCallstack(tid, mouseX, mouseY, true);
     }, 400);
   }, [showThreadCallstack]);
 
@@ -274,7 +276,7 @@ export const ContextThreadsView = ({ onNavigateToDisassembly, onNavigateToMemory
   const handleThreadClick = useCallback((tid: number, e: React.MouseEvent) => {
     if (hoverTimerRef.current) { clearTimeout(hoverTimerRef.current); hoverTimerRef.current = null; }
     if (hideTimerRef.current) { clearTimeout(hideTimerRef.current); hideTimerRef.current = null; }
-    showThreadCallstack(tid, e.clientX, e.clientY);
+    showThreadCallstack(tid, e.clientX, e.clientY, false);
   }, [showThreadCallstack]);
 
   const handleThreadMouseLeave = useCallback(() => {
