@@ -1,7 +1,7 @@
 use crate::error::{Error, Result};
 use crate::session::{UICommand, SymbolData};
 use crate::state::SessionStatesMap;
-use joybug2::protocol_io::{PdbLoadOutcome, SymbolLoadState};
+use joybug_core::protocol_io::{PdbLoadOutcome, SymbolLoadState};
 use super::types::{ModuleSymbolStatusData, PdbLoadResultData, PdbMismatchData};
 use tauri::State;
 use tracing::{debug, info, warn};

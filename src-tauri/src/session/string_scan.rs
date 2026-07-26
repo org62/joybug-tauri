@@ -1,7 +1,7 @@
 use tauri::{AppHandle, Emitter};
 use tracing::{debug, error, info};
 
-use joybug2::protocol::{ScanRegionFilter, StringEncodingFilter, StringSortKey};
+use joybug_core::protocol::{ScanRegionFilter, StringEncodingFilter, StringSortKey};
 
 use super::helpers::emit_scan_error;
 use super::types::*;

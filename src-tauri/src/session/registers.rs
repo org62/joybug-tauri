@@ -9,7 +9,7 @@ use super::types::DebugSession;
 pub(crate) fn process_set_register(
     session: &mut DebugSession,
     app_handle_clone: &Option<AppHandle>,
-    event: &joybug2::protocol_io::DebugEvent,
+    event: &joybug_core::protocol_io::DebugEvent,
     register_name: &str,
     value: u64,
 ) {
@@ -19,7 +19,7 @@ pub(crate) fn process_set_register(
 
     // 1. Get current raw thread context
     let mut ctx = match session.get_thread_context(pid, tid) {
-        Ok(joybug2::protocol::ThreadContext::Win32RawContext(c)) => c,
+        Ok(joybug_core::protocol::ThreadContext::Win32RawContext(c)) => c,
         Err(e) => {
             error!("Failed to get thread context for set register: {}", e);
             if let Some(ref handle) = app_handle_clone {
@@ -111,7 +111,7 @@ pub(crate) fn process_set_register(
     }
 
     // 3. Write modified context back
-    let write_ctx = joybug2::protocol::ThreadContext::Win32RawContext(ctx);
+    let write_ctx = joybug_core::protocol::ThreadContext::Win32RawContext(ctx);
     if let Err(e) = session.set_thread_context(pid, tid, write_ctx) {
         error!("Failed to set thread context: {}", e);
         if let Some(ref handle) = app_handle_clone {

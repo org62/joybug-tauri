@@ -126,7 +126,7 @@ pub struct ResolvedBookmark {
 /// (`to_resolved_static`) and the live emit path in `session::bookmarks`.
 pub(crate) fn bookmark_static_address(
     bm: &BookmarkInfo,
-    modules: &[joybug2::protocol_io::ModuleInfo],
+    modules: &[joybug_core::protocol_io::ModuleInfo],
 ) -> Option<u64> {
     if let (Some(name), Some(offset)) = (&bm.module_name, bm.module_offset) {
         // Bookmarks store the module stem (no extension); match on that.
@@ -183,7 +183,7 @@ impl BookmarkInfo {
     /// Build a snapshot ResolvedBookmark using only the module list (no memory
     /// reads). Value-kind addresses resolve here; pointer chains resolve later on
     /// a live refresh.
-    pub fn to_resolved_static(&self, modules: &[joybug2::protocol_io::ModuleInfo]) -> ResolvedBookmark {
+    pub fn to_resolved_static(&self, modules: &[joybug_core::protocol_io::ModuleInfo]) -> ResolvedBookmark {
         // Pointer bookmarks need a live chain walk, so they aren't "resolved" here.
         let resolved = if self.kind == "pointer" {
             None
@@ -335,10 +335,10 @@ pub struct SessionStateUI {
 
     // Runtime state
     pub status: SessionStatusUI,
-    pub events: Vec<joybug2::protocol_io::DebugEvent>,
-    pub modules: Vec<joybug2::protocol_io::ModuleInfo>,
-    pub threads: Vec<joybug2::protocol_io::ThreadInfo>,
-    pub current_event: Option<joybug2::protocol_io::DebugEvent>,
+    pub events: Vec<joybug_core::protocol_io::DebugEvent>,
+    pub modules: Vec<joybug_core::protocol_io::ModuleInfo>,
+    pub threads: Vec<joybug_core::protocol_io::ThreadInfo>,
+    pub current_event: Option<joybug_core::protocol_io::DebugEvent>,
     pub current_context: Option<SerializableThreadContext>,
     pub ui_sender: Option<mpsc::Sender<UICommand>>, // Send true to continue, false to stop
     pub ui_receiver: Option<mpsc::Receiver<UICommand>>,
@@ -400,7 +400,7 @@ pub struct SessionStateUI {
 /// Transient state for an active source-line step (see SessionStateUI::source_step).
 #[derive(Debug, Clone)]
 pub struct SourceStepState {
-    pub kind: joybug2::protocol::StepKind,
+    pub kind: joybug_core::protocol::StepKind,
     /// Starting (file, line); `None` when the start had no line info (degrades to
     /// a single instruction step).
     pub start: Option<(String, u32)>,
@@ -563,7 +563,7 @@ impl SessionStateUI {
 // Global state - now just holding session states, no duplicate session storage
 pub type SessionStatesMap = Mutex<HashMap<String, Arc<Mutex<SessionStateUI>>>>;
 pub type LogsState = Mutex<Vec<LogEntry>>;
-pub type EmbeddedServersMap = Mutex<HashMap<String, joybug2::local_server::LocalServer>>;
+pub type EmbeddedServersMap = Mutex<HashMap<String, joybug_core::local_server::LocalServer>>;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LogEntry {

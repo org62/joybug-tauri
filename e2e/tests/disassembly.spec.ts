@@ -268,7 +268,7 @@ test.describe("Disassembly View", () => {
       await waitForDisassemblyLoaded(page, ASM_PANEL);
 
       // The backend's resilient decode (a real undecodable byte becomes a
-      // `db 0xXX` row and decoding resumes after it) is covered by a joybug2
+      // `db 0xXX` row and decoding resumes after it) is covered by a joybug-core
       // unit test. Here we assert the user-visible outcome deterministically:
       // a replace payload carrying an invalid row sandwiched between valid rows
       // must render the invalid row distinctly (data-invalid, mnemonic "db") AND

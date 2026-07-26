@@ -1,13 +1,13 @@
 use std::sync::{Arc, Mutex};
 
-use joybug2::protocol_io::PdbLoadOutcome;
+use joybug_core::protocol_io::PdbLoadOutcome;
 use tauri::{AppHandle, Emitter};
 use tracing::{debug, error, info, warn};
 
 use super::helpers::{module_key_at_base, module_short_name};
 use super::types::{DebugSession, SymbolData};
 use crate::state::{SessionStateUI, SymbolOverrideInfo};
-use joybug2::protocol_io::{ModuleSymbolStatus, SymbolLoadState};
+use joybug_core::protocol_io::{ModuleSymbolStatus, SymbolLoadState};
 
 /// Remember a manually-loaded PDB so a session restart re-applies it. Keyed by
 /// the module's lowercased short name (the base changes with ASLR). Upserts the
@@ -286,10 +286,10 @@ pub(crate) fn process_symbol_search(
 pub(crate) fn process_resolve_thread_symbols(
     session: &mut DebugSession,
     app_handle_clone: &Option<AppHandle>,
-    event: &joybug2::protocol_io::DebugEvent,
+    event: &joybug_core::protocol_io::DebugEvent,
 ) {
     let pid = event.pid();
-    let threads: Vec<joybug2::protocol_io::ThreadInfo> = {
+    let threads: Vec<joybug_core::protocol_io::ThreadInfo> = {
         let state = session.state.lock().unwrap();
         state.threads.clone()
     };
@@ -378,7 +378,7 @@ pub(crate) fn process_module_extra_info_request(
                 struct ModuleExtraInfoResult {
                     session_id: String,
                     module_base: String,
-                    info: joybug2::pe_types::ModuleExtraInfo,
+                    info: joybug_core::pe_types::ModuleExtraInfo,
                 }
 
                 let result = ModuleExtraInfoResult {

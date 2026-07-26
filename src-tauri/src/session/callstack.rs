@@ -5,7 +5,7 @@ use super::helpers::{find_module_for_address, get_modules_snapshot};
 use super::types::{CallStackData, DebugSession};
 
 /// Converts raw stack frames into the serializable CallStackData format
-pub(crate) fn convert_frames_to_callstack(frames: &[joybug2::interfaces::CallFrame], modules: &[joybug2::protocol_io::ModuleInfo]) -> Vec<CallStackData> {
+pub(crate) fn convert_frames_to_callstack(frames: &[joybug_core::interfaces::CallFrame], modules: &[joybug_core::protocol_io::ModuleInfo]) -> Vec<CallStackData> {
     frames.iter().enumerate().map(|(i, frame)| {
         let symbol_info = if let Some(ref sym) = frame.symbol {
             Some(format!("{}!{}+0x{:x}", sym.module_name, sym.symbol_name, sym.offset))
@@ -28,7 +28,7 @@ pub(crate) fn convert_frames_to_callstack(frames: &[joybug2::interfaces::CallFra
 pub(crate) fn process_callstack_request(
     session: &mut DebugSession,
     app_handle_clone: &Option<AppHandle>,
-    event: &joybug2::protocol_io::DebugEvent,
+    event: &joybug_core::protocol_io::DebugEvent,
 ) {
     let pid = event.pid();
     let tid = event.tid();

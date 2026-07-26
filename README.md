@@ -113,7 +113,7 @@ Joybug is early-stage and deliberately narrow. What that means concretely:
 ```
 React + TypeScript UI  ──Tauri IPC──▶  Rust backend (src-tauri)
                                               │
-                                     embedded joybug2 server
+                                     embedded joybug-core server
                                     (framed JSON over TCP)  ◀── or a remote host
                                               │
                                       Windows debug APIs
@@ -121,7 +121,7 @@ React + TypeScript UI  ──Tauri IPC──▶  Rust backend (src-tauri)
 
 The frontend is a Tauri client: it `invoke()`s Rust command handlers, which forward typed commands into a debug session loop and emit events back. Panels listen for those events and re-render.
 
-The debugger itself lives in [`external/joybug2`](https://github.com/org62/joybug-core) — a Rust library and TCP server handling process control, stepping, breakpoints, memory, and symbols behind a framed-JSON protocol. It uses **Capstone** for disassembly, **Keystone** for assembly, **Unicorn** for emulation, and `pdb` + `symsrv` for symbols. Because the UI talks to it over a socket, a local session just spins up an embedded server on an ephemeral loopback port — and a remote session points at a different machine with no other changes.
+The debugger itself lives in [`external/joybug-core`](https://github.com/org62/joybug-core) — a Rust library and TCP server handling process control, stepping, breakpoints, memory, and symbols behind a framed-JSON protocol. It uses **Capstone** for disassembly, **Keystone** for assembly, **Unicorn** for emulation, and `pdb` + `symsrv` for symbols. Because the UI talks to it over a socket, a local session just spins up an embedded server on an ephemeral loopback port — and a remote session points at a different machine with no other changes.
 
 The core also ships **`jlua`**, a Lua REPL exposing the full debugger API. It's a core binary today, not yet surfaced in the GUI.
 

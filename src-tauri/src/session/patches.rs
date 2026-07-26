@@ -124,10 +124,10 @@ fn restore_suspended_breakpoints(
     }
 }
 
-fn nop_bytes(arch: joybug2::interfaces::Architecture) -> &'static [u8] {
+fn nop_bytes(arch: joybug_core::interfaces::Architecture) -> &'static [u8] {
     match arch {
-        joybug2::interfaces::Architecture::X64 => &[0x90],
-        joybug2::interfaces::Architecture::Arm64 => &[0x1F, 0x20, 0x03, 0xD5],
+        joybug_core::interfaces::Architecture::X64 => &[0x90],
+        joybug_core::interfaces::Architecture::Arm64 => &[0x1F, 0x20, 0x03, 0xD5],
     }
 }
 
@@ -146,10 +146,10 @@ fn resolve_module_for_patch(state: &SessionStateUI, address: u64) -> (String, u6
 pub(crate) fn process_assemble_patch(
     session: &mut DebugSession,
     app_handle_clone: &Option<AppHandle>,
-    event: &joybug2::protocol_io::DebugEvent,
+    event: &joybug_core::protocol_io::DebugEvent,
     address: u64,
     assembly_text: String,
-    arch: joybug2::interfaces::Architecture,
+    arch: joybug_core::interfaces::Architecture,
     nop_pad: bool,
 ) {
     let pid = event.pid();
@@ -167,7 +167,7 @@ pub(crate) fn process_assemble_patch(
         }
     }
 
-    let assembled = match joybug2::assembler::assemble(arch, &assembly_text, address) {
+    let assembled = match joybug_core::assembler::assemble(arch, &assembly_text, address) {
         Ok(a) => a,
         Err(e) => {
             emit_assemble_patch_error(session, app_handle_clone, format!("Assembly failed: {}", e));
@@ -298,7 +298,7 @@ pub(crate) fn process_assemble_patch(
 pub(crate) fn process_undo_patch(
     session: &mut DebugSession,
     app_handle_clone: &Option<AppHandle>,
-    event: &joybug2::protocol_io::DebugEvent,
+    event: &joybug_core::protocol_io::DebugEvent,
     patch_id: &str,
 ) {
     process_undo_patches(session, app_handle_clone, event, std::slice::from_ref(&patch_id.to_string()));
@@ -307,7 +307,7 @@ pub(crate) fn process_undo_patch(
 pub(crate) fn process_undo_patches(
     session: &mut DebugSession,
     app_handle_clone: &Option<AppHandle>,
-    event: &joybug2::protocol_io::DebugEvent,
+    event: &joybug_core::protocol_io::DebugEvent,
     patch_ids: &[String],
 ) {
     let pid = event.pid();
@@ -389,7 +389,7 @@ fn apply_enable_patch(
 pub(crate) fn process_enable_patch(
     session: &mut DebugSession,
     app_handle_clone: &Option<AppHandle>,
-    event: &joybug2::protocol_io::DebugEvent,
+    event: &joybug_core::protocol_io::DebugEvent,
     patch_id: &str,
     enabled: bool,
 ) {
@@ -417,7 +417,7 @@ pub(crate) fn process_update_patch(
 pub(crate) fn process_enable_patch_group(
     session: &mut DebugSession,
     app_handle_clone: &Option<AppHandle>,
-    event: &joybug2::protocol_io::DebugEvent,
+    event: &joybug_core::protocol_io::DebugEvent,
     group: &str,
     enabled: bool,
 ) {
@@ -505,7 +505,7 @@ pub(crate) const MAX_RESTORE_BYTES: usize = 64;
 pub(crate) fn process_restore_image_bytes(
     session: &mut DebugSession,
     app_handle_clone: &Option<AppHandle>,
-    event: &joybug2::protocol_io::DebugEvent,
+    event: &joybug_core::protocol_io::DebugEvent,
     address: u64,
 ) {
     let pid = event.pid();

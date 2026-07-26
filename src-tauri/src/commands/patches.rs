@@ -17,7 +17,7 @@ pub fn assemble_patch(
     let session_arc = super::get_session_arc(&session_id, &session_states)?;
     let arch = super::get_session_arch(&session_arc);
 
-    joybug2::assembler::assemble(arch, &assembly_text, address)
+    joybug_core::assembler::assemble(arch, &assembly_text, address)
         .map_err(|e| Error::InvalidParameter(format!("Assembly failed: {}", e)))?;
 
     super::send_paused_command(

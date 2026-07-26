@@ -4,7 +4,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use joybug2::windows_platform::disassembler::CapstoneDisassembler;
+use joybug_core::windows_platform::disassembler::CapstoneDisassembler;
 use tauri::{AppHandle, Emitter};
 use tracing::{debug, error, warn};
 
@@ -39,7 +39,7 @@ struct DiffRun {
 pub(crate) fn process_scan_image_patches(
     session: &mut DebugSession,
     app_handle_clone: &Option<AppHandle>,
-    event: &joybug2::protocol_io::DebugEvent,
+    event: &joybug_core::protocol_io::DebugEvent,
 ) {
     let pid = event.pid();
     let arch = crate::commands::get_session_arch(&session.state);

@@ -118,14 +118,14 @@ pub(crate) fn try_send_paused_command(
     }
 }
 
-/// Create an OOB joybug2 client sharing the real session's state.
+/// Create an OOB joybug-core client sharing the real session's state.
 /// Returns (oob_client, pid).
 pub(crate) fn create_oob_client(
     session_state: &Arc<Mutex<SessionStateUI>>,
 ) -> Result<(crate::session::types::DebugSession, u32)> {
     let pid = oob_pid(session_state)?;
     let server_url = session_state.lock().unwrap().server_url.clone();
-    let client = joybug2::protocol_io::DebugSession::new(session_state.clone(), Some(&server_url))
+    let client = joybug_core::protocol_io::DebugSession::new(session_state.clone(), Some(&server_url))
         .map_err(|e| Error::ConnectionFailed(e.to_string()))?;
     // OOB clients do request/response, so bound the wait — a stalled/half-open
     // server (possible over a network) must not hang the calling command thread.
@@ -286,18 +286,18 @@ pub(crate) fn with_oob_scan_client<R>(
 /// Get target architecture from session state (context or host default).
 pub(crate) fn get_session_arch(
     session_state: &Arc<Mutex<SessionStateUI>>,
-) -> joybug2::interfaces::Architecture {
+) -> joybug_core::interfaces::Architecture {
     let state = session_state.lock().unwrap();
     match &state.current_context {
-        Some(crate::state::SerializableThreadContext::X64(_)) => joybug2::interfaces::Architecture::X64,
-        Some(crate::state::SerializableThreadContext::Arm64(_)) => joybug2::interfaces::Architecture::Arm64,
+        Some(crate::state::SerializableThreadContext::X64(_)) => joybug_core::interfaces::Architecture::X64,
+        Some(crate::state::SerializableThreadContext::Arm64(_)) => joybug_core::interfaces::Architecture::Arm64,
         None => {
             #[cfg(target_arch = "x86_64")]
-            { joybug2::interfaces::Architecture::X64 }
+            { joybug_core::interfaces::Architecture::X64 }
             #[cfg(target_arch = "aarch64")]
-            { joybug2::interfaces::Architecture::Arm64 }
+            { joybug_core::interfaces::Architecture::Arm64 }
             #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-            { joybug2::interfaces::Architecture::X64 }
+            { joybug_core::interfaces::Architecture::X64 }
         }
     }
 }

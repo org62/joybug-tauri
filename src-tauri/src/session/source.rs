@@ -66,7 +66,7 @@ pub(crate) fn emit_source_line_resolved(
     handle: &AppHandle,
     session_id: String,
     address: u64,
-    info: Option<joybug2::protocol_io::AddressLineInfo>,
+    info: Option<joybug_core::protocol_io::AddressLineInfo>,
 ) {
     let payload = SourceLineResolvedPayload {
         session_id,
@@ -90,8 +90,8 @@ pub(crate) fn emit_source_file_line_map(
     session_id: String,
     module_base: u64,
     file_path: String,
-    file: Option<joybug2::interfaces::SourceFileEntry>,
-    entries: Vec<joybug2::interfaces::LineEntry>,
+    file: Option<joybug_core::interfaces::SourceFileEntry>,
+    entries: Vec<joybug_core::interfaces::LineEntry>,
 ) {
     let payload = SourceFileLineMapPayload {
         session_id,
@@ -119,7 +119,7 @@ pub(crate) fn emit_source_files_listed(
     handle: &AppHandle,
     session_id: String,
     module_base: u64,
-    files: Vec<joybug2::interfaces::SourceFileEntry>,
+    files: Vec<joybug_core::interfaces::SourceFileEntry>,
 ) {
     let payload = SourceFilesListedPayload {
         session_id,
@@ -161,7 +161,7 @@ pub(crate) fn resolve_file_line(session: &mut DebugSession, pid: u32, address: u
 pub(crate) fn process_resolve_address_to_line(
     session: &mut DebugSession,
     app_handle: &Option<AppHandle>,
-    event: &joybug2::protocol_io::DebugEvent,
+    event: &joybug_core::protocol_io::DebugEvent,
     address: u64,
 ) {
     let pid = event.pid();
@@ -179,7 +179,7 @@ pub(crate) fn process_resolve_address_to_line(
 pub(crate) fn process_get_source_file_line_map(
     session: &mut DebugSession,
     app_handle: &Option<AppHandle>,
-    event: &joybug2::protocol_io::DebugEvent,
+    event: &joybug_core::protocol_io::DebugEvent,
     module_base: u64,
     file_path: &str,
     start_line: Option<u32>,
@@ -201,7 +201,7 @@ pub(crate) fn process_get_source_file_line_map(
 pub(crate) fn process_list_source_files(
     session: &mut DebugSession,
     app_handle: &Option<AppHandle>,
-    event: &joybug2::protocol_io::DebugEvent,
+    event: &joybug_core::protocol_io::DebugEvent,
     module_base: u64,
 ) {
     let pid = event.pid();

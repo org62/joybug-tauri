@@ -1,7 +1,7 @@
 use crate::state::SessionStateUI;
 use std::sync::{Arc, Mutex};
 
-pub type DebugSession = joybug2::protocol_io::DebugSession<Arc<Mutex<SessionStateUI>>>;
+pub type DebugSession = joybug_core::protocol_io::DebugSession<Arc<Mutex<SessionStateUI>>>;
 
 #[derive(Debug, Clone)]
 pub enum UICommand {
@@ -14,9 +14,9 @@ pub enum UICommand {
     StepIntoLine,
     Stop,
     Detach,
-    Disassembly{ arch: joybug2::interfaces::Architecture, address: u64, count: u32, compare_image: bool },
-    DisassembleFunction{ arch: joybug2::interfaces::Architecture, address: u64, max_instructions: u32, compare_image: bool },
-    DisassembleBackward{ arch: joybug2::interfaces::Architecture, target: u64, count: u32, compare_image: bool },
+    Disassembly{ arch: joybug_core::interfaces::Architecture, address: u64, count: u32, compare_image: bool },
+    DisassembleFunction{ arch: joybug_core::interfaces::Architecture, address: u64, max_instructions: u32, compare_image: bool },
+    DisassembleBackward{ arch: joybug_core::interfaces::Architecture, target: u64, count: u32, compare_image: bool },
     GetCallStack,
     SearchSymbols{ pattern: String, limit: u32 },
     ReadMemory{ address: u64, size: usize },
@@ -26,8 +26,8 @@ pub enum UICommand {
     DereferenceBatch{ addresses: Vec<u64> },
     Emulate {
         max_instructions: usize,
-        mode: joybug2::protocol_io::EmulationMode,
-        exit_condition: Option<joybug2::protocol_io::TraceExitCondition>,
+        mode: joybug_core::protocol_io::EmulationMode,
+        exit_condition: Option<joybug_core::protocol_io::TraceExitCondition>,
         request_id: Option<String>,
         memory_reads: Vec<(u64, usize)>,
     },
@@ -50,7 +50,7 @@ pub enum UICommand {
     GetSourceFileLineMap { module_base: u64, file_path: String, start_line: Option<u32>, end_line: Option<u32> },
     ListSourceFiles { module_base: u64 },
     SearchMemory { pattern: Vec<u8>, max_results: usize },
-    AssemblePatch { address: u64, assembly_text: String, arch: joybug2::interfaces::Architecture, nop_pad: bool },
+    AssemblePatch { address: u64, assembly_text: String, arch: joybug_core::interfaces::Architecture, nop_pad: bool },
     UndoPatch { patch_id: String },
     UndoPatches { patch_ids: Vec<String> },
     EnablePatch { patch_id: String, enabled: bool },

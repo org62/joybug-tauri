@@ -7,7 +7,7 @@ use tracing::debug;
 
 use super::helpers::module_short_name;
 use super::types::{DebugSession, RegionAnnotation};
-use joybug2::protocol::MemoryRegionInfo;
+use joybug_core::protocol::MemoryRegionInfo;
 use std::collections::{HashMap, HashSet};
 
 // 64-bit native structure offsets (identical on x64 and ARM64).

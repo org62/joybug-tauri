@@ -4,7 +4,7 @@ import {
   STRING_SCAN_PAGE_SIZE,
 } from '@/hooks/useStringScan';
 
-/// One hit from `pe_string_scan` (joybug2 StringHit; address is a file offset).
+/// One hit from `pe_string_scan` (joybug-core StringHit; address is a file offset).
 export interface PeStringHit {
   address: number;
   encoding: string; // "Ascii" | "Utf16"

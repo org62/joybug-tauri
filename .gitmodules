@@ -1,3 +1,3 @@
-[submodule "external/joybug2"]
-	path = external/joybug2
+[submodule "external/joybug-core"]
+	path = external/joybug-core
 	url = https://github.com/org62/joybug-core.git
