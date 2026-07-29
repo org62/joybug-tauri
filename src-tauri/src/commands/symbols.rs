@@ -31,6 +31,9 @@ pub fn get_session_symbol_status(
             let data: Vec<ModuleSymbolStatusData> = statuses.into_iter().map(|s| {
                 let (status, symbol_count, error) = match s.state {
                     SymbolLoadState::Loaded { symbol_count } => ("loaded", Some(symbol_count), None),
+                    SymbolLoadState::ExportsOnly { export_count, error } => {
+                        ("exports_only", Some(export_count), Some(error))
+                    }
                     SymbolLoadState::Loading => ("loading", None, None),
                     SymbolLoadState::Failed { error } => ("failed", None, Some(error)),
                     SymbolLoadState::NotRequested => ("not_requested", None, None),

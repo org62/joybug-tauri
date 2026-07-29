@@ -1,5 +1,5 @@
 import { useCallback, useMemo } from 'react';
-import { useSessionContext, Symbol } from '@/contexts/SessionContext';
+import { useSessionContext, Symbol, hasUsableSymbols } from '@/contexts/SessionContext';
 import { useContextMenu } from '@/hooks/useContextMenu';
 import { invokeToggleBreakpoint, invokeSetBreakpoints } from '@/lib/sessionHelpers';
 import { Button } from '@/components/ui/button';
@@ -18,7 +18,7 @@ export const ContextSymbolsView = () => {
   const { contextMenu, openContextMenu, closeContextMenu } = useContextMenu<{ va: string; is_function: boolean }>();
 
   const loadedCount = useMemo(
-    () => (sessionData.symbolStatuses ?? []).filter((s) => s.status === 'loaded').length,
+    () => (sessionData.symbolStatuses ?? []).filter((s) => hasUsableSymbols(s.status)).length,
     [sessionData.symbolStatuses],
   );
 

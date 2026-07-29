@@ -77,6 +77,17 @@ pub fn start_code_coverage(
                 });
             }
 
+            // Arming nothing looks exactly like "this module was never executed" in
+            // the table, so say why instead. `list_symbols` errors while a PDB is
+            // still loading, so reaching this means the module really has no
+            // function symbols.
+            if addrs.is_empty() {
+                return Err(format!(
+                    "No function symbols in {} — nothing to arm coverage on",
+                    module_path
+                ));
+            }
+
             oob.start_coverage(pid, addrs, hit_limit).map_err(|e| e.to_string())?;
             Ok(functions)
         },

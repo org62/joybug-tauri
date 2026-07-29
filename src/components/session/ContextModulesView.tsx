@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { toast } from 'sonner';
-import { useSessionContext, Module, ModuleSymbolStatus, PdbLoadResult } from '@/contexts/SessionContext';
+import { useSessionContext, Module, ModuleSymbolStatus, PdbLoadResult, isPdbMissing, hasUsableSymbols } from '@/contexts/SessionContext';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -78,6 +78,17 @@ function SymbolStatusBadge({ status }: { status: ModuleSymbolStatus | undefined 
           {status.symbol_count ?? 0} syms
         </Badge>
       );
+    case 'exports_only':
+      return (
+        <Badge
+          variant="outline"
+          size="xs"
+          className="text-syn-state border-syn-state/50"
+          title={`PE exports only — ${status.error ?? 'no PDB available'}`}
+        >
+          {status.symbol_count ?? 0} exports
+        </Badge>
+      );
     case 'loading':
       return (
         <Badge variant="outline" size="xs" title="Downloading symbols…">
@@ -126,9 +137,11 @@ export const ContextModulesView: React.FC<ContextModulesViewProps> = ({ onOpenMo
   }, [sessionData?.symbolStatuses]);
 
   const failedStatuses = useMemo(
-    () => (sessionData?.symbolStatuses ?? []).filter((s) => s.status === 'failed'),
+    () => (sessionData?.symbolStatuses ?? []).filter((s) => isPdbMissing(s.status)),
     [sessionData?.symbolStatuses],
   );
+
+  const menuStatus = contextMenu ? statusByBase.get(contextMenu.data.base_address) : undefined;
 
   const loadPdbForModule = async (module: Module, pdbPath: string, force: boolean) => {
     try {
@@ -284,14 +297,10 @@ export const ContextModulesView: React.FC<ContextModulesViewProps> = ({ onOpenMo
           >
             Copy Full Path
           </ContextMenuItem>
-          {statusByBase.get(contextMenu.data.base_address)?.pdb_path && (
+          {menuStatus?.pdb_path && (
             <ContextMenuItem
               icon={<Copy className="h-3.5 w-3.5 text-muted-foreground" />}
-              onClick={() =>
-                navigator.clipboard.writeText(
-                  statusByBase.get(contextMenu.data.base_address)!.pdb_path!,
-                )
-              }
+              onClick={() => navigator.clipboard.writeText(menuStatus.pdb_path!)}
             >
               Copy Symbol Path
             </ContextMenuItem>
@@ -303,7 +312,7 @@ export const ContextModulesView: React.FC<ContextModulesViewProps> = ({ onOpenMo
           >
             Load PDB from file…
           </ContextMenuItem>
-          {statusByBase.get(contextMenu.data.base_address)?.status === 'failed' && (
+          {isPdbMissing(menuStatus?.status) && (
             <ContextMenuItem
               icon={<RotateCcw className="h-3.5 w-3.5" />}
               onClick={() => handleRetrySymbols(contextMenu.data)}
@@ -311,7 +320,7 @@ export const ContextModulesView: React.FC<ContextModulesViewProps> = ({ onOpenMo
               Retry symbol download
             </ContextMenuItem>
           )}
-          {statusByBase.get(contextMenu.data.base_address)?.status === 'not_requested' && (
+          {menuStatus?.status === 'not_requested' && (
             <ContextMenuItem
               icon={<RotateCcw className="h-3.5 w-3.5" />}
               onClick={() => handleRetrySymbols(contextMenu.data)}
@@ -319,7 +328,7 @@ export const ContextModulesView: React.FC<ContextModulesViewProps> = ({ onOpenMo
               Download symbols
             </ContextMenuItem>
           )}
-          {statusByBase.get(contextMenu.data.base_address)?.status === 'loaded' && (
+          {hasUsableSymbols(menuStatus?.status) && (
             <ContextMenuItem
               icon={<Trash2 className="h-3.5 w-3.5" />}
               onClick={() => sessionData.unloadModuleSymbols(contextMenu.data.base_address)}

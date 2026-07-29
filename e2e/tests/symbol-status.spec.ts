@@ -40,7 +40,7 @@ test.describe("Symbol Status", () => {
         const statuses = await getStatuses();
         expect(statuses.length).toBeGreaterThan(0);
         for (const s of statuses) {
-          expect(["loaded", "loading", "failed", "not_requested"]).toContain(s.status);
+          expect(["loaded", "exports_only", "loading", "failed", "not_requested"]).toContain(s.status);
         }
       }).toPass({ timeout: 10_000, intervals: [100, 250] });
 

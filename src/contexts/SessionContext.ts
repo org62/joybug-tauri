@@ -99,7 +99,15 @@ export interface Module {
   path: string;
 }
 
-export type SymbolStatusKind = "loaded" | "loading" | "failed" | "not_requested";
+export type SymbolStatusKind = "loaded" | "exports_only" | "loading" | "failed" | "not_requested";
+
+/** The module has symbols usable for search/resolution (full PDB or the PE-export fallback). */
+export const hasUsableSymbols = (status: SymbolStatusKind | undefined): boolean =>
+  status === "loaded" || status === "exports_only";
+
+/** The PDB is still missing (download failed, or only exports loaded) — retry applies. */
+export const isPdbMissing = (status: SymbolStatusKind | undefined): boolean =>
+  status === "failed" || status === "exports_only";
 
 export interface ModuleSymbolStatus {
   module_path: string;

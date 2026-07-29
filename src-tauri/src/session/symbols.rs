@@ -95,7 +95,10 @@ pub(crate) fn sync_failed_symbols(
         let mut changed = false;
         for s in statuses {
             match &s.state {
-                SymbolLoadState::Failed { .. } => {
+                // ExportsOnly counts as failed here: the PDB is still missing,
+                // and the deny entry must persist so the next session skips the
+                // download (and gets the export fallback again).
+                SymbolLoadState::Failed { .. } | SymbolLoadState::ExportsOnly { .. } => {
                     let short = module_short_name(&s.module_path).to_lowercase();
                     if !stored.contains(&short) {
                         stored.push(short);
