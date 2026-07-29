@@ -15,7 +15,7 @@ import {
   SelectValue,
 } from "./ui/select";
 import { FileCode, ChevronRight, Circle, RefreshCw, AlertTriangle, FolderSearch, ArrowRightToLine, CornerDownRight, ArrowDownToLine } from "lucide-react";
-import { cn, DATA_ROW_HEIGHT, PC_ROW_HIGHLIGHT_CLASS } from "@/lib/utils";
+import { cn, DATA_ROW_HEIGHT, NAV_HIGHLIGHT_MS, PC_ROW_HIGHLIGHT_CLASS } from "@/lib/utils";
 import { useSourceView } from "@/hooks/useSourceView";
 import { useContextMenu } from "@/hooks/useContextMenu";
 import { Virtualizer } from "@tanstack/react-virtual";
@@ -226,7 +226,7 @@ export function SourceView({
   useEffect(() => {
     if (!scrollToLine?.transient) return;
     setFlashLine(scrollToLine.line);
-    const timer = setTimeout(() => setFlashLine(null), 1000);
+    const timer = setTimeout(() => setFlashLine(null), NAV_HIGHLIGHT_MS);
     return () => clearTimeout(timer);
   }, [scrollToLine]);
 

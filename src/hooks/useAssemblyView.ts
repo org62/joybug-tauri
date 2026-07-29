@@ -28,6 +28,9 @@ export interface Instruction {
   is_call: boolean;
   is_ret: boolean;
   jump_target: string | null;
+  // Static data address of a memory operand (RIP-relative or absolute
+  // displacement) — the bracketed operand renders as a link to the Memory view.
+  mem_ref?: string | null;
   is_patched?: boolean;
   // When the live bytes differ from the on-disk image: original image bytes
   // (space-separated hex) and their disassembly, shown on hover over the row.

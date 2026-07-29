@@ -11,7 +11,7 @@ import { Switch } from "./ui/switch";
 import { Label } from "./ui/label";
 import { Cpu, ArrowLeft, ArrowRight, RefreshCw, ChevronRight, Circle, CircleDot, Wrench, Copy, Bookmark, FileCode, HardDrive, LocateFixed, Zap, Undo2 } from "lucide-react";
 import { sourceNavigation } from "@/lib/navigationStore";
-import { cn, DATA_ROW_HEIGHT, LINK_VALUE_CLASS, PC_ROW_HIGHLIGHT_CLASS } from "@/lib/utils";
+import { cn, DATA_ROW_HEIGHT, LINK_VALUE_CLASS, NAV_HIGHLIGHT_MS, PC_ROW_HIGHLIGHT_CLASS } from "@/lib/utils";
 import { useAssemblyView, buildAsmRows, Instruction, AsmDisassembleFn } from "@/hooks/useAssemblyView";
 import { NavHistoryStore } from "@/lib/navHistory";
 import { RegisterContext, SymbolResolver } from "@/lib/hexUtils";
@@ -58,6 +58,9 @@ interface AssemblyViewProps {
   symbolsRefreshKey?: string;
   /** Activate the Source tab and reveal an address's source line (context-menu action). */
   onNavigateToSource?: (address: string) => void;
+  /** Open the Memory view at an address. Enables clickable memory operands
+   * (e.g. `mov rdx, [module!fptr]` — the bracketed reference is the link). */
+  onNavigateToMemory?: (address: string) => void;
   /** Highlight the memory region containing an address (context-menu action). */
   onShowInMemoryRegions?: (address: string) => void;
   /** Non-session disassembly source (PE file on disk). Addresses are VAs. */
@@ -73,7 +76,7 @@ interface AssemblyViewProps {
   navHistory: NavHistoryStore;
 }
 
-export function AssemblyView({ sessionId, isPaused, canLoad, address, registers, resolveSymbol, breakpointAddresses, emulation, onToggleBreakpoint, onToggleSingleShotBreakpoint, onSetHardwareBreakpoint, onAssemblePatch, onRestoreImageBytes, onAddBookmark, symbolsRefreshKey, onNavigateToSource, onShowInMemoryRegions, disassemble, initialAddress, addressFormatter, translateGotoInput, navHistory }: AssemblyViewProps) {
+export function AssemblyView({ sessionId, isPaused, canLoad, address, registers, resolveSymbol, breakpointAddresses, emulation, onToggleBreakpoint, onToggleSingleShotBreakpoint, onSetHardwareBreakpoint, onAssemblePatch, onRestoreImageBytes, onAddBookmark, symbolsRefreshKey, onNavigateToSource, onNavigateToMemory, onShowInMemoryRegions, disassemble, initialAddress, addressFormatter, translateGotoInput, navHistory }: AssemblyViewProps) {
   const [addressInput, setAddressInput] = useState("");
   // Inline assembly input state
   const [assembleTarget, setAssembleTarget] = useState<{ address: string; defaultText: string } | null>(null);
@@ -158,6 +161,15 @@ export function AssemblyView({ sessionId, isPaused, canLoad, address, registers,
     openContextMenu(e, { address: addr, mnemonic, op_str: opStr, is_patched: isPatched });
   }, [openContextMenu]);
 
+  // Memory-operand click → open the Memory view at the referenced address.
+  // Kept stable (ref indirection) so the memoized InstructionRow doesn't
+  // re-render when the host re-creates its navigation callback.
+  const onNavigateToMemoryRef = useRef(onNavigateToMemory);
+  useEffect(() => { onNavigateToMemoryRef.current = onNavigateToMemory; }, [onNavigateToMemory]);
+  const handleMemRefClick = useCallback((addr: string) => {
+    onNavigateToMemoryRef.current?.(addr);
+  }, []);
+
   // Handle hover on jump target link
   const handleJumpTargetHover = useCallback((jumpTarget: string | null) => {
     if (jumpTarget === null) {
@@ -214,7 +226,7 @@ export function AssemblyView({ sessionId, isPaused, canLoad, address, registers,
       setHighlightedAddress(jumpTargetAddress);
       const timer = setTimeout(() => {
         setHighlightedAddress(null);
-      }, 1000);
+      }, NAV_HIGHLIGHT_MS);
       return () => clearTimeout(timer);
     }
   }, [jumpTargetAddress, loadGeneration, scrollToInstruction]);
@@ -589,6 +601,7 @@ export function AssemblyView({ sessionId, isPaused, canLoad, address, registers,
                 onClick={handleRowClick}
                 onJumpTargetClick={handleJumpTargetClick}
                 onJumpTargetHover={handleJumpTargetHover}
+                onMemRefClick={onNavigateToMemory ? handleMemRefClick : undefined}
                 onContextMenu={handleRowContextMenu}
               />
             );
@@ -748,6 +761,8 @@ interface InstructionRowProps {
   onClick: (address: string) => void;
   onJumpTargetClick: (target: string, sourceAddress: string) => void;
   onJumpTargetHover: (target: string | null) => void;
+  /** Present only when the host can open a Memory view. */
+  onMemRefClick?: (address: string) => void;
   onContextMenu: (e: React.MouseEvent, address: string, mnemonic: string, opStr: string, isPatched: boolean) => void;
   addressFormatter?: (va: bigint) => string;
 }
@@ -771,14 +786,14 @@ const ROW_HIGHLIGHT_BG: Record<RowHighlight, string> = {
   executed: "bg-syn-covered/[0.07]",
 };
 
-const InstructionRow = memo(function InstructionRow({ instruction, isPC, isExecuted, isSelected, isHighlighted, isHoverTarget, hasBreakpoint, isPatched, showBytes, columnWidths, onClick, onJumpTargetClick, onJumpTargetHover, onContextMenu, addressFormatter }: InstructionRowProps) {
+const InstructionRow = memo(function InstructionRow({ instruction, isPC, isExecuted, isSelected, isHighlighted, isHoverTarget, hasBreakpoint, isPatched, showBytes, columnWidths, onClick, onJumpTargetClick, onJumpTargetHover, onMemRefClick, onContextMenu, addressFormatter }: InstructionRowProps) {
   // The first column always shows the address, reformatted per the PE viewer's
   // address mode (VA/RVA/file). Symbols render as label rows above, not here.
   const addressText =
     addressFormatter ? addressFormatter(BigInt(instruction.address)) : instruction.address;
-  const { mnemonic, op_str, is_jump, is_call, is_ret, jump_target, is_invalid } = instruction;
+  const { mnemonic, op_str, is_jump, is_call, is_ret, jump_target, mem_ref, is_invalid } = instruction;
 
-  // Render operands with clickable jump target
+  // Render operands with clickable jump target / memory reference
   const renderOperands = () => {
     if (jump_target && (is_jump || is_call)) {
       return (
@@ -792,6 +807,26 @@ const InstructionRow = memo(function InstructionRow({ instruction, isPC, isExecu
           {op_str}
         </span>
       );
+    }
+    // Statically-resolvable memory operand: the bracketed reference (raw
+    // `[rip + 0xNN]` or symbolized `[module!name]`) links to the Memory view.
+    if (mem_ref && onMemRefClick) {
+      const m = op_str.match(/\[[^\]]*\]/);
+      if (m && m.index !== undefined) {
+        return (
+          <span>
+            {op_str.slice(0, m.index)}
+            <span
+              className={LINK_VALUE_CLASS}
+              onClick={() => onMemRefClick(mem_ref)}
+              title={`Open memory at ${mem_ref}`}
+            >
+              {m[0]}
+            </span>
+            {op_str.slice(m.index + m[0].length)}
+          </span>
+        );
+      }
     }
     return <span>{op_str}</span>;
   };

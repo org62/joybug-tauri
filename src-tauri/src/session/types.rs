@@ -251,6 +251,11 @@ pub struct SerializableInstruction {
     pub is_call: bool,
     pub is_ret: bool,
     pub jump_target: Option<String>,
+    /// Static data address of a memory operand (RIP-relative or absolute
+    /// displacement), e.g. the slot read by `mov rdx, [module!fptr]`. The
+    /// frontend renders the bracketed operand as a link to the Memory view.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mem_ref: Option<String>,
     pub is_patched: bool,
     /// When the in-memory bytes differ from the original on-disk image, the
     /// space-separated hex of the original image bytes covering this row.

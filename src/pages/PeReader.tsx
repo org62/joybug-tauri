@@ -25,7 +25,7 @@ import { AsmDisassembleFn, Instruction } from "@/hooks/useAssemblyView";
 import { ModuleExtraInfo } from "@/hooks/useModuleInfo";
 import { PeScanFn, PeStringScanResult } from "@/hooks/usePeStringScan";
 import { SymbolResolver } from "@/lib/hexUtils";
-import { PeMapping, AddrMode, ADDR_MODE_LABELS, buildMapping, formatOffset, formatVa, rvaToVa, tripleFromInput } from "@/lib/peAddress";
+import { PeMapping, AddrMode, ADDR_MODE_LABELS, buildMapping, formatOffset, formatVa, rvaToVa, tripleFromInput, tripleFromVa } from "@/lib/peAddress";
 import { applyFieldEdit } from "@/lib/peDecode";
 import { memoryNavigation, disassemblyNavigation } from "@/lib/navigationStore";
 import { NavHistoryStore } from "@/lib/navHistory";
@@ -132,7 +132,7 @@ const PeHexTab: React.FC = () => {
 };
 
 const PeDisasmTab: React.FC = () => {
-  const { summary, disassemble, initialAddress, mapping, mode, symbolsRefreshKey, resolveSymbol, navHistory } = usePeReader();
+  const { summary, disassemble, initialAddress, mapping, mode, symbolsRefreshKey, resolveSymbol, navHistory, onGoToHex } = usePeReader();
   if (!summary || !disassemble || !mapping) return <NoFilePlaceholder />;
   return (
     <AssemblyView
@@ -143,6 +143,8 @@ const PeDisasmTab: React.FC = () => {
       resolveSymbol={resolveSymbol}
       addressFormatter={(va) => formatVa(mapping, va, mode)}
       translateGotoInput={(addr) => tripleFromInput(mapping, addr, mode).va}
+      // Memory operands link into the hex view (VA → file offset).
+      onNavigateToMemory={(addr) => onGoToHex(tripleFromVa(mapping, BigInt(addr)).file)}
       navHistory={navHistory}
     />
   );

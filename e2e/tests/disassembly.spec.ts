@@ -378,6 +378,76 @@ test.describe("Disassembly View", () => {
     }
   });
 
+  test("memory-reference operand links open the Memory view at the address", async ({
+    tauriPage: page,
+  }) => {
+    await configureMinimalStopSettings(page);
+
+    try {
+      const sessionId = await createAndStartSession(page, "Disasm MemRef");
+      await waitForPaused(page, sessionId);
+      await waitForDisassemblyLoaded(page, ASM_PANEL);
+
+      // Backend mem_ref extraction (RIP-relative / absolute displacement) is
+      // covered by a joybug-core unit test; here we assert the user-visible
+      // contract deterministically: a row carrying `mem_ref` renders its
+      // bracketed operand as a link, and clicking it opens the Memory view at
+      // that address. The forged payload echoes the view's anchor (the PC) so
+      // the echo guard accepts it, and uses the PC itself as the referenced
+      // address — guaranteed-readable memory for the hex view to land on.
+      const s = await invoke(page, "get_debug_session", { sessionId });
+      const pc: number = s.current_event.address;
+
+      const forge = () =>
+        page.evaluate(
+          async ({ id, pcAddr }) => {
+            const hex = (n: number) => "0x" + n.toString(16).toUpperCase();
+            await (window as any).__TAURI_INTERNALS__.invoke("plugin:event|emit", {
+              event: "function-disassembly-updated",
+              payload: {
+                session_id: id,
+                address: pcAddr,
+                instructions: [
+                  { address: hex(pcAddr), bytes: "48 8B 05 F9 0F 00 00", mnemonic: "mov", op_str: "rax, qword ptr [rip + 0xff9]", is_jump: false, is_call: false, is_ret: false, jump_target: null, mem_ref: hex(pcAddr), is_invalid: false },
+                ],
+                function_start: hex(pcAddr),
+                function_end: hex(pcAddr + 7),
+                function_name: null,
+              },
+            });
+          },
+          { id: sessionId, pcAddr: pc },
+        );
+
+      // Re-forge per poll (a late symbol-load refresh can replace the view),
+      // then click the bracketed link. Re-clicking on retry is idempotent.
+      const memLink = page.locator(`${ASM_ROW} span[title^="Open memory at "]`).first();
+      await expect(async () => {
+        await forge();
+        await memLink.click({ timeout: 1_000 });
+      }).toPass({ timeout: 10_000, intervals: [50, 100, 200] });
+
+      // Memory tab activates and its hex gutter lands on the referenced
+      // address (gutter rows are 16-byte aligned, 0x + 16 uppercase digits).
+      const gutterAddr =
+        "0x" + (BigInt(pc) & ~0xfn).toString(16).toUpperCase().padStart(16, "0");
+      await expect(async () => {
+        const state = await page.evaluate(() => ({
+          activeTabs: Array.from(document.querySelectorAll(".dock-tab-active")).map(
+            (t) => (t as HTMLElement).innerText,
+          ),
+          body: document.body.innerText,
+        }));
+        expect(state.activeTabs.some((t) => /Memory/i.test(t))).toBe(true);
+        expect(state.body).toContain(gutterAddr);
+      }).toPass({ timeout: 10_000, intervals: [50, 100, 200] });
+
+      await cleanupSession(page, sessionId);
+    } finally {
+      await restoreDefaultSettings(page);
+    }
+  });
+
   test("disassembly clears when session resumes and stops", async ({
     tauriPage: page,
   }) => {
