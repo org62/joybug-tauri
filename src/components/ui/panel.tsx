@@ -41,18 +41,26 @@ DockPanel.displayName = "DockPanel"
  * Fixed toolbar/header row. Chrome — not text-selectable.
  * `stack` switches to a multi-row column layout (form-style headers) while
  * keeping the same padding/background contract as the single-row toolbar.
+ *
+ * `overflow` picks what happens once children can't shrink any further (their
+ * `min-w-*`/intrinsic floors): "scroll" scrolls the bar horizontally, "wrap"
+ * wraps onto extra rows. Default (unset) lets fixed-width children clip, which
+ * is fine for toolbars that always fit.
  */
 function PanelToolbar({
   className,
   stack,
+  overflow,
   ...props
-}: React.ComponentProps<"div"> & { stack?: boolean }) {
+}: React.ComponentProps<"div"> & { stack?: boolean; overflow?: "scroll" | "wrap" }) {
   return (
     <div
       data-slot="panel-toolbar"
       className={cn(
         "shrink-0 flex gap-1 px-2 py-1 border-b border-border bg-muted/30 select-none",
         stack ? "flex-col" : "items-center",
+        overflow === "scroll" && "overflow-x-auto scroll-area-thin",
+        overflow === "wrap" && "flex-wrap",
         className
       )}
       {...props}

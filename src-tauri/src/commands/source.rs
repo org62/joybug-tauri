@@ -119,10 +119,11 @@ struct LineIndex {
     offsets: Vec<u64>,
 }
 
-/// Managed LRU cache of line indexes, keyed by resolved path.
-#[derive(Default)]
+/// Managed LRU cache of line indexes, keyed by resolved path. Clones share the
+/// same cache, so a handle can move into `run_blocking` closures.
+#[derive(Default, Clone)]
 pub struct SourceIndexCache {
-    inner: Mutex<Vec<(String, Arc<LineIndex>)>>,
+    inner: Arc<Mutex<Vec<(String, Arc<LineIndex>)>>>,
 }
 
 impl SourceIndexCache {
@@ -292,9 +293,12 @@ fn build_index(path: &Path, mut hasher: Option<HashState>) -> std::io::Result<(L
 }
 
 /// Open a source file for windowed reading: resolve the path, index it, verify
-/// the checksum, and cache the index. Synchronous; needs no debug session.
+/// the checksum, and cache the index. Needs no debug session. The body runs on
+/// the blocking pool (see `run_blocking`) — the indexing/checksum pass, or a
+/// slow path probe like a dead UNC prefix from a PDB, would otherwise freeze
+/// the UI (sync command) or stall the shared async workers (bare async).
 #[tauri::command]
-pub fn open_source_file(
+pub async fn open_source_file(
     file_path: String,
     checksum_kind: Option<String>,
     checksum: Option<String>,
@@ -302,6 +306,20 @@ pub fn open_source_file(
     index_cache: State<'_, SourceIndexCache>,
 ) -> Result<SourceFileMeta> {
     let source_map = settings.lock().unwrap().source_map.clone();
+    let index_cache = index_cache.inner().clone();
+    super::run_blocking(move || {
+        open_source_file_impl(file_path, checksum_kind, checksum, source_map, index_cache)
+    })
+    .await
+}
+
+fn open_source_file_impl(
+    file_path: String,
+    checksum_kind: Option<String>,
+    checksum: Option<String>,
+    source_map: Vec<(String, String)>,
+    index_cache: SourceIndexCache,
+) -> Result<SourceFileMeta> {
     let resolved = resolve_source_path(&file_path, &source_map)
         .ok_or_else(|| Error::InvalidParameter(format!("Source file not found: {}", file_path)))?;
     let resolved_path = resolved.display().to_string();
@@ -339,12 +357,23 @@ pub fn open_source_file(
 
 /// Read `count` lines starting at `start_line` (1-based) from an already-opened
 /// source file. Uses the cached sparse index (rebuilding it if evicted).
+/// Runs on the blocking pool for the same reason as `open_source_file`.
 #[tauri::command]
-pub fn read_source_window(
+pub async fn read_source_window(
     resolved_path: String,
     start_line: u64,
     count: u64,
     index_cache: State<'_, SourceIndexCache>,
+) -> Result<SourceWindow> {
+    let index_cache = index_cache.inner().clone();
+    super::run_blocking(move || read_source_window_impl(resolved_path, start_line, count, index_cache)).await
+}
+
+fn read_source_window_impl(
+    resolved_path: String,
+    start_line: u64,
+    count: u64,
+    index_cache: SourceIndexCache,
 ) -> Result<SourceWindow> {
     let path = PathBuf::from(&resolved_path);
     let meta = std::fs::metadata(&path)

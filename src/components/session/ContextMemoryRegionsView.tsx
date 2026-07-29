@@ -262,7 +262,7 @@ export function ContextMemoryRegionsView({ onNavigateToAddress }: ContextMemoryR
   return (
     <DockPanel data-testid="memory-regions-panel">
       {/* Toolbar with goto + filters */}
-      <PanelToolbar className="flex-wrap">
+      <PanelToolbar overflow="wrap">
         <AddressExpressionInput
           value={gotoInput}
           onChange={setGotoInput}

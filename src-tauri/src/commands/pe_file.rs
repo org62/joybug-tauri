@@ -93,14 +93,7 @@ impl LoadedPeFile {
 // runtime, which cannot be dropped on an async worker thread.
 pub type PeFilesState = Arc<RwLock<HashMap<String, LoadedPeFile>>>;
 
-/// Await `f` on the blocking pool.
-async fn run_blocking<R: Send + 'static>(
-    f: impl FnOnce() -> Result<R> + Send + 'static,
-) -> Result<R> {
-    tauri::async_runtime::spawn_blocking(f)
-        .await
-        .map_err(|e| Error::InternalCommunication(format!("PE task failed: {}", e)))?
-}
+use super::run_blocking;
 
 /// Run `f` with a shared borrow of the open file for `path`. Read-only commands
 /// go through here so they don't serialize behind each other.

@@ -7,15 +7,10 @@ import { ContextMenu, ContextMenuItem } from "@/components/ui/context-menu";
 import { Button } from "./ui/button";
 import { Label } from "./ui/label";
 import { Switch } from "./ui/switch";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "./ui/select";
+import { VirtualCombobox, type VirtualComboboxItem } from "./ui/virtual-combobox";
 import { FileCode, ChevronRight, Circle, RefreshCw, AlertTriangle, FolderSearch, ArrowRightToLine, CornerDownRight, ArrowDownToLine } from "lucide-react";
 import { cn, DATA_ROW_HEIGHT, NAV_HIGHLIGHT_MS, PC_ROW_HIGHLIGHT_CLASS } from "@/lib/utils";
+import { moduleBasename, pathDirname } from "@/lib/symbolUtils";
 import { useSourceView } from "@/hooks/useSourceView";
 import { useContextMenu } from "@/hooks/useContextMenu";
 import { Virtualizer } from "@tanstack/react-virtual";
@@ -39,10 +34,9 @@ interface SourceViewProps {
   onNavigateToDisassembly?: (address: string) => void;
 }
 
-function shortName(path: string): string {
-  const idx = Math.max(path.lastIndexOf("\\"), path.lastIndexOf("/"));
-  return idx >= 0 ? path.slice(idx + 1) : path;
-}
+// Reused across sorts: a fresh localeCompare per comparison is an ICU call —
+// thousands of file paths would cost tens of blocking ms.
+const NAME_COLLATOR = new Intl.Collator(undefined, { sensitivity: "base" });
 
 export function SourceView({
   sessionId,
@@ -97,12 +91,28 @@ export function SourceView({
     return highlightToLines(windowLines.join("\n"), lang);
   }, [windowLines, filePath]);
 
+  // Digits needed by the line-number gutter. Sized to the file's last line
+  // (the window is a slice of the file), so it stays stable while scrolling.
+  const numDigits = Math.max(4, String(lineCount).length);
+
   // Widen the scroll area to the longest line so long lines scroll horizontally.
+  // The pad covers the fixed gutters (breakpoint + PC columns) and the
+  // digit-dependent line-number column.
   const minContentWidth = useMemo(() => {
     let max = 80;
     for (const l of windowLines) if (l.length > max) max = l.length;
-    return `${max + 12}ch`;
-  }, [windowLines]);
+    return `${max + numDigits + 8}ch`;
+  }, [windowLines, numDigits]);
+
+  // File-picker items, alphabetical by file name (paths can number in the
+  // thousands for CRT-heavy PDBs — the picker virtualizes them).
+  const fileItems = useMemo<VirtualComboboxItem[]>(
+    () =>
+      fileList
+        .map((f) => ({ value: f.path, label: moduleBasename(f.path), detail: pathDirname(f.path) }))
+        .sort((a, b) => NAME_COLLATOR.compare(a.label, b.label)),
+    [fileList],
+  );
 
   // Which source lines carry a breakpoint (any of the line's addresses is set).
   const breakpointLines = useMemo(() => {
@@ -259,28 +269,24 @@ export function SourceView({
 
   return (
     <DockPanel>
-      <PanelToolbar>
-        {/* Source file picker */}
-        <div className="flex items-center gap-1 min-w-0">
+      <PanelToolbar overflow="scroll">
+        {/* Source file picker. The wrapper shrinks (to its min width) before the
+            toolbar starts scrolling horizontally; the trigger itself truncates. */}
+        <div className="flex items-center gap-1 flex-1 min-w-28 max-w-56">
           <FileCode className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
           {fileList.length > 0 ? (
-            <Select value={filePath ?? undefined} onValueChange={selectFile}>
-              <SelectTrigger size="xs" className="w-56 font-mono">
-                <SelectValue placeholder="Select source file">
-                  {filePath ? shortName(filePath) : "Select source file"}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectContent>
-                {fileList.map((f) => (
-                  <SelectItem key={f.path} value={f.path} className="font-mono text-xs">
-                    {shortName(f.path)}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <VirtualCombobox
+              items={fileItems}
+              value={filePath}
+              onValueChange={selectFile}
+              placeholder="Select source file"
+              searchPlaceholder="Filter files..."
+              className="flex-1 min-w-0 font-mono"
+              panelClassName="font-mono"
+            />
           ) : (
-            <span className="text-xs font-mono text-muted-foreground truncate max-w-56" title={filePath ?? undefined}>
-              {filePath ? shortName(filePath) : "No source"}
+            <span className="text-xs font-mono text-muted-foreground truncate" title={filePath ?? undefined}>
+              {filePath ? moduleBasename(filePath) : "No source"}
             </span>
           )}
         </div>
@@ -299,7 +305,7 @@ export function SourceView({
         </Button>
 
         {checksumMismatch && (
-          <span className="flex items-center gap-1 text-xs text-syn-state" title="On-disk source differs from the build recorded in the PDB">
+          <span className="flex items-center gap-1 text-xs text-syn-state whitespace-nowrap shrink-0" title="On-disk source differs from the build recorded in the PDB">
             <AlertTriangle className="h-3.5 w-3.5" />
             Source differs
           </span>
@@ -314,14 +320,16 @@ export function SourceView({
 
         <div className="flex-1" />
 
-        <div className="flex items-center gap-2">
-          <Label htmlFor="follow-pc" className="text-xs">Follow PC</Label>
+        <div className="flex items-center gap-2 shrink-0">
+          <Label htmlFor="follow-pc" className="text-xs whitespace-nowrap">Follow PC</Label>
           <Switch id="follow-pc" size="xs" checked={followPc} onCheckedChange={toggleFollowPc} />
         </div>
       </PanelToolbar>
 
       {items.length > 0 ? (
-        <div className="flex-1 min-h-0">
+        // --src-ln-w: single definition of the line-number column width; rows
+        // consume it via a static class instead of per-row style objects.
+        <div className="flex-1 min-h-0" style={{ "--src-ln-w": `${numDigits}ch` } as React.CSSProperties}>
           <VirtualizedList
             items={items}
             rowHeight={SOURCE_ROW_HEIGHT}
@@ -484,10 +492,10 @@ function SourceRow({
         {isPC && <ChevronRight className="h-3 w-3" />}
       </span>
 
-      {/* Line number */}
+      {/* Line number (border-box width: --src-ln-w digits + the pr-2 gap) */}
       <span
         className={cn(
-          "w-12 shrink-0 pr-2 text-right tabular-nums select-none",
+          "w-[calc(var(--src-ln-w)+0.5rem)] shrink-0 pr-2 text-right tabular-nums select-none",
           hasCode ? "text-muted-foreground" : "text-muted-foreground/40",
         )}
       >

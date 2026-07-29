@@ -36,7 +36,7 @@ import {
 } from "@/lib/sessionStorage";
 
 import { DebugSession, SessionStatus } from "@/contexts/SessionContext";
-import { isProcessAvailable, formatTauriError, moduleBasename, buildLaunchCommand } from "@/lib/sessionHelpers";
+import { isProcessAvailable, formatTauriError, moduleBasename, pathDirname, buildLaunchCommand } from "@/lib/sessionHelpers";
 import { useFileDrop, pickDroppedFile } from "@/hooks/useFileDrop";
 import { FileDropOverlay } from "@/components/FileDropOverlay";
 
@@ -382,8 +382,7 @@ export default function Debugger() {
     if (!dropped) return;
 
     const name = moduleBasename(dropped).replace(/\.exe$/i, "");
-    const sepIdx = Math.max(dropped.lastIndexOf("\\"), dropped.lastIndexOf("/"));
-    const workingDirectory = sepIdx > 0 ? dropped.slice(0, sepIdx) : null;
+    const workingDirectory = pathDirname(dropped) || null;
 
     try {
       const sessionId = await createSessionRecord({

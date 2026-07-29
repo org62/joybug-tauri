@@ -56,7 +56,7 @@ export function isBenignSessionError(message: string): boolean {
   return /no active process|must be paused|session not|invalid ?session ?state/i.test(message);
 }
 
-export { moduleBasename } from '@/lib/symbolUtils';
+export { moduleBasename, pathDirname } from '@/lib/symbolUtils';
 
 /**
  * Turn an executable path into a launch command the backend can parse as a
