@@ -34,6 +34,7 @@ export const ContextHexView = ({ memoryViewId, initialAddress, initialViewMode }
       sessionStatus={statusString}
       registers={registers}
       resolveSymbol={resolveSymbolFn}
+      symbolsRefreshKey={sessionData.symbolsRefreshKey}
       initialAddress={initialAddress}
       initialViewMode={initialViewMode}
       onSetHardwareBreakpoint={setHardwareBreakpoint}

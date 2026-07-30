@@ -17,6 +17,7 @@ import { HexView } from "@/components/HexView";
 import { AssemblyView } from "@/components/AssemblyView";
 import { PeStructureTree } from "@/components/pe/PeStructureTree";
 import { PeSymbolsView, PeSymbol } from "@/components/pe/PeSymbolsView";
+import { SymbolPreview } from "@/components/SymbolSearchView";
 import { PeStringsView } from "@/components/pe/PeStringsView";
 import { OpenPeDialog } from "@/components/pe/OpenPeDialog";
 import { Download } from "lucide-react";
@@ -64,6 +65,8 @@ interface PeReaderContextValue {
   symbolsRefreshKey: string;
   setField: (field: string, value: number) => void;
   searchSymbols: (pattern: string, limit: number) => Promise<PeSymbol[]>;
+  /** Bytes/disasm preview for visible symbol-search rows. */
+  fetchSymbolPreviews: (items: PeSymbol[]) => Promise<(SymbolPreview | null)[]>;
   /** Resolve a symbol name typed in a goto box to its VA. */
   resolveSymbol: SymbolResolver;
   stringScan: PeScanFn;
@@ -151,11 +154,12 @@ const PeDisasmTab: React.FC = () => {
 };
 
 const PeSymbolsTab: React.FC = () => {
-  const { summary, mapping, mode, searchSymbols, onGoToHex, onGoToDisasm } = usePeReader();
+  const { summary, mapping, mode, searchSymbols, fetchSymbolPreviews, onGoToHex, onGoToDisasm } = usePeReader();
   if (!summary || !mapping) return <NoFilePlaceholder />;
   return (
     <PeSymbolsView
       searchSymbols={searchSymbols}
+      fetchPreviews={fetchSymbolPreviews}
       symbolsLoaded={summary.symbols_loaded}
       symbolCount={summary.symbol_count}
       mapping={mapping}
@@ -298,6 +302,14 @@ export default function PeReader() {
     return invoke<PeSymbol[]>("pe_search_symbols", { path, pattern, limit });
   }, [path]);
 
+  const fetchSymbolPreviews = useCallback((items: PeSymbol[]): Promise<(SymbolPreview | null)[]> => {
+    if (!path) return Promise.resolve(items.map(() => null));
+    return invoke<(SymbolPreview | null)[]>("pe_disassemble_preview_batch", {
+      path,
+      addresses: items.map((s) => s.va),
+    });
+  }, [path]);
+
   // Symbol resolution for the disassembly/hex goto boxes. An exact name match
   // wins (case-insensitive, `module!` prefix ignored); otherwise a unique
   // substring match resolves — anything ambiguous stays unresolved.
@@ -433,13 +445,14 @@ export default function PeReader() {
     symbolsRefreshKey,
     setField,
     searchSymbols,
+    fetchSymbolPreviews,
     resolveSymbol,
     stringScan,
     onGoToHex,
     onGoToDisasm,
     onSelectField,
     navHistory,
-  }), [summary, mapping, mode, hexDataSource, disassemble, symbolsRefreshKey, setField, searchSymbols, resolveSymbol, stringScan, onGoToHex, onGoToDisasm, onSelectField, navHistory]);
+  }), [summary, mapping, mode, hexDataSource, disassemble, symbolsRefreshKey, setField, searchSymbols, fetchSymbolPreviews, resolveSymbol, stringScan, onGoToHex, onGoToDisasm, onSelectField, navHistory]);
 
   return (
     <Page scroll={false} container={false}>

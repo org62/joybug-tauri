@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { toastError } from '@/lib/logger';
-import { formatTauriError } from '@/lib/sessionHelpers';
+import { formatTauriError, isBenignSessionError } from '@/lib/sessionHelpers';
 
 // TypeScript interfaces mirroring joybug_core::pe_types
 
@@ -166,7 +166,7 @@ export function useModuleInfo(
       });
     } catch (err) {
       const msg = formatTauriError(err);
-      if (!msg.includes('InvalidSessionState') && !msg.includes('must be paused')) {
+      if (!isBenignSessionError(msg)) {
         setError(msg);
         toastError(`Failed to request module info: ${msg}`, sessionId);
       }
@@ -194,7 +194,7 @@ export function useModuleInfo(
       (event) => {
         if (event.payload.session_id === sessionId && event.payload.module_base === lastRequestedBase.current) {
           const msg = event.payload.error || '';
-          if (!msg.includes('InvalidSessionState') && !msg.includes('must be paused')) {
+          if (!isBenignSessionError(msg)) {
             setError(msg);
             toastError(`Module info failed: ${msg}`, sessionId);
           }

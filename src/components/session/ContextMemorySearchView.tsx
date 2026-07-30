@@ -1,5 +1,4 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
-import { Virtualizer } from '@tanstack/react-virtual';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { useSessionContext } from '@/contexts/SessionContext';
@@ -7,6 +6,7 @@ import { formatTauriError, isTargetLive } from '@/lib/sessionHelpers';
 import { formatBytesAsHex } from '@/lib/hexUtils';
 import { cn, CHANGED_VALUE_CLASS } from '@/lib/utils';
 import { useLiveRefresh } from '@/hooks/useLiveRefresh';
+import { useVisibleRowsFetch } from '@/hooks/useVisibleRowsFetch';
 import { useContextMenu } from '@/hooks/useContextMenu';
 import { usePanelFocus } from '@/hooks/usePanelFocus';
 import { HistoryInput } from '@/components/ui/history-input';
@@ -104,74 +104,45 @@ export const ContextMemorySearchView = () => {
   const sessionId = sessionData?.session?.id;
   const isLive = isTargetLive(sessionData.displayStatus);
 
-  const virtualizerRef = useRef<Virtualizer<HTMLDivElement, Element> | null>(null);
-  const addressesRef = useRef<string[]>([]);
-  addressesRef.current = addresses;
   // Bytes shown per row: the matched pattern, with a floor/cap to stay readable.
   const previewLenRef = useRef(8);
-  const fetchInFlightRef = useRef(false);
 
   // Fetch byte previews for the rows currently rendered by the virtualizer.
-  const fetchPreviews = useCallback(async () => {
-    if (!sessionId || fetchInFlightRef.current) return;
-    const all = addressesRef.current;
-    if (all.length === 0) return;
-    const virtualizer = virtualizerRef.current;
-    const visible = virtualizer
-      ? virtualizer.getVirtualItems().map((row) => all[row.index]).filter(Boolean)
-      : all.slice(0, 64);
-    if (visible.length === 0) return;
-
-    fetchInFlightRef.current = true;
-    try {
-      const data = await invoke<(number[] | null)[]>('read_memory_batch', {
-        sessionId,
-        addresses: visible,
-        size: previewLenRef.current,
+  const fetchVisible = useCallback(async (visible: string[]) => {
+    if (!sessionId) return false;
+    const data = await invoke<(number[] | null)[]>('read_memory_batch', {
+      sessionId,
+      addresses: visible,
+      size: previewLenRef.current,
+    });
+    const values = visible.map((_, i) =>
+      data[i] ? formatBytesAsHex(new Uint8Array(data[i]!)) : null,
+    );
+    // The previous previews are the change baseline: a refreshed address that
+    // differs turns red; identical again → cleared. Addresses first seen this
+    // fetch don't flash. Bail out when nothing changed so the 500ms live poll
+    // doesn't re-render the whole result list with identical previews.
+    setPreviewState((prev) => {
+      let mutated = false;
+      const previews = new Map(prev.previews);
+      const changed = new Set(prev.changed);
+      visible.forEach((addr, i) => {
+        const value = values[i];
+        const had = prev.previews.has(addr);
+        if (!had || prev.previews.get(addr) !== value) {
+          previews.set(addr, value);
+          mutated = true;
+        }
+        const isChanged = had && prev.previews.get(addr) !== value;
+        if (isChanged && !changed.has(addr)) { changed.add(addr); mutated = true; }
+        else if (!isChanged && changed.has(addr)) { changed.delete(addr); mutated = true; }
       });
-      const values = visible.map((_, i) =>
-        data[i] ? formatBytesAsHex(new Uint8Array(data[i]!)) : null,
-      );
-      // The previous previews are the change baseline: a refreshed address that
-      // differs turns red; identical again → cleared. Addresses first seen this
-      // fetch don't flash. Bail out when nothing changed so the 500ms live poll
-      // doesn't re-render the whole result list with identical previews.
-      setPreviewState((prev) => {
-        let mutated = false;
-        const previews = new Map(prev.previews);
-        const changed = new Set(prev.changed);
-        visible.forEach((addr, i) => {
-          const value = values[i];
-          const had = prev.previews.has(addr);
-          if (!had || prev.previews.get(addr) !== value) {
-            previews.set(addr, value);
-            mutated = true;
-          }
-          const isChanged = had && prev.previews.get(addr) !== value;
-          if (isChanged && !changed.has(addr)) { changed.add(addr); mutated = true; }
-          else if (!isChanged && changed.has(addr)) { changed.delete(addr); mutated = true; }
-        });
-        return mutated ? { previews, changed } : prev;
-      });
-    } catch {
-      // Background preview read; keep last known bytes on failure.
-    } finally {
-      fetchInFlightRef.current = false;
-    }
+      return mutated ? { previews, changed } : prev;
+    });
   }, [sessionId]);
-
-  // Debounced fetch for rows scrolled into view that have no preview yet.
-  const scheduleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const schedulePreviewFetch = useCallback(() => {
-    if (scheduleTimerRef.current) return;
-    scheduleTimerRef.current = setTimeout(() => {
-      scheduleTimerRef.current = null;
-      fetchPreviews();
-    }, 100);
-  }, [fetchPreviews]);
-  useEffect(() => () => {
-    if (scheduleTimerRef.current) clearTimeout(scheduleTimerRef.current);
-  }, []);
+  // No followUp: the live poll below re-fetches all visible rows anyway.
+  const { virtualizerRef, schedule: schedulePreviewFetch, fetchNow: fetchPreviews } =
+    useVisibleRowsFetch({ items: addresses, fetchVisible });
 
   // Fresh previews when results change (new baseline — a fresh search doesn't
   // flash red); poll while the target runs live and refresh after each step —
@@ -182,7 +153,7 @@ export const ContextMemorySearchView = () => {
   }, [addresses, fetchPreviews]);
 
   useLiveRefresh(sessionId, isLive, () => {
-    if (addressesRef.current.length > 0) fetchPreviews();
+    fetchPreviews();
   });
 
   const onNavigateToDisassembly = sessionData.onNavigateToDisassembly;

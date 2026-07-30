@@ -202,6 +202,7 @@ export default function Debugger() {
       });
       if (selected) {
         setFormLaunchCommand(buildLaunchCommand(selected));
+        setFormWorkingDirectory((prev) => (prev.trim() ? prev : pathDirname(selected)));
       }
     } catch (error) {
       console.error("Failed to open file dialog:", error);
@@ -726,7 +727,7 @@ export default function Debugger() {
                       id="workingDirectory"
                       value={formWorkingDirectory}
                       onChange={(e) => setFormWorkingDirectory(e.target.value)}
-                      placeholder="Defaults to the debugger's directory"
+                      placeholder="Defaults to the executable's directory"
                     />
                     {formLocalRun && (
                       <Button variant="outline" size="icon" onClick={handleBrowseWorkingDirectory} title="Browse for working directory" type="button">

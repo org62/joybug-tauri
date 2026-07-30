@@ -13,6 +13,7 @@ import { cn, DATA_ROW_HEIGHT, NAV_HIGHLIGHT_MS, PC_ROW_HIGHLIGHT_CLASS } from "@
 import { moduleBasename, pathDirname } from "@/lib/symbolUtils";
 import { useSourceView } from "@/hooks/useSourceView";
 import { useContextMenu } from "@/hooks/useContextMenu";
+import { useRecenterOnReveal, applyOverFrames } from "@/hooks/useRecenterOnReveal";
 import { Virtualizer } from "@tanstack/react-virtual";
 import { languageForPath, highlightToLines, type SyntaxLine } from "@/lib/syntaxHighlight";
 
@@ -158,9 +159,7 @@ export function SourceView({
       el.scrollTop = Math.max(0, (target - start) * SOURCE_ROW_HEIGHT - (el.clientHeight - SOURCE_ROW_HEIGHT) / 2);
       return true;
     };
-    apply();
-    requestAnimationFrame(apply);
-    setTimeout(apply, 40);
+    applyOverFrames(apply);
   }, []);
 
   // Keep the scroll position meaningful across window changes:
@@ -200,37 +199,9 @@ export function SourceView({
     }
   }, [windowStart, windowLines, scrollToLine, centerOn]);
 
-  // rc-dock keeps hidden tabs mounted at zero height, so a PC move that happens
-  // while the Source tab is hidden scrolls a 0-height viewport. Re-center on the
-  // target line the moment the panel becomes visible (0 → positive height).
-  const hasRows = items.length > 0;
-  useEffect(() => {
-    if (!hasRows) return;
-    let ro: ResizeObserver | null = null;
-    let raf = 0;
-    const attach = () => {
-      const el = virtualizerRef.current?.scrollElement;
-      if (!el) {
-        raf = requestAnimationFrame(attach);
-        return;
-      }
-      let prevHeight = el.clientHeight;
-      ro = new ResizeObserver(() => {
-        const h = el.clientHeight;
-        const becameVisible = prevHeight === 0 && h > 0;
-        prevHeight = h;
-        if (becameVisible && centerLineRef.current != null) {
-          centerOn(centerLineRef.current);
-        }
-      });
-      ro.observe(el);
-    };
-    attach();
-    return () => {
-      cancelAnimationFrame(raf);
-      ro?.disconnect();
-    };
-  }, [hasRows, centerOn]);
+  // A PC move that happens while the Source tab is hidden scrolls a 0-height
+  // viewport — re-center on the target line once the panel is shown.
+  useRecenterOnReveal(virtualizerRef, items.length > 0, centerLineRef, centerOn);
 
   // Transient highlight flash for nav-target lines.
   useEffect(() => {

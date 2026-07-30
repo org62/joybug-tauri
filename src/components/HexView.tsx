@@ -40,6 +40,8 @@ interface HexViewProps {
   resolveSymbol?: SymbolResolver;
   initialAddress?: bigint;
   initialViewMode?: ViewMode;
+  /** Changes when background symbol loading completes — re-resolves pointer-mode annotations. */
+  symbolsRefreshKey?: string;
   onSetHardwareBreakpoint?: (address: string, hwType: string, hwSize: number) => void;
   onAddBookmark?: (address: string, valueType: string) => void;
   onFindAccesses?: (address: string, mode: "Write" | "ReadWrite", size: number) => void;
@@ -68,7 +70,7 @@ const EDGE_EXTEND_THRESHOLD = ROW_HEIGHT * 6;
 // rows: at most one full chunk's worth of rows.
 const MAX_WHEEL_REVEAL = (DEFAULT_CHUNK_SIZE / BYTES_PER_ROW) * ROW_HEIGHT;
 
-export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}, resolveSymbol, initialAddress, initialViewMode, onSetHardwareBreakpoint, onAddBookmark, onFindAccesses, onShowInMemoryRegions, dataSource, addressFormatter, translateGotoInput }: HexViewProps) {
+export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}, resolveSymbol, initialAddress, initialViewMode, symbolsRefreshKey, onSetHardwareBreakpoint, onAddBookmark, onFindAccesses, onShowInMemoryRegions, dataSource, addressFormatter, translateGotoInput }: HexViewProps) {
   const fmtAddr = addressFormatter ?? formatAddress;
   const {
     baseAddress,
@@ -120,7 +122,7 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
     // Clipboard actions
     copySelection,
     pasteBytes,
-  } = useHexEditor({ sessionId, memoryViewId, sessionStatus, registers, resolveSymbol, initialAddress, initialViewMode, dataSource });
+  } = useHexEditor({ sessionId, memoryViewId, sessionStatus, registers, resolveSymbol, initialAddress, initialViewMode, dataSource, symbolsRefreshKey });
 
   const [addressInput, setAddressInput] = useState("");
   const hexViewContainerRef = useRef<HTMLDivElement>(null);

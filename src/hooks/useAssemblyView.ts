@@ -10,6 +10,7 @@ import {
 } from '@/lib/hexUtils';
 import { formatTauriError, isBenignSessionError } from '@/lib/sessionHelpers';
 import { useNavigationChannel } from '@/hooks/useNavigationChannel';
+import { useLiveRefresh } from '@/hooks/useLiveRefresh';
 import { disassemblyNavigation } from '@/lib/navigationStore';
 import { NavHistoryStore } from '@/lib/navHistory';
 
@@ -147,6 +148,10 @@ export interface AssemblyViewState {
    *  on it re-fires even for equal counts. The view compensates the scroll
    *  offset so the viewport stays visually stable. */
   prependSignal: { count: number };
+  /** Bumps on every PC-follow decision (step or new pause event, including a
+   *  re-hit of the same breakpoint address). The view keys its PC auto-scroll
+   *  on this so an unchanged-PC pause still re-centers the RIP row. */
+  followSeq: number;
 }
 
 /** Navigation options: `auto` marks PC-follow navigation (no history entry, no
@@ -279,6 +284,20 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
   // (keep the viewport visually stable).
   const [loadGeneration, setLoadGeneration] = useState(0);
   const [prependSignal, setPrependSignal] = useState<{ count: number }>({ count: 0 });
+  const [followSeq, setFollowSeq] = useState(0);
+
+  // Raw pause-transition counter. The debounced `displayStatus` swallows runs
+  // shorter than its 250ms window (e.g. a breakpoint in a loop re-hitting the
+  // same address), so `isPaused`/`pcAddress` props can stay identical across a
+  // real resume→hit cycle. useLiveRefresh watches the raw `session-updated`
+  // stream and reports every non-Paused→Paused transition; each one must
+  // re-assert PC-follow even when the PC value didn't change. isLive=false:
+  // only the pause listener is wanted, not the polling interval.
+  const [pauseTick, setPauseTick] = useState(0);
+  const lastPauseTick = useRef(0);
+  useLiveRefresh(disassemble ? undefined : sessionId, false, (reason) => {
+    if (reason === 'pause') setPauseTick((t) => t + 1);
+  });
 
   // Refs
   const lastRequestedAddress = useRef<bigint | null>(null);
@@ -803,13 +822,19 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
     if (!isAddressInView(instructions, addr)) loadDisassembly(addr);
   });
 
-  // Auto-load when PC changes (stepping)
-  // When user steps, ALWAYS follow PC regardless of where they were looking
+  // Auto-load when PC changes (stepping) or a new pause event lands (breakpoint
+  // hit — including a re-hit of the SAME address, and a hit after the user
+  // navigated the view while the target ran). Either way the RIP row must end
+  // up loaded and visible.
   useEffect(() => {
     if (pcAddress === null || !sessionId || !canLoad) return;
 
     // Detect if PC actually changed (i.e., user stepped)
     const pcActuallyChanged = lastAutoPcAddress.current === null || pcAddress !== lastAutoPcAddress.current;
+    // Consume the raw pause tick only past the guards above, so a tick arriving
+    // while the session briefly can't load isn't swallowed.
+    const newPause = pauseTick !== lastPauseTick.current;
+    lastPauseTick.current = pauseTick;
 
     // Initial load - no address set yet
     // Skip if user already navigated (e.g., pending symbol navigation consumed in same render)
@@ -819,28 +844,35 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
       return;
     }
 
-    // If PC actually changed (user stepped), always follow PC
-    if (pcActuallyChanged) {
-      const isRealStep = lastAutoPcAddress.current !== null;
+    if (pcActuallyChanged || newPause) {
+      // A changed PC with a previous PC on record is a step/hit while this view
+      // was live. A changed PC with NO previous record is the first sighting on
+      // mount — follow only if a fresh pause event says so, otherwise a pending
+      // user navigation (e.g. a symbol click that mounted this tab) wins.
+      const isRealStep = lastAutoPcAddress.current !== null && pcActuallyChanged;
       const prevPc = lastAutoPcAddress.current;
       lastAutoPcAddress.current = pcAddress;
 
-      // Real step (PC moved to a new address) — always follow PC
-      if (isRealStep) {
-        // A step is a user action: record the departed location so back
-        // retraces the step trail like any other navigation. If the user had
-        // navigated away, the departed location is where they were looking
-        // (store snapshot); otherwise it's the previous PC row.
-        const departed = userNavigatedAway.current
-          ? navHistory.currentDisasmAddress ?? prevPc
-          : prevPc;
-        if (departed !== null && departed !== pcAddress) {
-          navHistory.push({ tabId: navHistory.disasmTabId, disasmAddress: departed });
+      if (isRealStep || newPause) {
+        if (isRealStep) {
+          // A step is a user action: record the departed location so back
+          // retraces the step trail like any other navigation. If the user had
+          // navigated away, the departed location is where they were looking
+          // (store snapshot); otherwise it's the previous PC row.
+          const departed = userNavigatedAway.current
+            ? navHistory.currentDisasmAddress ?? prevPc
+            : prevPc;
+          if (departed !== null && departed !== pcAddress) {
+            navHistory.push({ tabId: navHistory.disasmTabId, disasmAddress: departed });
+          }
         }
 
         userNavigatedAway.current = false;
         // Clear any previous jump target so PC scroll effect can work
         setJumpTargetAddress(null);
+        // Re-fire the view's PC auto-scroll even when nothing below re-decodes
+        // (same-address re-hit, PC already in the loaded window).
+        setFollowSeq((s) => s + 1);
 
         // Reload only when the PC has stepped OUT of the loaded window — not
         // merely out of the current function's bounds. Code without `.pdata`
@@ -855,8 +887,8 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
         if (!pcLoaded) {
           // PC left the decoded window — load a fresh view around it, with
           // adjacent-code context so it's never an isolated view.
-          goToAddressDirect(pcAddress, { auto: true, prefetchContext: true });
-        } else if (!contextActive.current) {
+          goToAddressDirect(pcAddress, { auto: true, prefetchContext: isRealStep });
+        } else if (!contextActive.current && isRealStep) {
           // In-window step on a bare view (e.g. right after a goto): pull in
           // surrounding code once so nearby instructions are visible.
           contextActive.current = true;
@@ -867,8 +899,9 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
       }
       // First time seeing PC (mount) — skip if user already navigated (e.g., symbol click)
     }
-    // If PC didn't change, user can freely navigate without being pulled back
-  }, [pcAddress, sessionId, canLoad, currentAddress, functionStart, functionEnd, goToAddressDirect, navHistory, loadMoreAbove, loadMoreBelow]);
+    // If PC didn't change and no new pause landed, user can freely navigate
+    // without being pulled back
+  }, [pcAddress, pauseTick, sessionId, canLoad, currentAddress, functionStart, functionEnd, goToAddressDirect, navHistory, loadMoreAbove, loadMoreBelow]);
 
   // File mode: disassemble the initial offset once on mount.
   useEffect(() => {
@@ -918,6 +951,7 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
     // Infinite-scroll extension
     loadGeneration,
     prependSignal,
+    followSeq,
     // Actions
     goToAddress,
     goToAddressDirect,

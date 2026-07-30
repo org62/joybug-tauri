@@ -1,6 +1,7 @@
 use crate::error::{Error, Result};
 use crate::session::{UICommand, SymbolData};
 use crate::state::SessionStatesMap;
+use joybug_core::interfaces::DisassemblerProvider;
 use joybug_core::protocol_io::{PdbLoadOutcome, SymbolLoadState};
 use super::types::{ModuleSymbolStatusData, PdbLoadResultData, PdbMismatchData};
 use tauri::State;
@@ -159,6 +160,61 @@ pub fn search_session_symbols(
         move |client, pid| crate::session::symbols::process_symbol_search(client, &handle, pid, &pattern, limit_val),
     )?;
     Ok(Vec::new())
+}
+
+/// Bytes + disassembly of the first instruction at one address, shown inline in
+/// symbol-search result rows.
+#[derive(serde::Serialize)]
+pub struct SymbolPreviewData {
+    /// Space-separated uppercase hex of the instruction bytes ("48 83 EC 28").
+    pub bytes: String,
+    /// "mnemonic op_str" of the decoded instruction.
+    pub disasm: String,
+}
+
+impl SymbolPreviewData {
+    pub(crate) fn from_instruction(instr: &joybug_core::interfaces::Instruction) -> Self {
+        Self {
+            bytes: crate::session::helpers::hex_join(&instr.bytes),
+            disasm: if instr.op_str.is_empty() {
+                instr.mnemonic.clone()
+            } else {
+                format!("{} {}", instr.mnemonic, instr.op_str)
+            },
+        }
+    }
+}
+
+/// Preview the first instruction at each address over the pooled live OOB client
+/// (works Paused, Running, and non-invasive Open). Each round trip is a plain
+/// memory read; decoding happens locally so the server does no per-address
+/// symbolization work. Returns None per address that can't be read/decoded.
+/// Used by the Symbols panel to enrich the visible search result rows; async so
+/// the round trips stay off the main thread.
+#[tauri::command]
+pub async fn disassemble_preview_batch(
+    session_id: String,
+    addresses: Vec<String>,
+    session_states: State<'_, SessionStatesMap>,
+    oob_pool: State<'_, super::OobPool>,
+) -> Result<Vec<Option<SymbolPreviewData>>> {
+    let session_arc = super::get_session_arc(&session_id, &session_states)?;
+    let arch = super::get_session_arch(&session_arc);
+    let disassembler = joybug_core::windows_platform::disassembler::CapstoneDisassembler::new()
+        .map_err(|e| Error::InvalidParameter(format!("Disassembler init failed: {:?}", e)))?;
+    super::with_oob_client(&session_arc, &session_id, &oob_pool, |client, pid| {
+        addresses
+            .iter()
+            .take(256)
+            .map(|s| {
+                let addr = super::parse_hex_u64(s, "address").ok()?;
+                // 16 bytes bound any single x64/ARM64 instruction.
+                let bytes = client.read_memory(pid, addr, 16).ok()?;
+                let instr = disassembler.disassemble_single(arch, &bytes, addr).ok().flatten()?;
+                Some(SymbolPreviewData::from_instruction(&instr))
+            })
+            .collect()
+    })
 }
 
 #[tauri::command]

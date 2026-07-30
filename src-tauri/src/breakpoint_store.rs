@@ -30,6 +30,7 @@ pub fn load_breakpoints(launch_command: &str) -> Vec<BreakpointInfo> {
                 source_line: bp.source_line,
                 auto: false,
                 single_shot: false,
+                module_fingerprint: bp.module_fingerprint.clone(),
             })
             .collect(),
         None => Vec::new(),

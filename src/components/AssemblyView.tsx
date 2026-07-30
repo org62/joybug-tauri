@@ -18,6 +18,7 @@ import { RegisterContext, SymbolResolver } from "@/lib/hexUtils";
 import { AddressExpressionInput } from "@/components/AddressExpressionInput";
 import { isBenignSessionError } from "@/lib/sessionHelpers";
 import { useContextMenu } from "@/hooks/useContextMenu";
+import { useRecenterOnReveal, applyOverFrames } from "@/hooks/useRecenterOnReveal";
 import { useColumnWidths } from "@/hooks/useColumnWidths";
 import { useHeaderScrollSync } from "@/hooks/useHeaderScrollSync";
 import { EmulationQuickView } from "./EmulationQuickView";
@@ -112,6 +113,7 @@ export function AssemblyView({ sessionId, isPaused, canLoad, address, registers,
     jumpTargetAddress,
     loadGeneration,
     prependSignal,
+    followSeq,
     goToAddressDirect,
     followJump,
     refresh,
@@ -192,16 +194,29 @@ export function AssemblyView({ sessionId, isPaused, canLoad, address, registers,
   const rowsForScrollRef = useRef(rows);
   useLayoutEffect(() => { rowsForScrollRef.current = rows; }, [rows]);
 
+  // Last requested centering target — re-applied when a hidden dock tab
+  // becomes visible again (see the ResizeObserver effect below).
+  const centerTargetRef = useRef<bigint | null>(null);
+
   const scrollToInstruction = useCallback((addr: bigint) => {
-    const key = `0X${addr.toString(16).toUpperCase()}`;
-    // Target the instruction row, not its label — centering the instruction
-    // keeps the label visible one row above.
-    const index = rowsForScrollRef.current.findIndex(
-      (r) => r.kind === 'insn' && r.insn.address.toUpperCase() === key
-    );
-    if (index >= 0) {
-      virtualizerRef.current?.scrollToIndex(index, { align: 'center' });
-    }
+    centerTargetRef.current = addr;
+    const apply = () => {
+      // rc-dock keeps inactive tabs mounted at zero size; scrolling a 0-height
+      // viewport computes a clamped offset of 0 and "succeeds". Bail instead —
+      // the visibility observer re-centers when the tab is shown.
+      const el = virtualizerRef.current?.scrollElement;
+      if (!el || el.clientHeight === 0) return;
+      const key = `0X${addr.toString(16).toUpperCase()}`;
+      // Target the instruction row, not its label — centering the instruction
+      // keeps the label visible one row above.
+      const index = rowsForScrollRef.current.findIndex(
+        (r) => r.kind === 'insn' && r.insn.address.toUpperCase() === key
+      );
+      if (index >= 0) {
+        virtualizerRef.current?.scrollToIndex(index, { align: 'center' });
+      }
+    };
+    applyOverFrames(apply);
   }, []);
 
   // Go-to-PC button: hand control back to PC-follow, then re-center the PC row
@@ -211,13 +226,19 @@ export function AssemblyView({ sessionId, isPaused, canLoad, address, registers,
     if (pcAddress !== null) scrollToInstruction(pcAddress);
   }, [goToPC, pcAddress, scrollToInstruction]);
 
-  // Scroll to PC on a fresh load / PC change (never on a scroll extension).
+  // Scroll to PC on a fresh load / PC change / new pause event (never on a
+  // scroll extension). `followSeq` re-fires this for pauses where nothing else
+  // changed — a re-hit of the same breakpoint address must still re-center.
   // Only if there's no jump target (user navigation takes priority).
   useEffect(() => {
     if (jumpTargetAddress === null && pcAddress !== null) {
       scrollToInstruction(pcAddress);
     }
-  }, [pcAddress, jumpTargetAddress, loadGeneration, scrollToInstruction]);
+  }, [pcAddress, jumpTargetAddress, loadGeneration, followSeq, scrollToInstruction]);
+
+  // A PC move (or goto) that lands while the Disassembly tab is hidden scrolls
+  // a 0-height viewport into nowhere — re-center once the panel is shown.
+  useRecenterOnReveal(virtualizerRef, rows.length > 0, centerTargetRef, scrollToInstruction);
 
   // Scroll to and highlight jump target when navigating (fresh load or in-view jump).
   useEffect(() => {

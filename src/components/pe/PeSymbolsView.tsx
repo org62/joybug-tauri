@@ -1,11 +1,12 @@
 import { useCallback } from "react";
-import { SymbolSearchView, SymbolSearchItem } from "@/components/SymbolSearchView";
+import { SymbolSearchView, SymbolSearchItem, SymbolPreview } from "@/components/SymbolSearchView";
 import { PeMapping, AddrMode, formatAddr, tripleFromVa } from "@/lib/peAddress";
 
 export type PeSymbol = SymbolSearchItem & { rva: number };
 
 interface PeSymbolsViewProps {
   searchSymbols: (pattern: string, limit: number) => Promise<PeSymbol[]>;
+  fetchPreviews?: (items: PeSymbol[]) => Promise<(SymbolPreview | null)[]>;
   symbolsLoaded: boolean;
   symbolCount: number;
   mapping: PeMapping;
@@ -19,7 +20,7 @@ interface PeSymbolsViewProps {
  * file-backed search instead of the session context, with addresses rendered
  * per the viewer's VA/RVA/file-offset display mode.
  */
-export const PeSymbolsView: React.FC<PeSymbolsViewProps> = ({ searchSymbols, symbolsLoaded, symbolCount, mapping, mode, onGoToHex, onGoToDisasm }) => {
+export const PeSymbolsView: React.FC<PeSymbolsViewProps> = ({ searchSymbols, fetchPreviews, symbolsLoaded, symbolCount, mapping, mode, onGoToHex, onGoToDisasm }) => {
   const navigate = useCallback((s: PeSymbol) => {
     const t = tripleFromVa(mapping, BigInt(s.va));
     if (s.is_function) onGoToDisasm(t.va);
@@ -34,6 +35,7 @@ export const PeSymbolsView: React.FC<PeSymbolsViewProps> = ({ searchSymbols, sym
       idleTitle={symbolsLoaded ? `${symbolCount.toLocaleString()} symbols are loaded` : "No symbols loaded"}
       idleSubtitle={symbolsLoaded ? undefined : "Load a PDB from the toolbar to search symbols"}
       formatAddress={(s) => formatAddr(tripleFromVa(mapping, BigInt(s.va)), mode)}
+      fetchPreviews={fetchPreviews}
       onSelect={navigate}
     />
   );

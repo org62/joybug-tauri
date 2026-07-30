@@ -14,8 +14,62 @@ pub fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
 }
 
+/// Default working directory for a launch: the directory containing the target
+/// executable. Returns None when the executable path is relative or its parent
+/// doesn't exist (the debuggee then inherits the debugger's cwd).
+fn default_working_directory(launch_command: &str) -> Option<String> {
+    let cmd = launch_command.trim();
+    let exe: String = if let Some(rest) = cmd.strip_prefix('"') {
+        rest.split('"').next().unwrap_or("").to_string()
+    } else {
+        // Unquoted: resolve like CreateProcessW — the longest space-delimited
+        // prefix naming an existing file, falling back to the first token.
+        let mut candidate: Option<&str> = None;
+        for idx in cmd
+            .match_indices(' ')
+            .map(|(i, _)| i)
+            .chain(std::iter::once(cmd.len()))
+        {
+            let prefix = &cmd[..idx];
+            if std::path::Path::new(prefix).is_file() {
+                candidate = Some(prefix);
+            }
+        }
+        candidate
+            .or_else(|| cmd.split_whitespace().next())
+            .unwrap_or("")
+            .to_string()
+    };
+    let path = std::path::Path::new(&exe);
+    if !path.is_absolute() {
+        return None;
+    }
+    path.parent()
+        .filter(|p| p.is_dir())
+        .map(|p| p.to_string_lossy().into_owned())
+}
+
+/// Normalize the working directory coming from the UI: blank means "not set",
+/// which for local launches defaults to the executable's directory.
+fn effective_working_directory(
+    working_directory: Option<String>,
+    launch_command: &str,
+    is_local_run: bool,
+    attach_pid: Option<u32>,
+) -> Option<String> {
+    working_directory
+        .filter(|w| !w.trim().is_empty())
+        .or_else(|| {
+            if is_local_run && attach_pid.is_none() {
+                default_working_directory(launch_command)
+            } else {
+                None
+            }
+        })
+}
+
 #[tauri::command]
-pub fn create_debug_session(
+pub async fn create_debug_session(
     name: String,
     server_url: String,
     launch_command: String,
@@ -27,6 +81,19 @@ pub fn create_debug_session(
     app_handle: tauri::AppHandle,
 ) -> std::result::Result<String, String> {
     let non_invasive = non_invasive.unwrap_or(false);
+
+    // The working-directory default stats the launch-command path, which can
+    // block for seconds on slow media (UNC share, unplugged drive) — resolve
+    // it on the blocking pool before touching any state.
+    let working_directory = {
+        let launch_command = launch_command.clone();
+        super::run_blocking(move || {
+            Ok(effective_working_directory(working_directory, &launch_command, is_local_run, attach_pid))
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    };
+
     let mut states = session_states.lock().unwrap();
 
     if !is_local_run && attach_pid.is_none() {
@@ -45,8 +112,6 @@ pub fn create_debug_session(
     } else {
         server_url
     };
-
-    let working_directory = working_directory.filter(|w| !w.trim().is_empty());
 
     let session_state_arc = Arc::new(Mutex::new(SessionStateUI::new(
         session_id.clone(),
@@ -84,7 +149,7 @@ pub fn create_debug_session(
 }
 
 #[tauri::command]
-pub fn update_debug_session(
+pub async fn update_debug_session(
     session_id: String,
     name: String,
     server_url: String,
@@ -97,6 +162,18 @@ pub fn update_debug_session(
     app_handle: tauri::AppHandle,
 ) -> std::result::Result<(), String> {
     let non_invasive = non_invasive.unwrap_or(false);
+
+    // See create_debug_session: the default-cwd stats must stay off the
+    // async runtime workers and the main thread.
+    let working_directory = {
+        let launch_command = launch_command.clone();
+        super::run_blocking(move || {
+            Ok(effective_working_directory(working_directory, &launch_command, is_local_run, attach_pid))
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    };
+
     let states = session_states.lock().unwrap();
 
     if !is_local_run && attach_pid.is_none() {
@@ -120,8 +197,8 @@ pub fn update_debug_session(
         state.name = name;
         state.is_local_run = is_local_run;
         state.server_url = if is_local_run { String::new() } else { server_url };
+        state.working_directory = working_directory;
         state.launch_command = launch_command;
-        state.working_directory = working_directory.filter(|w| !w.trim().is_empty());
         state.attach_pid = attach_pid;
         state.non_invasive = non_invasive;
 

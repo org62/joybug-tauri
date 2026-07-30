@@ -1,5 +1,5 @@
 import { test, expect } from "../helpers/test-fixtures";
-import { createAndStartSession, cleanupSession, pcRegister } from "../helpers/session-helpers";
+import { createAndStartSession, cleanupSession, pcRegister, goToWindow } from "../helpers/session-helpers";
 import {
   waitForPaused,
   waitForDisassemblyLoaded,
@@ -85,6 +85,36 @@ test.describe("PC follow across steps", () => {
       await expect(async () => {
         await page.mouse.wheel(0, -2000);
         expect(await contentHeight(page)).toBeGreaterThan(before);
+      }).toPass({ timeout: 10_000, intervals: [50, 100] });
+
+      await cleanupSession(page, sessionId);
+    } finally {
+      await restoreDefaultSettings(page);
+    }
+  });
+
+  test("PC move while the Disassembly tab is hidden re-centers once shown", async ({
+    tauriPage: page,
+  }) => {
+    await configureMinimalStopSettings(page);
+
+    try {
+      const sessionId = await createAndStartSession(page, "Hidden Tab PC");
+      await waitForPaused(page, sessionId);
+      await waitForDisassemblyLoaded(page, ASM_PANEL);
+
+      // Hide Disassembly: Memory shares its dock panel, so activating it puts
+      // the assembly view into rc-dock's cached zero-height state.
+      await goToWindow(page, "Memory");
+
+      // Step while hidden — the PC-follow scroll would previously run against
+      // the 0-height viewport and be silently lost.
+      await stepAndWaitForNewPc(page, sessionId, "step_out_debug_session");
+
+      // Reveal the tab again: the visibility observer must re-center the RIP row.
+      await goToWindow(page, "Disassembly");
+      await expect(async () => {
+        expect(await pcInViewport(page)).toBe(true);
       }).toPass({ timeout: 10_000, intervals: [50, 100] });
 
       await cleanupSession(page, sessionId);

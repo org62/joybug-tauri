@@ -30,7 +30,7 @@ fn reapply_for_loaded_module(
     let short = module_short_name(name);
     reapply_symbols_for_module(session, app_handle_clone, pid, &short, base);
     reapply_patches_for_module(session, pid, &short, base);
-    reapply_breakpoints_for_module(session, pid, &short, base);
+    reapply_breakpoints_for_module(session, app_handle_clone, pid, &short, base);
     reapply_bookmarks_for_module(session, pid, &short);
     apply_auto_module_breakpoints(session, app_handle_clone, pid, base);
 }
