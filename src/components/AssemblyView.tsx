@@ -11,12 +11,13 @@ import { Switch } from "./ui/switch";
 import { Label } from "./ui/label";
 import { Cpu, ArrowLeft, ArrowRight, RefreshCw, ChevronRight, Circle, CircleDot, Wrench, Copy, Bookmark, FileCode, HardDrive, LocateFixed, Zap, Undo2 } from "lucide-react";
 import { sourceNavigation } from "@/lib/navigationStore";
-import { cn, DATA_ROW_HEIGHT, LINK_VALUE_CLASS, NAV_HIGHLIGHT_MS, PC_ROW_HIGHLIGHT_CLASS } from "@/lib/utils";
+import { cn, DATA_ROW_HEIGHT, LINK_VALUE_CLASS, PC_ROW_HIGHLIGHT_CLASS } from "@/lib/utils";
 import { useAssemblyView, buildAsmRows, Instruction, AsmDisassembleFn } from "@/hooks/useAssemblyView";
 import { NavHistoryStore } from "@/lib/navHistory";
 import { RegisterContext, SymbolResolver } from "@/lib/hexUtils";
 import { AddressExpressionInput } from "@/components/AddressExpressionInput";
 import { isBenignSessionError } from "@/lib/sessionHelpers";
+import { copyToClipboard } from "@/lib/clipboard";
 import { useContextMenu } from "@/hooks/useContextMenu";
 import { useRecenterOnReveal, applyOverFrames } from "@/hooks/useRecenterOnReveal";
 import { useColumnWidths } from "@/hooks/useColumnWidths";
@@ -34,6 +35,13 @@ type ColumnWidths = { symbol: number; bytes: number; mnemonic: number };
 
 const DEFAULT_COLUMN_WIDTHS: ColumnWidths = { symbol: 320, bytes: 144, mnemonic: 64 };
 const ASSEMBLY_ROW_HEIGHT = DATA_ROW_HEIGHT;
+
+// Multi-row selection: `addrs` are selected instruction addresses (uppercase —
+// stable across scroll prepends/appends, unlike row indexes); `anchor` is the
+// last-clicked row, the range origin for shift-click and the target for
+// keyboard actions. Shared empty value so a redundant clear is a no-op render.
+interface Selection { addrs: Set<string>; anchor: string | null }
+const EMPTY_SELECTION: Selection = { addrs: new Set(), anchor: null };
 
 interface AssemblyViewProps {
   sessionId?: string;
@@ -88,10 +96,10 @@ export function AssemblyView({ sessionId, isPaused, canLoad, address, registers,
   const assembleInputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const virtualizerRef = useRef<Virtualizer<HTMLDivElement, Element>>(null);
-  // Track which line is selected (for keyboard breakpoint toggle)
-  const [selectedAddress, setSelectedAddress] = useState<string | null>(null);
-  // Track which address is being highlighted (for fade animation)
-  const [highlightedAddress, setHighlightedAddress] = useState<bigint | null>(null);
+  // Multi-row selection (see the Selection type above). Gestures: click =
+  // single row, drag / shift-click = contiguous range, ctrl-click = toggle a
+  // row in/out (non-contiguous picks).
+  const [selection, setSelection] = useState<Selection>(EMPTY_SELECTION);
   // Track which jump target is being hovered (for live highlight)
   const [hoveredJumpTarget, setHoveredJumpTarget] = useState<bigint | null>(null);
   // Resizable column widths
@@ -110,7 +118,7 @@ export function AssemblyView({ sessionId, isPaused, canLoad, address, registers,
     compareImage,
     canGoBack,
     canGoForward,
-    jumpTargetAddress,
+    jumpTarget,
     loadGeneration,
     prependSignal,
     followSeq,
@@ -138,6 +146,88 @@ export function AssemblyView({ sessionId, isPaused, canLoad, address, registers,
   // Display rows: instructions plus a label row above each exact-symbol hit.
   const rows = useMemo(() => buildAsmRows(instructions), [instructions]);
 
+  // Uppercased instruction addresses, computed once per listing change. The
+  // selection set is keyed on these, and range expansion slices from this array
+  // instead of re-uppercasing every address on every drag mouse-enter.
+  const upperAddrs = useMemo(
+    () => instructions.map((inst) => inst.address.toUpperCase()),
+    [instructions]
+  );
+
+  // Address → position in the listing, for expanding selection endpoints into
+  // the contiguous rows between them.
+  const addrIndex = useMemo(() => {
+    const m = new Map<string, number>();
+    upperAddrs.forEach((a, i) => m.set(a, i));
+    return m;
+  }, [upperAddrs]);
+
+  // All instruction addresses between two endpoints, inclusive. Falls back to
+  // just the destination when an endpoint left the loaded range (full replace).
+  const rangeSet = useCallback((a: string, b: string): Set<string> => {
+    const ia = addrIndex.get(a);
+    const ib = addrIndex.get(b);
+    if (ia === undefined || ib === undefined) return new Set([b]);
+    const [lo, hi] = ia <= ib ? [ia, ib] : [ib, ia];
+    const s = new Set<string>();
+    for (let i = lo; i <= hi; i++) s.add(upperAddrs[i]);
+    return s;
+  }, [addrIndex, upperAddrs]);
+
+  // Drag-selection anchor while the left button is held on a row; null when
+  // not dragging. Ended by window mouseup, or by entering a row with the
+  // button no longer down (mouseup happened outside the window).
+  const dragAnchorRef = useRef<string | null>(null);
+  const handleRowMouseDown = useCallback((e: React.MouseEvent, addr: string) => {
+    if (e.button !== 0) return;
+    // Rows own their selection — stop the browser starting a native text
+    // selection underneath the row-drag (click still fires for links).
+    e.preventDefault();
+    const a = addr.toUpperCase();
+    if (e.ctrlKey || e.metaKey) {
+      setSelection((prev) => {
+        const addrs = new Set(prev.addrs);
+        if (addrs.has(a)) addrs.delete(a); else addrs.add(a);
+        return { addrs, anchor: a };
+      });
+    } else if (e.shiftKey) {
+      setSelection((prev) =>
+        prev.anchor
+          ? { addrs: rangeSet(prev.anchor, a), anchor: prev.anchor }
+          : { addrs: new Set([a]), anchor: a }
+      );
+    } else {
+      dragAnchorRef.current = a;
+      setSelection({ addrs: new Set([a]), anchor: a });
+    }
+  }, [rangeSet]);
+
+  const handleRowMouseEnter = useCallback((e: React.MouseEvent, addr: string) => {
+    const anchor = dragAnchorRef.current;
+    if (anchor === null) return;
+    if (e.buttons !== 1) {
+      dragAnchorRef.current = null;
+      return;
+    }
+    setSelection({ addrs: rangeSet(anchor, addr.toUpperCase()), anchor });
+  }, [rangeSet]);
+
+  useEffect(() => {
+    const endDrag = () => { dragAnchorRef.current = null; };
+    window.addEventListener("mouseup", endDrag);
+    return () => window.removeEventListener("mouseup", endDrag);
+  }, []);
+
+  // Session hosts: drop the selection when the session resumes/ends so a stale
+  // range doesn't resurface at the next pause. File mode (PE viewer) has no
+  // pause lifecycle. Bail out when already empty so single-stepping doesn't
+  // force a render per resume.
+  useEffect(() => {
+    if (!disassemble && !isPaused) {
+      setSelection((prev) => (prev.addrs.size || prev.anchor ? EMPTY_SELECTION : prev));
+    }
+  }, [disassemble, isPaused]);
+
   const handleJumpTargetClick = useCallback((jumpTarget: string, sourceAddress: string) => {
     try {
       followJump(BigInt(jumpTarget), BigInt(sourceAddress));
@@ -152,14 +242,21 @@ export function AssemblyView({ sessionId, isPaused, canLoad, address, registers,
 
   // Stable row handlers so the memoized InstructionRow can bail out of
   // unrelated parent re-renders (emulation results, hover state, scrolling).
+  // Selection itself is handled on mousedown; click only does the passive
+  // source sync (if the Source tab is mounted it scrolls to the matching
+  // line; it does not steal the active tab).
   const handleRowClick = useCallback((addr: string) => {
-    setSelectedAddress(addr.toUpperCase());
-    // Passive source sync: if the Source tab is mounted it scrolls
-    // to the matching line; it does not steal the active tab.
     sourceNavigation.request(addr);
   }, []);
 
+  // Right-click keeps an existing multi-selection (so the menu can act on it)
+  // but collapses to the clicked row when it lands outside the selection —
+  // the standard list-view contract. The functional update reads the current
+  // selection without a mirror ref, and returning `prev` when the row is
+  // already selected keeps the callback a no-op re-render.
   const handleRowContextMenu = useCallback((e: React.MouseEvent, addr: string, mnemonic: string, opStr: string, isPatched: boolean) => {
+    const a = addr.toUpperCase();
+    setSelection((prev) => (prev.addrs.has(a) ? prev : { addrs: new Set([a]), anchor: a }));
     openContextMenu(e, { address: addr, mnemonic, op_str: opStr, is_patched: isPatched });
   }, [openContextMenu]);
 
@@ -231,26 +328,28 @@ export function AssemblyView({ sessionId, isPaused, canLoad, address, registers,
   // changed — a re-hit of the same breakpoint address must still re-center.
   // Only if there's no jump target (user navigation takes priority).
   useEffect(() => {
-    if (jumpTargetAddress === null && pcAddress !== null) {
+    if (jumpTarget === null && pcAddress !== null) {
       scrollToInstruction(pcAddress);
     }
-  }, [pcAddress, jumpTargetAddress, loadGeneration, followSeq, scrollToInstruction]);
+  }, [pcAddress, jumpTarget, loadGeneration, followSeq, scrollToInstruction]);
 
   // A PC move (or goto) that lands while the Disassembly tab is hidden scrolls
   // a 0-height viewport into nowhere — re-center once the panel is shown.
   useRecenterOnReveal(virtualizerRef, rows.length > 0, centerTargetRef, scrollToInstruction);
 
-  // Scroll to and highlight jump target when navigating (fresh load or in-view jump).
+  // Scroll to and select the jump target when navigating (fresh load or in-view
+  // jump). Selection, not a transient flash: it marks where the navigation
+  // landed until the user moves on, and can't be missed the way a timed fade
+  // can. jumpTarget is a fresh object on every navigation, so re-navigating to
+  // the same address still re-fires; loadGeneration re-asserts scroll +
+  // selection when the replace that fulfils the navigation lands.
   useEffect(() => {
-    if (jumpTargetAddress !== null) {
-      scrollToInstruction(jumpTargetAddress);
-      setHighlightedAddress(jumpTargetAddress);
-      const timer = setTimeout(() => {
-        setHighlightedAddress(null);
-      }, NAV_HIGHLIGHT_MS);
-      return () => clearTimeout(timer);
+    if (jumpTarget !== null) {
+      scrollToInstruction(jumpTarget.address);
+      const key = `0X${jumpTarget.address.toString(16).toUpperCase()}`;
+      setSelection({ addrs: new Set([key]), anchor: key });
     }
-  }, [jumpTargetAddress, loadGeneration, scrollToInstruction]);
+  }, [jumpTarget, loadGeneration, scrollToInstruction]);
 
   // Edge extension and prepend handling key off user intent. A full replace
   // moves scrollTop synthetically — the browser clamps it when content shrinks
@@ -276,10 +375,10 @@ export function AssemblyView({ sessionId, isPaused, canLoad, address, registers,
     const el = virtualizerRef.current?.scrollElement;
     if (el) el.scrollTop += prependSignal.count * ASSEMBLY_ROW_HEIGHT;
     if (!userGestureSinceLoadRef.current) {
-      const anchor = jumpTargetAddress ?? pcAddress;
+      const anchor = jumpTarget?.address ?? pcAddress;
       if (anchor !== null) scrollToInstruction(anchor);
     }
-  }, [prependSignal, jumpTargetAddress, pcAddress, scrollToInstruction]);
+  }, [prependSignal, jumpTarget, pcAddress, scrollToInstruction]);
 
   // Shared edge check for the scroll and wheel handlers. `only` restricts the
   // check to one edge (the wheel direction), so an up-wheel on content that fits
@@ -355,6 +454,9 @@ export function AssemblyView({ sessionId, isPaused, canLoad, address, registers,
 
   // Keyboard shortcuts — chord-based lookup via keybinding context
   const { reverseLookup, getKeybinding } = useKeybindingContext();
+
+  // Keyboard actions target the last-clicked row.
+  const selectedAddress = selection.anchor;
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -601,7 +703,6 @@ export function AssemblyView({ sessionId, isPaused, canLoad, address, registers,
             // pcAddress is already nulled while running/stopped (stale event
             // address) by useAssemblyView, so a plain null check suffices.
             const isPC = pcAddress !== null && instAddrUpper === `0X${pcAddress.toString(16).toUpperCase()}`;
-            const isHighlighted = highlightedAddress !== null && instAddrUpper === `0X${highlightedAddress.toString(16).toUpperCase()}`;
             const isHoverTarget = hoveredJumpTarget !== null && instAddrUpper === `0X${hoveredJumpTarget.toString(16).toUpperCase()}`;
             const hasBreakpoint = breakpointAddresses?.has(instAddrUpper) ?? false;
             const isExecuted = executedAddresses?.has(instAddrUpper) ?? false;
@@ -611,8 +712,7 @@ export function AssemblyView({ sessionId, isPaused, canLoad, address, registers,
                 instruction={inst}
                 isPC={isPC}
                 isExecuted={isExecuted}
-                isSelected={selectedAddress === instAddrUpper}
-                isHighlighted={isHighlighted}
+                isSelected={selection.addrs.has(instAddrUpper)}
                 isHoverTarget={isHoverTarget}
                 hasBreakpoint={hasBreakpoint}
                 isPatched={inst.is_patched ?? false}
@@ -620,6 +720,8 @@ export function AssemblyView({ sessionId, isPaused, canLoad, address, registers,
                 columnWidths={columnWidths}
                 addressFormatter={addressFormatter}
                 onClick={handleRowClick}
+                onMouseDown={handleRowMouseDown}
+                onMouseEnter={handleRowMouseEnter}
                 onJumpTargetClick={handleJumpTargetClick}
                 onJumpTargetHover={handleJumpTargetHover}
                 onMemRefClick={onNavigateToMemory ? handleMemRefClick : undefined}
@@ -736,16 +838,50 @@ export function AssemblyView({ sessionId, isPaused, canLoad, address, registers,
           )}
           <ContextMenuItem
             icon={<Copy className="text-muted-foreground" />}
-            onClick={async () => {
-              await navigator.clipboard.writeText(contextMenu.data.address);
-            }}
+            onClick={() => copyToClipboard(contextMenu.data.address, "address")}
           >
             Copy Address
+          </ContextMenuItem>
+          <ContextMenuItem
+            icon={<Copy className="text-muted-foreground" />}
+            onClick={() => {
+              // Listing order, and drops selected addresses that left the
+              // loaded range — the selection set itself is unordered.
+              const selected = instructions.filter((i) => selection.addrs.has(i.address.toUpperCase()));
+              const text = selected.length > 0
+                ? formatInstructionsForCopy(selected, addressFormatter)
+                : `${contextMenu.data.address}  ${contextMenu.data.mnemonic} ${contextMenu.data.op_str}`.trim();
+              copyToClipboard(text, "disassembly");
+            }}
+          >
+            {selection.addrs.size > 1 ? `Copy Disassembly (${selection.addrs.size} lines)` : "Copy Disassembly"}
           </ContextMenuItem>
         </ContextMenu>
       )}
     </DockPanel>
   );
+}
+
+// Clipboard text for the selected instructions, mirroring the on-screen
+// listing: a `symbol:` label line per symbol starting at an address, then
+// "address  bytes  mnemonic op_str" with the address/bytes columns padded so
+// multi-line copies align. Rows manage their own row selection (no free text
+// selection), so the context menu is the copy path.
+function formatInstructionsForCopy(insts: Instruction[], addressFormatter?: (va: bigint) => string): string {
+  const rows = insts.map((inst) => ({
+    symbols: inst.symbols ?? [],
+    address: addressFormatter ? addressFormatter(BigInt(inst.address)) : inst.address,
+    bytes: inst.bytes,
+    asm: `${inst.mnemonic} ${inst.op_str}`.trim(),
+  }));
+  const addrWidth = Math.max(...rows.map((r) => r.address.length));
+  const bytesWidth = Math.max(...rows.map((r) => r.bytes.length));
+  return rows
+    .flatMap((r) => [
+      ...r.symbols.map((s) => `${s}:`),
+      `${r.address.padEnd(addrWidth)}  ${r.bytes.padEnd(bytesWidth)}  ${r.asm}`,
+    ])
+    .join("\n");
 }
 
 // Symbol label row — inserted above an instruction sitting exactly at a symbol
@@ -773,13 +909,14 @@ interface InstructionRowProps {
   isPC: boolean;
   isExecuted: boolean;
   isSelected: boolean;
-  isHighlighted: boolean;
   isHoverTarget: boolean;
   hasBreakpoint: boolean;
   isPatched: boolean;
   showBytes: boolean;
   columnWidths: ColumnWidths;
   onClick: (address: string) => void;
+  onMouseDown: (e: React.MouseEvent, address: string) => void;
+  onMouseEnter: (e: React.MouseEvent, address: string) => void;
   onJumpTargetClick: (target: string, sourceAddress: string) => void;
   onJumpTargetHover: (target: string | null) => void;
   /** Present only when the host can open a Memory view. */
@@ -798,7 +935,11 @@ type RowHighlight = "selected" | "hover-target" | "pc" | "patched" | "executed";
 // over the near-black dark background, dark-hue fills (yellow-900/40 and friends)
 // desaturate into mud, while a light hue at ~10% stays chromatic and clean.
 const ROW_HIGHLIGHT_BG: Record<RowHighlight, string> = {
-  selected: "bg-accent/50",
+  // Neutral (foreground-tint) rather than --accent: the accent gray is nearly
+  // the page background in light mode, so any alpha of it is invisible there.
+  // Neutral also keeps selection distinct from the chromatic states below. The
+  // hairline inset ring gives the row a crisp edge without adding fill weight.
+  selected: "bg-foreground/10 shadow-[inset_0_0_0_1px_color-mix(in_oklab,var(--ring)_50%,transparent)]",
   "hover-target": "bg-syn-link/10",
   pc: PC_ROW_HIGHLIGHT_CLASS,
   patched: "bg-syn-patched/10",
@@ -807,7 +948,7 @@ const ROW_HIGHLIGHT_BG: Record<RowHighlight, string> = {
   executed: "bg-syn-covered/[0.07]",
 };
 
-const InstructionRow = memo(function InstructionRow({ instruction, isPC, isExecuted, isSelected, isHighlighted, isHoverTarget, hasBreakpoint, isPatched, showBytes, columnWidths, onClick, onJumpTargetClick, onJumpTargetHover, onMemRefClick, onContextMenu, addressFormatter }: InstructionRowProps) {
+const InstructionRow = memo(function InstructionRow({ instruction, isPC, isExecuted, isSelected, isHoverTarget, hasBreakpoint, isPatched, showBytes, columnWidths, onClick, onMouseDown, onMouseEnter, onJumpTargetClick, onJumpTargetHover, onMemRefClick, onContextMenu, addressFormatter }: InstructionRowProps) {
   // The first column always shows the address, reformatted per the PE viewer's
   // address mode (VA/RVA/file). Symbols render as label rows above, not here.
   const addressText =
@@ -869,8 +1010,7 @@ const InstructionRow = memo(function InstructionRow({ instruction, isPC, isExecu
       data-invalid={is_invalid ? "" : undefined}
       className={cn(
         "flex items-center font-mono text-data hover:bg-muted/30 px-2 cursor-default",
-        highlight && ROW_HIGHLIGHT_BG[highlight],
-        isHighlighted && "animate-highlight-fade"
+        highlight && ROW_HIGHLIGHT_BG[highlight]
       )}
       // lineHeight is pinned to the row height rather than left to the font's own
       // metrics: several columns use `truncate` (overflow-hidden), so a line box
@@ -878,6 +1018,8 @@ const InstructionRow = memo(function InstructionRow({ instruction, isPC, isExecu
       // constant keeps the two in step if the row height ever changes.
       style={{ height: ASSEMBLY_ROW_HEIGHT, lineHeight: `${ASSEMBLY_ROW_HEIGHT}px` }}
       onClick={() => onClick(instruction.address)}
+      onMouseDown={(e) => onMouseDown(e, instruction.address)}
+      onMouseEnter={(e) => onMouseEnter(e, instruction.address)}
       onContextMenu={(e) => onContextMenu(e, instruction.address, instruction.mnemonic, instruction.op_str, isPatched)}
     >
       {/* PC indicator */}

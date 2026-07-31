@@ -22,6 +22,7 @@ export default defineConfig({
     "keyboard-shortcuts.spec.ts",
     "windows-menu.spec.ts",
     "patches.spec.ts",
+    "process-exit-break.spec.ts",
     "image-patch.spec.ts",
     "symbol-persist.spec.ts",
     "bookmarks.spec.ts",

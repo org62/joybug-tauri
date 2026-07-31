@@ -266,11 +266,11 @@ html.dark[data-accent="rose"] { --syn-accent: oklch(0.76 0.13 355); }
   @apply text-foreground;
 }
 
-/* Highlight fade animation for navigation targets (disassembly rows, source
-   lines). Derives from the accent so it matches whatever accent the user
-   picked. Duration must stay in step with NAV_HIGHLIGHT_MS in lib/utils.ts —
-   the views drop the class on that timer, so a shorter timer would cut the
-   fade off abruptly mid-animation. */
+/* Highlight fade animation for navigation targets (source lines; the
+   disassembly view selects the target row instead). Derives from the accent so
+   it matches whatever accent the user picked. Duration must stay in step with
+   NAV_HIGHLIGHT_MS in lib/utils.ts — the views drop the class on that timer,
+   so a shorter timer would cut the fade off abruptly mid-animation. */
 @keyframes highlight-fade {
   0% {
     background-color: color-mix(in oklab, var(--syn-accent) 50%, transparent);

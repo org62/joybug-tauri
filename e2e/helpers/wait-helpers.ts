@@ -133,12 +133,17 @@ export async function waitForDisassemblyLoaded(
  * Configure debug settings to only stop on InitialBreakpoint.
  * This makes sessions reach a stable pause quickly by auto-continuing
  * all other events (DLL loads, thread creates, process create, etc.).
+ *
+ * `overrides` flips specific keys on top of the minimal set — e.g.
+ * `{ stop_on_process_exit: true }` for a test that needs the exit break —
+ * without a test hand-repeating the whole payload and drifting from this helper.
  */
 export async function configureMinimalStopSettings(
   page: Page,
+  overrides: Record<string, boolean> = {},
 ): Promise<void> {
   try {
-    await page.evaluate(async () => {
+    await page.evaluate(async (overrides) => {
       await (window as any).__TAURI_INTERNALS__.invoke("update_debug_settings", {
         newSettings: {
           stop_on_thread_create: false,
@@ -147,9 +152,11 @@ export async function configureMinimalStopSettings(
           stop_on_dll_unload: false,
           stop_on_initial_breakpoint: true,
           stop_on_process_create: false,
+          stop_on_process_exit: false,
+          ...overrides,
         },
       });
-    });
+    }, overrides);
   } catch {
     // Page or context may have been closed (e.g. test timeout)
   }
@@ -169,6 +176,7 @@ export async function restoreDefaultSettings(page: Page): Promise<void> {
           stop_on_dll_unload: true,
           stop_on_initial_breakpoint: true,
           stop_on_process_create: true,
+          stop_on_process_exit: false,
         },
       });
     });

@@ -22,7 +22,7 @@ export const LINK_VALUE_CLASS = "text-syn-link cursor-pointer hover:underline"
 export const PC_ROW_HIGHLIGHT_CLASS =
   "bg-syn-state/[0.12] shadow-[inset_2px_0_0_var(--syn-state)]"
 
-// How long a navigation target (disassembly row, source line) keeps the
+// How long a navigation target (source line) keeps the
 // `animate-highlight-fade` class. Matches the CSS animation duration in
 // App.css so the class is removed exactly when the fade reaches transparent —
 // shorter would cut the fade off visibly, longer would leave a stale

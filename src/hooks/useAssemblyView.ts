@@ -136,8 +136,12 @@ export interface AssemblyViewState {
   compareImage: boolean;
   canGoBack: boolean;
   canGoForward: boolean;
-  // Address to highlight temporarily (after navigation)
-  jumpTargetAddress: bigint | null;
+  /** Where the last user navigation landed (goto, external jump, in-view jump
+   *  follow, history restore) — the view scrolls to and selects this row. Null
+   *  while PC-follow owns the view. A fresh object is allocated on every
+   *  navigation (even to the same address), so its identity change re-fires the
+   *  view's scroll/selection effect. */
+  jumpTarget: { address: bigint } | null;
   /** Bumps only on a full replace (goto / PC-follow / function load), never on a
    *  scroll extension. The view gates its PC-follow/jump auto-scroll on this so
    *  prepend/append don't re-fire it. */
@@ -273,8 +277,12 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
   const [error, setError] = useState<string | null>(null);
   const [showBytes, setShowBytes] = useState(() => loadSettings().showBytes);
   const [compareImage, setCompareImage] = useState(() => loadSettings().compareImage);
-  // Address to highlight temporarily after navigation (for jump targets)
-  const [jumpTargetAddress, setJumpTargetAddress] = useState<bigint | null>(null);
+  // Where the last user navigation landed. A fresh object per call (even to the
+  // same address) makes the view's scroll/selection effect re-fire on identity.
+  const [jumpTarget, setJumpTarget] = useState<{ address: bigint } | null>(null);
+  const setJumpTargetAddress = useCallback((address: bigint | null) => {
+    setJumpTarget(address === null ? null : { address });
+  }, []);
 
   // Infinite-scroll extension. `loadGeneration` bumps ONLY on a full replace
   // (goto / PC-follow / function load), never on prepend/append — the component
@@ -947,7 +955,7 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
     compareImage,
     canGoBack,
     canGoForward,
-    jumpTargetAddress,
+    jumpTarget,
     // Infinite-scroll extension
     loadGeneration,
     prependSignal,
