@@ -2,6 +2,7 @@ import { test, expect } from "../helpers/test-fixtures";
 import {
   createAndStartSession,
   cleanupSession,
+  contextPc,
   invoke,
 } from "../helpers/session-helpers";
 import {
@@ -50,9 +51,12 @@ test.describe("Break on process exit", () => {
       // The exit code is surfaced (cmd.exe exited with 42 = 0x2A).
       expect(s.current_event.details).toContain("0x2A");
 
-      // A real break: registers resolved off the exiting thread...
-      expect(s.current_event.context?.rip).toBeTruthy();
-      expect(BigInt(s.current_event.context.rip)).toBeGreaterThan(0n);
+      // A real break: registers resolved off the exiting thread. The PC lives
+      // under a different name per debuggee arch (rip / pc), so read it through
+      // the helper — cmd.exe is native on both x64 and ARM64 runners.
+      const pc = contextPc(s.current_event.context);
+      expect(pc).toBeTruthy();
+      expect(BigInt(pc!)).toBeGreaterThan(0n);
 
       // ...and the module/thread lists survived instead of being wiped.
       const modules = await invoke(page, "get_session_modules", { sessionId });

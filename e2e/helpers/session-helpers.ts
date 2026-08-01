@@ -55,6 +55,16 @@ export async function pcRegister(page: Page, sessionId: string): Promise<"rip" |
   return (await debuggeeArch(page, sessionId)) === "Arm64" ? "pc" : "rip";
 }
 
+/**
+ * Program-counter value ("0x..") out of a context object already in hand — the
+ * `arch`-tagged union carries `rip` on x64 and `pc` on ARM64. Returns undefined
+ * when there is no context (or it is neither arch), so callers can assert on it.
+ */
+export function contextPc(context: any): string | undefined {
+  if (!context) return undefined;
+  return context.arch === "Arm64" ? context.pc : context.rip;
+}
+
 /** Module base ("0x..") for the first module whose path/name contains `substr`. */
 export async function moduleBase(
   page: Page,
