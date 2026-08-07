@@ -1814,6 +1814,27 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 
 [[package]]
+name = "hexpatch-keystone"
+version = "0.9.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "704500385f5b9007b684e75bc23ccaa03d89856b711472aa7d76f339258b84d8"
+dependencies = [
+ "hexpatch-keystone-sys",
+ "libc",
+]
+
+[[package]]
+name = "hexpatch-keystone-sys"
+version = "0.9.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "883b4833af9379e8921a9b5495c475229db20c25c94334b70a6385c53d313a43"
+dependencies = [
+ "bitflags 2.9.1",
+ "cmake",
+ "libc",
+]
+
+[[package]]
 name = "home"
 version = "0.5.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2223,8 +2244,8 @@ dependencies = [
  "cc",
  "clap",
  "dirs 5.0.1",
+ "hexpatch-keystone",
  "joybug-core-veh-shared",
- "keystone-engine",
  "memmap2",
  "mlua",
  "msvc-demangler",
@@ -2317,17 +2338,6 @@ dependencies = [
  "bitflags 2.9.1",
  "serde",
  "unicode-segmentation",
-]
-
-[[package]]
-name = "keystone-engine"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ab903ae27e1006cb336cc8af1991690c788892cd2184a3890547581afcf5a1f5"
-dependencies = [
- "bitflags 1.3.2",
- "cmake",
- "libc",
 ]
 
 [[package]]

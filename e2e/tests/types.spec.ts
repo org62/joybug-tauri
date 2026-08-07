@@ -1,6 +1,6 @@
 import type { Page } from "@playwright/test";
 import { test, expect } from "../helpers/test-fixtures";
-import { createAndStartSession, cleanupSession, invoke, goToWindow, debuggeeArch } from "../helpers/session-helpers";
+import { createAndStartSession, cleanupSession, invoke, goToWindow } from "../helpers/session-helpers";
 import {
   waitForPaused,
   configureMinimalStopSettings,
@@ -69,16 +69,25 @@ test.describe("Type System", () => {
       // Types come from ntdll's PDB.
       const kuser = await waitForTypeResolved(page, sessionId, "_KUSER_SHARED_DATA");
 
-      // _KUSER_SHARED_DATA is a fixed-size struct with a known NtSystemRoot
-      // member. Its declared size differs between the x64 and ARM64 ntdll PDBs
-      // (the struct carries per-architecture processor-feature fields), so the
-      // exact size is keyed off the debuggee arch. The member checks below prove
-      // the layout actually parsed regardless of which value it is.
-      const arch = await debuggeeArch(page, sessionId);
-      const expectedKuserSize = arch === "Arm64" ? 2688 : 1848;
+      // _KUSER_SHARED_DATA's declared size is not a stable constant — it grows
+      // across Windows releases and differs between the x64 and ARM64 ntdll
+      // PDBs — so asserting an exact number just pins the test to whichever
+      // build it was written on. Assert the invariants instead: it is a struct,
+      // it fits in the single page mapped at 0x7FFE0000, and every member lies
+      // inside it. Those only hold if the layout genuinely parsed.
       expect(kuser.kind).toBe("struct");
-      expect(kuser.size).toBe(expectedKuserSize);
-      expect(kuser.members.some((m) => m.name === "NtSystemRoot")).toBeTruthy();
+      expect(kuser.size).toBeLessThanOrEqual(4096);
+      for (const m of kuser.members) {
+        expect(m.offset + m.type_ref.size).toBeLessThanOrEqual(kuser.size);
+      }
+
+      // NtSystemRoot is a fixed part of the KUSER ABI: WCHAR[260] at 0x30.
+      // Unlike the total size, this offset has been stable for decades, so it
+      // pins the parse to real layout data rather than a plausible-looking stub.
+      const ntSystemRoot = kuser.members.find((m) => m.name === "NtSystemRoot");
+      expect(ntSystemRoot).toBeTruthy();
+      expect(ntSystemRoot!.offset).toBe(0x30);
+      expect(ntSystemRoot!.type_ref.size).toBe(520);
 
       // _PEB: BeingDebugged is an unsigned char at offset 2, and no member should
       // render as an opaque "t#NN" (primitive + function-pointer resolution).

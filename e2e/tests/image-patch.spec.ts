@@ -121,9 +121,12 @@ test.describe("Image patch detection", () => {
       const patchedRow = page.locator(`${ASM_ROW}[data-highlight="patched"]`).first();
       await expect(patchedRow).toBeVisible({ timeout: 10_000 });
 
-      // Hover shows the original instruction in a tooltip.
+      // Hover shows the original instruction in a tooltip. Scope the locator to
+      // the patch tooltip by its heading: operands render via TruncatedSymbol,
+      // which mounts its own copy tooltip, so a bare getByRole("tooltip") is
+      // ambiguous whenever the row's centre-point hover lands on an operand.
       await patchedRow.hover();
-      const tooltip = page.getByRole("tooltip");
+      const tooltip = page.getByRole("tooltip").filter({ hasText: "Original (on disk)" });
       await expect(tooltip).toBeVisible({ timeout: 5_000 });
       await expect(tooltip).toContainText(originalMnemonic, { timeout: 5_000 });
 
