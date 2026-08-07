@@ -3,7 +3,7 @@ import {
   createAndStartSession,
   cleanupSession,
   invoke,
-  openWindowsSubmenu,
+  goToWindow,
 } from "../helpers/session-helpers";
 import {
   waitForPaused,
@@ -182,9 +182,7 @@ test.describe("Image patch detection", () => {
 
       // Open the Image Patches window — it auto-scans on mount while paused.
       // The scan command is queued behind the memory write, so it sees the diff.
-      await openWindowsSubmenu(page, "Debug");
-      await page.getByRole("menuitemcheckbox", { name: "Image Patches" }).click();
-      await page.keyboard.press("Escape");
+      await goToWindow(page, "Image Patches");
 
       const row = page.locator('[data-testid="image-patch-row"]', { hasText: target.address });
       await expect(row).toHaveCount(1, { timeout: 15_000 });

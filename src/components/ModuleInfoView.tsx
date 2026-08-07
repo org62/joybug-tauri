@@ -1,4 +1,5 @@
 import React, { useMemo, useRef, useState } from 'react';
+import { LINK_VALUE_CLASS } from '@/lib/utils';
 import { DockPanel, PanelToolbar, PanelBody } from '@/components/ui/panel';
 import { TruncatedSymbol } from '@/components/ui/truncated-symbol';
 import { Button } from '@/components/ui/button';
@@ -55,7 +56,7 @@ const AddressLink: React.FC<{
   return (
     <Button
       variant="link"
-      className="h-auto p-0 font-mono text-blue-500 hover:text-blue-400"
+      className={`h-auto p-0 font-mono text-xs ${LINK_VALUE_CLASS}`}
       onClick={() => onClick(address)}
     >
       {address}
@@ -209,7 +210,7 @@ const ExportsTable: React.FC<{
           return (
             <div
               key={virtualRow.index}
-              className={`flex text-xs border-b border-border/40 ${isEntryPoint ? 'bg-yellow-500/10' : ''}`}
+              className={`flex text-xs border-b border-border/40 ${isEntryPoint ? 'bg-syn-state/10' : ''}`}
               style={rowStyle(virtualRow)}
             >
               <span className="py-0.5 pr-2 font-mono shrink-0" style={{ width: 50 }}>{entry.ordinal}</span>
@@ -451,8 +452,8 @@ export const ModuleInfoView: React.FC<ModuleInfoViewProps> = ({
 
           {error && !isLoading && (
             <div className="flex flex-col items-center justify-center py-8 text-muted-foreground">
-              <FileWarning className="h-8 w-8 mb-2 text-red-500" />
-              <p className="text-sm text-red-500">{error}</p>
+              <FileWarning className="h-8 w-8 mb-2 text-syn-invalid" />
+              <p className="text-sm text-syn-invalid">{error}</p>
             </div>
           )}
 

@@ -1,8 +1,17 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
+// Self-hosted so a desktop build never depends on a font CDN at runtime. Latin
+// subset only, regular + medium — the two weights the data panels actually use.
+import "@fontsource/jetbrains-mono/latin-400.css";
+import "@fontsource/jetbrains-mono/latin-500.css";
 import App from "./App";
 import { ThemeProvider } from "next-themes";
 import { runMouseNav } from "./lib/mouseNav";
+import { applyAccent, getStoredAccent } from "./lib/accent";
+
+// Apply the persisted accent before React mounts so the first paint already
+// has the right --syn-accent (no accent flash on startup).
+applyAccent(getStoredAccent());
 
 // Block browser back/forward navigation triggered by mouse buttons (XButton1/XButton2)
 // when a registered view's navigation history consumes the press (runMouseNav). WebView2

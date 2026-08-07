@@ -1,12 +1,16 @@
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSessionContext, type Module } from '@/contexts/SessionContext';
-import { useCodeExplorer, CoverageFn } from '@/hooks/useCodeExplorer';
+import { useCodeExplorer, CoverageFn, TARGET_SOURCES, customEntryLines } from '@/hooks/useCodeExplorer';
 import { useContextMenu } from '@/hooks/useContextMenu';
 import { useColumnWidths } from '@/hooks/useColumnWidths';
 import { usePanelFocus } from '@/hooks/usePanelFocus';
 import { useHeaderScrollSync } from '@/hooks/useHeaderScrollSync';
 import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 import { Button } from '@/components/ui/button';
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
+} from '@/components/ui/dialog';
 import { VirtualizedList } from '@/components/ui/virtualized-list';
 import { DockPanel, PanelToolbar } from '@/components/ui/panel';
 import { ContextMenu, ContextMenuItem, ContextMenuSeparator } from '@/components/ui/context-menu';
@@ -17,16 +21,84 @@ import {
   Select, SelectTrigger, SelectValue, SelectContent, SelectItem,
 } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Radar, Search, AlertTriangle } from 'lucide-react';
 import { moduleBasename, isTargetLive } from '@/lib/sessionHelpers';
 
 interface CoverageRow extends CoverageFn {
   hitCount: number;
   seq: number | null; // 1-based first-execution order, null = not hit yet
+  us: number | null; // µs from run start to first hit, null = not hit yet
+  deltaUs: number | null; // µs since the previously executed function
   tids: number[];
 }
 
 const EMPTY_MODULES: Module[] = [];
+
+/// Microseconds as milliseconds, at a fixed 3 decimals so the column reads as a
+/// timeline: values line up digit-for-digit under `tabular-nums`.
+const formatMs = (us: number) => (us / 1000).toFixed(3);
+
+/// Tooltip note explaining a non-obvious target source (appended after the
+/// symbol). `symbol`/`custom` need no note, so they're absent.
+const SOURCE_NOTE: Partial<Record<CoverageFn['source'], string>> = {
+  pdata: 'from the exception directory (.pdata)',
+  validated: 'symbol not marked as a function; passed the code-sanity check',
+};
+
+/** Editor for the custom target list. Owns its own draft so keystrokes stay
+ *  local — the parent (and its virtualized results table) never re-renders
+ *  while typing, and Cancel discards without touching the hook. */
+function CustomListDialog({ open, initial, moduleLabel, onClose, onSave }: {
+  open: boolean;
+  initial: string;
+  moduleLabel: string;
+  onClose: () => void;
+  onSave: (text: string) => void;
+}) {
+  const [draft, setDraft] = useState(initial);
+  // Re-seed from the saved list each time the dialog opens (it can change
+  // between opens); mid-edit changes must not clobber what's being typed, so
+  // `initial` is intentionally read only on the open transition.
+  const initialRef = useRef(initial);
+  initialRef.current = initial;
+  useEffect(() => {
+    if (open) setDraft(initialRef.current);
+  }, [open]);
+  const count = useMemo(() => customEntryLines(draft).length, [draft]);
+  return (
+    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="sm:max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>Functions to explore</DialogTitle>
+          <DialogDescription>
+            One per line — a symbol name in {moduleLabel}, or a hex address like{' '}
+            <span className="font-mono">0x140001000</span>. Only these are instrumented; the
+            code-sanity filter is not applied. Blank lines and lines starting with{' '}
+            <span className="font-mono">#</span> or <span className="font-mono">;</span> are
+            ignored, and a <span className="font-mono">module!name</span> prefix is accepted.
+          </DialogDescription>
+        </DialogHeader>
+        <Textarea
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          className="font-mono h-72 resize-none"
+          spellCheck={false}
+          placeholder={'main\n0x140001520\n# comments are ignored'}
+        />
+        <DialogFooter className="sm:justify-between">
+          <span className="text-xs text-muted-foreground tabular-nums self-center">
+            {count.toLocaleString()} entries
+          </span>
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={onClose}>Cancel</Button>
+            <Button onClick={() => onSave(draft)}>Save</Button>
+          </div>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
 
 export const ContextCodeExplorerView = () => {
   const sessionData = useSessionContext();
@@ -38,15 +110,26 @@ export const ContextCodeExplorerView = () => {
   const modules = sessionData?.modules ?? EMPTY_MODULES;
   const loadModules = sessionData?.loadModules;
 
-  const ce = useCodeExplorer(sessionId, canUse, isTargetLive(sessionData.displayStatus));
+  const ce = useCodeExplorer(
+    sessionId,
+    canUse,
+    isTargetLive(sessionData.displayStatus),
+    // Identifies the debuggee the coverage breakpoints were armed in; a restart
+    // keeps the session but replaces this.
+    sessionData.session?.current_event?.process_id,
+  );
+  // The list editor is a separate component owning its own draft (so typing in
+  // it doesn't re-render this results table); this only tracks open/closed.
+  const [listOpen, setListOpen] = useState(false);
   const { contextMenu, openContextMenu, closeContextMenu } = useContextMenu<{ row: CoverageRow }>();
   const { columnWidths, handleColumnResizeStart } = useColumnWidths('codeExplorerView', {
-    address: 150, rva: 90, order: 60, threads: 90, hits: 80,
+    address: 150, rva: 90, order: 60, time: 90, delta: 80, threads: 90, hits: 80,
   });
 
   // Below this width the results scroll horizontally instead of crushing the
-  // columns: the five fixed columns + px-2 padding + a floor for the symbol.
-  const rowMinWidth = `${columnWidths.address + columnWidths.rva + columnWidths.order + columnWidths.threads + columnWidths.hits + 16 + 160}px`;
+  // columns: the seven fixed columns + px-2 padding + a floor for the symbol.
+  const rowMinWidth = `${columnWidths.address + columnWidths.rva + columnWidths.order
+    + columnWidths.time + columnWidths.delta + columnWidths.threads + columnWidths.hits + 16 + 160}px`;
   const { headerInnerRef, handleViewportScroll } = useHeaderScrollSync(rowMinWidth);
 
   // Load the module list so the user can pick which module to instrument.
@@ -62,13 +145,31 @@ export const ContextCodeExplorerView = () => {
     setSelectedModule(exe.name);
   }, [modules, ce.selectedModule, setSelectedModule]);
 
+  // First-hit timestamp by execution order, so a row's delta is measured against
+  // the function that actually ran before it — not against the row above it,
+  // which the filter and the sort column both change.
+  const usBySeq = useMemo(() => {
+    const m = new Map<number, number>();
+    for (const c of Object.values(ce.counts)) m.set(c.seq, c.us);
+    return m;
+  }, [ce.counts]);
+
   // Join the armed function table with live counts, then filter + sort
   // client-side. All rows come from one module, so RVA order == address order.
   const rows = useMemo<CoverageRow[]>(() => {
     const f = ce.filter.trim().toLowerCase();
     let r: CoverageRow[] = ce.functions.map((fn) => {
       const c = ce.counts[fn.address];
-      return { ...fn, hitCount: c?.count ?? 0, seq: c?.seq ?? null, tids: c?.tids ?? [] };
+      const previous = c && c.seq > 1 ? usBySeq.get(c.seq - 1) : undefined;
+      return {
+        ...fn,
+        hitCount: c?.count ?? 0,
+        seq: c?.seq ?? null,
+        us: c?.us ?? null,
+        // seq 1 has no predecessor — its own timestamp is the elapsed time.
+        deltaUs: c && previous !== undefined ? c.us - previous : null,
+        tids: c?.tids ?? [],
+      };
     });
     if (ce.hitOnly) r = r.filter((x) => x.hitCount > 0);
     if (f) r = r.filter((x) => x.symbol.toLowerCase().includes(f));
@@ -88,7 +189,7 @@ export const ContextCodeExplorerView = () => {
       return cmp * dir;
     });
     return r;
-  }, [ce.functions, ce.counts, ce.filter, ce.sortKey, ce.sortAsc, ce.hitOnly]);
+  }, [ce.functions, ce.counts, ce.filter, ce.sortKey, ce.sortAsc, ce.hitOnly, usBySeq]);
 
   const total = ce.functions.length;
   // The backend only reports addresses hit at least once, so the count map's
@@ -98,7 +199,9 @@ export const ContextCodeExplorerView = () => {
   const pct = total > 0 ? Math.round((hitTotal / total) * 100) : 0;
   const armedShort = moduleBasename(ce.armedModule);
 
-  const startDisabled = !canUse || ce.isStarting || ce.active || !ce.selectedModule;
+  const customCount = useMemo(() => customEntryLines(ce.customList).length, [ce.customList]);
+  // `ce.hasTargets` owns "would this arm anything?" (see the hook).
+  const startDisabled = !canUse || ce.isStarting || ce.active || !ce.selectedModule || !ce.hasTargets;
 
   const radarIcon = <Radar className="h-12 w-12 mx-auto mb-4 opacity-50" />;
 
@@ -141,7 +244,10 @@ export const ContextCodeExplorerView = () => {
               onClick={() => onNavigateToDisassembly?.(r.address)}
               onContextMenu={(e) => openContextMenu(e, { row: r })}
             >
-              <span className="flex-1 min-w-0 truncate pr-1" title={r.symbol}>
+              <span
+                className="flex-1 min-w-0 truncate pr-1"
+                title={SOURCE_NOTE[r.source] ? `${r.symbol} — ${SOURCE_NOTE[r.source]}` : r.symbol}
+              >
                 {r.symbol}
               </span>
               <span className="shrink-0 truncate pr-1 text-muted-foreground" style={{ width: columnWidths.address }}>
@@ -152,6 +258,20 @@ export const ContextCodeExplorerView = () => {
               </span>
               <span className="shrink-0 truncate pr-1 text-muted-foreground tabular-nums" style={{ width: columnWidths.order }}>
                 {r.seq ?? '–'}
+              </span>
+              <span
+                className="shrink-0 truncate pr-1 text-right text-muted-foreground tabular-nums"
+                style={{ width: columnWidths.time }}
+                title={r.us !== null ? `First hit ${r.us.toLocaleString()} µs into the run` : undefined}
+              >
+                {r.us !== null ? formatMs(r.us) : '–'}
+              </span>
+              <span
+                className="shrink-0 truncate pr-1 text-right text-muted-foreground tabular-nums"
+                style={{ width: columnWidths.delta }}
+                title={r.deltaUs !== null ? `${r.deltaUs.toLocaleString()} µs after the previous function` : undefined}
+              >
+                {r.deltaUs !== null ? `+${formatMs(r.deltaUs)}` : '–'}
               </span>
               <span
                 className="shrink-0 truncate pr-1 text-muted-foreground tabular-nums"
@@ -217,6 +337,43 @@ export const ContextCodeExplorerView = () => {
             </Button>
           )}
         </div>
+        {/* Independent switches, not exclusive modes: they combine, so the
+            exception directory can be armed alongside a hand-written list while
+            the heuristic symbol tier stays off. */}
+        <div className="flex gap-3 items-center">
+          <span className="text-xs text-muted-foreground shrink-0">Targets</span>
+          {TARGET_SOURCES.map(({ key, label, hint }) => (
+            <label
+              key={key}
+              className="flex items-center gap-1.5 shrink-0 cursor-pointer select-none"
+              title={hint}
+            >
+              <Checkbox
+                checked={ce.targetSources[key]}
+                onCheckedChange={(checked) => {
+                  const on = checked === true;
+                  ce.setTargetSources({ ...ce.targetSources, [key]: on });
+                  // Turning the list on with nothing in it: go straight to the
+                  // editor rather than leaving a switch that does nothing.
+                  if (key === 'list' && on && customCount === 0) setListOpen(true);
+                }}
+                disabled={!canUse || ce.active}
+              />
+              <span className="text-xs">{label}</span>
+            </label>
+          ))}
+          {ce.targetSources.list && (
+            <Button
+              size="xs"
+              variant="outline"
+              className="shrink-0 ml-auto"
+              onClick={() => setListOpen(true)}
+              disabled={ce.active}
+            >
+              {customCount > 0 ? `${customCount.toLocaleString()} entries` : 'Add entries…'}
+            </Button>
+          )}
+        </div>
         {total > 0 && (
           <div className="flex gap-1 items-center">
             <Search className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
@@ -239,6 +396,14 @@ export const ContextCodeExplorerView = () => {
             <div className="text-xs text-muted-foreground ml-auto shrink-0 tabular-nums">
               {armedShort} · {hitTotal.toLocaleString()}/{total.toLocaleString()} hit ({pct}%)
               {ce.active && ' · live'}
+              {ce.unresolved.length > 0 && (
+                <span
+                  className="text-destructive ml-1"
+                  title={`Not found in this module:\n${ce.unresolved.slice(0, 50).join('\n')}${ce.unresolved.length > 50 ? `\n…and ${ce.unresolved.length - 50} more` : ''}`}
+                >
+                  · {ce.unresolved.length.toLocaleString()} unresolved
+                </span>
+              )}
             </div>
           </div>
         )}
@@ -268,6 +433,24 @@ export const ContextCodeExplorerView = () => {
               <SortHeader label="Order" active={ce.sortKey === 'order'} asc={ce.sortAsc}
                 onClick={() => ce.toggleSort('order')} />
             </ResizableHeaderCell>
+            <ResizableHeaderCell
+              width={columnWidths.time}
+              onResizeStart={(e) => handleColumnResizeStart('time', e)}
+              className="text-right"
+            >
+              <span title="Milliseconds from the start of the run to this function's first hit. Only the first hit is timed, so on a heat map (limit ≠ 1) this still marks first execution, not the repeats.">
+                Time
+              </span>
+            </ResizableHeaderCell>
+            <ResizableHeaderCell
+              width={columnWidths.delta}
+              onResizeStart={(e) => handleColumnResizeStart('delta', e)}
+              className="text-right"
+            >
+              <span title="Milliseconds between this function's first hit and that of the function executed immediately before it (by Order), regardless of the current filter or sort.">
+                Δ
+              </span>
+            </ResizableHeaderCell>
             <ResizableHeaderCell width={columnWidths.threads} onResizeStart={(e) => handleColumnResizeStart('threads', e)}>
               Threads
             </ResizableHeaderCell>
@@ -283,6 +466,14 @@ export const ContextCodeExplorerView = () => {
       <div className="flex-1 min-h-0">
         {renderContent()}
       </div>
+
+      <CustomListDialog
+        open={listOpen}
+        initial={ce.customList}
+        moduleLabel={moduleBasename(ce.selectedModule ?? '') || 'the module'}
+        onClose={() => setListOpen(false)}
+        onSave={(text) => { ce.setCustomList(text); setListOpen(false); }}
+      />
 
       {/* Context Menu */}
       {contextMenu && (

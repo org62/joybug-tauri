@@ -24,6 +24,12 @@ export function moduleBasename(path: string): string {
   return parts[parts.length - 1] || path;
 }
 
+/** Directory of a path ("C:\\a\\b.c" -> "C:\\a"); "" when there is no separator. */
+export function pathDirname(path: string): string {
+  const idx = Math.max(path.lastIndexOf("\\"), path.lastIndexOf("/"));
+  return idx >= 0 ? path.slice(0, idx) : "";
+}
+
 /**
  * If `name` is a loaded module's name ("orig", "orig.exe", "ntdll", full path
  * basename), returns that module's base address. Matches the `module+0x...`

@@ -7,6 +7,10 @@
 //     otherwise the rc-dock scroll contract breaks (whole panel scrolls).
 //  2. No raw <button> in views — use <Button>/<ContextMenuItem>.
 //  3. No raw <input>/<select>/<textarea> in views — use <Input>/<Checkbox>/<Select>.
+//  4. No raw chromatic Tailwind hues (text-blue-400, bg-red-500, …) in views — use
+//     the semantic tokens (--syn-* / destructive / muted; see App.css). Neutral
+//     scales (gray/neutral/zinc) are allowed. A deliberate categorical scale can
+//     opt out with an eslint-disable block and a comment saying why.
 // `src/components/ui/**` is exempt (the primitives legitimately use these).
 
 import tseslint from "typescript-eslint";
@@ -30,6 +34,21 @@ const noRawButton = {
   selector: "JSXOpeningElement[name.name='button']",
   message:
     "Don't use a raw <button> in a view — use <Button> (from @/components/ui/button) or <ContextMenuItem> (from @/components/ui/context-menu).",
+};
+
+const rawHuePattern =
+  "\\b(?:text|bg|border|fill|stroke|ring|divide|outline)-(?:red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose)-\\d";
+const noRawHueMessage =
+  "Don't use raw Tailwind hue classes in a view — use the semantic color tokens (syn-*, destructive, muted; see the --syn-* palette in App.css) so every color keeps one meaning.";
+
+const noRawHueLiteral = {
+  selector: `Literal[value=/${rawHuePattern}/]`,
+  message: noRawHueMessage,
+};
+
+const noRawHueTemplate = {
+  selector: `TemplateElement[value.raw=/${rawHuePattern}/]`,
+  message: noRawHueMessage,
 };
 
 const noRawFormControl = {
@@ -67,6 +86,8 @@ export default tseslint.config(
         noOverflowTemplate,
         noRawButton,
         noRawFormControl,
+        noRawHueLiteral,
+        noRawHueTemplate,
       ],
     },
   },

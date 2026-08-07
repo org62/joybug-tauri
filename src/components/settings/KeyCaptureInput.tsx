@@ -75,7 +75,7 @@ export function KeyCaptureInput({ onCapture, onCancel }: KeyCaptureInputProps) {
       ref={ref}
       tabIndex={0}
       className={cn(
-        "inline-flex items-center px-2 py-1 rounded border-2 border-blue-500 bg-blue-500/10 text-sm font-mono",
+        "inline-flex items-center px-2 py-1 rounded border-2 border-ring bg-accent text-sm font-mono",
         "focus:outline-none min-w-[120px]"
       )}
     >

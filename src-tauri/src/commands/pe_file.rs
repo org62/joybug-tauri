@@ -93,14 +93,7 @@ impl LoadedPeFile {
 // runtime, which cannot be dropped on an async worker thread.
 pub type PeFilesState = Arc<RwLock<HashMap<String, LoadedPeFile>>>;
 
-/// Await `f` on the blocking pool.
-async fn run_blocking<R: Send + 'static>(
-    f: impl FnOnce() -> Result<R> + Send + 'static,
-) -> Result<R> {
-    tauri::async_runtime::spawn_blocking(f)
-        .await
-        .map_err(|e| Error::InternalCommunication(format!("PE task failed: {}", e)))?
-}
+use super::run_blocking;
 
 /// Run `f` with a shared borrow of the open file for `path`. Read-only commands
 /// go through here so they don't serialize behind each other.
@@ -438,6 +431,44 @@ pub async fn pe_disassemble(
         .map_err(|e| Error::InvalidParameter(format!("Disassembly failed: {:?}", e)))?;
 
         Ok(crate::session::disassembly::serialize_instructions(&instructions, &[], None))
+    }))
+    .await
+}
+
+/// Disassemble the first instruction at each VA of an opened PE file — the PE
+/// viewer's analogue of the session-side `disassemble_preview_batch`, feeding
+/// the Symbols panel's per-row bytes/disasm preview. None per address outside
+/// the image or undecodable.
+#[tauri::command]
+pub async fn pe_disassemble_preview_batch(
+    path: String,
+    addresses: Vec<String>,
+    pe_files: State<'_, PeFilesState>,
+) -> Result<Vec<Option<super::symbols::SymbolPreviewData>>> {
+    let pe_files = pe_files.inner().clone();
+    run_blocking(move || with_file(&pe_files, &path, |file| {
+        let disassembler = CapstoneDisassembler::new()
+            .map_err(|e| Error::InvalidParameter(format!("Disassembler init failed: {:?}", e)))?;
+        let out = addresses
+            .iter()
+            .take(256)
+            .map(|s| {
+                let va = super::parse_hex_u64(s, "address").ok()?;
+                let offset = file.va_to_offset(va)?;
+                if offset >= file.bytes.len() {
+                    return None;
+                }
+                // 16 bytes bound any single x64/ARM64 instruction.
+                let end = (offset + 16).min(file.bytes.len());
+                let instr = disassembler
+                    .disassemble(file.arch, &file.bytes[offset..end], va, 1)
+                    .ok()?
+                    .into_iter()
+                    .next()?;
+                Some(super::symbols::SymbolPreviewData::from_instruction(&instr))
+            })
+            .collect();
+        Ok(out)
     }))
     .await
 }

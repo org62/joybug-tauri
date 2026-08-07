@@ -1,10 +1,11 @@
 import { useCallback, useMemo } from 'react';
-import { useSessionContext, Symbol } from '@/contexts/SessionContext';
+import { invoke } from '@tauri-apps/api/core';
+import { useSessionContext, Symbol, hasUsableSymbols } from '@/contexts/SessionContext';
 import { useContextMenu } from '@/hooks/useContextMenu';
 import { invokeToggleBreakpoint, invokeSetBreakpoints } from '@/lib/sessionHelpers';
 import { Button } from '@/components/ui/button';
 import { ContextMenu, ContextMenuItem } from '@/components/ui/context-menu';
-import { SymbolSearchView } from '@/components/SymbolSearchView';
+import { SymbolSearchView, SymbolPreview } from '@/components/SymbolSearchView';
 
 export const ContextSymbolsView = () => {
   const sessionData = useSessionContext();
@@ -18,7 +19,7 @@ export const ContextSymbolsView = () => {
   const { contextMenu, openContextMenu, closeContextMenu } = useContextMenu<{ va: string; is_function: boolean }>();
 
   const loadedCount = useMemo(
-    () => (sessionData.symbolStatuses ?? []).filter((s) => s.status === 'loaded').length,
+    () => (sessionData.symbolStatuses ?? []).filter((s) => hasUsableSymbols(s.status)).length,
     [sessionData.symbolStatuses],
   );
 
@@ -38,6 +39,14 @@ export const ContextSymbolsView = () => {
       onNavigateToMemory?.(symbol.va);
     }
   }, [onNavigateToDisassembly, onNavigateToMemory]);
+
+  const fetchPreviews = useCallback(async (items: Symbol[]): Promise<(SymbolPreview | null)[]> => {
+    if (!sessionId) return items.map(() => null);
+    return invoke<(SymbolPreview | null)[]>('disassemble_preview_batch', {
+      sessionId,
+      addresses: items.map((s) => s.va),
+    });
+  }, [sessionId]);
 
   const setBreakpointsForSymbols = useCallback(async (symbols: Symbol[], term: string, clear: () => void, singleShot: boolean) => {
     if (!sessionId || symbols.length === 0) return;
@@ -62,6 +71,7 @@ export const ContextSymbolsView = () => {
       onRowContextMenu={(e, symbol) => openContextMenu(e, { va: symbol.va, is_function: symbol.is_function })}
       resetKey={sessionId}
       focusTabId="symbols"
+      fetchPreviews={fetchPreviews}
       selectable
       renderBulkBar={(selectedSymbols, { term, clear }) => (
         <div className="flex items-center gap-1.5">

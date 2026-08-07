@@ -2,7 +2,7 @@ import React, { useRef, useMemo, useEffect, useState, useLayoutEffect } from "re
 import { useParams, useNavigate } from "react-router-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
+import { SessionStatusBadge } from "@/components/session/SessionStatusBadge";
 import { disassemblyNavigation, memoryNavigation, memoryRegionsNavigation, sourceNavigation, panelFocus, peviewerModuleNavigation, typesNavigation } from "@/lib/navigationStore";
 import {
   SESSION_TAB_DEFS, SESSION_TAB_CATEGORIES, SESSION_TAB_BY_ACTION, sessionTabDefFor,
@@ -663,24 +663,9 @@ export default function SessionDocked() {
     };
   }, [sessionId, dynamicTabContent, tabContentFactory, placement]);
 
-  const getStatusBadge = (status: SessionStatus) => {
-    if (typeof status === "string") {
-      switch (status) {
-        case "Stopped":
-          return <Badge variant="secondary">Stopped</Badge>;
-        case "Running":
-          return <Badge variant="default" className="bg-green-600 animate-pulse">Running</Badge>;
-        case "Paused":
-          return <Badge variant="default" className="bg-yellow-600">Paused</Badge>;
-        case "Open":
-          return <Badge variant="default" className="bg-blue-600">Open (non-invasive)</Badge>;
-        default:
-          return <Badge variant="secondary">{status}</Badge>;
-      }
-    } else {
-      return <Badge variant="destructive">Error</Badge>;
-    }
-  };
+  const getStatusBadge = (status: SessionStatus) => (
+    <SessionStatusBadge status={status} openLabel="Open (non-invasive)" />
+  );
 
   if (isLoading) {
     return (
@@ -697,8 +682,8 @@ export default function SessionDocked() {
     return (
       <div className="h-screen flex items-center justify-center">
         <div className="text-center">
-          <AlertCircle className="h-12 w-12 mx-auto mb-4 text-red-500" />
-          <h1 className="text-2xl font-bold text-red-600 mb-2">Session Not Found</h1>
+          <AlertCircle className="h-12 w-12 mx-auto mb-4 text-syn-invalid" />
+          <h1 className="text-2xl font-bold mb-2">Session Not Found</h1>
           <p className="text-muted-foreground mb-4">
             The requested debug session could not be found or has been removed.
           </p>

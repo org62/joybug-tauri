@@ -2,7 +2,7 @@ import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { ArrowLeft, Square, Play, MoveRight, CornerDownRight, CornerUpLeft, Pause, Plus, ChevronDown, Unplug, Loader2, AlertTriangle, Search, RotateCcw } from 'lucide-react';
+import { ArrowLeft, Square, Play, RedoDot, ArrowDownToDot, ArrowUpFromDot, Pause, Plus, ChevronDown, Unplug, Loader2, AlertTriangle, Search, RotateCcw } from 'lucide-react';
 import { exceptionName, formatExceptionCode, EXCEPTION_SINGLE_STEP } from '@/lib/exceptionNames';
 import {
   DropdownMenu,
@@ -179,14 +179,16 @@ export const SessionHeader: React.FC<SessionHeaderProps> = ({
             onClick={handlePause}
             disabled={!canPause || busyAction !== null}
             size="sm"
-            variant="default"
+            variant="ghost"
             title={`Pause (${getKeybinding("debug.go")})`}
             aria-label="Pause"
           >
             <Pause className="h-4 w-4" />
           </Button>
         )}
-        {/* Step buttons group with tighter spacing */}
+        {/* Step buttons group with tighter spacing. Go keeps a border so the group
+            has a hierarchy; the steps are ghost because they're keyboard-driven in
+            practice and a row of solid fills dominates the whole header. */}
         {!canStart && !isOpen && (
           <div className="inline-flex items-center gap-1">
             <div className="inline-flex">
@@ -194,7 +196,7 @@ export const SessionHeader: React.FC<SessionHeaderProps> = ({
                 onClick={handleGo}
                 disabled={!canStep || busyAction !== null}
                 size="sm"
-                variant="default"
+                variant="outline"
                 title={`Go (${getKeybinding("debug.go")})`}
                 aria-label="Go"
                 className="rounded-r-none"
@@ -206,8 +208,8 @@ export const SessionHeader: React.FC<SessionHeaderProps> = ({
                   <Button
                     disabled={!canStep || busyAction !== null}
                     size="sm"
-                    variant="default"
-                    className="rounded-l-none border-l border-l-primary-foreground/20 px-1"
+                    variant="outline"
+                    className="rounded-l-none border-l border-l-border px-1"
                     aria-label="Go options"
                   >
                     <ChevronDown className="h-3 w-3" />
@@ -228,41 +230,42 @@ export const SessionHeader: React.FC<SessionHeaderProps> = ({
                 </DropdownMenuContent>
               </DropdownMenu>
             </div>
+            {/* The three share a dot motif and differ only in how the arrow meets
+                it — over, into, out of — which is the same language VS Code and
+                friends use. The previous three corner arrows were near-identical
+                at 16px and said nothing about what each one does. */}
             <Button
               onClick={handleStepOver}
               disabled={!canStep || busyAction !== null}
               size="sm"
-              variant="default"
+              variant="ghost"
               title={`Step Over (${getKeybinding("debug.stepOver")})`}
               aria-label="Step Over"
             >
-              <MoveRight className="h-4 w-4" />
+              <RedoDot className="h-4 w-4" />
             </Button>
             <Button
               onClick={handleStepIn}
               disabled={!canStep || busyAction !== null}
               size="sm"
-              variant="default"
+              variant="ghost"
               title={`Step In (${getKeybinding("debug.stepIn")})`}
               aria-label="Step In"
             >
-              <CornerDownRight className="h-4 w-4" />
+              <ArrowDownToDot className="h-4 w-4" />
             </Button>
             <Button
               onClick={handleStepOut}
               disabled={!canStep || busyAction !== null}
               size="sm"
-              variant="default"
+              variant="ghost"
               title={`Step Out (${getKeybinding("debug.stepOut")})`}
               aria-label="Step Out"
             >
-              <CornerUpLeft className="h-4 w-4" />
+              <ArrowUpFromDot className="h-4 w-4" />
             </Button>
           </div>
         )}
-
-        {/* Separator between debug/step controls and session-lifecycle actions */}
-        {!canStart && !isOpen && <div className="w-px h-6 bg-border mx-1" />}
 
         {!canStart && isOpen && (
           <Button
@@ -281,11 +284,14 @@ export const SessionHeader: React.FC<SessionHeaderProps> = ({
             (Handle/Pass Exception) split button. */}
         {!canStart && (
           <div className="inline-flex">
+            {/* Neutral, not destructive: stopping is routine and recoverable (Restart
+                is one item down this very menu), and red is reserved for error and
+                changed-since-last-step. The filled square carries the meaning. */}
             <Button
               onClick={handleStop}
               disabled={!canStop || busyAction === "stop"}
               size="sm"
-              variant="destructive"
+              variant="ghost"
               className={isOpen ? undefined : "rounded-r-none"}
               title={`Stop Session (${getKeybinding("debug.stop")})`}
               aria-label="Stop"
@@ -298,8 +304,12 @@ export const SessionHeader: React.FC<SessionHeaderProps> = ({
                   <Button
                     disabled={busyAction !== null || (!canStop && !canDetach)}
                     size="sm"
-                    variant="destructive"
-                    className="rounded-l-none border-l border-l-white/20 px-1"
+                    variant="ghost"
+                    // No divider rule here, unlike the outlined Go split button:
+                    // with no button fill it would read as a stray 1px line
+                    // hanging between two invisible controls. The squared inner
+                    // corners still join them up once either half is hovered.
+                    className="rounded-l-none px-1"
                     aria-label="Stop options"
                   >
                     <ChevronDown className="h-3 w-3" />

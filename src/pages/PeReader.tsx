@@ -17,6 +17,7 @@ import { HexView } from "@/components/HexView";
 import { AssemblyView } from "@/components/AssemblyView";
 import { PeStructureTree } from "@/components/pe/PeStructureTree";
 import { PeSymbolsView, PeSymbol } from "@/components/pe/PeSymbolsView";
+import { SymbolPreview } from "@/components/SymbolSearchView";
 import { PeStringsView } from "@/components/pe/PeStringsView";
 import { OpenPeDialog } from "@/components/pe/OpenPeDialog";
 import { Download } from "lucide-react";
@@ -25,7 +26,7 @@ import { AsmDisassembleFn, Instruction } from "@/hooks/useAssemblyView";
 import { ModuleExtraInfo } from "@/hooks/useModuleInfo";
 import { PeScanFn, PeStringScanResult } from "@/hooks/usePeStringScan";
 import { SymbolResolver } from "@/lib/hexUtils";
-import { PeMapping, AddrMode, ADDR_MODE_LABELS, buildMapping, formatOffset, formatVa, rvaToVa, tripleFromInput } from "@/lib/peAddress";
+import { PeMapping, AddrMode, ADDR_MODE_LABELS, buildMapping, formatOffset, formatVa, rvaToVa, tripleFromInput, tripleFromVa } from "@/lib/peAddress";
 import { applyFieldEdit } from "@/lib/peDecode";
 import { memoryNavigation, disassemblyNavigation } from "@/lib/navigationStore";
 import { NavHistoryStore } from "@/lib/navHistory";
@@ -64,6 +65,8 @@ interface PeReaderContextValue {
   symbolsRefreshKey: string;
   setField: (field: string, value: number) => void;
   searchSymbols: (pattern: string, limit: number) => Promise<PeSymbol[]>;
+  /** Bytes/disasm preview for visible symbol-search rows. */
+  fetchSymbolPreviews: (items: PeSymbol[]) => Promise<(SymbolPreview | null)[]>;
   /** Resolve a symbol name typed in a goto box to its VA. */
   resolveSymbol: SymbolResolver;
   stringScan: PeScanFn;
@@ -132,7 +135,7 @@ const PeHexTab: React.FC = () => {
 };
 
 const PeDisasmTab: React.FC = () => {
-  const { summary, disassemble, initialAddress, mapping, mode, symbolsRefreshKey, resolveSymbol, navHistory } = usePeReader();
+  const { summary, disassemble, initialAddress, mapping, mode, symbolsRefreshKey, resolveSymbol, navHistory, onGoToHex } = usePeReader();
   if (!summary || !disassemble || !mapping) return <NoFilePlaceholder />;
   return (
     <AssemblyView
@@ -143,17 +146,20 @@ const PeDisasmTab: React.FC = () => {
       resolveSymbol={resolveSymbol}
       addressFormatter={(va) => formatVa(mapping, va, mode)}
       translateGotoInput={(addr) => tripleFromInput(mapping, addr, mode).va}
+      // Memory operands link into the hex view (VA → file offset).
+      onNavigateToMemory={(addr) => onGoToHex(tripleFromVa(mapping, BigInt(addr)).file)}
       navHistory={navHistory}
     />
   );
 };
 
 const PeSymbolsTab: React.FC = () => {
-  const { summary, mapping, mode, searchSymbols, onGoToHex, onGoToDisasm } = usePeReader();
+  const { summary, mapping, mode, searchSymbols, fetchSymbolPreviews, onGoToHex, onGoToDisasm } = usePeReader();
   if (!summary || !mapping) return <NoFilePlaceholder />;
   return (
     <PeSymbolsView
       searchSymbols={searchSymbols}
+      fetchPreviews={fetchSymbolPreviews}
       symbolsLoaded={summary.symbols_loaded}
       symbolCount={summary.symbol_count}
       mapping={mapping}
@@ -296,6 +302,14 @@ export default function PeReader() {
     return invoke<PeSymbol[]>("pe_search_symbols", { path, pattern, limit });
   }, [path]);
 
+  const fetchSymbolPreviews = useCallback((items: PeSymbol[]): Promise<(SymbolPreview | null)[]> => {
+    if (!path) return Promise.resolve(items.map(() => null));
+    return invoke<(SymbolPreview | null)[]>("pe_disassemble_preview_batch", {
+      path,
+      addresses: items.map((s) => s.va),
+    });
+  }, [path]);
+
   // Symbol resolution for the disassembly/hex goto boxes. An exact name match
   // wins (case-insensitive, `module!` prefix ignored); otherwise a unique
   // substring match resolves — anything ambiguous stays unresolved.
@@ -431,13 +445,14 @@ export default function PeReader() {
     symbolsRefreshKey,
     setField,
     searchSymbols,
+    fetchSymbolPreviews,
     resolveSymbol,
     stringScan,
     onGoToHex,
     onGoToDisasm,
     onSelectField,
     navHistory,
-  }), [summary, mapping, mode, hexDataSource, disassemble, symbolsRefreshKey, setField, searchSymbols, resolveSymbol, stringScan, onGoToHex, onGoToDisasm, onSelectField, navHistory]);
+  }), [summary, mapping, mode, hexDataSource, disassemble, symbolsRefreshKey, setField, searchSymbols, fetchSymbolPreviews, resolveSymbol, stringScan, onGoToHex, onGoToDisasm, onSelectField, navHistory]);
 
   return (
     <Page scroll={false} container={false}>
@@ -477,8 +492,8 @@ export default function PeReader() {
           )}
           <div className="ml-2 flex-1 min-w-0 text-sm font-mono truncate text-muted-foreground" title={path ?? undefined}>
             {path ? moduleBasename(path) : "No PE file open"}
-            {dirty && <span className="ml-1 text-yellow-500">●</span>}
-            {summary?.symbols_loaded && <span className="ml-2 text-xs text-green-500">{summary.symbol_count} symbols</span>}
+            {dirty && <span className="ml-1 text-syn-state">●</span>}
+            {summary?.symbols_loaded && <span className="ml-2 text-xs text-muted-foreground">{summary.symbol_count} symbols</span>}
           </div>
           <DockWindowsMenu dockingRef={dockingRef} tabs={PE_TABS} />
         </div>

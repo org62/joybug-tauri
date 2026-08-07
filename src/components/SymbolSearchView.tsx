@@ -9,6 +9,7 @@ import { VirtualizedList } from '@/components/ui/virtualized-list';
 import { TruncatedSymbol } from '@/components/ui/truncated-symbol';
 import { EmptyState } from '@/components/ui/empty-state';
 import { usePanelFocus } from '@/hooks/usePanelFocus';
+import { useVisibleRowsFetch } from '@/hooks/useVisibleRowsFetch';
 
 /** The fields every symbol source (session or PE file) returns per hit. */
 export interface SymbolSearchItem {
@@ -19,10 +20,19 @@ export interface SymbolSearchItem {
   is_function: boolean;
 }
 
+/** Per-row enrichment: the first instruction's bytes and disassembly at the symbol. */
+export interface SymbolPreview {
+  bytes: string;
+  disasm: string;
+}
+
 export const MIN_SEARCH_CHARS = 2;
 const SEARCH_LIMIT = 1000;
 const DEBOUNCE_MS = 250;
 const ROW_HEIGHT = 30;
+/** Row-width floor: below this the list scrolls horizontally instead of squashing. */
+const MIN_ROW_WIDTH = '30rem';
+const MIN_ROW_WIDTH_WITH_PREVIEWS = '58rem';
 
 interface SymbolSearchViewProps<T extends SymbolSearchItem> {
   searchSymbols: (pattern: string, limit: number) => Promise<T[]>;
@@ -52,6 +62,13 @@ interface SymbolSearchViewProps<T extends SymbolSearchItem> {
    * selected items, the trimmed search term (for naming), and a `clear` callback.
    */
   renderBulkBar?: (selected: T[], ctx: { term: string; clear: () => void }) => ReactNode;
+  /**
+   * Fetches bytes/disasm previews for the given result rows (visible rows only —
+   * called lazily as the list scrolls). Must return one entry per input item,
+   * null where no preview is available. When omitted, the preview columns are
+   * not rendered.
+   */
+  fetchPreviews?: (items: T[]) => Promise<(SymbolPreview | null)[]>;
   /** Extra content rendered inside the panel (e.g. a context menu). */
   children?: ReactNode;
 }
@@ -63,7 +80,8 @@ interface SymbolSearchViewProps<T extends SymbolSearchItem> {
  */
 export function SymbolSearchView<T extends SymbolSearchItem>({
   searchSymbols, enabled, placeholder, idleTitle, idleSubtitle, formatAddress,
-  onSelect, onRowContextMenu, resetKey, focusTabId, selectable, renderBulkBar, children,
+  onSelect, onRowContextMenu, resetKey, focusTabId, selectable, renderBulkBar,
+  fetchPreviews, children,
 }: SymbolSearchViewProps<T>) {
   const focusRef = usePanelFocus<HTMLInputElement>(focusTabId);
   const [term, setTerm] = useState('');
@@ -71,6 +89,34 @@ export function SymbolSearchView<T extends SymbolSearchItem>({
   const [searching, setSearching] = useState(false);
   const [searched, setSearched] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Bytes/disasm previews, fetched lazily for the rows the virtualizer renders,
+  // keyed by VA. `null` marks "fetched, nothing there" so rows aren't re-requested.
+  const [previews, setPreviews] = useState<Map<string, SymbolPreview | null>>(new Map());
+  const previewsRef = useRef(previews);
+  previewsRef.current = previews;
+
+  const fetchVisible = useCallback(async (visible: T[]) => {
+    if (!fetchPreviews) return false;
+    const missing = visible.filter((s) => !previewsRef.current.has(s.va));
+    if (missing.length === 0) return false;
+    const data = await fetchPreviews(missing);
+    setPreviews((prev) => {
+      const next = new Map(prev);
+      missing.forEach((s, i) => next.set(s.va, data[i] ?? null));
+      return next;
+    });
+  }, [fetchPreviews]);
+  // followUp: previews are fetched once per row, so the extra pass (catching
+  // rows scrolled in mid-fetch) converges as soon as nothing is missing.
+  const { virtualizerRef, schedule: schedulePreviewFetch } =
+    useVisibleRowsFetch({ items: symbols, fetchVisible, followUp: true });
+
+  // New result set: previews belong to the old rows — drop and refetch.
+  useEffect(() => {
+    setPreviews(new Map());
+    if (symbols.length > 0) schedulePreviewFetch();
+  }, [symbols, schedulePreviewFetch]);
 
   // Selection state (indices into the stable `symbols` array). `anchorRef` is the last
   // toggled index, used as the pivot for shift-click range selection.
@@ -206,27 +252,53 @@ export function SymbolSearchView<T extends SymbolSearchItem>({
             items={symbols}
             rowHeight={ROW_HEIGHT}
             className="h-full"
+            minContentWidth={fetchPreviews ? MIN_ROW_WIDTH_WITH_PREVIEWS : MIN_ROW_WIDTH}
+            virtualizerRef={virtualizerRef}
+            onViewportScroll={fetchPreviews ? schedulePreviewFetch : undefined}
             getItemKey={(s, i) => `${s.module_name}-${s.name}-${i}`}
-            renderItem={(s, i) => (
-              <div
-                className="px-2 py-1 border-b hover:bg-muted/40 cursor-pointer h-full"
-                onClick={() => onSelect(s)}
-                onContextMenu={onRowContextMenu ? (e) => onRowContextMenu(e, s) : undefined}
-              >
-                <div className="flex items-center gap-2 text-sm font-mono min-w-0 h-full">
-                  {selectable && (
-                    <span
-                      className="flex items-center shrink-0"
-                      onClick={(e) => { e.stopPropagation(); toggleSelect(i, e.shiftKey); }}
-                    >
-                      <Checkbox checked={selected.has(i)} tabIndex={-1} className="pointer-events-none" />
-                    </span>
-                  )}
-                  <span className="text-muted-foreground shrink-0">{formatAddress ? formatAddress(s) : s.va}</span>
-                  <TruncatedSymbol text={s.display_name} className="flex-1" />
+            renderItem={(s, i) => {
+              const preview = fetchPreviews ? previews.get(s.va) : undefined;
+              return (
+                <div
+                  className="px-2 py-1 border-b hover:bg-muted/40 cursor-pointer h-full"
+                  onClick={() => onSelect(s)}
+                  onContextMenu={onRowContextMenu ? (e) => onRowContextMenu(e, s) : undefined}
+                >
+                  <div className="flex items-center gap-2 text-sm font-mono min-w-0 h-full">
+                    {selectable && (
+                      <span
+                        className="flex items-center shrink-0"
+                        onClick={(e) => { e.stopPropagation(); toggleSelect(i, e.shiftKey); }}
+                      >
+                        <Checkbox checked={selected.has(i)} tabIndex={-1} className="pointer-events-none" />
+                      </span>
+                    )}
+                    <span className="text-muted-foreground shrink-0">{formatAddress ? formatAddress(s) : s.va}</span>
+                    {fetchPreviews ? (
+                      <>
+                        <TruncatedSymbol text={s.display_name} className="w-72 shrink-0" />
+                        <span
+                          data-testid="symbol-preview-bytes"
+                          className="w-40 shrink-0 truncate text-xs text-muted-foreground"
+                          title={preview?.bytes}
+                        >
+                          {preview?.bytes ?? ''}
+                        </span>
+                        <span
+                          data-testid="symbol-preview-disasm"
+                          className="flex-1 min-w-0 truncate"
+                          title={preview?.disasm}
+                        >
+                          {preview?.disasm ?? ''}
+                        </span>
+                      </>
+                    ) : (
+                      <TruncatedSymbol text={s.display_name} className="flex-1" />
+                    )}
+                  </div>
                 </div>
-              </div>
-            )}
+              );
+            }}
           />
         ) : (
           <ScrollArea className="h-full">{stateContent()}</ScrollArea>

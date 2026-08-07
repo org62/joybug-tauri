@@ -38,6 +38,17 @@
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) + 4px);
+  /* Bundled via @fontsource in main.tsx. Cascadia Mono / Consolas are the
+     Windows fallbacks so a failed font load still lands on something monospaced
+     rather than collapsing hex columns into a proportional font. */
+  --font-mono: "JetBrains Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+  /* The density of every data listing (disassembly, source, hex, registers,
+     emulation trace). One token so the views can't drift apart: the line-height
+     is also the virtualized row height — see DATA_ROW_HEIGHT in lib/utils.ts.
+     18px is the snug fit for JetBrains Mono at 13px (ascent+descent ≈ 17.2px);
+     anything lower clips descenders. */
+  --text-data: 13px;
+  --text-data--line-height: 18px;
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
@@ -69,6 +80,17 @@
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
+  /* Semantic data colors — see the --syn-* block below for what each one means.
+     Views must reach for these, never a raw Tailwind hue, so that the number of
+     things a color can mean stays bounded. */
+  --color-syn-accent: var(--syn-accent);
+  --color-syn-flow: var(--syn-flow);
+  --color-syn-link: var(--syn-link);
+  --color-syn-changed: var(--syn-changed);
+  --color-syn-invalid: var(--syn-invalid);
+  --color-syn-patched: var(--syn-patched);
+  --color-syn-state: var(--syn-state);
+  --color-syn-covered: var(--syn-covered);
 }
 
 :root {
@@ -104,6 +126,28 @@
   --sidebar-accent-foreground: oklch(0.205 0 0);
   --sidebar-border: oklch(0.922 0 0);
   --sidebar-ring: oklch(0.708 0 0);
+
+  /* Semantic data palette. A handful of hues, fixed roles — the whole point is
+     that a reader can state what a color means in one sentence:
+       accent  (user)   the app's accent hue, user-selectable in Settings
+       flow    (blue)   control leaves this row: jmp / jcc / call / ret
+       link    (accent) clickable target — symbol, address, jump destination
+       changed (red)    differs from the previous stop
+       invalid (red)    undecodable instruction, parse or command error
+       patched (violet) in-memory bytes differ from the on-disk image
+       state   (amber)  execution state: paused, the PC row, pending edits
+       covered (green)  this code was actually executed (coverage / trace)
+     Anything that isn't one of these gets no hue at all. Most disassembly rows
+     are ordinary data movement, so leaving them plain is what lets the coloured
+     minority actually register. */
+  --syn-accent: oklch(0.50 0.19 250);
+  --syn-link: var(--syn-accent);
+  --syn-flow: oklch(0.52 0.18 250);
+  --syn-changed: oklch(0.55 0.21 25);
+  --syn-invalid: oklch(0.52 0.22 25);
+  --syn-patched: oklch(0.52 0.20 300);
+  --syn-state: oklch(0.58 0.15 70);
+  --syn-covered: oklch(0.55 0.14 155);
 }
 
 .dark {
@@ -138,6 +182,37 @@
   --sidebar-accent-foreground: oklch(0.985 0 0);
   --sidebar-border: oklch(1 0 0 / 10%);
   --sidebar-ring: oklch(0.556 0 0);
+
+  /* Same roles, lifted in lightness and eased off in chroma so they stay
+     legible against the near-black background without vibrating on it. */
+  --syn-accent: oklch(0.78 0.12 250);
+  --syn-flow: oklch(0.72 0.14 250);
+  --syn-changed: oklch(0.72 0.17 25);
+  --syn-invalid: oklch(0.68 0.20 25);
+  --syn-patched: oklch(0.74 0.14 300);
+  --syn-state: oklch(0.80 0.15 80);
+  --syn-covered: oklch(0.76 0.13 155);
+}
+
+/* User-selectable accent (Settings → General, persisted by src/lib/accent.ts as
+   data-accent on <html>). Each option defines a light and a dark variant so it
+   reads well on both themes. Hues steer clear of the semantic palette's fixed
+   meanings (red = changed/invalid, amber = state, green = covered). Blue is the
+   default — no data-accent attribute. */
+html[data-accent="teal"] { --syn-accent: oklch(0.52 0.13 200); }
+html.dark[data-accent="teal"] { --syn-accent: oklch(0.78 0.12 200); }
+html[data-accent="purple"] { --syn-accent: oklch(0.51 0.19 290); }
+html.dark[data-accent="purple"] { --syn-accent: oklch(0.76 0.13 290); }
+html[data-accent="rose"] { --syn-accent: oklch(0.53 0.19 355); }
+html.dark[data-accent="rose"] { --syn-accent: oklch(0.76 0.13 355); }
+
+/* JetBrains Mono ligates ->, =>, !=, ::, and similar. In a disassembler that's
+   actively harmful: operands like [rsp + 0x40] and raw byte columns have to read
+   as the literal characters they are, never as a composed glyph. Unlayered so it
+   applies wherever the font-mono utility lands. */
+.font-mono {
+  font-variant-ligatures: none;
+  font-feature-settings: "liga" 0, "calt" 0;
 }
 
 /* Thin scrollbar matching ScrollArea style */
@@ -170,19 +245,35 @@
   animation: none !important;
 }
 
-.dark .dock-ink-bar {
-  @apply bg-amber-400;
+/* Panel tab titles are chrome, not data — they signal "active" through contrast,
+   weight and the ink bar's position, which is three cues without spending a hue.
+   Same treatment on both themes; the `.dock-layout` prefix out-ranks rc-dock's
+   own stylesheet, which hardcodes a blue active tab and ink bar. */
+.dock-layout .dock-ink-bar {
+  @apply bg-foreground/60;
 }
 
-.dark .dock-layout .dock-tab-active,
-.dark .dock-layout .dock-tab:hover {
-  @apply text-amber-400;
+.dock-layout .dock-tab {
+  @apply text-muted-foreground;
 }
 
-/* Highlight fade animation for jump targets in disassembly view */
+.dock-layout .dock-tab-active,
+.dock-layout .dock-tab-active:hover {
+  @apply text-foreground font-medium;
+}
+
+.dock-layout .dock-tab:hover {
+  @apply text-foreground;
+}
+
+/* Highlight fade animation for navigation targets (source lines; the
+   disassembly view selects the target row instead). Derives from the accent so
+   it matches whatever accent the user picked. Duration must stay in step with
+   NAV_HIGHLIGHT_MS in lib/utils.ts — the views drop the class on that timer,
+   so a shorter timer would cut the fade off abruptly mid-animation. */
 @keyframes highlight-fade {
   0% {
-    background-color: rgb(59 130 246 / 0.5); /* blue-500/50 */
+    background-color: color-mix(in oklab, var(--syn-accent) 50%, transparent);
   }
   100% {
     background-color: transparent;
@@ -190,16 +281,17 @@
 }
 
 .animate-highlight-fade {
-  animation: highlight-fade 1s ease-out forwards;
+  animation: highlight-fade 2.5s ease-out forwards;
 }
 
+/* Same timing, dimmer peak — only the keyframes differ in dark mode. */
 .dark .animate-highlight-fade {
-  animation: highlight-fade-dark 3s ease-out forwards;
+  animation-name: highlight-fade-dark;
 }
 
 @keyframes highlight-fade-dark {
   0% {
-    background-color: rgb(59 130 246 / 0.4); /* blue-500/40 */
+    background-color: color-mix(in oklab, var(--syn-accent) 40%, transparent);
   }
   100% {
     background-color: transparent;

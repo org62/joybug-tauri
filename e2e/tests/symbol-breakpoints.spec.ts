@@ -67,6 +67,20 @@ test.describe("Symbol mass breakpoints", () => {
       const selectAll = page.getByRole("button", { name: "Select All" });
       await expect(selectAll).toBeVisible({ timeout: 10_000 });
 
+      // Result rows enrich asynchronously with the first instruction's bytes
+      // and disassembly, fetched for the visible rows over the OOB client.
+      await expect(async () => {
+        const bytes = await page
+          .getByTestId("symbol-preview-bytes")
+          .allTextContents();
+        const disasm = await page
+          .getByTestId("symbol-preview-disasm")
+          .allTextContents();
+        // Function symbols decode to hex byte pairs + a mnemonic.
+        expect(bytes.some((t) => /^[0-9A-F]{2}( [0-9A-F]{2})*$/.test(t.trim()))).toBe(true);
+        expect(disasm.some((t) => t.trim().length > 0)).toBe(true);
+      }).toPass({ timeout: 10_000, intervals: [100, 250] });
+
       // Select everything, then read the count off the apply button before clicking.
       await selectAll.click();
       const applyBtn = page.getByRole("button", { name: /Set Breakpoints/ });

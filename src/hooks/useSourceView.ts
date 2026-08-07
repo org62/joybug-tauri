@@ -193,7 +193,8 @@ export function useSourceView(options: UseSourceViewOptions): SourceViewState & 
   const loadWindow = useCallback(
     async (start: number, count: number, mode: 'replace' | 'prepend' | 'append', token: number) => {
       const of = openRef.current;
-      if (!of) return;
+      // Missing files have no resolved path — nothing to read.
+      if (!of || !of.resolvedPath) return;
       try {
         const win = await invoke<SourceWindow>('read_source_window', {
           resolvedPath: of.resolvedPath,
@@ -280,28 +281,27 @@ export function useSourceView(options: UseSourceViewOptions): SourceViewState & 
         return;
       }
 
+      let meta: SourceFileMeta & { fileMissing: boolean };
       try {
         const override = manualPathsRef.current.get(fPath.toLowerCase());
-        const meta = await invoke<SourceFileMeta>('open_source_file', {
+        const opened = await invoke<SourceFileMeta>('open_source_file', {
           filePath: override ?? fPath,
           checksumKind: checksumKind || null,
           checksum: checksum || null,
         });
-        if (token !== openTokenRef.current) return;
-        const withMissing = { ...meta, fileMissing: false };
-        cacheMeta(key, withMissing);
-        applyMeta(withMissing);
+        meta = { ...opened, fileMissing: false };
       } catch (err) {
-        if (token !== openTokenRef.current) return;
         const msg = formatTauriError(err);
-        const missing: SourceFileMeta & { fileMissing: boolean } = {
-          resolved_path: '', line_count: 0, checksum_matches: null, fileMissing: true,
-        };
-        applyMeta(missing);
         if (!isBenignSessionError(msg)) console.warn('Source file unavailable:', msg);
-      } finally {
-        if (token === openTokenRef.current) setIsLoading(false);
+        // The miss is cached (negatively) below: every PC move / disasm click
+        // re-resolves the same file, and without this each one re-invokes
+        // open_source_file. Refresh and Locate drop the cache to re-check disk.
+        meta = { resolved_path: '', line_count: 0, checksum_matches: null, fileMissing: true };
       }
+      if (token !== openTokenRef.current) return; // superseded — the newer open owns isLoading
+      cacheMeta(key, meta);
+      applyMeta(meta);
+      setIsLoading(false);
     },
     [sessionId, loadWindow, cacheMeta, requestScroll],
   );
@@ -537,6 +537,16 @@ export function useSourceView(options: UseSourceViewOptions): SourceViewState & 
   }, [pcAddress, resolveAddress]);
 
   const refresh = useCallback(() => {
+    // Re-check the disk for the current file and any negative "file missing"
+    // entries (e.g. after the user copied sources into place). Other files'
+    // metas stay cached — re-opening one re-streams the whole file.
+    const currentKey = openRef.current?.key;
+    for (const [k, m] of metaCacheRef.current) {
+      if (m.fileMissing || k === currentKey) metaCacheRef.current.delete(k);
+    }
+    // Dropping a meta must also clear openRef, or the already-open fast path
+    // in openFile skips the re-open (same pairing as locateFile).
+    openRef.current = null;
     if (pcAddress !== null) {
       lastPcRef.current = null;
       resolveAddress(pcAddress, true);

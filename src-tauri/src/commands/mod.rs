@@ -48,6 +48,18 @@ pub(crate) fn parse_hex_u64(s: &str, label: &str) -> Result<u64> {
         .map_err(|e| Error::InvalidParameter(format!("Invalid {} '{}': {}", label, s, e)))
 }
 
+/// Await `f` on the blocking pool. Heavy filesystem/parse work in an async
+/// command must hop here — an async body with no awaits runs its whole
+/// duration on a shared async-runtime worker, head-of-line-blocking every
+/// other async command.
+pub(crate) async fn run_blocking<R: Send + 'static>(
+    f: impl FnOnce() -> Result<R> + Send + 'static,
+) -> Result<R> {
+    tauri::async_runtime::spawn_blocking(f)
+        .await
+        .map_err(|e| Error::InternalCommunication(format!("Blocking task failed: {}", e)))?
+}
+
 /// Sends a UICommand to a paused session. Shared helper for breakpoint, symbol, and disassembly commands.
 fn send_paused_command(
     session_id: &str,

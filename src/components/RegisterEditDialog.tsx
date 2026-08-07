@@ -213,7 +213,7 @@ export function RegisterEditDialog({
             )}
             {!resolving && preview && !error && (
               <>
-                <span className="text-green-500">{preview}</span>
+                <span className="text-foreground">{preview}</span>
                 {resolvedLabel && (
                   <span className="text-muted-foreground">({resolvedLabel})</span>
                 )}

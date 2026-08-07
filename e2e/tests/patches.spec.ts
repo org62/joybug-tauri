@@ -1,7 +1,7 @@
 import { writeFileSync } from "fs";
 import path from "path";
 import { test, expect } from "../helpers/test-fixtures";
-import { createAndStartSession, cleanupSession, openWindowsSubmenu } from "../helpers/session-helpers";
+import { createAndStartSession, cleanupSession, goToWindow } from "../helpers/session-helpers";
 import {
   waitForPaused,
   waitForDisassemblyLoaded,
@@ -445,9 +445,9 @@ test.describe("Assembly Patching", () => {
         expect(p.length).toBe(1);
       }).toPass({ timeout: 5_000 });
 
-      // Open the User Patches tab via the Windows menu → Debug submenu
-      await openWindowsSubmenu(page, "Debug");
-      await page.getByRole("menuitemcheckbox", { name: "User Patches" }).click();
+      // Open the User Patches tab (palette, not the Windows menu — this test
+      // is about the patch list, not the menu).
+      await goToWindow(page, "User Patches");
 
       // Wait for the patches view to render with data
       await expect(async () => {

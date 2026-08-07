@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { useDebugSettings } from "@/hooks/useDebugSettings";
 import { applyZoom, getStoredZoom, ZOOM_CHANGED_EVENT, ZOOM_STEPS } from "@/lib/uiZoom";
+import { ACCENT_OPTIONS, applyAccent, getStoredAccent, type AccentId } from "@/lib/accent";
 
 interface SettingItem {
   key: string;
@@ -20,6 +21,7 @@ interface SettingItem {
 
 const SETTING_ITEMS: SettingItem[] = [
   { key: "theme", label: "Theme", keywords: ["dark", "light", "system", "appearance", "color"] },
+  { key: "accentColor", label: "Accent color", keywords: ["accent", "color", "appearance", "link", "blue", "teal", "purple", "rose", "highlight"] },
   { key: "uiScale", label: "UI scale", keywords: ["zoom", "scale", "ui", "enlarge", "bigger", "size", "font", "magnify", "text", "large", "small"] },
   { key: "scanThreads", label: "Memory scan threads (0 = all cores)", keywords: ["scan", "thread", "threads", "memory", "performance", "cores", "parallel", "cpu"] },
   { key: "autoUpdateCheck", label: "Automatically check for updates", keywords: ["update", "updates", "upgrade", "version", "release", "releases", "check", "github", "new"] },
@@ -35,6 +37,7 @@ export function SettingsGeneral({ searchQuery }: SettingsGeneralProps) {
   const { settings, setScanThreadCount, toggle } = useDebugSettings();
   const [scanThreadsDraft, setScanThreadsDraft] = useState<string | null>(null);
   const [uiScale, setUiScale] = useState(() => getStoredZoom());
+  const [accent, setAccent] = useState<AccentId>(() => getStoredAccent());
 
   // Track zoom changes made elsewhere (Ctrl/Cmd +/-/0 hotkeys) while this
   // panel is open, so the dropdown never shows a stale factor.
@@ -77,6 +80,33 @@ export function SettingsGeneral({ searchQuery }: SettingsGeneralProps) {
                   <SelectItem value="light">Light</SelectItem>
                   <SelectItem value="dark">Dark</SelectItem>
                   <SelectItem value="system">System</SelectItem>
+                </SelectContent>
+              </Select>
+            )}
+            {item.key === "accentColor" && (
+              <Select
+                value={accent}
+                onValueChange={(v) => {
+                  const id = v as AccentId;
+                  applyAccent(id);
+                  setAccent(id);
+                }}
+              >
+                <SelectTrigger size="xs" className="w-[130px]">
+                  <SelectValue placeholder="Accent" />
+                </SelectTrigger>
+                <SelectContent>
+                  {ACCENT_OPTIONS.map((o) => (
+                    <SelectItem key={o.id} value={o.id}>
+                      <span className="flex items-center gap-2">
+                        <span
+                          className="inline-block h-2.5 w-2.5 rounded-full"
+                          style={{ background: o.swatch }}
+                        />
+                        {o.label}
+                      </span>
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             )}

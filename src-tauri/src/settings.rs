@@ -76,6 +76,8 @@ pub struct DebugSettings {
     pub stop_on_initial_breakpoint: bool,
     pub stop_on_process_create: bool,
     #[serde(default)]
+    pub stop_on_process_exit: bool,
+    #[serde(default)]
     pub stop_on_debug_output: bool,
     /// Plant a single-shot breakpoint at each loaded user module's entry point (DllMain/OEP).
     #[serde(default)]
@@ -125,6 +127,7 @@ impl Default for DebugSettings {
             stop_on_dll_unload: true,
             stop_on_initial_breakpoint: true,
             stop_on_process_create: true,
+            stop_on_process_exit: false, // do not pause on process exit by default
             stop_on_debug_output: false,
             break_on_user_module_entry: false,
             break_on_system_module_entry: false,

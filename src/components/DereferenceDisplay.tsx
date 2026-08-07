@@ -68,10 +68,14 @@ export function DereferenceDisplay({ entry, skipFirst = false, maxItems = 4 }: D
   }
 
   const chain = entry.chain;
-  const startIndex = skipFirst ? 1 : 0;
+  // skipFirst drops the chain's leading element because the caller already shows
+  // the raw slot value. When the target is executable but unreadable the backend
+  // emits no Pointer element and the chain starts directly with an Instruction —
+  // nothing is duplicated then, so there is nothing to skip.
+  const startIndex = skipFirst && chain[0]?.type !== 'Instruction' ? 1 : 0;
 
-  // If skipFirst is true and we have a symbol, show it in parens
-  const symbol = skipFirst ? getSymbol(chain) : null;
+  // If we skipped the leading pointer and it carried a symbol, show it in parens
+  const symbol = startIndex > 0 ? getSymbol(chain) : null;
 
   // Build the chain string
   const items: string[] = [];

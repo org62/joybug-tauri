@@ -190,8 +190,11 @@ pub fn debug_event_to_info(event: &joybug_core::protocol_io::DebugEvent) -> Debu
             event_type: "ProcessExited".to_string(),
             process_id: *pid,
             thread_id: *tid,
-            details: format!("Process exited: PID={}, Exit Code={}", pid, exit_code),
-            can_continue: false,
+            // Exit codes are routinely status codes (0xC0000005 &c.), so lead with hex.
+            details: format!("Process exited: PID={}, Exit Code=0x{:X} ({})", pid, exit_code, exit_code),
+            // Resumable in the sense the UI cares about: when the session pauses on
+            // this event, Go/Stop is what releases the zombie and ends the run.
+            can_continue: true,
             address: None,
             context: None,
             exception_code: None,

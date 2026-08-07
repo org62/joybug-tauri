@@ -80,7 +80,7 @@ const LeafRow: React.FC<{
   return (
     <div className="flex items-center gap-2 py-0.5 pr-2 text-xs" style={{ paddingLeft: depth * INDENT + 22 }}>
       <span
-        className={`text-muted-foreground min-w-[180px] ${field ? "cursor-pointer hover:text-foreground hover:underline decoration-dotted underline-offset-2" : ""}`}
+        className={`text-muted-foreground min-w-[180px] ${field ? "cursor-pointer hover:text-syn-link hover:underline decoration-dotted underline-offset-2" : ""}`}
         title={field ? "Click to select this field's bytes in the hex view" : undefined}
         onClick={field ? () => selectField(...(Array.isArray(field) ? field : [field])) : undefined}
       >

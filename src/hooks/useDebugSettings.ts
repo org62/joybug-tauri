@@ -23,6 +23,7 @@ export interface DebugSettings {
   stop_on_dll_unload: boolean;
   stop_on_initial_breakpoint: boolean;
   stop_on_process_create: boolean;
+  stop_on_process_exit: boolean;
   stop_on_debug_output: boolean;
   break_on_user_module_entry: boolean;
   break_on_system_module_entry: boolean;
@@ -49,6 +50,7 @@ export interface EventSettingItem {
 
 export const EVENT_ITEMS: EventSettingItem[] = [
   { key: "stop_on_process_create", id: "event.processCreate", label: "Process Create", keywords: ["event", "process", "create", "exception"] },
+  { key: "stop_on_process_exit", id: "event.processExit", label: "Process Exit", keywords: ["event", "process", "exit", "terminate", "exception"] },
   { key: "stop_on_thread_create", id: "event.threadCreate", label: "Thread Create", keywords: ["event", "thread", "create", "exception"] },
   { key: "stop_on_thread_exit", id: "event.threadExit", label: "Thread Exit", keywords: ["event", "thread", "exit", "exception"] },
   { key: "stop_on_dll_load", id: "event.dllLoad", label: "DLL Load", keywords: ["event", "dll", "module", "load", "exception"] },
@@ -77,6 +79,7 @@ const DEFAULTS: DebugSettings = {
   stop_on_dll_unload: true,
   stop_on_initial_breakpoint: true,
   stop_on_process_create: true,
+  stop_on_process_exit: false,
   stop_on_debug_output: false,
   break_on_user_module_entry: false,
   break_on_system_module_entry: false,

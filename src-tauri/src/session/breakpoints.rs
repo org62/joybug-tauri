@@ -84,6 +84,31 @@ fn arm_bp_of_kind(session: &mut DebugSession, pid: u32, address: u64, bp_kind: &
     }
 }
 
+/// Identity of a module's on-disk file ("size:mtime_ns"), recorded per
+/// breakpoint so a rebuilt binary can be detected before persisted RVAs are
+/// re-armed at (now wrong) instructions. None when the file can't be inspected
+/// (remote target, device path) — the check is then skipped, not failed.
+pub(crate) fn module_file_fingerprint(path: &str) -> Option<String> {
+    let meta = std::fs::metadata(path).ok()?;
+    let mtime = meta.modified().ok()?;
+    let ns = mtime.duration_since(std::time::UNIX_EPOCH).ok()?.as_nanos();
+    Some(format!("{}:{}", meta.len(), ns))
+}
+
+/// Fingerprint of the on-disk file of the module containing `address`, if any.
+fn module_fingerprint_at(session: &DebugSession, address: u64) -> Option<String> {
+    let path = {
+        let state = session.state.lock().unwrap();
+        state.modules.iter()
+            .find(|m| {
+                let size = m.size.unwrap_or(0);
+                address >= m.base && (size == 0 || address < m.base + size)
+            })
+            .map(|m| m.name.clone())
+    };
+    path.as_deref().and_then(module_file_fingerprint)
+}
+
 /// Persist breakpoints to disk for the current session's launch command
 pub(crate) fn persist_breakpoints(session_state: &Arc<Mutex<SessionStateUI>>) {
     let state = session_state.lock().unwrap();
@@ -161,18 +186,18 @@ fn add_software_breakpoint(
     auto: bool,
     single_shot: bool,
 ) {
-    let (module_name, module_offset) = {
+    let (module_name, module_offset, module_path) = {
         let state = session.state.lock().unwrap();
         let mut found = None;
         for m in &state.modules {
             let module_size = m.size.unwrap_or(0);
             if address >= m.base && (module_size == 0 || address < m.base + module_size) {
                 let name = module_short_name(&m.name).to_lowercase();
-                found = Some((name, address - m.base));
+                found = Some((name, address - m.base, Some(m.name.clone())));
                 break;
             }
         }
-        found.unwrap_or_else(|| ("unknown".to_string(), address))
+        found.unwrap_or_else(|| ("unknown".to_string(), address, None))
     };
 
     let bp_id = uuid::Uuid::new_v4().to_string();
@@ -211,6 +236,8 @@ fn add_software_breakpoint(
         (symbol, source_file, source_line)
     };
 
+    let module_fingerprint = module_path.as_deref().and_then(module_file_fingerprint);
+
     let mut state = session.state.lock().unwrap();
     state.breakpoints.push(crate::state::BreakpointInfo {
         id: bp_id,
@@ -229,6 +256,7 @@ fn add_software_breakpoint(
         source_line,
         auto,
         single_shot,
+        module_fingerprint,
     });
 }
 
@@ -563,11 +591,17 @@ pub(crate) fn apply_enable_breakpoint(
             let set_result = arm_bp_of_kind(session, pid, address, &bp.bp_kind, bp.hw_type.as_deref(), bp.hw_size, bp.single_shot);
             match set_result {
                 Ok(()) => {
+                    // An explicit enable accepts the module file as it is now —
+                    // refresh the recorded identity (see reapply invalidation).
+                    let module_fingerprint = module_fingerprint_at(session, address);
                     let mut state = session.state.lock().unwrap();
                     if let Some(b) = state.breakpoints.iter_mut().find(|b| b.id == breakpoint_id) {
                         b.enabled = true;
                         b.is_active = true;
                         b.address = address;
+                        if module_fingerprint.is_some() {
+                            b.module_fingerprint = module_fingerprint;
+                        }
                     }
                 }
                 Err(e) => {
@@ -697,45 +731,96 @@ pub(crate) fn refresh_breakpoint_source_lines_for_module(
     }
 }
 
-/// Re-apply breakpoints for a newly loaded module
+/// Re-apply breakpoints for a newly loaded module.
+///
+/// Before arming, each persisted breakpoint's recorded module-file fingerprint is
+/// compared against the file on disk now: a rebuilt/updated binary invalidates the
+/// stored RVAs (they may land mid-instruction), so mismatching breakpoints are
+/// auto-disabled with a warning instead of being armed at wrong locations. The
+/// fingerprint is refreshed on that pass, so explicitly re-enabling a row accepts
+/// the new binary.
 pub(crate) fn reapply_breakpoints_for_module(
     session: &mut DebugSession,
+    app_handle_clone: &Option<AppHandle>,
     pid: u32,
     module_name: &str,
     module_base: u64,
 ) {
-    let breakpoints_to_apply: Vec<(String, u64, bool, String, Option<String>, Option<u8>, bool)> = {
+    let module_path: Option<String> = {
+        let state = session.state.lock().unwrap();
+        state.modules.iter().find(|m| m.base == module_base).map(|m| m.name.clone())
+    };
+    let current_fp = module_path.as_deref().and_then(module_file_fingerprint);
+
+    let breakpoints_to_apply: Vec<crate::state::BreakpointInfo> = {
         let state = session.state.lock().unwrap();
         state.breakpoints.iter()
             .filter(|bp| !bp.is_active && bp.module_name.eq_ignore_ascii_case(module_name))
-            .map(|bp| (bp.id.clone(), module_base + bp.module_offset, bp.enabled, bp.bp_kind.clone(), bp.hw_type.clone(), bp.hw_size, bp.single_shot))
+            .cloned()
             .collect()
     };
 
-    for (bp_id, addr, enabled, bp_kind, hw_type, hw_size, single_shot) in breakpoints_to_apply {
-        if enabled {
-            let set_ok = arm_bp_of_kind(session, pid, addr, &bp_kind, hw_type.as_deref(), hw_size, single_shot).is_ok();
-            if set_ok {
-                let (source_file, source_line) = resolve_source_line(session, pid, addr);
-                let mut state = session.state.lock().unwrap();
-                if let Some(bp) = state.breakpoints.iter_mut().find(|b| b.id == bp_id) {
-                    bp.address = addr;
-                    bp.is_active = true;
-                    bp.source_file = source_file;
-                    bp.source_line = source_line;
-                    info!("Re-applied breakpoint {} at 0x{:X}", bp.id, addr);
-                }
-            }
-        } else {
-            let (source_file, source_line) = resolve_source_line(session, pid, addr);
+    let mut invalidated: usize = 0;
+    for snap in breakpoints_to_apply {
+        let addr = module_base + snap.module_offset;
+        // Only a definite mismatch invalidates; an unknown side (legacy entry,
+        // uninspectable file) keeps today's trust-the-RVA behavior.
+        let stale = matches!((&snap.module_fingerprint, &current_fp), (Some(s), Some(c)) if s != c);
+        if stale {
             let mut state = session.state.lock().unwrap();
-            if let Some(bp) = state.breakpoints.iter_mut().find(|b| b.id == bp_id) {
+            if let Some(bp) = state.breakpoints.iter_mut().find(|b| b.id == snap.id) {
+                if bp.enabled {
+                    invalidated += 1;
+                }
+                bp.enabled = false;
+                bp.is_active = false;
                 bp.address = addr;
-                bp.source_file = source_file;
-                bp.source_line = source_line;
+                // Accept the new binary's identity so the warning fires once, not
+                // on every future run; the row stays disabled until the user
+                // re-enables it deliberately.
+                bp.module_fingerprint = current_fp.clone();
+                warn!("Breakpoint {} at {}+0x{:X} invalidated: module file changed on disk", bp.id, module_name, bp.module_offset);
+            }
+            continue;
+        }
+
+        let armed = snap.enabled
+            && arm_bp_of_kind(session, pid, addr, &snap.bp_kind, snap.hw_type.as_deref(), snap.hw_size, snap.single_shot).is_ok();
+        if snap.enabled && !armed {
+            continue;
+        }
+        let (source_file, source_line) = resolve_source_line(session, pid, addr);
+        let mut state = session.state.lock().unwrap();
+        if let Some(bp) = state.breakpoints.iter_mut().find(|b| b.id == snap.id) {
+            bp.address = addr;
+            bp.source_file = source_file;
+            bp.source_line = source_line;
+            if bp.module_fingerprint.is_none() {
+                bp.module_fingerprint = current_fp.clone();
+            }
+            if armed {
+                bp.is_active = true;
+                info!("Re-applied breakpoint {} at 0x{:X}", bp.id, addr);
+            } else {
                 info!("Resolved address for disabled breakpoint {} at 0x{:X}", bp.id, addr);
             }
         }
+    }
+
+    if invalidated > 0 {
+        let msg = format!(
+            "{} breakpoint{} in {} disabled: the module file changed on disk since {} saved",
+            invalidated,
+            if invalidated == 1 { "" } else { "s" },
+            module_name,
+            if invalidated == 1 { "it was" } else { "they were" },
+        );
+        warn!("{}", msg);
+        if let Some(ref handle) = app_handle_clone {
+            crate::ui_logger::log_warn(handle, &msg, None);
+            crate::ui_logger::toast_error(handle, &msg);
+        }
+        persist_breakpoints(&session.state);
     }
 }
 
@@ -865,6 +950,8 @@ fn arm_hardware_at(
     };
     let (source_file, source_line) = resolve_source_line(session, pid, address);
 
+    let module_fingerprint = module_fingerprint_at(session, address);
+
     {
         let mut state = session.state.lock().unwrap();
         state.breakpoints.push(crate::state::BreakpointInfo {
@@ -884,6 +971,7 @@ fn arm_hardware_at(
             source_line,
             auto: false,
             single_shot: false,
+            module_fingerprint,
         });
     }
 

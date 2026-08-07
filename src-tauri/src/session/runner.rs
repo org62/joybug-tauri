@@ -30,7 +30,7 @@ fn reapply_for_loaded_module(
     let short = module_short_name(name);
     reapply_symbols_for_module(session, app_handle_clone, pid, &short, base);
     reapply_patches_for_module(session, pid, &short, base);
-    reapply_breakpoints_for_module(session, pid, &short, base);
+    reapply_breakpoints_for_module(session, app_handle_clone, pid, &short, base);
     reapply_bookmarks_for_module(session, pid, &short);
     apply_auto_module_breakpoints(session, app_handle_clone, pid, base);
 }
@@ -378,18 +378,6 @@ pub fn run_debug_session(
                 // Fall through to pause path
             }
 
-            // ProcessExited: always finalize/continue
-            if matches!(event, joybug_core::protocol_io::DebugEvent::ProcessExited { .. }) {
-                {
-                    let mut state = session.state.lock().unwrap();
-                    state.current_event = Some(event.clone());
-                    state.events.push(event.clone());
-                    update_session_from_event(&mut state, event);
-                }
-                emit_session_event(&session.state, handle);
-                return Ok(true);
-            }
-
             // ThreadExited: respect settings whether to pause or not
             if let joybug_core::protocol_io::DebugEvent::ThreadExited { .. } = event {
                 let should_pause_on_thread_exit = {
@@ -414,6 +402,7 @@ pub fn run_debug_session(
                 let settings = handle.state::<SettingsState>().inner().lock().unwrap().clone();
                 let should_pause = match event {
                     joybug_core::protocol_io::DebugEvent::ProcessCreated { .. } => settings.stop_on_process_create,
+                    joybug_core::protocol_io::DebugEvent::ProcessExited { .. } => settings.stop_on_process_exit,
                     joybug_core::protocol_io::DebugEvent::ThreadCreated { .. } => settings.stop_on_thread_create,
                     joybug_core::protocol_io::DebugEvent::ThreadExited { .. } => settings.stop_on_thread_exit,
                     joybug_core::protocol_io::DebugEvent::DllLoaded { .. } => settings.stop_on_dll_load,
@@ -442,7 +431,23 @@ pub fn run_debug_session(
                     _ => true,
                 };
 
+                let is_process_exit = matches!(event, joybug_core::protocol_io::DebugEvent::ProcessExited { .. });
+
                 if !should_pause {
+                    // A non-pausing ProcessExited ends the run rather than
+                    // auto-continuing: record the event, tear the live state
+                    // down, and let the debug loop unwind.
+                    if is_process_exit {
+                        {
+                            let mut state = session.state.lock().unwrap();
+                            state.current_event = Some(event.clone());
+                            state.events.push(event.clone());
+                            super::helpers::finalize_process_exit(&mut state);
+                        }
+                        emit_session_event(&session.state, handle);
+                        return Ok(true);
+                    }
+
                     let unloaded_module_name;
                     {
                         let mut state = session.state.lock().unwrap();
@@ -472,9 +477,24 @@ pub fn run_debug_session(
                     return Ok(true);
                 }
 
-                // Update session state from event (pausing path)
+                // Update session state from event (pausing path).
+                //
+                // A pause on ProcessExited is a real break, not a cosmetic one:
+                // the debuggee is a zombie whose handles (process, threads,
+                // address space) stay valid until the debugger issues the final
+                // ContinueDebugEvent, so registers, memory, modules and the
+                // callstack all still resolve — the exiting thread's RIP sits in
+                // the exit path. The session is torn down for real when the user
+                // resumes and the debug loop unwinds.
                 let context = match session.get_thread_context(event.pid(), event.tid()) {
-                    Ok(ctx) => ctx,
+                    Ok(ctx) => Some(ctx),
+                    // On a process-exit break the registers are a bonus, not the
+                    // point — surface the exit as a normal pause even if the OS
+                    // refuses the context, instead of failing the whole session.
+                    Err(e) if is_process_exit => {
+                        error!("Failed to get thread context on process exit: {}", e);
+                        None
+                    }
                     Err(e) => {
                         error!("Failed to get thread context: {}", e);
                         let mut state = session.state.lock().unwrap();
@@ -490,7 +510,7 @@ pub fn run_debug_session(
                     state.current_event = Some(event.clone());
                     state.events.push(event.clone());
                     state.status = SessionStatusUI::Paused;
-                    state.current_context = Some(crate::events::convert_raw_context_to_serializable(context));
+                    state.current_context = context.map(crate::events::convert_raw_context_to_serializable);
 
                     unloaded_module_name = get_unloaded_module_name(&state, event);
                     if let Some(ref name) = unloaded_module_name {

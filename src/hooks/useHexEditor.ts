@@ -172,10 +172,12 @@ export interface UseHexEditorOptions {
   initialAddress?: bigint;
   initialViewMode?: ViewMode;
   dataSource?: HexDataSource;
+  /** Changes when background symbol loading completes — re-resolves pointer-mode annotations. */
+  symbolsRefreshKey?: string;
 }
 
 export function useHexEditor(options: UseHexEditorOptions): HexEditorState & HexEditorActions {
-  const { sessionId, memoryViewId = 'memory', sessionStatus, registers = {}, resolveSymbol, initialAddress, initialViewMode, dataSource } = options;
+  const { sessionId, memoryViewId = 'memory', sessionStatus, registers = {}, resolveSymbol, initialAddress, initialViewMode, dataSource, symbolsRefreshKey } = options;
 
   // Whether the view has a byte source at all (live session or file).
   const active = !!sessionId || !!dataSource;
@@ -215,6 +217,9 @@ export function useHexEditor(options: UseHexEditorOptions): HexEditorState & Hex
   // Dereference data for pointer mode (keyed by address string)
   const [dereferenceData, setDereferenceData] = useState<Map<string, DereferenceEntry>>(new Map());
   const pendingDereferenceAddress = useRef<string | null>(null);
+  // Bumped on every raw pause transition so the deref effect re-requests
+  // pointer annotations even when the window shape didn't change.
+  const [derefRefreshSeq, setDerefRefreshSeq] = useState(0);
 
   // Previous memory data for change detection (highlight changed bytes in red)
   const prevMemoryDataRef = useRef<{ data: Uint8Array; baseAddress: bigint } | undefined>(undefined);
@@ -986,6 +991,12 @@ export function useHexEditor(options: UseHexEditorOptions): HexEditorState & Hex
       if (!listenersReady || !initialLoadDone.current) return;
       setTopExhausted(false);
       setBottomExhausted(false);
+      // Pointer-mode annotations can change across a step (values, symbols) but
+      // the deref effect only fires on window-shape changes — bump its refresh
+      // seq, matching the register view's per-pause re-request. The raw pause
+      // stream is used because the debounced `sessionStatus` swallows runs
+      // shorter than its window.
+      setDerefRefreshSeq((s) => s + 1);
     }
     refreshWindow();
   });
@@ -1041,7 +1052,10 @@ export function useHexEditor(options: UseHexEditorOptions): HexEditorState & Hex
     if (pointerCount > 0) {
       loadDereference(baseAddress, pointerCount);
     }
-  }, [viewMode, memoryData.length, baseAddress, sessionId, sessionStatus, loadDereference]);
+    // derefRefreshSeq: bumped per raw pause transition (see useLiveRefresh above).
+    // symbolsRefreshKey: annotations fetched while PDBs were still loading come
+    // back symbol-less; re-request once background symbol loading completes.
+  }, [viewMode, memoryData.length, baseAddress, sessionId, derefRefreshSeq, loadDereference, symbolsRefreshKey]);
 
   // Computed: effective memory data with pending changes applied for display
   const effectiveMemoryData = useMemo(() => {

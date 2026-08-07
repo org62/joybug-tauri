@@ -5,7 +5,7 @@ import { ResizableHeaderCell } from "./ui/resizable-header-cell";
 import { Checkbox } from "./ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { X, Bookmark as BookmarkIcon, Lock, Unlock, Fingerprint } from "lucide-react";
-import { cn, CHANGED_VALUE_CLASS } from "@/lib/utils";
+import { cn, CHANGED_VALUE_CLASS, LINK_VALUE_CLASS } from "@/lib/utils";
 import type { ResolvedBookmark } from "@/hooks/useBookmarks";
 import { useContextMenu } from "@/hooks/useContextMenu";
 import { useColumnWidths } from "@/hooks/useColumnWidths";
@@ -178,7 +178,7 @@ export function BookmarksView({
 
       {/* Address (navigate) */}
       <span
-        className="shrink-0 text-blue-400 cursor-pointer hover:underline truncate pr-1"
+        className={cn("shrink-0 truncate pr-1", LINK_VALUE_CLASS)}
         style={{ width: columnWidths.address }}
         title={b.resolved_address}
         onClick={() => navigate(b)}
@@ -231,7 +231,7 @@ export function BookmarksView({
           <Button
             variant="ghost"
             size="icon-xs"
-            className={cn(b.locked ? "text-amber-500" : "text-muted-foreground")}
+            className={cn(b.locked ? "text-syn-state" : "text-muted-foreground")}
             onClick={() => onToggleLock?.(b.id, !b.locked)}
             title={b.locked ? "Unlock value" : "Lock (freeze) value"}
           >
@@ -246,10 +246,10 @@ export function BookmarksView({
         {b.kind === "code" && (
           <>
             <span>{b.asm_text}</span>
-            {b.comment && <span className="text-amber-600/80 ml-2">; {b.comment}</span>}
+            {b.comment && <span className="text-muted-foreground ml-2">; {b.comment}</span>}
           </>
         )}
-        {b.kind === "value" && b.comment && <span className="text-amber-600/80">; {b.comment}</span>}
+        {b.kind === "value" && b.comment && <span className="text-muted-foreground">; {b.comment}</span>}
       </span>
 
       {!isDragOverlay && (

@@ -7,21 +7,17 @@ import { ContextMenu, ContextMenuItem } from "@/components/ui/context-menu";
 import { Button } from "./ui/button";
 import { Label } from "./ui/label";
 import { Switch } from "./ui/switch";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "./ui/select";
+import { VirtualCombobox, type VirtualComboboxItem } from "./ui/virtual-combobox";
 import { FileCode, ChevronRight, Circle, RefreshCw, AlertTriangle, FolderSearch, ArrowRightToLine, CornerDownRight, ArrowDownToLine } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { cn, DATA_ROW_HEIGHT, NAV_HIGHLIGHT_MS, PC_ROW_HIGHLIGHT_CLASS } from "@/lib/utils";
+import { moduleBasename, pathDirname } from "@/lib/symbolUtils";
 import { useSourceView } from "@/hooks/useSourceView";
 import { useContextMenu } from "@/hooks/useContextMenu";
+import { useRecenterOnReveal, applyOverFrames } from "@/hooks/useRecenterOnReveal";
 import { Virtualizer } from "@tanstack/react-virtual";
 import { languageForPath, highlightToLines, type SyntaxLine } from "@/lib/syntaxHighlight";
 
-const SOURCE_ROW_HEIGHT = 24;
+const SOURCE_ROW_HEIGHT = DATA_ROW_HEIGHT;
 
 interface SourceLine {
   n: number;
@@ -39,10 +35,9 @@ interface SourceViewProps {
   onNavigateToDisassembly?: (address: string) => void;
 }
 
-function shortName(path: string): string {
-  const idx = Math.max(path.lastIndexOf("\\"), path.lastIndexOf("/"));
-  return idx >= 0 ? path.slice(idx + 1) : path;
-}
+// Reused across sorts: a fresh localeCompare per comparison is an ICU call —
+// thousands of file paths would cost tens of blocking ms.
+const NAME_COLLATOR = new Intl.Collator(undefined, { sensitivity: "base" });
 
 export function SourceView({
   sessionId,
@@ -97,12 +92,28 @@ export function SourceView({
     return highlightToLines(windowLines.join("\n"), lang);
   }, [windowLines, filePath]);
 
+  // Digits needed by the line-number gutter. Sized to the file's last line
+  // (the window is a slice of the file), so it stays stable while scrolling.
+  const numDigits = Math.max(4, String(lineCount).length);
+
   // Widen the scroll area to the longest line so long lines scroll horizontally.
+  // The pad covers the fixed gutters (breakpoint + PC columns) and the
+  // digit-dependent line-number column.
   const minContentWidth = useMemo(() => {
     let max = 80;
     for (const l of windowLines) if (l.length > max) max = l.length;
-    return `${max + 12}ch`;
-  }, [windowLines]);
+    return `${max + numDigits + 8}ch`;
+  }, [windowLines, numDigits]);
+
+  // File-picker items, alphabetical by file name (paths can number in the
+  // thousands for CRT-heavy PDBs — the picker virtualizes them).
+  const fileItems = useMemo<VirtualComboboxItem[]>(
+    () =>
+      fileList
+        .map((f) => ({ value: f.path, label: moduleBasename(f.path), detail: pathDirname(f.path) }))
+        .sort((a, b) => NAME_COLLATOR.compare(a.label, b.label)),
+    [fileList],
+  );
 
   // Which source lines carry a breakpoint (any of the line's addresses is set).
   const breakpointLines = useMemo(() => {
@@ -148,9 +159,7 @@ export function SourceView({
       el.scrollTop = Math.max(0, (target - start) * SOURCE_ROW_HEIGHT - (el.clientHeight - SOURCE_ROW_HEIGHT) / 2);
       return true;
     };
-    apply();
-    requestAnimationFrame(apply);
-    setTimeout(apply, 40);
+    applyOverFrames(apply);
   }, []);
 
   // Keep the scroll position meaningful across window changes:
@@ -190,43 +199,15 @@ export function SourceView({
     }
   }, [windowStart, windowLines, scrollToLine, centerOn]);
 
-  // rc-dock keeps hidden tabs mounted at zero height, so a PC move that happens
-  // while the Source tab is hidden scrolls a 0-height viewport. Re-center on the
-  // target line the moment the panel becomes visible (0 → positive height).
-  const hasRows = items.length > 0;
-  useEffect(() => {
-    if (!hasRows) return;
-    let ro: ResizeObserver | null = null;
-    let raf = 0;
-    const attach = () => {
-      const el = virtualizerRef.current?.scrollElement;
-      if (!el) {
-        raf = requestAnimationFrame(attach);
-        return;
-      }
-      let prevHeight = el.clientHeight;
-      ro = new ResizeObserver(() => {
-        const h = el.clientHeight;
-        const becameVisible = prevHeight === 0 && h > 0;
-        prevHeight = h;
-        if (becameVisible && centerLineRef.current != null) {
-          centerOn(centerLineRef.current);
-        }
-      });
-      ro.observe(el);
-    };
-    attach();
-    return () => {
-      cancelAnimationFrame(raf);
-      ro?.disconnect();
-    };
-  }, [hasRows, centerOn]);
+  // A PC move that happens while the Source tab is hidden scrolls a 0-height
+  // viewport — re-center on the target line once the panel is shown.
+  useRecenterOnReveal(virtualizerRef, items.length > 0, centerLineRef, centerOn);
 
   // Transient highlight flash for nav-target lines.
   useEffect(() => {
     if (!scrollToLine?.transient) return;
     setFlashLine(scrollToLine.line);
-    const timer = setTimeout(() => setFlashLine(null), 1000);
+    const timer = setTimeout(() => setFlashLine(null), NAV_HIGHLIGHT_MS);
     return () => clearTimeout(timer);
   }, [scrollToLine]);
 
@@ -259,28 +240,24 @@ export function SourceView({
 
   return (
     <DockPanel>
-      <PanelToolbar>
-        {/* Source file picker */}
-        <div className="flex items-center gap-1 min-w-0">
+      <PanelToolbar overflow="scroll">
+        {/* Source file picker. The wrapper shrinks (to its min width) before the
+            toolbar starts scrolling horizontally; the trigger itself truncates. */}
+        <div className="flex items-center gap-1 flex-1 min-w-28 max-w-56">
           <FileCode className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
           {fileList.length > 0 ? (
-            <Select value={filePath ?? undefined} onValueChange={selectFile}>
-              <SelectTrigger size="xs" className="w-56 font-mono">
-                <SelectValue placeholder="Select source file">
-                  {filePath ? shortName(filePath) : "Select source file"}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectContent>
-                {fileList.map((f) => (
-                  <SelectItem key={f.path} value={f.path} className="font-mono text-xs">
-                    {shortName(f.path)}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <VirtualCombobox
+              items={fileItems}
+              value={filePath}
+              onValueChange={selectFile}
+              placeholder="Select source file"
+              searchPlaceholder="Filter files..."
+              className="flex-1 min-w-0 font-mono"
+              panelClassName="font-mono"
+            />
           ) : (
-            <span className="text-xs font-mono text-muted-foreground truncate max-w-56" title={filePath ?? undefined}>
-              {filePath ? shortName(filePath) : "No source"}
+            <span className="text-xs font-mono text-muted-foreground truncate" title={filePath ?? undefined}>
+              {filePath ? moduleBasename(filePath) : "No source"}
             </span>
           )}
         </div>
@@ -299,7 +276,7 @@ export function SourceView({
         </Button>
 
         {checksumMismatch && (
-          <span className="flex items-center gap-1 text-xs text-amber-600 dark:text-amber-400" title="On-disk source differs from the build recorded in the PDB">
+          <span className="flex items-center gap-1 text-xs text-syn-state whitespace-nowrap shrink-0" title="On-disk source differs from the build recorded in the PDB">
             <AlertTriangle className="h-3.5 w-3.5" />
             Source differs
           </span>
@@ -314,14 +291,16 @@ export function SourceView({
 
         <div className="flex-1" />
 
-        <div className="flex items-center gap-2">
-          <Label htmlFor="follow-pc" className="text-xs">Follow PC</Label>
+        <div className="flex items-center gap-2 shrink-0">
+          <Label htmlFor="follow-pc" className="text-xs whitespace-nowrap">Follow PC</Label>
           <Switch id="follow-pc" size="xs" checked={followPc} onCheckedChange={toggleFollowPc} />
         </div>
       </PanelToolbar>
 
       {items.length > 0 ? (
-        <div className="flex-1 min-h-0">
+        // --src-ln-w: single definition of the line-number column width; rows
+        // consume it via a static class instead of per-row style objects.
+        <div className="flex-1 min-h-0" style={{ "--src-ln-w": `${numDigits}ch` } as React.CSSProperties}>
           <VirtualizedList
             items={items}
             rowHeight={SOURCE_ROW_HEIGHT}
@@ -396,7 +375,7 @@ export function SourceView({
         <ContextMenu x={contextMenu.x} y={contextMenu.y} onClose={closeContextMenu} className="min-w-[180px]">
           {onToggleBreakpoint && contextMenu.data.hasCode && (
             <ContextMenuItem
-              icon={<Circle className="text-red-500" />}
+              icon={<Circle className="text-destructive" />}
               onClick={() => toggleBreakpoint(contextMenu.data.line)}
             >
               Toggle Breakpoint
@@ -404,7 +383,7 @@ export function SourceView({
           )}
           {onNavigateToDisassembly && contextMenu.data.hasCode && (
             <ContextMenuItem
-              icon={<ArrowRightToLine className="text-blue-400" />}
+              icon={<ArrowRightToLine className="text-syn-link" />}
               onClick={() => goToDisassembly(contextMenu.data.line)}
             >
               Go to Disassembly
@@ -455,10 +434,10 @@ function SourceRow({
         // overflow-hidden: rows are a fixed px height in a virtualized list, so
         // clip rather than let an over-tall line (e.g. under OS text scaling)
         // bleed into the neighbouring row. Prefer the UI-scale zoom for enlarging.
-        "flex items-center overflow-hidden hover:bg-muted/30 cursor-default font-mono text-xs",
+        "flex items-center overflow-hidden hover:bg-muted/30 cursor-default font-mono text-data",
         isSelected && "bg-accent/50",
-        isPC && !isSelected && "bg-yellow-100 dark:bg-yellow-900/40",
-        isNavTarget && !isPC && !isSelected && "bg-blue-100 dark:bg-blue-900/40",
+        isPC && !isSelected && PC_ROW_HIGHLIGHT_CLASS,
+        isNavTarget && !isPC && !isSelected && "bg-syn-link/10",
         isFlashing && "animate-highlight-fade",
       )}
       style={style}
@@ -473,21 +452,21 @@ function SourceRow({
         title={hasCode ? "Toggle breakpoint" : undefined}
       >
         {hasBreakpoint ? (
-          <Circle className="h-2.5 w-2.5 fill-red-500 text-red-500" />
+          <Circle className="h-2.5 w-2.5 fill-destructive text-destructive" />
         ) : hasCode ? (
           <Circle className="h-2 w-2 text-muted-foreground/30" />
         ) : null}
       </span>
 
       {/* PC indicator */}
-      <span className="w-4 shrink-0 text-yellow-600 dark:text-yellow-400">
+      <span className="w-4 shrink-0 text-syn-state">
         {isPC && <ChevronRight className="h-3 w-3" />}
       </span>
 
-      {/* Line number */}
+      {/* Line number (border-box width: --src-ln-w digits + the pr-2 gap) */}
       <span
         className={cn(
-          "w-12 shrink-0 pr-2 text-right tabular-nums select-none",
+          "w-[calc(var(--src-ln-w)+0.5rem)] shrink-0 pr-2 text-right tabular-nums select-none",
           hasCode ? "text-muted-foreground" : "text-muted-foreground/40",
         )}
       >

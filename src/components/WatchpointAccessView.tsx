@@ -1,7 +1,7 @@
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
 import { Square, Trash2, Fingerprint } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { cn, LINK_VALUE_CLASS } from "@/lib/utils";
 import { DockPanel, PanelToolbar, PanelBody } from "./ui/panel";
 import { EmptyState } from "./ui/empty-state";
 import { TruncatedSymbol } from "./ui/truncated-symbol";
@@ -31,7 +31,7 @@ export function WatchpointAccessView({
   return (
     <DockPanel>
       <PanelToolbar>
-        <Fingerprint className="size-3.5 text-violet-500 shrink-0" />
+        <Fingerprint className="size-3.5 text-syn-patched shrink-0" />
         <span className="text-xs text-muted-foreground">
           {traces.length === 0
             ? "No access traces"
@@ -52,11 +52,11 @@ export function WatchpointAccessView({
               {/* Trace section header */}
               <div className="flex items-center gap-2 px-2 py-1 bg-muted/30 sticky top-0 z-10">
                 <span
-                  className={cn("h-2.5 w-2.5 rounded-full shrink-0", trace.tracing ? "bg-violet-500 animate-pulse" : "bg-muted-foreground/40")}
+                  className={cn("h-2.5 w-2.5 rounded-full shrink-0", trace.tracing ? "bg-syn-patched animate-pulse" : "bg-muted-foreground/40")}
                   title={trace.tracing ? "Collecting" : "Stopped"}
                 />
                 <span className="font-mono text-xs">{trace.address}</span>
-                <Badge size="xs" className="bg-violet-500/20 text-violet-600 dark:text-violet-400 text-[10px] shrink-0">
+                <Badge size="xs" className="bg-syn-patched/15 text-syn-patched text-[10px] shrink-0">
                   {modeLabel(trace.hwType, trace.hwSize)}
                 </Badge>
                 {trace.symbol && (
@@ -101,7 +101,7 @@ export function WatchpointAccessView({
                     <span
                       className={cn(
                         "shrink-0 w-[132px] truncate",
-                        onNavigateToDisassembly ? "text-blue-400 cursor-pointer hover:underline" : "text-muted-foreground",
+                        onNavigateToDisassembly ? LINK_VALUE_CLASS : "text-muted-foreground",
                       )}
                       title={`${row.accessor}${row.raw_rip !== row.accessor ? ` (trap @ ${row.raw_rip})` : ""}`}
                       onClick={() => onNavigateToDisassembly?.(row.accessor)}

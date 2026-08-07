@@ -231,14 +231,23 @@ pub(crate) fn update_session_from_event(state: &mut SessionStateUI, event: &joyb
             state.region_annotation_cache.sections.remove(base_of_dll);
             info!("Removed module at 0x{:X}", base_of_dll);
         }
-        joybug_core::protocol_io::DebugEvent::ProcessExited { .. } => {
-            state.modules.clear();
-            state.threads.clear();
-            state.original_images.clear();
-            state.region_annotation_cache = Default::default();
-            state.status = SessionStatusUI::Stopped;
-            info!("Process exited, session stopped.");
-        }
         _ => {}
     }
+}
+
+/// Tear the run's live state down after `ProcessExited` when the session is
+/// finalizing (i.e. not pausing on the event).
+///
+/// Deliberately NOT part of `update_session_from_event`: when "Stop on process
+/// exit" is enabled we pause on that event instead, and the process object is
+/// still fully inspectable there (its handles outlive the event until the final
+/// `ContinueDebugEvent`), so the module/thread lists must survive until the user
+/// resumes.
+pub(crate) fn finalize_process_exit(state: &mut SessionStateUI) {
+    state.modules.clear();
+    state.threads.clear();
+    state.original_images.clear();
+    state.region_annotation_cache = Default::default();
+    state.status = SessionStatusUI::Stopped;
+    info!("Process exited, session stopped.");
 }

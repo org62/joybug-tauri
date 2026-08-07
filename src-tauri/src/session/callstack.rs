@@ -99,6 +99,7 @@ pub(crate) fn process_thread_callstack_request(
     app_handle_clone: &Option<AppHandle>,
     pid: u32,
     tid: u32,
+    preview: bool,
 ) {
     debug!("📤 Processing thread callstack request: pid={}, tid={}", pid, tid);
 
@@ -119,12 +120,14 @@ pub(crate) fn process_thread_callstack_request(
                 struct ThreadCallStackResult<'a> {
                     session_id: String,
                     tid: u32,
+                    preview: bool,
                     frames: &'a Vec<CallStackData>,
                 }
 
                 let result = ThreadCallStackResult {
                     session_id,
                     tid,
+                    preview,
                     frames: &call_stack,
                 };
 

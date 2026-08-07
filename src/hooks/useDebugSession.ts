@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { toast } from 'sonner';
-import { DebugSession, Module, ModuleSymbolStatus, PdbLoadResult, Thread, Symbol, SessionStatus } from '@/contexts/SessionContext';
+import { DebugSession, Module, ModuleSymbolStatus, PdbLoadResult, Thread, Symbol, SessionStatus, hasUsableSymbols } from '@/contexts/SessionContext';
 import { isProcessAvailable, isTargetLive, formatTauriError } from '@/lib/sessionHelpers';
 
 // The 1s live poll returns fresh arrays every tick even when nothing changed;
@@ -178,13 +178,15 @@ export function useDebugSession(sessionId: string | undefined) {
     await loadSymbolStatuses();
   }, [sessionId, loadSymbolStatuses]);
 
-  // Identity of the set of modules whose symbols are loaded. Consumers refresh
-  // symbol-derived views (e.g. disassembly) when it changes so raw addresses
-  // upgrade to symbol names as background downloads land.
+  // Identity of the set of modules whose symbols are usable (PDB or export
+  // fallback). Consumers refresh symbol-derived views (e.g. disassembly) when
+  // it changes so raw addresses upgrade to symbol names as background
+  // downloads land. The status is part of each entry so an exports_only →
+  // loaded upgrade at an unchanged base still triggers a refresh.
   const symbolsRefreshKey = useMemo(
     () => symbolStatuses
-      .filter((s) => s.status === 'loaded')
-      .map((s) => s.base_address)
+      .filter((s) => hasUsableSymbols(s.status))
+      .map((s) => `${s.base_address}:${s.status}`)
       .sort()
       .join(','),
     [symbolStatuses],

@@ -67,11 +67,11 @@ export default function Logs() {
       case 'debug':
         return 'text-gray-500 dark:text-gray-400';
       case 'info':
-        return 'text-blue-600 dark:text-blue-400';
+        return 'text-foreground';
       case 'warning':
-        return 'text-yellow-500 dark:text-yellow-400';
+        return 'text-syn-state';
       case 'error':
-        return 'text-red-600 dark:text-red-400';
+        return 'text-destructive';
       default:
         return 'text-gray-600 dark:text-gray-400';
     }

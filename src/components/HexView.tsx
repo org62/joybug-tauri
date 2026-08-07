@@ -12,7 +12,7 @@ import {
 import { Binary, Save, X, ArrowRight, Copy, ClipboardPaste, Crosshair, Bookmark, Fingerprint, HardDrive } from "lucide-react";
 import { useHexEditor, ExtendStatus, HexDataSource } from "@/hooks/useHexEditor";
 import { isProcessAvailable } from "@/lib/sessionHelpers";
-import { CHANGED_VALUE_CLASS } from "@/lib/utils";
+import { CHANGED_VALUE_CLASS, DATA_ROW_HEIGHT } from "@/lib/utils";
 import { useNavigationChannel } from "@/hooks/useNavigationChannel";
 import { memoryNavigation } from "@/lib/navigationStore";
 import {
@@ -40,6 +40,8 @@ interface HexViewProps {
   resolveSymbol?: SymbolResolver;
   initialAddress?: bigint;
   initialViewMode?: ViewMode;
+  /** Changes when background symbol loading completes — re-resolves pointer-mode annotations. */
+  symbolsRefreshKey?: string;
   onSetHardwareBreakpoint?: (address: string, hwType: string, hwSize: number) => void;
   onAddBookmark?: (address: string, valueType: string) => void;
   onFindAccesses?: (address: string, mode: "Write" | "ReadWrite", size: number) => void;
@@ -60,7 +62,7 @@ const VIEWMODE_VALUE_TYPE: Record<ViewMode, string> = {
   byte: 'U8', word: 'U16', dword: 'U32', qword: 'U64', float: 'F32', pointer: 'U64',
 };
 
-const ROW_HEIGHT = 28;
+const ROW_HEIGHT = DATA_ROW_HEIGHT;
 // Scrolling within this distance of the top/bottom edge extends the memory
 // window in that direction (infinite scroll).
 const EDGE_EXTEND_THRESHOLD = ROW_HEIGHT * 6;
@@ -68,7 +70,7 @@ const EDGE_EXTEND_THRESHOLD = ROW_HEIGHT * 6;
 // rows: at most one full chunk's worth of rows.
 const MAX_WHEEL_REVEAL = (DEFAULT_CHUNK_SIZE / BYTES_PER_ROW) * ROW_HEIGHT;
 
-export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}, resolveSymbol, initialAddress, initialViewMode, onSetHardwareBreakpoint, onAddBookmark, onFindAccesses, onShowInMemoryRegions, dataSource, addressFormatter, translateGotoInput }: HexViewProps) {
+export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}, resolveSymbol, initialAddress, initialViewMode, symbolsRefreshKey, onSetHardwareBreakpoint, onAddBookmark, onFindAccesses, onShowInMemoryRegions, dataSource, addressFormatter, translateGotoInput }: HexViewProps) {
   const fmtAddr = addressFormatter ?? formatAddress;
   const {
     baseAddress,
@@ -120,7 +122,7 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
     // Clipboard actions
     copySelection,
     pasteBytes,
-  } = useHexEditor({ sessionId, memoryViewId, sessionStatus, registers, resolveSymbol, initialAddress, initialViewMode, dataSource });
+  } = useHexEditor({ sessionId, memoryViewId, sessionStatus, registers, resolveSymbol, initialAddress, initialViewMode, dataSource, symbolsRefreshKey });
 
   const [addressInput, setAddressInput] = useState("");
   const hexViewContainerRef = useRef<HTMLDivElement>(null);
@@ -589,7 +591,7 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
         <VirtualizedList
           items={rowIndices}
           rowHeight={ROW_HEIGHT}
-          className="h-full font-mono text-sm"
+          className="h-full font-mono text-data"
           minContentWidth={rowMinWidth}
           onViewportScroll={handleViewportScroll}
           virtualizerRef={virtualizerRef}
@@ -601,7 +603,7 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
             return (
               <div className="flex items-center hover:bg-muted/30 h-full px-2 select-none">
                 {/* Address column */}
-                <span className="w-36 shrink-0 text-muted-foreground text-xs">
+                <span className="w-36 shrink-0 text-muted-foreground">
                   {fmtAddr(rowAddress)}
                 </span>
 
@@ -668,7 +670,7 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
                             isSelected
                               ? "bg-primary text-primary-foreground"
                               : hasPendingChange
-                              ? "bg-yellow-200 dark:bg-yellow-800"
+                              ? "bg-syn-state/20"
                               : hasChangedByte
                               ? `${CHANGED_VALUE_CLASS} hover:bg-muted/50`
                               : "hover:bg-muted/50"
@@ -705,7 +707,7 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
                             isSelected
                               ? "bg-primary text-primary-foreground"
                               : hasPending
-                              ? "bg-yellow-200 dark:bg-yellow-800"
+                              ? "bg-syn-state/20"
                               : hasChanged
                               ? CHANGED_VALUE_CLASS
                               : ""
@@ -918,6 +920,8 @@ function HexToolbar({
         resolveSymbol={resolveSymbol}
         sessionId={sessionId}
         focusTabId={memoryViewId}
+        className="flex-1 max-w-md"
+        inputClassName="flex-1"
         historyKey="hex-goto"
         buttonLabel={
           <>
@@ -948,7 +952,7 @@ function HexToolbar({
       {/* Pending changes actions */}
       {pendingChanges.size > 0 && (
         <div className="flex items-center gap-1">
-          <span className="text-xs text-yellow-600 dark:text-yellow-400">
+          <span className="text-xs text-syn-state">
             {pendingChanges.size} pending
           </span>
           <Button
@@ -1059,7 +1063,7 @@ function HexStatusBar({
 
       {/* Pending changes count */}
       {pendingChanges.size > 0 && (
-        <span className="text-yellow-600 dark:text-yellow-400">
+        <span className="text-syn-state">
           {pendingChanges.size} unsaved changes
         </span>
       )}

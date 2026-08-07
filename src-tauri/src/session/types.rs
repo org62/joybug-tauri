@@ -43,7 +43,9 @@ pub enum UICommand {
     SetHardwareBreakpoint { address: u64, hw_type: String, hw_size: u8 },
     StartWatchpointTrace { address: u64, hw_type: String, hw_size: u8 },
     StopWatchpointTrace { breakpoint_id: String },
-    GetThreadCallStack { tid: u32 },
+    // `preview` marks a hover-preview fetch (Threads popover); the Call Stack
+    // panel only follows non-preview (explicit selection) results.
+    GetThreadCallStack { tid: u32, preview: bool },
     ResolveThreadSymbols,
     GetModuleExtraInfo { module_base: u64 },
     ResolveAddressToLine { address: u64 },
@@ -249,6 +251,11 @@ pub struct SerializableInstruction {
     pub is_call: bool,
     pub is_ret: bool,
     pub jump_target: Option<String>,
+    /// Static data address of a memory operand (RIP-relative or absolute
+    /// displacement), e.g. the slot read by `mov rdx, [module!fptr]`. The
+    /// frontend renders the bracketed operand as a link to the Memory view.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mem_ref: Option<String>,
     pub is_patched: bool,
     /// When the in-memory bytes differ from the original on-disk image, the
     /// space-separated hex of the original image bytes covering this row.

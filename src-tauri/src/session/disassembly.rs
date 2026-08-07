@@ -151,6 +151,7 @@ pub(crate) fn serialize_instructions(
                 is_call: inst.is_call,
                 is_ret: inst.is_ret,
                 jump_target: inst.jump_target.map(|addr| format!("{:#X}", addr)),
+                mem_ref: inst.mem_ref.map(|addr| format!("{:#X}", addr)),
                 is_patched: is_patched_by_range || differs_from_image,
                 original_bytes,
                 original_disasm,

@@ -55,6 +55,16 @@ export async function pcRegister(page: Page, sessionId: string): Promise<"rip" |
   return (await debuggeeArch(page, sessionId)) === "Arm64" ? "pc" : "rip";
 }
 
+/**
+ * Program-counter value ("0x..") out of a context object already in hand — the
+ * `arch`-tagged union carries `rip` on x64 and `pc` on ARM64. Returns undefined
+ * when there is no context (or it is neither arch), so callers can assert on it.
+ */
+export function contextPc(context: any): string | undefined {
+  if (!context) return undefined;
+  return context.arch === "Arm64" ? context.pc : context.rip;
+}
+
 /** Module base ("0x..") for the first module whose path/name contains `substr`. */
 export async function moduleBase(
   page: Page,
@@ -190,12 +200,29 @@ export async function goToWindow(page: Page, title: string): Promise<void> {
 }
 
 /**
- * Open the Windows menu and enter one of its submenus (e.g. "Debug"). The next
- * click should be a `menuitemcheckbox` with the window's title.
+ * Toggle a window's checkbox item inside the Windows menu's `group` submenu,
+ * then close the menu. Owns the whole open → submenu → click sequence and
+ * restarts it from scratch if the menu collapses mid-flight: under heavy UI
+ * churn (e.g. a disassembly refresh right after a memory write) Radix's
+ * hover-grace timers can fire late and close the submenu underneath the
+ * pointer, which a bare item click can never recover from.
+ *
+ * Only for tests that are *about* the Windows menu — to merely open a window,
+ * use `goToWindow`, which goes through the palette and can't hit this race.
  */
-export async function openWindowsSubmenu(page: Page, group: string): Promise<void> {
-  await page.getByRole("button", { name: "Windows" }).click();
-  await page.getByRole("menuitem", { name: group }).click();
+export async function clickWindowsMenuItem(page: Page, group: string, item: string): Promise<void> {
+  await expect(async () => {
+    // Clean slate each attempt: Escape closes any half-open menu, so the
+    // trigger click below always opens (never toggles closed). Every click is
+    // bounded so a stuck attempt fails fast into the next one instead of
+    // hanging until the test timeout (actionTimeout is unset = no limit).
+    await page.keyboard.press("Escape");
+    await page.getByRole("button", { name: "Windows" }).click({ timeout: 2_000 });
+    await page.getByRole("menuitem", { name: group }).click({ timeout: 2_000 });
+    await page.getByRole("menuitemcheckbox", { name: item }).click({ timeout: 2_000 });
+  }).toPass({ timeout: 20_000, intervals: [100, 250, 500] });
+  // Checkbox items keep the menu open for multi-toggling; dismiss it.
+  await page.keyboard.press("Escape");
 }
 
 /**

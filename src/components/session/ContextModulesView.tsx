@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { toast } from 'sonner';
-import { useSessionContext, Module, ModuleSymbolStatus, PdbLoadResult } from '@/contexts/SessionContext';
+import { useSessionContext, Module, ModuleSymbolStatus, PdbLoadResult, isPdbMissing, hasUsableSymbols } from '@/contexts/SessionContext';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -59,9 +59,9 @@ interface ContextModulesViewProps {
   onOpenModuleInfo?: (moduleBase: string) => void;
 }
 
-// Fixed row height (px) for the virtualized module list. Rows are uniform (3 lines
+// Fixed row height (px) for the virtualized module list. Rows are uniform (2 lines
 // of truncated text), so a fixed height avoids per-row getBoundingClientRect measurement.
-const MODULE_ROW_HEIGHT = 72;
+const MODULE_ROW_HEIGHT = 44;
 
 interface PdbMismatchPrompt {
   module: Module;
@@ -76,6 +76,17 @@ function SymbolStatusBadge({ status }: { status: ModuleSymbolStatus | undefined 
       return (
         <Badge variant="outline" size="xs" title={status.pdb_path ?? undefined}>
           {status.symbol_count ?? 0} syms
+        </Badge>
+      );
+    case 'exports_only':
+      return (
+        <Badge
+          variant="outline"
+          size="xs"
+          className="text-syn-state border-syn-state/50"
+          title={`PE exports only — ${status.error ?? 'no PDB available'}`}
+        >
+          {status.symbol_count ?? 0} exports
         </Badge>
       );
     case 'loading':
@@ -126,9 +137,11 @@ export const ContextModulesView: React.FC<ContextModulesViewProps> = ({ onOpenMo
   }, [sessionData?.symbolStatuses]);
 
   const failedStatuses = useMemo(
-    () => (sessionData?.symbolStatuses ?? []).filter((s) => s.status === 'failed'),
+    () => (sessionData?.symbolStatuses ?? []).filter((s) => isPdbMissing(s.status)),
     [sessionData?.symbolStatuses],
   );
+
+  const menuStatus = contextMenu ? statusByBase.get(contextMenu.data.base_address) : undefined;
 
   const loadPdbForModule = async (module: Module, pdbPath: string, force: boolean) => {
     try {
@@ -223,24 +236,29 @@ export const ContextModulesView: React.FC<ContextModulesViewProps> = ({ onOpenMo
           className="flex-1 min-h-0"
           getItemKey={(_module, index) => index}
           renderItem={(module) => (
+            /* Two lines, not three. The full path was ~90% redundant with the name
+               beside it and cost a third of the panel's vertical budget on a list
+               that runs to 50-100 entries on a real target — it lives in the row
+               tooltip now, and in the context menu's Copy Full Path. The "Base:"
+               label went with it: a bare hex value in a modules list needs no
+               caption. Note the quick filter still matches on path, so a row can
+               match on text that isn't visible. */
             <div
-              className={`flex items-center justify-between px-2 py-1 border-b hover:bg-gray-50 dark:hover:bg-gray-900 h-full${onOpenModuleInfo ? ' cursor-pointer' : ''}`}
+              title={module.path}
+              className={`flex items-center justify-between font-mono px-2 py-1 border-b hover:bg-gray-50 dark:hover:bg-gray-900 h-full${onOpenModuleInfo ? ' cursor-pointer' : ''}`}
               onClick={onOpenModuleInfo ? () => onOpenModuleInfo(module.base_address) : undefined}
               onContextMenu={(e) => openContextMenu(e, module)}
             >
               <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 mb-1">
+                <div className="flex items-center gap-2">
                   <h3 className="font-medium text-sm truncate">{moduleBasename(module.name)}</h3>
                   <Badge variant="outline" size="xs">
                     {formatBytes(module.size)}
                   </Badge>
                   <SymbolStatusBadge status={statusByBase.get(module.base_address)} />
                 </div>
-                <p className="text-xs text-muted-foreground mb-1 truncate">
-                  Base: <span className="font-mono">{module.base_address}</span>
-                </p>
                 <p className="text-xs text-muted-foreground truncate">
-                  {module.path}
+                  {module.base_address}
                 </p>
               </div>
             </div>
@@ -279,14 +297,10 @@ export const ContextModulesView: React.FC<ContextModulesViewProps> = ({ onOpenMo
           >
             Copy Full Path
           </ContextMenuItem>
-          {statusByBase.get(contextMenu.data.base_address)?.pdb_path && (
+          {menuStatus?.pdb_path && (
             <ContextMenuItem
               icon={<Copy className="h-3.5 w-3.5 text-muted-foreground" />}
-              onClick={() =>
-                navigator.clipboard.writeText(
-                  statusByBase.get(contextMenu.data.base_address)!.pdb_path!,
-                )
-              }
+              onClick={() => navigator.clipboard.writeText(menuStatus.pdb_path!)}
             >
               Copy Symbol Path
             </ContextMenuItem>
@@ -298,7 +312,7 @@ export const ContextModulesView: React.FC<ContextModulesViewProps> = ({ onOpenMo
           >
             Load PDB from file…
           </ContextMenuItem>
-          {statusByBase.get(contextMenu.data.base_address)?.status === 'failed' && (
+          {isPdbMissing(menuStatus?.status) && (
             <ContextMenuItem
               icon={<RotateCcw className="h-3.5 w-3.5" />}
               onClick={() => handleRetrySymbols(contextMenu.data)}
@@ -306,7 +320,7 @@ export const ContextModulesView: React.FC<ContextModulesViewProps> = ({ onOpenMo
               Retry symbol download
             </ContextMenuItem>
           )}
-          {statusByBase.get(contextMenu.data.base_address)?.status === 'not_requested' && (
+          {menuStatus?.status === 'not_requested' && (
             <ContextMenuItem
               icon={<RotateCcw className="h-3.5 w-3.5" />}
               onClick={() => handleRetrySymbols(contextMenu.data)}
@@ -314,7 +328,7 @@ export const ContextModulesView: React.FC<ContextModulesViewProps> = ({ onOpenMo
               Download symbols
             </ContextMenuItem>
           )}
-          {statusByBase.get(contextMenu.data.base_address)?.status === 'loaded' && (
+          {hasUsableSymbols(menuStatus?.status) && (
             <ContextMenuItem
               icon={<Trash2 className="h-3.5 w-3.5" />}
               onClick={() => sessionData.unloadModuleSymbols(contextMenu.data.base_address)}

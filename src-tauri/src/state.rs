@@ -33,6 +33,13 @@ pub struct BreakpointInfo {
     /// Session-only — never persisted to disk.
     #[serde(default)]
     pub single_shot: bool,
+    /// Identity ("size:mtime_ns") of the module's on-disk file when this
+    /// breakpoint was created/armed. A rebuilt binary changes it, meaning the
+    /// stored RVA may land mid-instruction — such breakpoints are auto-disabled
+    /// on reapply instead of being armed at a wrong location. None when the
+    /// file wasn't inspectable (remote target, pre-existing entries).
+    #[serde(default)]
+    pub module_fingerprint: Option<String>,
 }
 
 fn default_bp_kind() -> String {

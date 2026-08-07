@@ -3,7 +3,7 @@ import { Button } from "./ui/button";
 import { Switch } from "./ui/switch";
 import { Checkbox } from "./ui/checkbox";
 import { X, Puzzle } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { cn, LINK_VALUE_CLASS } from "@/lib/utils";
 import type { Patch } from "@/hooks/usePatches";
 import { useContextMenu } from "@/hooks/useContextMenu";
 import { GroupedItemList } from "./GroupedItemList";
@@ -87,7 +87,7 @@ export function PatchesView({
         />
       </span>
       <span
-        className="w-28 shrink-0 text-blue-400 cursor-pointer hover:underline truncate"
+        className={cn("w-28 shrink-0 truncate", LINK_VALUE_CLASS)}
         title={patch.address}
         onClick={() => onNavigateToDisassembly?.(patch.address)}
       >
@@ -99,7 +99,7 @@ export function PatchesView({
       <span className="flex-1 min-w-0 truncate" title={`${patch.original_disassembly} → ${patch.assembly_text}`}>
         <span className="text-muted-foreground">{patch.original_disassembly}</span>
         <span className="text-muted-foreground/60 mx-1">&rarr;</span>
-        <span className="text-purple-500">{patch.assembly_text}</span>
+        <span className="text-syn-patched">{patch.assembly_text}</span>
       </span>
       <span className="w-14 shrink-0 flex items-center justify-center">
         <Switch
