@@ -45,6 +45,7 @@ export default defineConfig({
     "non-invasive.spec.ts",
     "strings-view.spec.ts",
     "memory-regions.spec.ts",
+    "hex-offset-origin.spec.ts",
     "code-explorer.spec.ts",
     "watchpoint-trace.spec.ts",
     "updates.spec.ts",

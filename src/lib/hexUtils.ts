@@ -238,6 +238,20 @@ export function formatAddress(address: bigint): string {
 }
 
 /**
+ * Format a signed distance between two addresses, e.g. `-0x20`, `0x0`, `+0x1F0`.
+ *
+ * Deliberately unpadded, unlike `formatAddress`: the point of the hex view's
+ * offset mode is that `+0x10` reads as visibly nearer than `+0x1F0`, and a
+ * fixed width would hide exactly the magnitude being scanned for.
+ */
+export function formatSignedOffset(delta: bigint): string {
+  if (delta === 0n) return '0x0';
+  const sign = delta < 0n ? '-' : '+';
+  const magnitude = (delta < 0n ? -delta : delta).toString(16).toUpperCase();
+  return `${sign}0x${magnitude}`;
+}
+
+/**
  * Parse an address string to bigint
  */
 export function parseAddress(str: string): bigint | null {

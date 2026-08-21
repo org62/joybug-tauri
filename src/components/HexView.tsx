@@ -19,6 +19,7 @@ import {
   ViewMode,
   VIEW_MODE_CONFIGS,
   formatAddress,
+  formatSignedOffset,
   byteToAscii,
   BYTES_PER_ROW,
   DEFAULT_CHUNK_SIZE,
@@ -100,6 +101,7 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
     viewGeneration,
     viewTargetOffset,
     extendStatus,
+    offsetOrigin,
     // Actions
     goToAddress,
     setViewMode,
@@ -122,6 +124,7 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
     // Clipboard actions
     copySelection,
     pasteBytes,
+    toggleOffsetOrigin,
   } = useHexEditor({ sessionId, memoryViewId, sessionStatus, registers, resolveSymbol, initialAddress, initialViewMode, dataSource, symbolsRefreshKey });
 
   const [addressInput, setAddressInput] = useState("");
@@ -578,7 +581,9 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
           style={{ minWidth: rowMinWidth }}
           className="flex items-center font-mono text-sm px-2 pt-2 pb-1 text-muted-foreground"
         >
-          <span className="w-36 shrink-0 text-xs">Address</span>
+          <span className={`w-36 shrink-0 text-xs ${offsetOrigin === null ? "" : "text-right pr-3"}`}>
+            {offsetOrigin === null ? "Address" : "Offset"}
+          </span>
           <span className="flex-1 text-xs">{viewMode === 'pointer' ? 'Pointer' : 'Hex'}</span>
           {viewMode !== 'pointer' && (
             <span className="w-[136px] shrink-0 text-right pr-2 text-xs">ASCII</span>
@@ -602,9 +607,30 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
 
             return (
               <div className="flex items-center hover:bg-muted/30 h-full px-2 select-none">
-                {/* Address column */}
-                <span className="w-36 shrink-0 text-muted-foreground">
-                  {fmtAddr(rowAddress)}
+                {/* Address column — double-click to measure from this row.
+                    Deliberately not `cursor-pointer`: the e2e suite finds the
+                    first byte cell with `span.cursor-pointer`, and the gutter
+                    comes first in DOM order. */}
+                <span
+                  className={`w-36 shrink-0 text-muted-foreground hover:text-foreground ${
+                    offsetOrigin === null ? "" : "text-right pr-3"
+                  }`}
+                  data-testid="hex-address"
+                  data-address={rowAddress.toString()}
+                  title={
+                    offsetOrigin === rowAddress
+                      ? "Double-click to show absolute addresses again"
+                      : "Double-click to measure offsets from this address"
+                  }
+                  onDoubleClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    toggleOffsetOrigin(rowAddress);
+                  }}
+                >
+                  {offsetOrigin === null
+                    ? fmtAddr(rowAddress)
+                    : formatSignedOffset(rowAddress - offsetOrigin)}
                 </span>
 
                 {/* Hex values column */}
@@ -741,6 +767,7 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
           bottomExhausted={bottomExhausted}
           extendStatus={extendStatus}
           addressFormatter={fmtAddr}
+          offsetOrigin={offsetOrigin}
         />
       </div>
 
@@ -992,6 +1019,9 @@ interface HexStatusBarProps {
   extendStatus: ExtendStatus | null;
   // Already defaulted by HexView — the parent passes its resolved fmtAddr.
   addressFormatter: (absoluteAddress: bigint) => string;
+  // Set while the gutter shows offsets, so the footer can name the anchor the
+  // gutter is now silent about.
+  offsetOrigin: bigint | null;
 }
 
 function HexStatusBar({
@@ -1005,6 +1035,7 @@ function HexStatusBar({
   bottomExhausted,
   extendStatus,
   addressFormatter: fmtAddr,
+  offsetOrigin,
 }: HexStatusBarProps) {
   const endAddress = baseAddress + BigInt(memoryData.length);
 
@@ -1027,13 +1058,29 @@ function HexStatusBar({
       {/* Size */}
       <span>{memoryData.length} bytes</span>
 
+      {/* The address the gutter is measuring from — it shows only offsets now,
+          so this is the one place the anchor is still spelled out. */}
+      {offsetOrigin !== null && (
+        <span data-testid="hex-offset-origin">
+          relative to {fmtAddr(offsetOrigin)}
+        </span>
+      )}
+
       {/* Selection info */}
       {hasSelection && (
         <span>
           {selectionCount === 1 ? (
             <>
-              Cursor: {fmtAddr(baseAddress + BigInt(normalizedStart!))} (offset +0x
-              {normalizedStart!.toString(16).toUpperCase()})
+              Cursor: {fmtAddr(baseAddress + BigInt(normalizedStart!))} (
+              {/* Measured from the user's origin when there is one: two
+                  differently-anchored offsets on screen at once would be
+                  unreadable. */}
+              {offsetOrigin === null
+                ? `offset +0x${normalizedStart!.toString(16).toUpperCase()}`
+                : formatSignedOffset(
+                    baseAddress + BigInt(normalizedStart!) - offsetOrigin,
+                  )}
+              )
             </>
           ) : (
             <>

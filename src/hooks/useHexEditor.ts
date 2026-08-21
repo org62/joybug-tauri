@@ -26,8 +26,14 @@ import {
 interface HexViewPersistedState {
   baseAddress: bigint;
   viewMode: ViewMode;
+  offsetOrigin: bigint | null;
 }
 const sessionStateStore = new Map<string, HexViewPersistedState>();
+const PERSISTED_DEFAULTS: HexViewPersistedState = {
+  baseAddress: 0n,
+  viewMode: 'byte',
+  offsetOrigin: null,
+};
 
 // The view keeps a sliding window of memory. Scrolling near an edge extends
 // the window by one chunk; beyond this cap the opposite end is trimmed so
@@ -125,6 +131,10 @@ export interface HexEditorState {
   viewTargetOffset: number;
   // In-flight / just-completed edge extension, for status-bar feedback
   extendStatus: ExtendStatus | null;
+  // Address the gutter measures from, or null for absolute addresses. Absolute
+  // on purpose: the window base slides during infinite scroll, so an origin
+  // held as a window offset would drift.
+  offsetOrigin: bigint | null;
 }
 
 export interface HexEditorActions {
@@ -150,6 +160,8 @@ export interface HexEditorActions {
   // Clipboard actions
   copySelection: (format: 'text' | 'hex' | 'dump') => Promise<void>;
   pasteBytes: (mode: 'hex' | 'text') => Promise<void>;
+  /** Measure the gutter from `address`, or clear it if it already is the origin. */
+  toggleOffsetOrigin: (address: bigint) => void;
 }
 
 /// A non-session byte source (e.g. a PE file opened from disk). When provided,
@@ -191,23 +203,36 @@ export function useHexEditor(options: UseHexEditorOptions): HexEditorState & Hex
   const [baseAddress, setBaseAddressRaw] = useState<bigint>(persisted?.baseAddress ?? initialAddress ?? 0n);
   const [memoryData, setMemoryData] = useState<Uint8Array>(new Uint8Array(0));
   const [viewMode, setViewModeRaw] = useState<ViewMode>(persisted?.viewMode ?? initialViewMode ?? 'byte');
+  const [offsetOrigin, setOffsetOriginRaw] = useState<bigint | null>(persisted?.offsetOrigin ?? null);
 
-  // Persist on change
+  // Persist on change. Each setter merges into whatever is already stored, so a
+  // field written here can't clobber the others.
+  const persistField = useCallback((patch: Partial<HexViewPersistedState>) => {
+    if (!persistenceKey) return;
+    const existing = sessionStateStore.get(persistenceKey) ?? PERSISTED_DEFAULTS;
+    sessionStateStore.set(persistenceKey, { ...existing, ...patch });
+  }, [persistenceKey]);
+
   const setBaseAddress = useCallback((address: bigint) => {
     setBaseAddressRaw(address);
-    if (persistenceKey) {
-      const existing = sessionStateStore.get(persistenceKey) || { baseAddress: 0n, viewMode: 'byte' as ViewMode };
-      sessionStateStore.set(persistenceKey, { ...existing, baseAddress: address });
-    }
-  }, [persistenceKey]);
+    persistField({ baseAddress: address });
+  }, [persistField]);
 
   const setViewModeInternal = useCallback((mode: ViewMode) => {
     setViewModeRaw(mode);
-    if (persistenceKey) {
-      const existing = sessionStateStore.get(persistenceKey) || { baseAddress: 0n, viewMode: 'byte' as ViewMode };
-      sessionStateStore.set(persistenceKey, { ...existing, viewMode: mode });
-    }
-  }, [persistenceKey]);
+    persistField({ viewMode: mode });
+  }, [persistField]);
+
+  const setOffsetOrigin = useCallback((address: bigint | null) => {
+    setOffsetOriginRaw(address);
+    persistField({ offsetOrigin: address });
+  }, [persistField]);
+
+  // Double-clicking the row that is already the origin is how the user clears
+  // it, so the toggle lives here rather than in the view.
+  const toggleOffsetOrigin = useCallback((address: bigint) => {
+    setOffsetOrigin(offsetOrigin === address ? null : address);
+  }, [offsetOrigin, setOffsetOrigin]);
   const [bytesPerRow] = useState<number>(BYTES_PER_ROW);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1032,10 +1057,12 @@ export function useHexEditor(options: UseHexEditorOptions): HexEditorState & Hex
       setTopExhausted(false);
       setBottomExhausted(false);
       setExtendStatus(null);
+      // An address from a dead process is meaningless to measure against.
+      setOffsetOrigin(null);
       initialLoadDone.current = false;
       pendingRead.current = null;
     }
-  }, [sessionId, dataSource, sessionStatus]);
+  }, [sessionId, dataSource, sessionStatus, setOffsetOrigin]);
 
   // Fetch dereference data when in pointer mode and memory data is available
   useEffect(() => {
@@ -1145,6 +1172,7 @@ export function useHexEditor(options: UseHexEditorOptions): HexEditorState & Hex
     viewGeneration,
     viewTargetOffset,
     extendStatus,
+    offsetOrigin,
     // Actions
     goToAddress,
     setViewMode,
@@ -1168,5 +1196,6 @@ export function useHexEditor(options: UseHexEditorOptions): HexEditorState & Hex
     // Clipboard actions
     copySelection,
     pasteBytes,
+    toggleOffsetOrigin,
   };
 }
