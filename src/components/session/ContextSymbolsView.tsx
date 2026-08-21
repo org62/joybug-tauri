@@ -102,6 +102,7 @@ export const ContextSymbolsView = () => {
         enabled={!!sessionId && isActive}
         placeholder={isActive ? "Search symbols..." : "Open, attach to, or run a process to search symbols"}
         columnWidthsKey="symbolsView.columnWidths"
+        historyKey="symbol-search"
         idleTitle={isActive ? `Symbols for ${loadedCount} module${loadedCount === 1 ? '' : 's'} are loaded` : undefined}
         onSelect={onSelect}
         onRowContextMenu={(e, symbol) => openContextMenu(e, { va: symbol.va, is_function: symbol.is_function })}

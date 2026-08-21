@@ -39,6 +39,16 @@ test.describe("Input History", () => {
       const addrB = "0x" + (pc! + 8).toString(16);
 
       const input = page.locator(ASM_PANEL).getByPlaceholder(/Address, symbol/);
+      // The chevron lives inside this input's wrapper; scoping through the
+      // wrapper keeps it apart from the assemble editor's own history input.
+      const trigger = page
+        .locator(ASM_PANEL)
+        .locator('[data-slot="history-input"]')
+        .filter({ has: page.getByPlaceholder(/Address, symbol/) })
+        .locator('[data-slot="history-trigger"]');
+
+      // No history yet, so there is nothing to offer and no affordance for it.
+      await expect(trigger).toHaveCount(0);
 
       // Submit A — the expression lands in history (push happens on successful parse).
       await input.fill(addrA);
@@ -60,12 +70,28 @@ test.describe("Input History", () => {
       await expect(input).toHaveValue("");
       await expect(page.locator(DROPDOWN)).toHaveCount(0);
 
-      // Idle ArrowDown opens the dropdown in browse mode: list visible, draft untouched.
+      // Idle ArrowDown opens the list on the newest value too — either arrow is
+      // a recall gesture, so neither one merely toggles the list open.
       await input.press("ArrowDown");
       await expect(page.locator(DROPDOWN)).toBeVisible();
-      await expect(input).toHaveValue("");
+      await expect(input).toHaveValue(addrA);
+      await input.press("Escape");
+      await expect(page.locator(DROPDOWN)).toHaveCount(0);
+
+      // The chevron browses instead: it opens the list and leaves the draft alone.
+      await input.fill(addrB);
+      await expect(trigger).toBeVisible();
+      await trigger.click();
+      await expect(page.locator(DROPDOWN)).toBeVisible();
+      await expect(input).toHaveValue(addrB);
+      // Clicking it again closes the list.
+      await trigger.click();
+      await expect(page.locator(DROPDOWN)).toHaveCount(0);
+      await expect(input).toHaveValue(addrB);
 
       // Clicking a row fills the input and closes the list (Enter would submit).
+      await input.fill("");
+      await input.press("ArrowDown");
       await page.locator(DROPDOWN).getByRole("button", { name: addrA }).click();
       await expect(input).toHaveValue(addrA);
       await expect(page.locator(DROPDOWN)).toHaveCount(0);
@@ -77,16 +103,28 @@ test.describe("Input History", () => {
       await input.press("Enter");
       await expectHistory([addrA, addrB]);
 
-      // Shell-style cycling: Up→A, Up→B (older), Down→A, Down→draft + closed.
+      // Combobox cycling: the highlight moves the way the key points, and the
+      // list renders newest-first, so Down walks into older entries.
       await input.fill("");
       await input.press("ArrowUp");
       await expect(input).toHaveValue(addrA);
-      await input.press("ArrowUp");
+      await input.press("ArrowDown");
       await expect(input).toHaveValue(addrB);
+      await input.press("ArrowUp");
+      await expect(input).toHaveValue(addrA);
+      // Past the newest entry is the draft that recall interrupted.
+      await input.press("ArrowUp");
+      await expect(input).toHaveValue("");
+      await expect(page.locator(DROPDOWN)).toHaveCount(0);
+
+      // The list does not wrap: ArrowDown at the oldest entry stays put.
       await input.press("ArrowDown");
       await expect(input).toHaveValue(addrA);
       await input.press("ArrowDown");
-      await expect(input).toHaveValue("");
+      await expect(input).toHaveValue(addrB);
+      await input.press("ArrowDown");
+      await expect(input).toHaveValue(addrB);
+      await input.press("Escape");
       await expect(page.locator(DROPDOWN)).toHaveCount(0);
 
       await cleanupSession(page, sessionId);

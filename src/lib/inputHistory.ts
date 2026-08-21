@@ -37,4 +37,22 @@ export function pushInputHistory(key: string, value: string): void {
   } catch {
     // ignore quota/serialization errors
   }
+  for (const listener of listeners) listener(key);
+}
+
+type HistoryListener = (key: string) => void;
+
+const listeners = new Set<HistoryListener>();
+
+/**
+ * Observe pushes so a mounted input can react to its history becoming
+ * non-empty (the recall affordance is only shown when there is something to
+ * recall). Reads still go straight to `localStorage`; this only announces
+ * *when* to re-read. Returns an unsubscribe function.
+ */
+export function subscribeToInputHistory(listener: HistoryListener): () => void {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
 }

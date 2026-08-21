@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef, useEffect, useMemo, ReactNode } from 'react';
 import { Search, Code, Loader2 } from 'lucide-react';
-import { Input } from '@/components/ui/input';
+import { HistoryInput } from '@/components/ui/history-input';
+import { pushInputHistory } from '@/lib/inputHistory';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { DockPanel, PanelToolbar } from '@/components/ui/panel';
@@ -52,6 +53,12 @@ interface SymbolSearchViewProps<T extends SymbolSearchItem> {
   placeholder: string;
   /** localStorage key for the column widths (kept separate per host view). */
   columnWidthsKey: string;
+  /**
+   * Identity of the search input for recall history (`input-history:${historyKey}`).
+   * Hosts searching the same namespace should share a key so one history follows
+   * the user between them.
+   */
+  historyKey: string;
   /** First idle-state line, e.g. what's loaded ("Symbols for 12 modules are loaded"). */
   idleTitle?: string;
   /** Second idle-state line; defaults to the start-typing hint. */
@@ -96,7 +103,7 @@ interface SymbolSearchViewProps<T extends SymbolSearchItem> {
  * set, so a Select All survives a re-sort.
  */
 export function SymbolSearchView<T extends SymbolSearchItem>({
-  searchSymbols, enabled, placeholder, columnWidthsKey, idleTitle, idleSubtitle, formatAddress,
+  searchSymbols, enabled, placeholder, columnWidthsKey, historyKey, idleTitle, idleSubtitle, formatAddress,
   onSelect, onRowContextMenu, resetKey, focusTabId, selectable, renderBulkBar,
   fetchPreviews, children,
 }: SymbolSearchViewProps<T>) {
@@ -263,6 +270,17 @@ export function SymbolSearchView<T extends SymbolSearchItem>({
     [selected, symbols],
   );
 
+  const runSearch = useCallback(async (trimmed: string) => {
+    try {
+      setSymbols(await searchSymbols(trimmed, SEARCH_LIMIT));
+    } catch (error) {
+      console.error('Symbol search failed:', error);
+      setSymbols([]);
+    }
+    setSearched(true);
+    setSearching(false);
+  }, [searchSymbols]);
+
   const onChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;
     setTerm(value);
@@ -275,17 +293,29 @@ export function SymbolSearchView<T extends SymbolSearchItem>({
       return;
     }
     setSearching(true);
-    debounceRef.current = setTimeout(async () => {
-      try {
-        setSymbols(await searchSymbols(trimmed, SEARCH_LIMIT));
-      } catch (error) {
-        console.error('Symbol search failed:', error);
-        setSymbols([]);
-      }
-      setSearched(true);
-      setSearching(false);
-    }, DEBOUNCE_MS);
-  }, [searchSymbols]);
+    debounceRef.current = setTimeout(() => { void runSearch(trimmed); }, DEBOUNCE_MS);
+  }, [runSearch]);
+
+  // Enter is the explicit "search this" gesture: it skips the remaining debounce
+  // and records the term. Recall history therefore only collects terms the user
+  // committed to, not every keystroke prefix on the way there.
+  const onKeyDown = useCallback((e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key !== 'Enter') return;
+    const trimmed = term.trim();
+    if (trimmed.length < MIN_SEARCH_CHARS) return;
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    pushInputHistory(historyKey, trimmed);
+    setSearching(true);
+    void runSearch(trimmed);
+  }, [term, historyKey, runSearch]);
+
+  // Clicking a hit also proves the term good, which covers the common flow of
+  // typing, waiting for the debounce, and picking a row without ever pressing Enter.
+  const selectRow = useCallback((item: T) => {
+    const trimmed = term.trim();
+    if (trimmed.length >= MIN_SEARCH_CHARS) pushInputHistory(historyKey, trimmed);
+    onSelect(item);
+  }, [term, historyKey, onSelect]);
 
   const showList = searched && !searching && symbols.length > 0;
   // The backend truncates at the limit in module order rather than ranking, so
@@ -326,13 +356,15 @@ export function SymbolSearchView<T extends SymbolSearchItem>({
   return (
     <DockPanel>
       <PanelToolbar stack>
-        <Input
+        <HistoryInput
           ref={focusRef}
+          historyKey={historyKey}
           inputSize="xs"
           className="w-full"
           placeholder={placeholder}
           value={term}
           onChange={onChange}
+          onKeyDown={onKeyDown}
           disabled={!enabled}
         />
         {showList && !selectable && (
@@ -417,7 +449,7 @@ export function SymbolSearchView<T extends SymbolSearchItem>({
               return (
                 <div
                   className="px-2 py-1 border-b hover:bg-muted/40 cursor-pointer h-full"
-                  onClick={() => onSelect(s)}
+                  onClick={() => selectRow(s)}
                   onContextMenu={onRowContextMenu ? (e) => onRowContextMenu(e, s) : undefined}
                 >
                   <div className="flex items-center text-sm font-mono h-full">

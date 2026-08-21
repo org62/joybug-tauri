@@ -194,7 +194,35 @@ test.describe("Symbols table", () => {
         breakpoints: unknown[];
       };
       expect(session.breakpoints.length).toBe(0);
+
+      // --- Search history -----------------------------------------------------
+      // Enter is the commit gesture: it records the term and searches without
+      // waiting out the debounce.
+      await page.getByRole("button", { name: "Clear" }).click();
+      await search.fill("LdrLoadDl");
+      await search.press("Enter");
+      await expect(async () => {
+        const stored = await page.evaluate(() =>
+          localStorage.getItem("input-history:symbol-search"),
+        );
+        expect(JSON.parse(stored ?? "[]")).toEqual(["LdrLoadDl"]);
+      }).toPass({ timeout: 10_000, intervals: [50, 100] });
+
+      // ArrowUp on a cleared field recalls it and the results come back with it.
+      await search.fill("");
+      await search.press("ArrowUp");
+      await expect(search).toHaveValue("LdrLoadDl");
+      await expect(page.locator('[data-slot="history-dropdown"]')).toBeVisible();
+      await search.press("Escape");
+      await expect(page.locator('[data-slot="history-dropdown"]')).toHaveCount(0);
+      await search.fill("LdrLoadDl");
+      await expect(async () => {
+        expect((await names(page)).some((n) => n.includes("LdrLoadDll"))).toBe(true);
+      }).toPass({ timeout: 20_000, intervals: [100, 250] });
     } finally {
+      // The page is never reloaded between specs, so a history entry left here
+      // would follow the suite around.
+      await page.evaluate(() => localStorage.removeItem("input-history:symbol-search"));
       await restoreDefaultSettings(page);
       if (sessionId) await cleanupSession(page, sessionId);
     }

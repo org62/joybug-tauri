@@ -33,6 +33,7 @@ export const PeSymbolsView: React.FC<PeSymbolsViewProps> = ({ searchSymbols, fet
       enabled={symbolsLoaded}
       placeholder={symbolsLoaded ? "Search symbols…" : "Load symbols to search"}
       columnWidthsKey="peSymbolsView.columnWidths"
+      historyKey="symbol-search"
       idleTitle={symbolsLoaded ? `${symbolCount.toLocaleString()} symbols are loaded` : "No symbols loaded"}
       idleSubtitle={symbolsLoaded ? undefined : "Load a PDB from the toolbar to search symbols"}
       formatAddress={(s) => formatAddr(tripleFromVa(mapping, BigInt(s.va)), mode)}
