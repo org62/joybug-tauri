@@ -33,6 +33,7 @@ export default defineConfig({
     "navigation-history.spec.ts",
     "symbol-status.spec.ts",
     "symbol-breakpoints.spec.ts",
+    "symbols-table.spec.ts",
     "types.spec.ts",
     "registers.spec.ts",
     "session-lifecycle.spec.ts",

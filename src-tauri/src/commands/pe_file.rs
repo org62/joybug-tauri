@@ -320,7 +320,17 @@ fn contains_ignore_ascii_case(haystack: &str, needle: &str) -> bool {
             .any(|w| w.eq_ignore_ascii_case(needle.as_bytes()))
 }
 
-/// Search loaded symbols by substring for the Symbol Explorer / goto box.
+/// True when every whitespace-separated token of `pattern` appears in the module
+/// name or the symbol name, in any order — so "user bar" finds "user32!foo_bar_baz".
+/// Mirrors `joybug_core`'s session-side symbol matching.
+fn matches_tokens(pattern: &str, module_name: &str, symbol_name: &str) -> bool {
+    pattern.split_whitespace().all(|t| {
+        contains_ignore_ascii_case(symbol_name, t) || contains_ignore_ascii_case(module_name, t)
+    })
+}
+
+/// Search loaded symbols for the Symbol Explorer / goto box: whitespace-separated
+/// tokens, ANDed, matched against the module and symbol names.
 /// Async + blocking pool: the scan walks the whole symbol list (10^5+ entries
 /// for big PDBs) and must not run on the main thread per keystroke.
 #[tauri::command]
@@ -336,7 +346,7 @@ pub async fn pe_search_symbols(
         let module_name = file.module_name();
         let out = syms
             .iter()
-            .filter(|s| contains_ignore_ascii_case(&s.name, &pattern))
+            .filter(|s| matches_tokens(&pattern, &module_name, &s.name))
             .take(limit.max(1))
             .map(|s| SymbolData {
                 name: s.name.clone(),

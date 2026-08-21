@@ -25,15 +25,20 @@ interface ImagePatchesPayload {
  * Backing state for the Image Patches window. Scans on demand (and re-scans
  * when the session pauses or the patch set changes) — the hook lives in the
  * view's context wrapper so no scanning happens while the tab is closed.
+ *
+ * `canScan` is "a process is reachable", not "paused": the backend runs the
+ * scan over the out-of-band connection when the session isn't paused, so a
+ * running target — or a non-invasive `Open` one that was never attached — scans
+ * just the same.
  */
-export function useImagePatches(sessionId?: string, isPaused?: boolean) {
+export function useImagePatches(sessionId?: string, canScan?: boolean, isPaused?: boolean) {
   const [patches, setPatches] = useState<ImagePatch[]>([]);
   const [capped, setCapped] = useState(false);
   const [scanning, setScanning] = useState(false);
   const [scanned, setScanned] = useState(false);
 
-  const isPausedRef = useRef(isPaused);
-  isPausedRef.current = isPaused;
+  const canScanRef = useRef(canScan);
+  canScanRef.current = canScan;
 
   // Session cleanup: results describe a live process, so drop everything when
   // the session goes away. Kept across resumes — stale-but-labeled beats blank.
@@ -46,13 +51,22 @@ export function useImagePatches(sessionId?: string, isPaused?: boolean) {
     }
   }, [sessionId]);
 
+  // Resolves once this hook's event listeners are attached. The result comes
+  // back as an event, so a scan requested before then is emitted into the void
+  // and the view sits on "Scanning..." forever. That's reachable now that the
+  // first scan fires on mount: with the module images already cached from an
+  // earlier scan, the backend can answer in well under the listener's own IPC
+  // round-trip.
+  const listenersReady = useRef<Promise<unknown> | null>(null);
+
   const scan = useCallback(async () => {
     if (!sessionId) return;
     setScanning(true);
     try {
+      await listenersReady.current;
       await invoke('scan_image_patches', { sessionId });
     } catch (e) {
-      // Not paused (stepping raced the scan) — keep whatever we last showed.
+      // Target gone (the session stopped mid-scan) — keep what we last showed.
       console.error('Failed to request image patch scan:', e);
       setScanning(false);
     }
@@ -73,24 +87,37 @@ export function useImagePatches(sessionId?: string, isPaused?: boolean) {
     // Patch changes and image-byte restores emit patches-updated; the scan
     // result is stale the moment that fires.
     const unlistenPatches = listen<{ session_id: string }>('patches-updated', (event) => {
-      if (event.payload.session_id === sessionId && isPausedRef.current) {
+      if (event.payload.session_id === sessionId && canScanRef.current) {
         scan();
       }
     });
 
+    listenersReady.current = Promise.all([unlistenUpdated, unlistenPatches]);
+
     return () => {
+      listenersReady.current = null;
       unlistenUpdated.then(f => f());
       unlistenPatches.then(f => f());
     };
   }, [sessionId, scan]);
 
-  // Auto-scan on pause (debounced upstream via displayStatus, so rapid
-  // stepping doesn't fire a scan per step).
+  // Auto-scan on every pause (debounced upstream via displayStatus, so rapid
+  // stepping doesn't fire a scan per step) — and once when the target first
+  // becomes reachable, since a running or non-invasive `Open` session never
+  // pauses and so offers no edge to hang the rescan on. The ref keeps a resume
+  // from looking like that first time and firing a second scan.
+  const autoScanned = useRef(false);
   useEffect(() => {
-    if (sessionId && isPaused) {
+    if (!sessionId || !canScan) {
+      autoScanned.current = false;
+      return;
+    }
+    const first = !autoScanned.current;
+    autoScanned.current = true;
+    if (isPaused || first) {
       scan();
     }
-  }, [sessionId, isPaused, scan]);
+  }, [sessionId, canScan, isPaused, scan]);
 
   return useMemo(() => ({
     patches,

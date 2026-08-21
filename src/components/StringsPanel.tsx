@@ -63,7 +63,7 @@ export const StringsPanel = ({
   // Below this width the results scroll horizontally instead of crushing the
   // columns: the three fixed columns + px-2 padding + a floor for the string.
   const rowMinWidth = `${columnWidths.address + columnWidths.encoding + columnWidths.length + 16 + 160}px`;
-  const { headerInnerRef, handleViewportScroll } = useHeaderScrollSync(rowMinWidth);
+  const { headerInnerRef, handleViewportScroll, handleHeaderScroll } = useHeaderScrollSync(rowMinWidth);
 
   const displayAddress = (address: string) => formatAddress?.(address) ?? address;
 
@@ -219,7 +219,7 @@ export const StringsPanel = ({
       {/* Column header row (sortable Address & String) — fixed vertically,
           follows the list's horizontal scroll */}
       {scan.hasScanned && scan.results.length > 0 && (
-        <div className="shrink-0 overflow-hidden border-b bg-muted/30">
+        <div className="shrink-0 overflow-hidden border-b bg-muted/30" onScroll={handleHeaderScroll}>
           <div
             ref={headerInnerRef}
             style={{ minWidth: rowMinWidth }}

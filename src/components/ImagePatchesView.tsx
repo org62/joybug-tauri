@@ -14,7 +14,8 @@ interface ImagePatchesViewProps {
   capped: boolean;
   scanning: boolean;
   scanned: boolean;
-  /** True when a scan can run now (session paused). */
+  /** True when a scan can run now (a process is reachable — paused, running,
+   *  or opened non-invasively). */
   canScan: boolean;
   onScan: () => void;
   onRestore?: (address: string) => void;
@@ -55,7 +56,7 @@ export function ImagePatchesView({
       return <EmptyState icon={<Loader2 className="h-8 w-8 mx-auto mb-4 animate-spin" />} title="Scanning modules..." />;
     }
     const { title, subtitle } = !scanned
-      ? { title: "Not scanned yet", subtitle: "Pause the session to scan loaded modules for image patches" }
+      ? { title: "Not scanned yet", subtitle: "Start or open a process to scan its loaded modules for image patches" }
       : patches.length === 0
         ? { title: "No image patches", subtitle: "In-memory code matches the on-disk module images" }
         : { title: "No matches", subtitle: "No image patch matches the current filter" };
@@ -84,7 +85,7 @@ export function ImagePatchesView({
           size="icon-xs"
           onClick={onScan}
           disabled={!canScan || scanning}
-          title={canScan ? "Rescan all modules" : "Pause the session to scan"}
+          title={canScan ? "Rescan all modules" : "Start or open a process to scan"}
         >
           <RefreshCw className={cn(scanning && "animate-spin")} />
         </Button>

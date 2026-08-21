@@ -64,19 +64,23 @@ pub fn undo_patches(
 
 /// Restore the original on-disk image bytes at `address` for an in-memory
 /// modification that has no tracked UI patch (external hook, self-modifying
-/// code). Requires a paused session (writes memory in the debug loop).
+/// code). Runs in the debug loop when paused, otherwise over OOB — a
+/// non-invasive `Open` handle carries `PROCESS_VM_WRITE`, so no attach is needed.
 #[tauri::command]
 pub fn restore_image_bytes(
     session_id: String,
     address: String,
     session_states: State<'_, SessionStatesMap>,
+    oob_pool: State<'_, super::OobPool>,
+    app_handle: tauri::AppHandle,
 ) -> Result<()> {
     let address = super::parse_hex_u64(&address, "address")?;
 
-    super::send_paused_command(
-        &session_id,
-        &session_states,
+    let handle = Some(app_handle);
+    super::paused_or_oob(
+        &session_id, &session_states, &oob_pool,
         UICommand::RestoreImageBytes { address },
+        |client, pid| crate::session::patches::process_restore_image_bytes(client, &handle, pid, address),
     )?;
 
     info!("Restore image bytes request sent for session {} at 0x{:X}", session_id, address);
@@ -85,13 +89,21 @@ pub fn restore_image_bytes(
 
 /// Diff all loaded modules' executable sections against their on-disk images
 /// and emit the modified runs on `image-patches-updated` (the Image Patches
-/// window). Requires a paused session (reads memory in the debug loop).
+/// window). Runs in the debug loop when paused, otherwise over OOB so a running
+/// or non-invasive `Open` session can scan without an attach.
 #[tauri::command]
 pub fn scan_image_patches(
     session_id: String,
     session_states: State<'_, SessionStatesMap>,
+    oob_pool: State<'_, super::OobPool>,
+    app_handle: tauri::AppHandle,
 ) -> Result<()> {
-    super::send_paused_command(&session_id, &session_states, UICommand::ScanImagePatches)?;
+    let handle = Some(app_handle);
+    super::paused_or_oob(
+        &session_id, &session_states, &oob_pool,
+        UICommand::ScanImagePatches,
+        |client, pid| crate::session::image_patches::process_scan_image_patches(client, &handle, pid),
+    )?;
     info!("Image patch scan request sent for session {}", session_id);
     Ok(())
 }

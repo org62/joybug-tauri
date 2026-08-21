@@ -49,22 +49,25 @@ pub fn ensure_and_snapshot_images(
     state.original_images.values().cloned().collect()
 }
 
-/// Ensure every module in `bases` has an image entry and return one snapshot of
-/// all cached entries — the whole-image scan's variant of
+/// Ensure every `(base, name)` in `modules` has an image entry and return one
+/// snapshot of all cached entries — the explicit-module-list variant of
 /// [`ensure_and_snapshot_images`] (which builds only the module covering a
 /// single address). One lock pass collects the missing modules, the builds run
 /// off-lock, and one re-lock commits everything and takes the snapshot.
+///
+/// The list is passed in rather than read off `state.modules` because a
+/// non-invasive `Open` session has no debug events to populate that cache — its
+/// callers enumerate over the connection instead (`modules_or_enumerate`).
 pub fn ensure_all_and_snapshot_images(
     state_arc: &Arc<Mutex<SessionStateUI>>,
-    bases: &[u64],
+    modules: &[(u64, String)],
 ) -> Vec<Arc<OriginalModuleImage>> {
     let missing: Vec<(u64, String)> = {
         let state = state_arc.lock().unwrap();
-        state
-            .modules
+        modules
             .iter()
-            .filter(|m| bases.contains(&m.base) && !state.original_images.contains_key(&m.base))
-            .map(|m| (m.base, m.name.clone()))
+            .filter(|(base, _)| !state.original_images.contains_key(base))
+            .cloned()
             .collect()
     };
 

@@ -130,7 +130,7 @@ export const ContextCodeExplorerView = () => {
   // columns: the seven fixed columns + px-2 padding + a floor for the symbol.
   const rowMinWidth = `${columnWidths.address + columnWidths.rva + columnWidths.order
     + columnWidths.time + columnWidths.delta + columnWidths.threads + columnWidths.hits + 16 + 160}px`;
-  const { headerInnerRef, handleViewportScroll } = useHeaderScrollSync(rowMinWidth);
+  const { headerInnerRef, handleViewportScroll, handleHeaderScroll } = useHeaderScrollSync(rowMinWidth);
 
   // Load the module list so the user can pick which module to instrument.
   useEffect(() => {
@@ -412,7 +412,7 @@ export const ContextCodeExplorerView = () => {
       {/* Column header row (sortable Symbol / Address / Hits) — fixed
           vertically, follows the list's horizontal scroll */}
       {rows.length > 0 && (
-        <div className="shrink-0 overflow-hidden border-b bg-muted/30">
+        <div className="shrink-0 overflow-hidden border-b bg-muted/30" onScroll={handleHeaderScroll}>
           <div
             ref={headerInnerRef}
             style={{ minWidth: rowMinWidth }}

@@ -575,13 +575,226 @@ export function isHexChar(char: string): boolean {
 // Address expression parsing
 // ============================================================================
 
+/** Characters that act as binary/unary operators in address expressions. */
+const EXPRESSION_OPERATORS = '+-*/%';
+
+type ExprToken =
+  | { kind: 'op'; op: '+' | '-' | '*' | '/' | '%' }
+  | { kind: 'lparen' }
+  | { kind: 'rparen' }
+  | { kind: 'atom'; text: string };
+
+type ExprNode =
+  | { kind: 'atom'; text: string }
+  | { kind: 'neg'; operand: ExprNode }
+  | { kind: 'binary'; op: '+' | '-' | '*' | '/' | '%'; left: ExprNode; right: ExprNode };
+
+/** Thrown while tokenizing/parsing/evaluating; the message reaches the user. */
+class ExpressionError extends Error {}
+
+/**
+ * Split an expression into atoms, operators and parentheses.
+ *
+ * An atom runs until the next operator or parenthesis, so interior spaces are
+ * kept (`operator new+8`) but `rax * 8` splits into three tokens. A `(` that
+ * opens *inside* an atom is treated as part of it, together with everything up
+ * to its matching `)` — that keeps demangled signatures such as
+ * `mod!foo(void *)+0x10` intact while still allowing grouping like `(rax+8)*2`.
+ */
+function tokenizeExpression(input: string): ExprToken[] {
+  const tokens: ExprToken[] = [];
+  let i = 0;
+
+  while (i < input.length) {
+    const char = input[i];
+
+    if (/\s/.test(char)) {
+      i++;
+      continue;
+    }
+    if (EXPRESSION_OPERATORS.includes(char)) {
+      tokens.push({ kind: 'op', op: char as '+' | '-' | '*' | '/' | '%' });
+      i++;
+      continue;
+    }
+    if (char === '(') {
+      tokens.push({ kind: 'lparen' });
+      i++;
+      continue;
+    }
+    if (char === ')') {
+      tokens.push({ kind: 'rparen' });
+      i++;
+      continue;
+    }
+
+    const start = i;
+    let depth = 0;
+    while (i < input.length) {
+      const c = input[i];
+      if (depth === 0) {
+        if (c === ')' || EXPRESSION_OPERATORS.includes(c)) break;
+        if (c === '(') depth++;
+      } else if (c === '(') {
+        depth++;
+      } else if (c === ')') {
+        depth--;
+      }
+      i++;
+    }
+
+    const text = input.slice(start, i).trim();
+    if (text) tokens.push({ kind: 'atom', text });
+  }
+
+  return tokens;
+}
+
+/**
+ * Recursive-descent parse of the token stream.
+ * Grammar (lowest to highest precedence):
+ *   sum     := product (('+' | '-') product)*
+ *   product := unary (('*' | '/' | '%') unary)*
+ *   unary   := ('+' | '-') unary | primary
+ *   primary := '(' sum ')' | atom
+ */
+function parseExpressionTokens(tokens: ExprToken[]): ExprNode {
+  let pos = 0;
+  const peek = (): ExprToken | undefined => tokens[pos];
+
+  function parseSum(): ExprNode {
+    let node = parseProduct();
+    for (;;) {
+      const token = peek();
+      if (token?.kind === 'op' && (token.op === '+' || token.op === '-')) {
+        pos++;
+        node = { kind: 'binary', op: token.op, left: node, right: parseProduct() };
+      } else {
+        return node;
+      }
+    }
+  }
+
+  function parseProduct(): ExprNode {
+    let node = parseUnary();
+    for (;;) {
+      const token = peek();
+      if (token?.kind === 'op' && (token.op === '*' || token.op === '/' || token.op === '%')) {
+        pos++;
+        node = { kind: 'binary', op: token.op, left: node, right: parseUnary() };
+      } else {
+        return node;
+      }
+    }
+  }
+
+  function parseUnary(): ExprNode {
+    const token = peek();
+    if (token?.kind === 'op') {
+      if (token.op === '-') {
+        pos++;
+        return { kind: 'neg', operand: parseUnary() };
+      }
+      if (token.op === '+') {
+        pos++;
+        return parseUnary();
+      }
+      throw new ExpressionError(`Unexpected operator: ${token.op}`);
+    }
+    return parsePrimary();
+  }
+
+  function parsePrimary(): ExprNode {
+    const token = peek();
+    if (!token) throw new ExpressionError('Unexpected end of expression');
+    if (token.kind === 'lparen') {
+      pos++;
+      const inner = parseSum();
+      if (peek()?.kind !== 'rparen') throw new ExpressionError('Missing closing parenthesis');
+      pos++;
+      return inner;
+    }
+    if (token.kind === 'rparen') throw new ExpressionError('Unmatched ")"');
+    if (token.kind === 'op') throw new ExpressionError(`Unexpected operator: ${token.op}`);
+    pos++;
+    return { kind: 'atom', text: token.text };
+  }
+
+  const node = parseSum();
+  const leftover = peek();
+  if (leftover) {
+    throw new ExpressionError(leftover.kind === 'rparen' ? 'Unmatched ")"' : 'Invalid expression');
+  }
+  return node;
+}
+
+/**
+ * Evaluate a parsed expression, resolving registers and symbols along the way.
+ */
+async function evaluateExpressionNode(
+  node: ExprNode,
+  registers: RegisterContext,
+  resolveSymbol?: SymbolResolver
+): Promise<bigint> {
+  switch (node.kind) {
+    case 'atom': {
+      const parsed = parseTerm(node.text, registers);
+
+      if (parsed.needsSymbolResolution && parsed.symbolName) {
+        if (!resolveSymbol) {
+          throw new ExpressionError(`Cannot resolve symbol: ${parsed.symbolName}`);
+        }
+        let resolved: bigint | null;
+        try {
+          resolved = await resolveSymbol(parsed.symbolName);
+        } catch {
+          throw new ExpressionError(`Failed to resolve symbol: ${parsed.symbolName}`);
+        }
+        if (resolved === null) {
+          throw new ExpressionError(`Symbol not found: ${parsed.symbolName}`);
+        }
+        return resolved;
+      }
+
+      if (parsed.value === null) {
+        throw new ExpressionError(`Invalid term: ${node.text}`);
+      }
+      return parsed.value;
+    }
+    case 'neg':
+      return -(await evaluateExpressionNode(node.operand, registers, resolveSymbol));
+    case 'binary': {
+      const left = await evaluateExpressionNode(node.left, registers, resolveSymbol);
+      const right = await evaluateExpressionNode(node.right, registers, resolveSymbol);
+      switch (node.op) {
+        case '+':
+          return left + right;
+        case '-':
+          return left - right;
+        case '*':
+          return left * right;
+        case '/':
+          if (right === 0n) throw new ExpressionError('Division by zero');
+          return left / right;
+        case '%':
+          if (right === 0n) throw new ExpressionError('Division by zero');
+          return left % right;
+      }
+    }
+  }
+}
+
 /**
  * Parse an address expression with support for:
  * - Hex addresses: 0x7FF8ABCD1234, 7FF8ABCD1234
  * - Decimal addresses: 12345
  * - Registers: rax, rsp, rip, etc.
  * - Symbols: ntdll!NtCreateFile, kernel32!CreateFileW
- * - Simple math: rax+0x10, rsp-8, ntdll!NtCreateFile+0x20
+ * - Math with the usual precedence: `+ - * / %`, unary minus and parentheses,
+ *   e.g. `rbp+rax*8+0x4e18`, `rsp-8`, `(rax+8)*2`, `ntdll!NtCreateFile+0x20`
+ *
+ * Bare numbers are hex, matching the rest of the debugger's address input, so
+ * `rax*10` scales by 0x10.
  *
  * @param expression The address expression to parse
  * @param registers Current register values from thread context
@@ -599,76 +812,28 @@ export async function parseAddressExpression(
     return { address: null, error: 'Empty expression' };
   }
 
-  // Tokenize: split on + and - while keeping the operators
-  // Handle expressions like: rax+0x10, rsp-8, symbol+offset
-  const tokens: { value: string; op: '+' | '-' | null }[] = [];
-  let current = '';
-  let pendingOp: '+' | '-' | null = null;
-
-  for (let i = 0; i < trimmed.length; i++) {
-    const char = trimmed[i];
-
-    if (char === '+' || char === '-') {
-      // Check if this is part of a hex number (0x prefix followed by this)
-      // or if it's an operator
-      if (current.trim()) {
-        tokens.push({ value: current.trim(), op: pendingOp });
-        current = '';
-      }
-      pendingOp = char as '+' | '-';
-    } else {
-      current += char;
-    }
-  }
-
-  // Push the last token
-  if (current.trim()) {
-    tokens.push({ value: current.trim(), op: pendingOp });
-  }
-
-  if (tokens.length === 0) {
-    return { address: null, error: 'Invalid expression' };
-  }
-
-  // Evaluate tokens
-  let result: bigint = 0n;
-
-  for (const token of tokens) {
-    const parsed = parseTerm(token.value, registers);
-    let termValue: bigint | null = parsed.value;
-
-    // Need to resolve symbol
-    if (parsed.needsSymbolResolution && parsed.symbolName) {
-      if (!resolveSymbol) {
-        return { address: null, error: `Cannot resolve symbol: ${parsed.symbolName}` };
-      }
-
-      try {
-        termValue = await resolveSymbol(parsed.symbolName);
-        if (termValue === null) {
-          return { address: null, error: `Symbol not found: ${parsed.symbolName}` };
-        }
-      } catch (e) {
-        return { address: null, error: `Failed to resolve symbol: ${parsed.symbolName}` };
-      }
+  try {
+    const tokens = tokenizeExpression(trimmed);
+    if (tokens.length === 0) {
+      return { address: null, error: 'Invalid expression' };
     }
 
-    if (termValue === null) {
-      return { address: null, error: `Invalid term: ${token.value}` };
+    const result = await evaluateExpressionNode(
+      parseExpressionTokens(tokens),
+      registers,
+      resolveSymbol
+    );
+
+    // Ensure non-negative
+    if (result < 0n) {
+      return { address: null, error: 'Result is negative' };
     }
 
-    // Apply operator
-    if (token.op === null || token.op === '+') {
-      result += termValue;
-    } else if (token.op === '-') {
-      result -= termValue;
+    return { address: result };
+  } catch (e) {
+    if (e instanceof ExpressionError) {
+      return { address: null, error: e.message };
     }
+    return { address: null, error: 'Invalid address expression' };
   }
-
-  // Ensure non-negative
-  if (result < 0n) {
-    return { address: null, error: 'Result is negative' };
-  }
-
-  return { address: result };
 }

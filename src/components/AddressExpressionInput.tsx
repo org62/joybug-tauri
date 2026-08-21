@@ -38,8 +38,8 @@ interface AddressExpressionInputProps {
 /**
  * Address input shared by the disassembly, memory, breakpoints, and types
  * views. Accepts the full expression grammar of `parseAddressExpression`
- * (hex/decimal addresses, registers, `module!symbol`, and +/- math like
- * `rax+0x10`) and emits the resolved address on submit.
+ * (hex/decimal addresses, registers, `module!symbol`, and math like
+ * `rax+0x10` or `rbp+rax*8+0x4e18`) and emits the resolved address on submit.
  */
 export function AddressExpressionInput({
   value,

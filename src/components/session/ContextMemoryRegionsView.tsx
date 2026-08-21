@@ -356,7 +356,9 @@ export function ContextMemoryRegionsView({ onNavigateToAddress }: ContextMemoryR
               <span className="w-20 shrink-0 text-right">{region.region_size_formatted}</span>
               <span className="w-24 shrink-0 ml-2">{region.state}</span>
               <span className="w-24 shrink-0">{region.region_type}</span>
-              <span className="w-28 shrink-0 truncate">{region.protect}</span>
+              {/* Modifier flags (…|PAGE_GUARD) push past the column — keep the
+                  full string reachable on hover rather than widening the row. */}
+              <span className="w-28 shrink-0 truncate" title={region.protect}>{region.protect}</span>
               <span className="flex-1 flex items-center gap-1 overflow-hidden">
                 {region.annotations.map((a, i) => {
                   const typeName = a.address ? KIND_TYPE_OVERLAY[a.kind] : undefined;

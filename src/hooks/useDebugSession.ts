@@ -207,11 +207,13 @@ export function useDebugSession(sessionId: string | undefined) {
         unlistenError();
       };
 
+      // Generous: a broad pattern can return the panel's full 10k-symbol limit,
+      // which is a megabyte or two of JSON crossing core -> Tauri -> webview.
       const timeout = setTimeout(() => {
         console.warn('Symbol search timed out for pattern:', pattern);
         cleanup();
         resolve([]);
-      }, 5000); // 5 second timeout
+      }, 30000);
 
       // Set up one-time listener for the response
       const unlisten = await listen<{ session_id: string; pattern: string; symbols: Symbol[] }>(

@@ -78,6 +78,29 @@ pub(crate) fn get_modules_snapshot(session: &DebugSession) -> Vec<joybug_core::p
     session.state.lock().unwrap().modules.clone()
 }
 
+/// The session's module list: the debug-loop cache when it has one, otherwise a
+/// live enumeration over the connection. A non-invasive `Open` session receives
+/// no debug events, so its cached list is always empty — anything that must work
+/// without an attach has to enumerate instead of reading the cache.
+pub(crate) fn modules_or_enumerate(
+    session: &mut DebugSession,
+    pid: u32,
+) -> Vec<joybug_core::protocol_io::ModuleInfo> {
+    let cached = get_modules_snapshot(session);
+    if !cached.is_empty() {
+        return cached;
+    }
+    session.list_modules(pid).unwrap_or_default()
+}
+
+/// `(base, name)` pairs for the original-image cache, which keys by base and
+/// builds from the module's on-disk path.
+pub(crate) fn module_image_keys(
+    modules: &[joybug_core::protocol_io::ModuleInfo],
+) -> Vec<(u64, String)> {
+    modules.iter().map(|m| (m.base, m.name.clone())).collect()
+}
+
 /// Finds the module containing the given address, returns (short_name, offset_from_base)
 pub(crate) fn find_module_for_address(modules: &[joybug_core::protocol_io::ModuleInfo], address: u64) -> Option<(String, u64)> {
     for module in modules {

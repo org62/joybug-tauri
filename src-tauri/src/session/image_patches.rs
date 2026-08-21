@@ -9,7 +9,7 @@ use tauri::{AppHandle, Emitter};
 use tracing::{debug, error, warn};
 
 use super::disassembly::{applied_patch_ranges, disasm_covering};
-use super::helpers::{format_symbol, hex_join, module_short_name};
+use super::helpers::{format_symbol, hex_join, module_image_keys, module_short_name, modules_or_enumerate};
 use super::image_cache::ensure_all_and_snapshot_images;
 use super::patches::MAX_RESTORE_BYTES;
 use super::types::{DebugSession, ImagePatchEntry, ImagePatchesResult};
@@ -36,33 +36,36 @@ struct DiffRun {
 /// and emit the modified runs on `image-patches-updated`. Active software
 /// breakpoints (0xCC written by the debugger itself) are excluded from the
 /// diff; tracked user patches are included and flagged `tracked`.
+///
+/// Runs off a plain pid, so it serves both the paused debug loop and the OOB
+/// path used by a running or non-invasive `Open` session (which has neither
+/// breakpoints nor tracked patches, so those sets come back empty).
 pub(crate) fn process_scan_image_patches(
     session: &mut DebugSession,
     app_handle_clone: &Option<AppHandle>,
-    event: &joybug_core::protocol_io::DebugEvent,
+    pid: u32,
 ) {
-    let pid = event.pid();
     let arch = crate::commands::get_session_arch(&session.state);
 
-    let (session_id, module_names, bp_addrs, patch_ranges) = {
+    let (session_id, bp_addrs, patch_ranges) = {
         let state = session.state.lock().unwrap();
-        let names: HashMap<u64, String> = state
-            .modules
-            .iter()
-            .map(|m| (m.base, module_short_name(&m.name)))
-            .collect();
         let bps: HashSet<u64> = state
             .breakpoints
             .iter()
             .filter(|bp| bp.is_active && bp.bp_kind == "software" && bp.address != 0)
             .map(|bp| bp.address)
             .collect();
-        (state.id.clone(), names, bps, applied_patch_ranges(&state))
+        (state.id.clone(), bps, applied_patch_ranges(&state))
     };
 
+    let modules = modules_or_enumerate(session, pid);
+    let module_names: HashMap<u64, String> = modules
+        .iter()
+        .map(|m| (m.base, module_short_name(&m.name)))
+        .collect();
+
     // Ensure every loaded module has an image entry, then take one snapshot.
-    let module_bases: Vec<u64> = module_names.keys().copied().collect();
-    let images = ensure_all_and_snapshot_images(&session.state, &module_bases);
+    let images = ensure_all_and_snapshot_images(&session.state, &module_image_keys(&modules));
 
     let disasm = match CapstoneDisassembler::new() {
         Ok(d) => Some(d),

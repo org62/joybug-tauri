@@ -31,6 +31,7 @@ interface RegionData {
   region_size: number;
   state: string;
   region_type: string;
+  protect: string;
   annotations: RegionAnnotation[];
 }
 
@@ -182,6 +183,55 @@ test.describe("Memory Regions", () => {
           { timeout: 10_000, intervals: [100, 250] },
         )
         .toContain(tebAnn.address);
+
+      await cleanupSession(page, sessionId);
+    } finally {
+      await restoreDefaultSettings(page);
+    }
+  });
+
+  // A thread stack's guard region is PAGE_READWRITE|PAGE_GUARD: plain
+  // ReadProcessMemory refuses it with ERROR_PARTIAL_COPY, so opening one used to
+  // fail with a raw OS error even though the pages hold ordinary stack bytes.
+  test("a guard-page region opens in the memory view and stays armed", async ({
+    tauriPage: page,
+  }) => {
+    test.setTimeout(60_000);
+    await configureMinimalStopSettings(page);
+
+    try {
+      const sessionId = await createAndStartSession(page, "Region Guard Page");
+      await waitForPaused(page, sessionId);
+
+      const regions = await fetchRegions(page, sessionId);
+      const guard = regions.find(
+        (r) => r.state === "MEM_COMMIT" && r.protect.includes("PAGE_GUARD"),
+      );
+      expect(guard, "process should have a stack guard region").toBeTruthy();
+
+      await goToWindow(page, "Memory Regions");
+      const panel = page.locator('[data-testid="memory-regions-panel"]');
+      const gotoInput = panel.getByPlaceholder(/Address/);
+      await gotoInput.fill(guard!.base_address);
+      await gotoInput.press("Enter");
+
+      const guardRow = panel.locator(`${REGION_ROW}[data-base="${guard!.base_address}"]`);
+      await expect(guardRow).toBeVisible({ timeout: 10_000 });
+      await guardRow.click();
+
+      // Bytes, not an error panel: the footer reports a full chunk was read.
+      const hexPanel = page.locator('[data-testid="hex-panel"]');
+      await expect(hexPanel.locator("span.cursor-pointer").first()).toBeVisible({
+        timeout: 10_000,
+      });
+      await expect(hexPanel).toContainText("4096 bytes");
+      await expect(hexPanel).not.toContainText("ReadProcessMemory");
+
+      // The read lifts PAGE_GUARD transiently — it must be back afterwards, or
+      // the target loses the trap that grows its stack.
+      const after = await fetchRegions(page, sessionId);
+      const sameRegion = after.find((r) => r.base_address === guard!.base_address);
+      expect(sameRegion?.protect).toContain("PAGE_GUARD");
 
       await cleanupSession(page, sessionId);
     } finally {

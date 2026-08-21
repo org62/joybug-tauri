@@ -153,7 +153,7 @@ pub(crate) fn process_memory_regions_request(
                     region_size_formatted: format_bytes(r.region_size),
                     state: joybug_core::formatting::memory::state_to_str(r.state).to_string(),
                     state_raw: r.state,
-                    protect: joybug_core::formatting::memory::protect_to_str(r.protect).to_string(),
+                    protect: joybug_core::formatting::memory::protect_to_str(r.protect),
                     protect_raw: r.protect,
                     region_type: joybug_core::formatting::memory::type_to_str(r.region_type).to_string(),
                     type_raw: r.region_type,

@@ -515,11 +515,11 @@ fn process_command(
             CommandResult::Continue
         }
         UICommand::UndoPatch { ref patch_id } => {
-            process_undo_patch(session, app_handle_clone, event, patch_id);
+            process_undo_patch(session, app_handle_clone, event.pid(), patch_id);
             CommandResult::Continue
         }
         UICommand::UndoPatches { ref patch_ids } => {
-            process_undo_patches(session, app_handle_clone, event, patch_ids);
+            process_undo_patches(session, app_handle_clone, event.pid(), patch_ids);
             CommandResult::Continue
         }
         UICommand::EnablePatch { ref patch_id, enabled } => {
@@ -535,11 +535,11 @@ fn process_command(
             CommandResult::Continue
         }
         UICommand::RestoreImageBytes { address } => {
-            process_restore_image_bytes(session, app_handle_clone, event, address);
+            process_restore_image_bytes(session, app_handle_clone, event.pid(), address);
             CommandResult::Continue
         }
         UICommand::ScanImagePatches => {
-            process_scan_image_patches(session, app_handle_clone, event);
+            process_scan_image_patches(session, app_handle_clone, event.pid());
             CommandResult::Continue
         }
         UICommand::AddBookmark { ref kind, address, ref value_type, ref name, ref comment, ref pointer_offsets, ref base_symbol, ref asm_text } => {

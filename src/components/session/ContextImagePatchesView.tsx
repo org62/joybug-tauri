@@ -5,10 +5,13 @@ import { useImagePatches } from '@/hooks/useImagePatches';
 export function ContextImagePatchesView() {
   const sessionData = useSessionContext();
 
-  // displayStatus is debounced, so rapid stepping doesn't trigger a scan per step.
+  // The scan runs over OOB when the session isn't paused, so it needs a process
+  // — not a pause. displayStatus is debounced, so rapid stepping doesn't
+  // trigger a scan per step.
   const isPaused = sessionData.displayStatus === 'Paused';
   const { patches, capped, scanning, scanned, scan } = useImagePatches(
     sessionData.session?.id,
+    sessionData.canUseMemoryOps,
     isPaused,
   );
 
@@ -18,7 +21,7 @@ export function ContextImagePatchesView() {
       capped={capped}
       scanning={scanning}
       scanned={scanned}
-      canScan={isPaused}
+      canScan={sessionData.canUseMemoryOps}
       onScan={scan}
       onRestore={sessionData.patchState.restoreImageBytes}
       onNavigateToDisassembly={sessionData.onNavigateToDisassembly}

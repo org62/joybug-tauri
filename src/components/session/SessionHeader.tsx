@@ -179,16 +179,16 @@ export const SessionHeader: React.FC<SessionHeaderProps> = ({
             onClick={handlePause}
             disabled={!canPause || busyAction !== null}
             size="sm"
-            variant="ghost"
+            variant="outline"
             title={`Pause (${getKeybinding("debug.go")})`}
             aria-label="Pause"
           >
             <Pause className="h-4 w-4" />
           </Button>
         )}
-        {/* Step buttons group with tighter spacing. Go keeps a border so the group
-            has a hierarchy; the steps are ghost because they're keyboard-driven in
-            practice and a row of solid fills dominates the whole header. */}
+        {/* Step buttons group with tighter spacing. Every transport control is
+            outlined and equally weighted — Go, the three steps, and Stop are all
+            first-class actions, so none of them gets promoted over the others. */}
         {!canStart && !isOpen && (
           <div className="inline-flex items-center gap-1">
             <div className="inline-flex">
@@ -238,7 +238,7 @@ export const SessionHeader: React.FC<SessionHeaderProps> = ({
               onClick={handleStepOver}
               disabled={!canStep || busyAction !== null}
               size="sm"
-              variant="ghost"
+              variant="outline"
               title={`Step Over (${getKeybinding("debug.stepOver")})`}
               aria-label="Step Over"
             >
@@ -248,7 +248,7 @@ export const SessionHeader: React.FC<SessionHeaderProps> = ({
               onClick={handleStepIn}
               disabled={!canStep || busyAction !== null}
               size="sm"
-              variant="ghost"
+              variant="outline"
               title={`Step In (${getKeybinding("debug.stepIn")})`}
               aria-label="Step In"
             >
@@ -258,7 +258,7 @@ export const SessionHeader: React.FC<SessionHeaderProps> = ({
               onClick={handleStepOut}
               disabled={!canStep || busyAction !== null}
               size="sm"
-              variant="ghost"
+              variant="outline"
               title={`Step Out (${getKeybinding("debug.stepOut")})`}
               aria-label="Step Out"
             >
@@ -291,7 +291,7 @@ export const SessionHeader: React.FC<SessionHeaderProps> = ({
               onClick={handleStop}
               disabled={!canStop || busyAction === "stop"}
               size="sm"
-              variant="ghost"
+              variant="outline"
               className={isOpen ? undefined : "rounded-r-none"}
               title={`Stop Session (${getKeybinding("debug.stop")})`}
               aria-label="Stop"
@@ -304,12 +304,8 @@ export const SessionHeader: React.FC<SessionHeaderProps> = ({
                   <Button
                     disabled={busyAction !== null || (!canStop && !canDetach)}
                     size="sm"
-                    variant="ghost"
-                    // No divider rule here, unlike the outlined Go split button:
-                    // with no button fill it would read as a stray 1px line
-                    // hanging between two invisible controls. The squared inner
-                    // corners still join them up once either half is hovered.
-                    className="rounded-l-none px-1"
+                    variant="outline"
+                    className="rounded-l-none border-l border-l-border px-1"
                     aria-label="Stop options"
                   >
                     <ChevronDown className="h-3 w-3" />

@@ -3,10 +3,10 @@ import { useCallback, useEffect, useRef } from 'react';
 /**
  * Keeps a fixed column header horizontally aligned with a horizontally
  * scrolling list viewport. Render the header inside a `shrink-0
- * overflow-hidden` wrapper, put `headerInnerRef` (and the row min-width) on
- * the inner div, and wire `handleViewportScroll` to the scrolled viewport
- * (e.g. VirtualizedList's `onViewportScroll`) — or call `syncScrollLeft`
- * from a handler that also does other scroll work.
+ * overflow-hidden` wrapper carrying `handleHeaderScroll`, put `headerInnerRef`
+ * (and the row min-width) on the inner div, and wire `handleViewportScroll` to
+ * the scrolled viewport (e.g. VirtualizedList's `onViewportScroll`) — or call
+ * `syncScrollLeft` from a handler that also does other scroll work.
  *
  * Pass the same `rowMinWidth` the rows use: when it changes (column resize),
  * the viewport can clamp or reset its horizontal scroll without firing a
@@ -32,6 +32,17 @@ export function useHeaderScrollSync(
     syncScrollLeft(e.currentTarget.scrollLeft);
   }, [syncScrollLeft]);
 
+  /**
+   * The header wrapper must never scroll itself — its offset comes solely from
+   * the transform above. Clicking (or tabbing to) a sortable header cell makes
+   * the browser scroll the overflow-hidden wrapper to "reveal" it, since it
+   * reads the untransformed layout box; that scroll composes with the transform
+   * and leaves the header misaligned with the rows. Snap it straight back.
+   */
+  const handleHeaderScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
+    if (e.currentTarget.scrollLeft !== 0) e.currentTarget.scrollLeft = 0;
+  }, []);
+
   const getViewportRef = useRef(getViewport);
   getViewportRef.current = getViewport;
   useEffect(() => {
@@ -42,5 +53,5 @@ export function useHeaderScrollSync(
     }
   }, [rowMinWidth]);
 
-  return { headerInnerRef, handleViewportScroll, syncScrollLeft };
+  return { headerInnerRef, handleViewportScroll, handleHeaderScroll, syncScrollLeft };
 }

@@ -4,6 +4,7 @@ import {
   cleanupSession,
   invoke,
   debuggeeArch,
+  pcRegister,
 } from "../helpers/session-helpers";
 import {
   waitForPaused,
@@ -485,4 +486,52 @@ test.describe("Disassembly View", () => {
       await restoreDefaultSettings(page);
     }
   });
+
+  test("goto box evaluates expressions with operator precedence", async ({
+    tauriPage: page,
+  }) => {
+    await configureMinimalStopSettings(page);
+
+    try {
+      const sessionId = await createAndStartSession(page, "Disasm ExprMath");
+      await waitForPaused(page, sessionId);
+      await waitForDisassemblyLoaded(page, ASM_PANEL);
+
+      const pc = await pcRegister(page, sessionId);
+      const input = page.locator(`${ASM_PANEL} input`).first();
+      const firstRow = () => page.locator(ASM_ROW).first().innerText();
+      const goto = async (expression: string) => {
+        await input.fill(expression);
+        await input.press("Enter");
+      };
+      /** Poll until the top instruction row reaches (or leaves) `text`. */
+      const expectFirstRow = async (text: string, opts: { not?: boolean } = {}) => {
+        await expect(async () => {
+          if (opts.not) expect(await firstRow()).not.toBe(text);
+          else expect(await firstRow()).toBe(text);
+        }).toPass({ timeout: 10_000, intervals: [100, 250] });
+      };
+
+      const atPc = await firstRow();
+
+      // `*` binds tighter than `+`, so this must land exactly 0x2000 past the
+      // PC — a plain +/- tokenizer used to hand "2*0x1000" to the symbol
+      // resolver and fail with "Symbol not found".
+      await goto(`${pc}+2*0x1000`);
+      await expectFirstRow(atPc, { not: true });
+      const scaled = await firstRow();
+
+      // Return to the PC, then prove the arithmetic: the same address written
+      // without multiplication renders the identical row.
+      await goto(pc);
+      await expectFirstRow(atPc);
+      await goto(`${pc}+0x2000`);
+      await expectFirstRow(scaled);
+
+      await cleanupSession(page, sessionId);
+    } finally {
+      await restoreDefaultSettings(page);
+    }
+  });
+
 });

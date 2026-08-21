@@ -298,20 +298,18 @@ pub(crate) fn process_assemble_patch(
 pub(crate) fn process_undo_patch(
     session: &mut DebugSession,
     app_handle_clone: &Option<AppHandle>,
-    event: &joybug_core::protocol_io::DebugEvent,
+    pid: u32,
     patch_id: &str,
 ) {
-    process_undo_patches(session, app_handle_clone, event, std::slice::from_ref(&patch_id.to_string()));
+    process_undo_patches(session, app_handle_clone, pid, std::slice::from_ref(&patch_id.to_string()));
 }
 
 pub(crate) fn process_undo_patches(
     session: &mut DebugSession,
     app_handle_clone: &Option<AppHandle>,
-    event: &joybug_core::protocol_io::DebugEvent,
+    pid: u32,
     patch_ids: &[String],
 ) {
-    let pid = event.pid();
-
     let patches_to_undo: Vec<PatchInfo> = {
         let state = session.state.lock().unwrap();
         state.patches.iter()
@@ -505,11 +503,9 @@ pub(crate) const MAX_RESTORE_BYTES: usize = 64;
 pub(crate) fn process_restore_image_bytes(
     session: &mut DebugSession,
     app_handle_clone: &Option<AppHandle>,
-    event: &joybug_core::protocol_io::DebugEvent,
+    pid: u32,
     address: u64,
 ) {
-    let pid = event.pid();
-
     // A tracked UI patch covering this address must be undone through the patch
     // machinery (which flips is_applied and repersists) — a raw image restore
     // would rewrite the bytes but leave the record applied, so the patch would
@@ -528,12 +524,22 @@ pub(crate) fn process_restore_image_bytes(
             .map(|p| p.id.clone())
     };
     if let Some(patch_id) = covering_patch {
-        process_undo_patch(session, app_handle_clone, event, &patch_id);
+        process_undo_patch(session, app_handle_clone, pid, &patch_id);
         return;
     }
 
-    // Locate (lazily building) the original image covering this address.
-    let images = crate::session::image_cache::ensure_and_snapshot_images(&session.state, address);
+    // Locate (lazily building) the original image covering this address. The
+    // covering module is resolved from the session's module list rather than
+    // going straight to the cache, so a non-invasive `Open` session — which has
+    // no debug events to populate `state.modules` — still finds its image. Only
+    // the one covering module is built; a whole-list build here would read every
+    // loaded DLL off disk just to restore a handful of bytes.
+    let covering: Vec<(u64, String)> = crate::session::helpers::modules_or_enumerate(session, pid)
+        .into_iter()
+        .filter(|m| address >= m.base && address < m.base + m.size.unwrap_or(0))
+        .map(|m| (m.base, m.name))
+        .collect();
+    let images = crate::session::image_cache::ensure_all_and_snapshot_images(&session.state, &covering);
     let Some(image) = images
         .iter()
         .find(|im| !im.unavailable && im.contains(address) && im.is_code(address))
