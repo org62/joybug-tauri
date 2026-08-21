@@ -64,8 +64,20 @@ jobs:
     - name: Install frontend dependencies
       run: npm ci
 
+    # Ahead of the build: the ESLint config is what actually enforces the UI
+    # layout guardrails (no raw overflow-* scroll containers, no raw <button>),
+    # and failing in seconds beats failing after a full Rust release build.
+    - name: Lint frontend
+      run: npm run lint
+
     - name: Build Tauri app
       run: npm run tauri build
+
+    # --release reuses the dependency artifacts the build just produced; the
+    # default test profile would recompile the entire tree from scratch.
+    - name: Rust unit tests
+      run: cargo test --lib --release
+      working-directory: src-tauri
 
     - name: Run E2E tests
       run: npm run test:e2e

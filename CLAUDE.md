@@ -120,16 +120,22 @@ A tag containing `-` (e.g. `v0.2.0-rc.1`) ships as a prerelease.
 **Versioning:** the git tag is the only source of truth. Every version field in the repo (`tauri.conf.json`, `Cargo.toml`, `package.json`, both lockfiles) reads `0.0.0` and stays that way — release CI stamps the real version into `tauri.conf.json` before building, so nothing has to be committed at release time. A local build reporting `0.0.0` is correct: it isn't a release. Never hardcode a version in the UI; `About.tsx` reads it at runtime via `getVersion()` from `@tauri-apps/api/app`.
 
 **Update check & first-run dialog.** The app is a portable `.exe` (`bundle.active: false`), so
-Tauri's updater plugin doesn't apply — `commands/updates.rs` queries the GitHub releases API and
-links to the release page instead. The startup check is throttled to once per 24h
-(`last_update_check` in `app_state.json`), is opt-out via `auto_update_check` in Settings, and
-self-suppresses on a `0.0.0` local build. The welcome dialog re-shows on every version bump.
+Tauri's updater plugin doesn't apply — `commands/updates.rs` queries the GitHub releases API
+directly. The startup check is throttled to once per 24h (`last_update_check` in
+`app_state.json`), is opt-out via `auto_update_check` in Settings, and self-suppresses on a
+`0.0.0` local build. The welcome dialog re-shows on every version bump.
 Both honour hard env kill switches — `JOYBUG_NO_UPDATE_CHECK` and `JOYBUG_NO_WELCOME`, set by
 `e2e/global-setup.ts`. **Do not remove them**: the suite attaches to an already-mounted app, so a
 startup modal or network call can't be suppressed by a test fixture.
 
+**One-click install.** The exe replaces itself in place (a running image can be renamed on
+Windows) — see the module doc of `commands/self_update.rs` for the swap and its invariants.
+`UpdateInfo.self_update` decides at check time whether that is possible; when it isn't, the
+dialog falls back to opening the release page.
+
 Release artifacts are deliberately **version-free** (`Joybug-UI-x64.exe`) so
-`releases/latest/download/<name>` stays a stable permalink for that download link.
+`releases/latest/download/<name>` stays a stable permalink for that download link. The `.sha256`
+sidecars are only written for tagged releases, and the one-click install requires one.
 
 **CI** (`.github/workflows/`):
 - `_build.yml` — reusable build + E2E (ARM64 + X64 self-hosted). Not triggered directly. Artifacts are always named `Joybug-UI-<arch>.exe`; when given a `version` it also stamps `tauri.conf.json` and writes SHA256 sidecars.

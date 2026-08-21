@@ -1,6 +1,14 @@
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 
+/** Mirrors `SelfUpdateState` in `src-tauri/src/commands/updates.rs`. */
+export interface SelfUpdateState {
+  /** Can the app replace its own executable with this release? */
+  supported: boolean;
+  /** Why not — phrased for the dialog to show verbatim. */
+  reason: string | null;
+}
+
 /** Mirrors `UpdateInfo` in `src-tauri/src/commands/updates.rs`. */
 export interface UpdateInfo {
   current_version: string;
@@ -8,11 +16,25 @@ export interface UpdateInfo {
   update_available: boolean;
   release_url: string;
   download_url: string | null;
+  /** The `.sha256` sidecar; only tagged releases publish one. */
+  checksum_url: string | null;
+  asset_size: number | null;
+  self_update: SelfUpdateState;
   published_at: string | null;
   notes: string | null;
   /** Unstamped local build — every release looks newer, so say so instead. */
   is_dev_build: boolean;
 }
+
+/** Payload of the `update-install-progress` event. */
+export interface InstallProgress {
+  phase: "checksum" | "downloading" | "verifying" | "installing" | "done";
+  downloaded: number;
+  /** `null` when neither the response nor the release listing gave a size. */
+  total: number | null;
+}
+
+export const INSTALL_PROGRESS_EVENT = "update-install-progress";
 
 /** Mirrors `WelcomeState` in `src-tauri/src/commands/updates.rs`. */
 export interface WelcomeState {
@@ -50,3 +72,18 @@ export const getWelcomeState = (): Promise<WelcomeState> =>
   invoke<WelcomeState>("get_welcome_state");
 
 export const dismissWelcome = (): Promise<void> => invoke("dismiss_welcome");
+
+/**
+ * Download, verify, and swap the new executable in over the running one.
+ * Resolves once the swap is done — the process is still the old image, so
+ * follow up with {@link restartApp}. Progress arrives on
+ * {@link INSTALL_PROGRESS_EVENT}.
+ */
+export const installUpdate = (
+  downloadUrl: string,
+  checksumUrl: string,
+): Promise<void> =>
+  invoke("install_update", { downloadUrl, checksumUrl });
+
+/** Relaunch the (now replaced) executable and quit. Never resolves. */
+export const restartApp = (): Promise<void> => invoke("restart_app");

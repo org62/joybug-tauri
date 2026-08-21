@@ -19,6 +19,8 @@ pub enum Error {
     InvalidParameter(String),
     #[error("Update check failed: {0}")]
     UpdateCheck(String),
+    #[error("Update install failed: {0}")]
+    UpdateInstall(String),
 }
 
 pub type Result<T> = std::result::Result<T, Error>; 

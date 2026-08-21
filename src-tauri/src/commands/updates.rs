@@ -3,7 +3,11 @@
 //!
 //! This is deliberately *not* `tauri-plugin-updater`: the app ships as a bare
 //! portable `.exe` (`bundle.active: false`), and that plugin can only install
-//! signed NSIS/MSI bundles. So we notify and link to the release page instead.
+//! signed NSIS/MSI bundles. Installing is instead handled in-process by
+//! [`crate::commands::self_update`], which swaps the new exe in over the
+//! running one; this module only decides *whether* there is something to
+//! install, and reports in [`UpdateInfo::self_update`] whether the one-click
+//! path is available for this release and this install location.
 
 use crate::app_state_store::{self, AppState};
 use crate::error::{Error, Result};
@@ -56,6 +60,18 @@ struct GhRelease {
 struct GhAsset {
     name: String,
     browser_download_url: String,
+    /// Progress-bar total when the download response carries no
+    /// `Content-Length`.
+    #[serde(default)]
+    size: Option<u64>,
+}
+
+/// Whether the one-click install can run, and if not, why — phrased for the
+/// dialog to show verbatim.
+#[derive(Debug, Clone, Serialize)]
+pub struct SelfUpdateState {
+    pub supported: bool,
+    pub reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -67,6 +83,13 @@ pub struct UpdateInfo {
     /// Always set — the release page works even when no asset matches this arch.
     pub release_url: String,
     pub download_url: Option<String>,
+    /// The `<asset>.sha256` sidecar. Only tagged releases publish one, and the
+    /// one-click install requires it.
+    pub checksum_url: Option<String>,
+    /// Size of `download_url`'s asset, as GitHub reports it.
+    pub asset_size: Option<u64>,
+    /// Whether this build can install the update itself.
+    pub self_update: SelfUpdateState,
     pub published_at: Option<String>,
     pub notes: Option<String>,
     /// True for an unstamped local build, so the UI can say "development build"
@@ -113,12 +136,21 @@ fn arch_suffix() -> Option<&'static str> {
     }
 }
 
-/// Pick the asset built for this machine, e.g. `Joybug-UI-x64.exe`.
-fn match_asset<'a>(assets: &'a [GhAsset], arch: &str) -> Option<&'a str> {
-    let suffix = format!("-{arch}.exe");
-    assets
-        .iter()
-        .find(|a| a.name.ends_with(&suffix))
+/// The one asset whose name ends in `suffix`, e.g. `-x64.exe`.
+fn find_asset<'a>(assets: &'a [GhAsset], suffix: &str) -> Option<&'a GhAsset> {
+    assets.iter().find(|a| a.name.ends_with(suffix))
+}
+
+/// Name suffix of the asset built for this machine, e.g. `Joybug-UI-x64.exe`.
+fn asset_suffix(arch: &str) -> String {
+    format!("-{arch}.exe")
+}
+
+/// The `sha256sum` sidecar beside the arch's asset, e.g.
+/// `Joybug-UI-x64.exe.sha256`. `_build.yml` only writes one for tagged
+/// releases, so this is legitimately absent on older or untagged builds.
+fn match_checksum_asset<'a>(assets: &'a [GhAsset], arch: &str) -> Option<&'a str> {
+    find_asset(assets, &format!("{}.sha256", asset_suffix(arch)))
         .map(|a| a.browser_download_url.as_str())
 }
 
@@ -163,11 +195,7 @@ static HTTP: LazyLock<reqwest::Client> = LazyLock::new(|| {
 async fn fetch_latest_release(current_version: &str) -> Result<GhRelease> {
     let response = HTTP
         .get(RELEASES_LATEST_API)
-        // GitHub rejects API requests without a User-Agent.
-        .header(
-            reqwest::header::USER_AGENT,
-            format!("joybug-tauri/{current_version}"),
-        )
+        .header(reqwest::header::USER_AGENT, user_agent(current_version))
         .header(reqwest::header::ACCEPT, "application/vnd.github+json")
         .send()
         .await
@@ -188,22 +216,45 @@ async fn fetch_latest_release(current_version: &str) -> Result<GhRelease> {
 
 fn to_update_info(release: GhRelease, current_version: &str) -> UpdateInfo {
     let latest_version = normalize_tag(&release.tag_name).to_string();
+    let arch = arch_suffix();
+    // Resolved once, so the size comes from the same asset as the URL rather
+    // than a second lookup that has to match it back up.
+    let asset = arch.and_then(|arch| find_asset(&release.assets, &asset_suffix(arch)));
+    let download_url = asset.map(|a| a.browser_download_url.clone());
+    let asset_size = asset.and_then(|a| a.size);
+    let checksum_url = arch
+        .and_then(|arch| match_checksum_asset(&release.assets, arch))
+        .map(str::to_string);
+
     UpdateInfo {
         update_available: is_newer(current_version, &latest_version),
         is_dev_build: is_dev_build(current_version),
         current_version: current_version.to_string(),
         latest_version,
         release_url: release.html_url,
-        download_url: arch_suffix()
-            .and_then(|arch| match_asset(&release.assets, arch))
-            .map(str::to_string),
+        self_update: super::self_update::probe(download_url.as_deref(), checksum_url.as_deref()),
+        download_url,
+        checksum_url,
+        asset_size,
         published_at: release.published_at,
         notes: truncate_notes(release.body),
     }
 }
 
-fn current_version(app: &tauri::AppHandle) -> String {
+pub(crate) fn current_version(app: &tauri::AppHandle) -> String {
     app.package_info().version.to_string()
+}
+
+/// GitHub rejects API requests without a User-Agent. The release download host
+/// does not care, but sending the same string keeps both requests attributable.
+pub(crate) fn user_agent(version: &str) -> String {
+    format!("joybug-tauri/{version}")
+}
+
+/// The short-timeout client, for the small API/sidecar requests. Downloads use
+/// their own client — see [`crate::commands::self_update`].
+pub(crate) fn http() -> &'static reqwest::Client {
+    &HTTP
 }
 
 /// Mutator, not a command: callers that already hold an `AppState` stamp it in
@@ -326,10 +377,16 @@ pub fn dismiss_welcome(app_handle: tauri::AppHandle) -> Result<()> {
 mod tests {
     use super::*;
 
+    /// What `to_update_info` resolves `download_url` to, for one arch.
+    fn download_url_for<'a>(assets: &'a [GhAsset], arch: &str) -> Option<&'a str> {
+        find_asset(assets, &asset_suffix(arch)).map(|a| a.browser_download_url.as_str())
+    }
+
     fn asset(name: &str) -> GhAsset {
         GhAsset {
             name: name.to_string(),
             browser_download_url: format!("https://example.test/{name}"),
+            size: Some(1024),
         }
     }
 
@@ -379,20 +436,59 @@ mod tests {
             asset("Joybug-UI-aarch64.exe.sha256"),
         ];
         assert_eq!(
-            match_asset(&assets, "x64"),
+            download_url_for(&assets, "x64"),
             Some("https://example.test/Joybug-UI-x64.exe")
         );
         assert_eq!(
-            match_asset(&assets, "aarch64"),
+            download_url_for(&assets, "aarch64"),
             Some("https://example.test/Joybug-UI-aarch64.exe")
+        );
+    }
+
+    #[test]
+    fn download_url_never_resolves_to_the_checksum_sidecar() {
+        // Both end in the arch suffix; only one of them is the executable.
+        let assets = vec![
+            asset("Joybug-UI-x64.exe.sha256"),
+            asset("Joybug-UI-x64.exe"),
+        ];
+        assert_eq!(
+            download_url_for(&assets, "x64"),
+            Some("https://example.test/Joybug-UI-x64.exe")
         );
     }
 
     #[test]
     fn match_asset_returns_none_when_nothing_fits() {
         let assets = vec![asset("Joybug-UI-x64.exe")];
-        assert_eq!(match_asset(&assets, "riscv64"), None);
-        assert_eq!(match_asset(&[], "x64"), None);
+        assert_eq!(download_url_for(&assets, "riscv64"), None);
+        assert_eq!(download_url_for(&[], "x64"), None);
+    }
+
+    #[test]
+    fn match_checksum_asset_picks_the_sidecar_for_the_running_arch() {
+        let assets = vec![
+            asset("Joybug-UI-x64.exe"),
+            asset("Joybug-UI-x64.exe.sha256"),
+            asset("Joybug-UI-aarch64.exe"),
+            asset("Joybug-UI-aarch64.exe.sha256"),
+        ];
+        assert_eq!(
+            match_checksum_asset(&assets, "x64"),
+            Some("https://example.test/Joybug-UI-x64.exe.sha256")
+        );
+        assert_eq!(
+            match_checksum_asset(&assets, "aarch64"),
+            Some("https://example.test/Joybug-UI-aarch64.exe.sha256")
+        );
+    }
+
+    #[test]
+    fn match_checksum_asset_is_none_when_the_release_publishes_no_sidecar() {
+        // Untagged builds skip the sidecar entirely (see _build.yml), which is
+        // what makes the one-click install unavailable rather than unsafe.
+        let assets = vec![asset("Joybug-UI-x64.exe")];
+        assert_eq!(match_checksum_asset(&assets, "x64"), None);
     }
 
     #[test]
@@ -400,7 +496,7 @@ mod tests {
         // Older releases (v0.0.1) carry the version in the filename.
         let assets = vec![asset("Joybug-UI-0.0.1-x64.exe")];
         assert_eq!(
-            match_asset(&assets, "x64"),
+            download_url_for(&assets, "x64"),
             Some("https://example.test/Joybug-UI-0.0.1-x64.exe")
         );
     }
@@ -444,5 +540,31 @@ mod tests {
         assert!(info.update_available);
         assert!(!info.is_dev_build);
         assert_eq!(info.notes.as_deref(), Some("notes"));
+        // No sidecar in this release, so the one-click path must decline with a
+        // reason rather than offering an unverifiable download.
+        assert_eq!(info.checksum_url, None);
+        assert!(!info.self_update.supported);
+        assert!(info.self_update.reason.is_some());
+    }
+
+    #[test]
+    fn update_info_carries_the_sidecar_and_asset_size_when_present() {
+        let Some(arch) = arch_suffix() else {
+            return; // Nothing to assert on an architecture we do not ship.
+        };
+        let release = GhRelease {
+            tag_name: "v0.0.2".to_string(),
+            html_url: "https://example.test/tag/v0.0.2".to_string(),
+            body: None,
+            published_at: None,
+            assets: vec![
+                asset(&format!("Joybug-UI-{arch}.exe")),
+                asset(&format!("Joybug-UI-{arch}.exe.sha256")),
+            ],
+        };
+        let info = to_update_info(release, "0.0.1");
+        assert!(info.download_url.unwrap().ends_with(".exe"));
+        assert!(info.checksum_url.unwrap().ends_with(".exe.sha256"));
+        assert_eq!(info.asset_size, Some(1024));
     }
 }

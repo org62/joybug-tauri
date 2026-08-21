@@ -48,6 +48,12 @@ pub fn run() {
         }
     }
 
+    // Before anything else can rename the exe: drops the previous version left
+    // behind by a self-update (it was still mapped when the update ran) and any
+    // partial download, and pins the running image's path while it is still
+    // unambiguous.
+    commands::cleanup_stale_artifacts();
+
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
@@ -126,6 +132,8 @@ pub fn run() {
             commands::check_for_updates,
             commands::startup_update_check,
             commands::skip_update_version,
+            commands::install_update,
+            commands::restart_app,
             commands::get_welcome_state,
             commands::dismiss_welcome,
             commands::toggle_breakpoint,
