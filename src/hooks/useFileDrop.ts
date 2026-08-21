@@ -3,6 +3,13 @@ import { getCurrentWebview } from '@tauri-apps/api/webview';
 import { toastError, toastInfo } from '@/lib/logger';
 
 /**
+ * Extensions that are worth handing to the PE parser. A UX nicety for obvious
+ * non-PE files only — the backend stays the authority on what actually parses.
+ */
+export const PE_FILE_PATTERN = /\.(exe|dll|sys|efi|ocx|cpl|scr)$/i;
+export const PE_FILE_REJECT_MESSAGE = 'Not a PE file (.exe, .dll, .sys, ...)';
+
+/**
  * Reduce a native drop to the single path a consumer accepts: takes the first
  * dropped file (toasting when extras are ignored), rejects paths that don't
  * match `pattern` with `rejectMessage`, and returns the accepted path or null.
@@ -30,9 +37,9 @@ export interface UseFileDropOptions {
 
 /**
  * Subscribes to Tauri's native window drag-drop (which delivers real file
- * paths and suppresses HTML5 drops). The event is window-global — one
- * consumer per route; our consumers live on different routes so they never
- * coexist.
+ * paths and suppresses HTML5 drops). The event is window-global, so there is
+ * exactly one consumer: FileDropProvider. Routes that want to handle a drop
+ * themselves register a claim via useFileDropTarget instead of calling this.
  *
  * `onDrop` is kept in a ref: callback identity churn never re-subscribes.
  */

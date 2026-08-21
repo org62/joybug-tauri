@@ -15,6 +15,7 @@ import { CommandPalette } from "@/components/CommandPalette";
 import { WelcomeDialog } from "@/components/WelcomeDialog";
 import { UpdateDialog } from "@/components/UpdateDialog";
 import { useStartupDialogs } from "@/hooks/useStartupDialogs";
+import { FileDropProvider } from "@/components/FileDropProvider";
 import { applyZoom, getStoredZoom, nudgeZoom } from "@/lib/uiZoom";
 import { useDebugSettings, EVENT_ITEMS } from "@/hooks/useDebugSettings";
 import { Home as HomeIcon, Bug, ScrollText, Settings as SettingsIcon, Info, Sun, Moon, Keyboard, Bell, Zap, Plus, Eye, FileSearch } from "lucide-react";
@@ -273,23 +274,25 @@ function AppContent() {
       <CommandPalette />
       {welcome && <WelcomeDialog state={welcome} onDismissed={dismissWelcome} />}
       <UpdateDialog info={update} onClose={dismissUpdate} />
-      <main className="flex-1 min-h-0 overflow-hidden">
-        <Suspense fallback={
-          <div className="flex justify-center items-center h-64">
-            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-gray-900 dark:border-gray-100"></div>
-          </div>
-        }>
-          <Routes>
-            <Route path="/" element={<Home />} />
-            <Route path="/debugger" element={<Debugger />} />
-            <Route path="/pe" element={<PeReader />} />
-            <Route path="/session/:sessionId" element={<SessionDocked />} />
-            <Route path="/logs" element={<Logs />} />
-            <Route path="/settings" element={<Settings />} />
-            <Route path="/about" element={<About />} />
-          </Routes>
-        </Suspense>
-      </main>
+      <FileDropProvider>
+        <main className="flex-1 min-h-0 overflow-hidden">
+          <Suspense fallback={
+            <div className="flex justify-center items-center h-64">
+              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-gray-900 dark:border-gray-100"></div>
+            </div>
+          }>
+            <Routes>
+              <Route path="/" element={<Home />} />
+              <Route path="/debugger" element={<Debugger />} />
+              <Route path="/pe" element={<PeReader />} />
+              <Route path="/session/:sessionId" element={<SessionDocked />} />
+              <Route path="/logs" element={<Logs />} />
+              <Route path="/settings" element={<Settings />} />
+              <Route path="/about" element={<About />} />
+            </Routes>
+          </Suspense>
+        </main>
+      </FileDropProvider>
       <Toaster visibleToasts={8} />
     </div>
   );

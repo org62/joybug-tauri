@@ -33,8 +33,8 @@ import { NavHistoryStore } from "@/lib/navHistory";
 import { useNavHistoryDock } from "@/hooks/useNavHistoryDock";
 import { moduleBasename } from "@/lib/sessionHelpers";
 import { toastError, toastSuccess } from "@/lib/logger";
-import { useFileDrop, pickDroppedFile } from "@/hooks/useFileDrop";
-import { FileDropOverlay } from "@/components/FileDropOverlay";
+import { pickDroppedFile, PE_FILE_PATTERN, PE_FILE_REJECT_MESSAGE } from "@/hooks/useFileDrop";
+import { useFileDropTarget } from "@/contexts/FileDropContext";
 import { formatTauriError } from "@/lib/sessionHelpers";
 
 interface PeFileSummary {
@@ -269,12 +269,12 @@ export default function PeReader() {
   const handleFileDrop = (paths: string[]) => {
     if (busy) return;
     const dropped = pickDroppedFile(paths, {
-      pattern: /\.(exe|dll|sys|efi|ocx|cpl|scr)$/i,
-      rejectMessage: "Not a PE file (.exe, .dll, .sys, ...)",
+      pattern: PE_FILE_PATTERN,
+      rejectMessage: PE_FILE_REJECT_MESSAGE,
     });
     if (dropped) loadPath(dropped);
   };
-  const { isDragOver } = useFileDrop({ onDrop: handleFileDrop, enabled: !openDialog });
+  useFileDropTarget({ message: "Drop a PE file to inspect", onDrop: handleFileDrop, enabled: !openDialog });
 
   // Download/parse symbols for the open file (allows a symbol-server download),
   // then re-symbolize the disassembly.
@@ -329,8 +329,10 @@ export default function PeReader() {
 
   // Deep-link support: /pe?path=<file>&base=<hex> opens on mount.
   useEffect(() => {
+    // Not `!summary`: the open file survives navigation (savedPeState), so a
+    // deep link arriving from a drop on another route must still replace it.
     const deepLink = searchParams.get("path");
-    if (deepLink && !summary && !busy) {
+    if (deepLink && deepLink !== summary?.path && !busy) {
       loadPath(deepLink, searchParams.get("base"));
       setSearchParams({}, { replace: true });
     }
@@ -511,8 +513,6 @@ export default function PeReader() {
         onOpenChange={setOpenDialog}
         onConfirm={(p, base, pdb) => loadPath(p, base, pdb)}
       />
-
-      <FileDropOverlay active={isDragOver} message="Drop a PE file to inspect" />
     </Page>
   );
 }

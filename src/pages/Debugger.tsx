@@ -27,7 +27,6 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { toast } from "sonner";
 import { 
   loadSessionsFromStorage, 
-  addSessionToStorage, 
   updateSessionInStorage, 
   removeSessionFromStorage,
   sessionToConfig,
@@ -36,9 +35,10 @@ import {
 } from "@/lib/sessionStorage";
 
 import { DebugSession, SessionStatus } from "@/contexts/SessionContext";
-import { isProcessAvailable, formatTauriError, moduleBasename, pathDirname, buildLaunchCommand } from "@/lib/sessionHelpers";
-import { useFileDrop, pickDroppedFile } from "@/hooks/useFileDrop";
-import { FileDropOverlay } from "@/components/FileDropOverlay";
+import { isProcessAvailable, formatTauriError, pathDirname, buildLaunchCommand } from "@/lib/sessionHelpers";
+import { pickDroppedFile } from "@/hooks/useFileDrop";
+import { useFileDropTarget } from "@/contexts/FileDropContext";
+import { createSessionRecord, launchExecutable } from "@/lib/launchFile";
 
 const DEFAULT_SESSION_NAME = "Unnamed Session";
 
@@ -253,37 +253,6 @@ export default function Debugger() {
     if (!formLocalRun) pushInputHistory("server-url", formServerUrl);
   };
 
-  // Backend create + storage persistence, shared by the dialog and the
-  // drag-drop path. Returns the new session id.
-  const createSessionRecord = async (cfg: {
-    name: string;
-    serverUrl: string;
-    launchCommand: string;
-    workingDirectory: string | null;
-    isLocalRun: boolean;
-  }): Promise<string> => {
-    const sessionId = await invoke<string>("create_debug_session", {
-      name: cfg.name,
-      serverUrl: cfg.serverUrl,
-      launchCommand: cfg.launchCommand,
-      workingDirectory: cfg.workingDirectory,
-      isLocalRun: cfg.isLocalRun,
-      attachPid: null,
-    });
-
-    addSessionToStorage({
-      id: sessionId,
-      name: cfg.name,
-      server_url: cfg.serverUrl,
-      launch_command: cfg.launchCommand,
-      working_directory: cfg.workingDirectory,
-      is_local_run: cfg.isLocalRun,
-      created_at: new Date().toISOString(),
-    });
-
-    return sessionId;
-  };
-
   const handleCreateSession = async () => {
     const sessionName = formName.trim() || DEFAULT_SESSION_NAME;
 
@@ -382,25 +351,19 @@ export default function Debugger() {
     });
     if (!dropped) return;
 
-    const name = moduleBasename(dropped).replace(/\.exe$/i, "");
-    const workingDirectory = pathDirname(dropped) || null;
-
     try {
-      const sessionId = await createSessionRecord({
-        name,
-        serverUrl: "",
-        launchCommand: buildLaunchCommand(dropped),
-        workingDirectory,
-        isLocalRun: true,
-      });
-      await startAndNavigate(sessionId);
+      const sessionId = await launchExecutable(dropped);
+      setLastUsedTick((t) => t + 1);
+      toast.success("Debug session started");
+      navigate(`/session/${sessionId}`);
     } catch (error) {
       console.error("Failed to launch dropped executable:", error);
       toast.error(formatTauriError(error));
     }
   };
 
-  const { isDragOver } = useFileDrop({
+  useFileDropTarget({
+    message: "Drop an executable to debug",
     onDrop: handleFileDrop,
     enabled: !isSessionDialogOpen && !isAttachDialogOpen,
   });
@@ -941,8 +904,6 @@ export default function Debugger() {
           </div>
         )}
       </div>
-
-      <FileDropOverlay active={isDragOver} message="Drop an executable to debug" />
     </Page>
   );
 }
