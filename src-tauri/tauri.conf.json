@@ -15,7 +15,10 @@
         "title": "Joybug UI",
         "width": 900,
         "height": 1000,
+        "minWidth": 760,
+        "minHeight": 480,
         "resizable": true,
+        "decorations": false,
         "label": "main"
       }
     ],

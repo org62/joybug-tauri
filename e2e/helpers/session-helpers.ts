@@ -217,7 +217,11 @@ export async function clickWindowsMenuItem(page: Page, group: string, item: stri
     // bounded so a stuck attempt fails fast into the next one instead of
     // hanging until the test timeout (actionTimeout is unset = no limit).
     await page.keyboard.press("Escape");
-    await page.getByRole("button", { name: "Windows" }).click({ timeout: 2_000 });
+    // Scoped to <main>: the app header's active-session pill is a button whose
+    // accessible name contains the session name, and Playwright matches names
+    // by substring — a session called "Windows Toggle" would otherwise make
+    // this ambiguous with the dock's own Windows menu.
+    await page.getByRole("main").getByRole("button", { name: "Windows" }).click({ timeout: 2_000 });
     await page.getByRole("menuitem", { name: group }).click({ timeout: 2_000 });
     await page.getByRole("menuitemcheckbox", { name: item }).click({ timeout: 2_000 });
   }).toPass({ timeout: 20_000, intervals: [100, 250, 500] });

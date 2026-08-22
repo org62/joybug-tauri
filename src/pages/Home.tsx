@@ -2,6 +2,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Page } from "@/components/ui/page";
 import { Link } from "react-router-dom";
+import { Bug, FileSearch, ScrollText, Settings, Info } from "lucide-react";
 
 export default function Home() {
   return (
@@ -19,7 +20,8 @@ export default function Home() {
           <Card className="hover:shadow-lg transition-shadow">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                🐛 Start Debugging
+                <Bug className="size-5 text-syn-accent" />
+                Start Debugging
               </CardTitle>
               <CardDescription>
                 Attach to a process and start debugging
@@ -35,7 +37,8 @@ export default function Home() {
           <Card className="hover:shadow-lg transition-shadow">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                📦 PE Viewer
+                <FileSearch className="size-5 text-syn-accent" />
+                PE Viewer
               </CardTitle>
               <CardDescription>
                 Inspect and edit PE files without running them
@@ -51,7 +54,8 @@ export default function Home() {
           <Card className="hover:shadow-lg transition-shadow">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                📋 Logs
+                <ScrollText className="size-5 text-syn-accent" />
+                Logs
               </CardTitle>
               <CardDescription>
                 View Debug Server Configuration and debug information
@@ -67,7 +71,8 @@ export default function Home() {
           <Card className="hover:shadow-lg transition-shadow">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                ⚙️ Settings
+                <Settings className="size-5 text-syn-accent" />
+                Settings
               </CardTitle>
               <CardDescription>
                 Configure application preferences and options
@@ -83,7 +88,8 @@ export default function Home() {
           <Card className="hover:shadow-lg transition-shadow">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                ℹ️ About
+                <Info className="size-5 text-syn-accent" />
+                About
               </CardTitle>
               <CardDescription>
                 Learn more about this application and its technologies

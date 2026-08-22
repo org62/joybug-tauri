@@ -1,8 +1,7 @@
 import React from 'react';
-import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { ArrowLeft, Square, Play, RedoDot, ArrowDownToDot, ArrowUpFromDot, Pause, Plus, ChevronDown, Unplug, Loader2, AlertTriangle, Search, RotateCcw } from 'lucide-react';
+import { Square, Play, RedoDot, ArrowDownToDot, ArrowUpFromDot, Pause, Plus, ChevronDown, Unplug, Loader2, AlertTriangle, RotateCcw } from 'lucide-react';
 import { exceptionName, formatExceptionCode, EXCEPTION_SINGLE_STEP } from '@/lib/exceptionNames';
 import {
   DropdownMenu,
@@ -14,8 +13,8 @@ import {
 import { DockWindowsMenu, DockWindowsMenuGroup } from '@/components/DockWindowsMenu';
 import { SESSION_TAB_DEFS, SESSION_TAB_CATEGORIES } from '@/lib/sessionTabs';
 import { DebugEventInfo, DebugSession, SessionStatus } from '@/contexts/SessionContext';
+import { sessionDisplayName } from '@/lib/sessionHelpers';
 import { useKeybindingContext } from '@/contexts/KeybindingContext';
-import { useCommandPaletteContext } from '@/contexts/CommandPaletteContext';
 
 export interface SessionHeaderProps {
   session: DebugSession;
@@ -96,9 +95,7 @@ export const SessionHeader: React.FC<SessionHeaderProps> = ({
   dockingRef,
   symbolLoadingCount = 0,
 }) => {
-  const navigate = useNavigate();
   const { getKeybinding } = useKeybindingContext();
-  const { setOpen: setPaletteOpen } = useCommandPaletteContext();
 
   // Non-invasive Open session: no debug loop, so no stepping/pause. The single
   // Attach/Detach button becomes "Attach" here and "Detach" once attached.
@@ -126,14 +123,19 @@ export const SessionHeader: React.FC<SessionHeaderProps> = ({
   }));
 
   return (
-    <div className="mb-3 flex items-center justify-between">
+    <div className="mb-2 flex items-center justify-between">
       <div className="flex items-center gap-4">
-        <Button variant="outline" size="sm" onClick={() => navigate("/debugger")}>
-          <ArrowLeft className="h-4 w-4 mr-2" />
-          Back
-        </Button>
+        {/* The Back button moved to the app header (brand + nav). The name
+            stays: this bar anchors the top-left of the session view, and an
+            empty corner reads as a bug. It is smaller than the old page-title
+            h1 because the header's pill already carries the name globally.
+            The status badge stays too — its data-session-status attribute is
+            the e2e suite's paused signal (e2e/helpers/wait-helpers.ts) and
+            must resolve to exactly one node. */}
         <div className="flex items-center gap-3">
-          <h1 className="text-xl font-bold">{session.name}</h1>
+          <h1 className="text-sm font-semibold truncate max-w-[28ch]">
+            {sessionDisplayName(session)}
+          </h1>
           {getStatusBadge(session.status)}
           <ExceptionBadge event={session.current_event} />
           {symbolLoadingCount > 0 && (
@@ -146,23 +148,8 @@ export const SessionHeader: React.FC<SessionHeaderProps> = ({
       </div>
 
       <div className="flex items-center gap-2">
-        {/* Quiet discoverability hint: everything in the app is reachable from
-            the command palette, but users don't find the shortcut on their own. */}
-        <Button
-          variant="ghost"
-          size="sm"
-          className="text-muted-foreground hover:text-foreground"
-          onClick={() => setPaletteOpen(true)}
-          title={`Command palette — jump to any window, action, or address (${getKeybinding("palette.open")})`}
-          aria-label="Open command palette"
-        >
-          <Search className="h-3.5 w-3.5 mr-1.5" />
-          <kbd className="rounded border px-1 py-0.5 text-[10px] font-mono">
-            {getKeybinding("palette.open")}
-          </kbd>
-        </Button>
-        <div className="w-px h-6 bg-border mx-1" />
-
+        {/* The command-palette hint lives in the app header now — one per
+            screen, not one per bar. */}
         {canStart && (
           <Button
             onClick={handleStart}

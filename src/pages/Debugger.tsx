@@ -22,7 +22,7 @@ import {
 import { SessionStatusBadge } from "@/components/session/SessionStatusBadge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Page } from "@/components/ui/page";
-import { Plus, Play, Eye, Pencil, Trash2, XSquare, FileCode2, FolderOpen, Unplug, RefreshCw, Search } from "lucide-react";
+import { Plus, Play, Eye, Pencil, Trash2, Square, FileCode2, FolderOpen, Unplug, RefreshCw, Search } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { toast } from "sonner";
 import { 
@@ -35,12 +35,10 @@ import {
 } from "@/lib/sessionStorage";
 
 import { DebugSession, SessionStatus } from "@/contexts/SessionContext";
-import { isProcessAvailable, formatTauriError, pathDirname, buildLaunchCommand } from "@/lib/sessionHelpers";
+import { isProcessAvailable, formatTauriError, pathDirname, buildLaunchCommand, DEFAULT_SESSION_NAME } from "@/lib/sessionHelpers";
 import { pickDroppedFile } from "@/hooks/useFileDrop";
 import { useFileDropTarget } from "@/contexts/FileDropContext";
 import { createSessionRecord, launchExecutable } from "@/lib/launchFile";
-
-const DEFAULT_SESSION_NAME = "Unnamed Session";
 
 interface ProcessInfo {
   pid: number;
@@ -827,23 +825,34 @@ export default function Debugger() {
                         {getStatusDescription(session.status)}
                       </CardDescription>
                     </div>
-                    <div className="flex items-center gap-2">
-                      <Button variant="ghost" size="icon" onClick={() => handleStartSession(session)} disabled={!canStart(session.status)} title={session.attach_pid != null ? "Re-attach" : "Start"}>
+                    {/* Three classes of action, separated so they don't read as
+                        one undifferentiated row: run the target, manage the
+                        session record, then the primary "go debug it". Nothing
+                        here uses a solid variant — `disabled` already says what
+                        is available, so promoting a button for being *enabled*
+                        would just out-shout the name and status. */}
+                    <div className="flex items-center gap-1">
+                      {/* Lifecycle */}
+                      <Button variant="ghost" size="icon" onClick={() => handleStartSession(session)} disabled={!canStart(session.status)} title={session.attach_pid != null ? "Re-attach" : "Start"} aria-label={session.attach_pid != null ? "Re-attach" : "Start"}>
                         <Play className="h-4 w-4" />
                       </Button>
-                      <Button variant="ghost" size="icon" onClick={() => handleStopSession(session.id)} disabled={!canStop(session.status)} title="Stop">
-                        <XSquare className="h-4 w-4" />
+                      {/* Square, not XSquare: it pairs with Play the way every
+                          transport control does, and matches SessionHeader. An
+                          icon that draws its own box also fights the button. */}
+                      <Button variant="ghost" size="icon" onClick={() => handleStopSession(session.id)} disabled={!canStop(session.status)} title="Stop" aria-label="Stop">
+                        <Square className="h-4 w-4" />
                       </Button>
-                      <Button variant="ghost" size="icon" onClick={() => handleOpenEditSessionDialog(session)} disabled={!canEdit(session.status)} title="Edit">
+
+                      <div className="w-px h-6 bg-border mx-1" />
+
+                      {/* Manage the session record */}
+                      <Button variant="ghost" size="icon" onClick={() => handleOpenEditSessionDialog(session)} disabled={!canEdit(session.status)} title="Edit" aria-label="Edit">
                         <Pencil className="h-4 w-4" />
-                      </Button>
-                      <Button variant={canView(session.status) ? "default" : "ghost"} size="icon" onClick={() => handleViewSession(session.id)} disabled={!canView(session.status)} title="View">
-                        <Eye className="h-4 w-4" />
                       </Button>
                       <Dialog>
                         <DialogTrigger asChild>
                           <span tabIndex={canDelete(session.status) ? 0 : -1}>
-                            <Button variant="ghost" size="icon" disabled={!canDelete(session.status)} title="Delete">
+                            <Button variant="ghost" size="icon" disabled={!canDelete(session.status)} title="Delete" aria-label="Delete" className="hover:bg-destructive/10 hover:text-destructive">
                               <Trash2 className="h-4 w-4" />
                             </Button>
                           </span>
@@ -870,6 +879,16 @@ export default function Debugger() {
                           </DialogFooter>
                         </DialogContent>
                       </Dialog>
+
+                      <div className="w-px h-6 bg-border mx-1" />
+
+                      {/* The card's one focal point, and the only labelled
+                          control: opening the session is what you came here to
+                          do, and it shouldn't be a glyph you have to decode. */}
+                      <Button variant="outline" onClick={() => handleViewSession(session.id)} disabled={!canView(session.status)} title="Open this session in the debugger">
+                        <Eye className="h-4 w-4" />
+                        Open
+                      </Button>
                     </div>
                   </div>
                 </CardHeader>

@@ -1,7 +1,6 @@
 import { BrowserRouter as Router, Routes, Route, useNavigate } from "react-router-dom";
-import React, { Suspense, useEffect, useState, useCallback, useRef } from "react";
+import React, { Suspense, useEffect } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { invoke } from "@tauri-apps/api/core";
 import { useTheme } from "next-themes";
 import { dispatchToast } from "@/lib/toastDispatcher";
 import { isProcessAvailable } from "@/lib/sessionHelpers";
@@ -18,6 +17,7 @@ import { useStartupDialogs } from "@/hooks/useStartupDialogs";
 import { FileDropProvider } from "@/components/FileDropProvider";
 import { applyZoom, getStoredZoom, nudgeZoom } from "@/lib/uiZoom";
 import { useDebugSettings, EVENT_ITEMS } from "@/hooks/useDebugSettings";
+import { useSessionRoster } from "@/hooks/useSessionRoster";
 import { Home as HomeIcon, Bug, ScrollText, Settings as SettingsIcon, Info, Sun, Moon, Keyboard, Bell, Zap, Plus, Eye, FileSearch } from "lucide-react";
 
 // Lazy load pages for code splitting
@@ -112,40 +112,9 @@ function AppContent() {
   // Register global commands (navigation + theme + settings)
   const { settings: debugSettings, toggle: toggleDebugSetting } = useDebugSettings();
 
-  // Track session list for "Open Session" commands
-  const [sessionList, setSessionList] = useState<{ id: string; name: string; status: string }[]>([]);
-
-  const loadSessionList = useCallback(async () => {
-    try {
-      const sessions = await invoke<{ id: string; name: string; status: string }[]>("get_debug_sessions");
-      setSessionList(sessions.map(s => ({
-        id: s.id,
-        name: s.name,
-        status: typeof s.status === "string" ? s.status : "Error",
-      })));
-    } catch {
-      // ignore — sessions not available yet
-    }
-  }, []);
-
-  // Debounced version to avoid IPC storm during rapid stepping
-  const debounceRef = useRef<ReturnType<typeof setTimeout>>();
-  const debouncedLoadSessionList = useCallback(() => {
-    clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(loadSessionList, 500);
-  }, [loadSessionList]);
-
-  useEffect(() => {
-    loadSessionList();
-    // Also refresh when sessions change (debounced — session-updated fires on every step)
-    const unUpdated = listen("session-updated", debouncedLoadSessionList);
-    const unRemoved = listen("session-removed", () => loadSessionList());
-    return () => {
-      clearTimeout(debounceRef.current);
-      unUpdated.then(f => f());
-      unRemoved.then(f => f());
-    };
-  }, [loadSessionList, debouncedLoadSessionList]);
+  // Session entries for the "Open Session" commands. Shared with the header's
+  // active-session pill via one module-level store — see lib/sessionRoster.ts.
+  const sessionList = useSessionRoster();
 
   useEffect(() => {
     const isDark = resolvedTheme === 'dark';
@@ -261,7 +230,7 @@ function AppContent() {
             navigate("/debugger");
           }
         },
-        shortcutLabel: s.status,
+        shortcutLabel: typeof s.status === "string" ? s.status : "Error",
         keywords: ["session", "open", "switch", s.name.toLowerCase()],
       })),
     ]);

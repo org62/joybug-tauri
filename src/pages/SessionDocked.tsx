@@ -698,15 +698,10 @@ export default function SessionDocked() {
 
   return (
     <SessionContext.Provider value={contextValue}>
-      <div
-        className="absolute flex flex-col"
-        style={{
-          left: 10,
-          top: 80,
-          right: 10,
-          bottom: 10,
-        }}
-      >
+      {/* A normal flex child of App's <main>, so the session view is no longer
+          coupled to the app header's height (this used to be absolutely
+          positioned at top: 80 to clear a 64px header). */}
+      <div className="h-full flex flex-col p-2.5">
         <SessionHeader
           session={session}
           busyAction={busyAction}

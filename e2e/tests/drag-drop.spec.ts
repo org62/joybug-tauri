@@ -56,7 +56,10 @@ test.describe("Drag-drop file open", () => {
     // Close the file: the PE viewer's open file intentionally survives
     // navigation (module-level snapshot), so leaving it open would break
     // later specs that expect the empty-page placeholder.
-    await page.getByRole("button", { name: "Close" }).first().click();
+    // Scoped to <main>: the app header's window caption bar also has a Close
+    // button, and it comes first in DOM order — an unscoped .first() would
+    // quit the app and take every later test down with it.
+    await page.getByRole("main").getByRole("button", { name: "Close" }).first().click();
     await expect(page.getByText("No PE file open").first()).toBeVisible({ timeout: 5_000 });
   });
 
@@ -140,7 +143,7 @@ test.describe("Drag-drop file open", () => {
     await expect(page.getByText("cmd.exe", { exact: false }).first()).toBeVisible();
 
     // The PE viewer's open file survives navigation — leave the page empty.
-    await page.getByRole("button", { name: "Close" }).first().click();
+    await page.getByRole("main").getByRole("button", { name: "Close" }).first().click();
     await expect(page.getByText("No PE file open").first()).toBeVisible({ timeout: 5_000 });
   });
 
@@ -181,7 +184,7 @@ test.describe("Drag-drop file open", () => {
     await expect(page.getByText("ntdll.dll", { exact: false }).first()).toBeVisible();
     await expect(page.getByTestId("file-drop-choice")).toHaveCount(0);
 
-    await page.getByRole("button", { name: "Close" }).first().click();
+    await page.getByRole("main").getByRole("button", { name: "Close" }).first().click();
     await expect(page.getByText("No PE file open").first()).toBeVisible({ timeout: 5_000 });
   });
 
@@ -208,7 +211,7 @@ test.describe("Drag-drop file open", () => {
     await expect(page.getByText("cmd.exe", { exact: false }).first()).toBeVisible({ timeout: 15_000 });
     await expect(page.getByTestId("file-drop-choice")).toHaveCount(0);
 
-    await page.getByRole("button", { name: "Close" }).first().click();
+    await page.getByRole("main").getByRole("button", { name: "Close" }).first().click();
     await expect(page.getByText("No PE file open").first()).toBeVisible({ timeout: 5_000 });
   });
 });

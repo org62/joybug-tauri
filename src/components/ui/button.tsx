@@ -30,6 +30,10 @@ const buttonVariants = cva(
         // panel button/icon size — see CLAUDE.md UI conventions).
         xs: "h-7 rounded-md gap-1 px-2 text-xs has-[>svg]:px-1.5 [&_svg:not([class*='size-'])]:size-3.5",
         "icon-xs": "size-7 [&_svg:not([class*='size-'])]:size-3.5",
+        // Window caption button (frameless titlebar): full-height, square,
+        // unrounded — the Windows convention, and a size no other control uses.
+        titlebar:
+          "h-full w-11 rounded-none [&_svg:not([class*='size-'])]:size-3.5",
       },
     },
     defaultVariants: {

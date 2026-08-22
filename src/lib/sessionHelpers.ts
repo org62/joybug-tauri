@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { RegisterContext, SymbolResolver } from '@/lib/hexUtils';
-import { resolveSymbol as resolveSymbolByName, SearchSymbolsFn, ModuleRef } from '@/lib/symbolUtils';
+import { resolveSymbol as resolveSymbolByName, SearchSymbolsFn, ModuleRef, moduleBasename as basename } from '@/lib/symbolUtils';
 import { SerializableThreadContext } from '@/components/RegisterView';
 import type { SessionStatus } from '@/contexts/SessionContext';
 
@@ -57,6 +57,40 @@ export function isBenignSessionError(message: string): boolean {
 }
 
 export { moduleBasename, pathDirname } from '@/lib/symbolUtils';
+
+/** Placeholder the new-session dialog writes when the user names nothing. */
+export const DEFAULT_SESSION_NAME = 'Unnamed Session';
+
+/**
+ * The label to show for a session. Prefers the user's name, but falls back to
+ * the launched executable (then the attached pid) so the app header and the
+ * session bar are never blank — an unnamed session used to render as an empty
+ * top-left corner.
+ */
+export function sessionDisplayName(session: {
+  name?: string | null;
+  launch_command?: string | null;
+  attach_pid?: number | null;
+}): string {
+  const name = session.name?.trim();
+  if (name && name !== DEFAULT_SESSION_NAME) return name;
+
+  const command = session.launch_command?.trim();
+  if (command) {
+    // The exe is the first token, quoted when the path contains spaces
+    // (see buildLaunchCommand).
+    const exe = command.startsWith('"')
+      ? command.slice(1, command.indexOf('"', 1))
+      : command.split(/\s+/)[0];
+    const stem = basename(exe).replace(/\.exe$/i, '');
+    if (stem) return stem;
+  }
+
+  if (session.attach_pid != null) return `PID ${session.attach_pid}`;
+  return DEFAULT_SESSION_NAME;
+}
+
+
 
 /**
  * Turn an executable path into a launch command the backend can parse as a

@@ -59,7 +59,16 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(
             tauri_plugin_window_state::Builder::default()
-                .with_state_flags(tauri_plugin_window_state::StateFlags::all())
+                // Everything except DECORATIONS. The window is frameless by
+                // design (`decorations: false` in tauri.conf.json — the app
+                // header IS the caption bar), and that is an app decision, not
+                // user window state. With DECORATIONS in the set the plugin
+                // restores a persisted `decorated: true` from an older build
+                // and puts the native title bar back above our own header.
+                .with_state_flags(
+                    tauri_plugin_window_state::StateFlags::all()
+                        & !tauri_plugin_window_state::StateFlags::DECORATIONS,
+                )
                 .build()
         )
         .manage(SessionStatesMap::default())

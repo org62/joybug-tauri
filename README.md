@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="public/joybug-logo.svg" alt="Joybug" width="120" />
+<img src="src-tauri/icons/128x128.png" alt="Joybug" width="120" />
 
 # Joybug
 

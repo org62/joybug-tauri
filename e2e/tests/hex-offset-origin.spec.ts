@@ -91,7 +91,7 @@ test.describe("Hex offset origin", () => {
       await cleanupSession(page, sessionId);
       // The Memory tab this spec opened would otherwise stay open for every
       // later spec, mounting its view (and its fetches) before they start.
-      await page.getByRole("button", { name: "Windows" }).click();
+      await page.getByRole("main").getByRole("button", { name: "Windows" }).click();
       await page.getByRole("menuitem", { name: "Reset Layout" }).click();
       await page.keyboard.press("Escape");
     }

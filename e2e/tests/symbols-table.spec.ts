@@ -65,7 +65,7 @@ test.describe("Symbols table", () => {
       // Address column — a left column narrowed by an earlier spec would clip it
       // out of view and the drag would land on whatever is behind it. Reset to
       // the default layout so the panel's width is deterministic.
-      await page.getByRole("button", { name: "Windows" }).click();
+      await page.getByRole("main").getByRole("button", { name: "Windows" }).click();
       await page.getByRole("menuitem", { name: "Reset Layout" }).click();
       await page.keyboard.press("Escape");
 

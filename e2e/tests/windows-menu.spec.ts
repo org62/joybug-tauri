@@ -126,7 +126,7 @@ test.describe("Windows: navigation, grouping, and reset", () => {
         expect((await openTabIds(page)).length).toBeGreaterThan(DEFAULT_TABS.length);
       }).toPass({ timeout: 5_000 });
 
-      await page.getByRole("button", { name: "Windows" }).click();
+      await page.getByRole("main").getByRole("button", { name: "Windows" }).click();
       await page.getByRole("menuitem", { name: "Reset Layout" }).click();
       await page.keyboard.press("Escape");
 

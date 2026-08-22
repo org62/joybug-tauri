@@ -19,20 +19,6 @@
   filter: drop-shadow(0 0 2em #f74c00);
 }
 
-.joybug {
-  will-change: filter;
-  transition: 0.75s;
-}
-
-.joybug:hover {
-  filter: drop-shadow(0 0 2em #24c8db);
-}
-
-.logo {
-  height: 6em;
-  padding: 1.5em;
-}
-
 @theme inline {
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
