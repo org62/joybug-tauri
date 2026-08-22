@@ -35,6 +35,7 @@ export interface DebugSettings {
   symbol_path: string; // _NT_SYMBOL_PATH syntax; empty = env var / Microsoft symbol server
   symbol_offline: boolean; // never download symbols
   auto_update_check: boolean; // ask GitHub Releases for a newer version on startup
+  lightning_instructions: number; // instructions the always-on lightning emulation runs per pause
 }
 
 // Keys whose value is a boolean, derived structurally so new settings never
@@ -91,6 +92,7 @@ const DEFAULTS: DebugSettings = {
   symbol_path: "",
   symbol_offline: false,
   auto_update_check: true,
+  lightning_instructions: 100,
 };
 
 export function useDebugSettings() {
@@ -141,8 +143,13 @@ export function useDebugSettings() {
     return update(prev => ({ ...prev, scan_thread_count: sanitized }));
   }, [update]);
 
+  const setLightningInstructions = useCallback((count: number) => {
+    const sanitized = Number.isFinite(count) && count >= 1 ? Math.floor(count) : 100;
+    return update(prev => ({ ...prev, lightning_instructions: sanitized }));
+  }, [update]);
+
   const setSymbolPath = useCallback((path: string) =>
     update(prev => ({ ...prev, symbol_path: path })), [update]);
 
-  return { settings, toggle, updateExceptionRules, toggleHiding, setScanThreadCount, setSymbolPath };
+  return { settings, toggle, updateExceptionRules, toggleHiding, setScanThreadCount, setSymbolPath, setLightningInstructions };
 }

@@ -1,5 +1,5 @@
-import { useState, useRef, useEffect, useMemo, useCallback, memo } from "react";
-import { ChevronDown, ChevronRight, Copy, Loader2 } from "lucide-react";
+import { useState, useRef, useMemo, useCallback, memo } from "react";
+import { Copy, Loader2 } from "lucide-react";
 import { copyToClipboard } from "@/lib/clipboard";
 import { ScrollArea } from "./ui/scroll-area";
 import { VirtualizedList } from "./ui/virtualized-list";
@@ -7,8 +7,15 @@ import { Button } from "./ui/button";
 import { HistoryInput } from "./ui/history-input";
 import { pushInputHistory } from "@/lib/inputHistory";
 import { cn, DATA_ROW_HEIGHT } from "@/lib/utils";
-import { QuickEmulationState, QuickEmulationResult } from "@/hooks/useQuickEmulation";
-import { parseTenetTrace } from "@/lib/tenetParser";
+import { QuickEmulationState, QuickEmulationResult, EmulationToggle, TraceMode } from "@/hooks/useQuickEmulation";
+import { buildTraceSteps, buildCallSteps, formatStepValues, stepLabel, type TraceStep } from "@/lib/emulationTrace";
+import { TraceStepDetails } from "./EmulationTraceStep";
+import { useHoverPopup } from "@/hooks/useHoverPopup";
+import { HoverPopupPanel } from "@/components/ui/hover-popup";
+import { useColumnWidths } from "@/hooks/useColumnWidths";
+import { useHeaderScrollSync } from "@/hooks/useHeaderScrollSync";
+import { ResizableHeaderCell } from "./ui/resizable-header-cell";
+import { Badge } from "./ui/badge";
 
 interface EmulationQuickViewProps {
   emulation: QuickEmulationState;
@@ -65,17 +72,23 @@ function parseSummaryRow(result: QuickEmulationResult | null, kind: "syscall" | 
   return { label: reason, muted: false, finalPc };
 }
 
-interface TraceLine {
-  index: number;
-  address: string;
-  mnemonic: string;
-  opStr: string;
-  changes: string;
-  memory: string;
-  tooltip: string;
-}
-
 const TRACE_ROW_HEIGHT = DATA_ROW_HEIGHT;
+
+// Resizable table columns of the trace listing; the "Emu values" column takes
+// the rest. Persisted like the assembly listing's columns.
+type TraceColumnWidths = { index: number; address: number; asm: number };
+const TRACE_COLUMNS_KEY = "assembly-quick-emulation-columns";
+const DEFAULT_TRACE_COLUMNS: TraceColumnWidths = { index: 44, address: 220, asm: 200 };
+const TRACE_VALUES_MIN = 240;
+
+// Quick picks for the trace limit, offered in the input's recall dropdown.
+const LIMIT_PRESETS = [1_000, 10_000, 100_000].map((n) => n.toLocaleString());
+
+const TRACE_MODE_LABEL: Record<TraceMode, string> = {
+  InstructionTrace: "Per instruction",
+  BasicBlock: "Basic blocks",
+  Calls: "Calls",
+};
 
 function VirtualizedTraceLines({
   height,
@@ -87,60 +100,94 @@ function VirtualizedTraceLines({
   onRowLeave,
 }: {
   height: number;
-  traceLines: TraceLine[];
+  traceLines: TraceStep[];
   hasAnyData: boolean;
   isLoading: boolean;
-  onRowEnter: (index: number, e: React.MouseEvent) => void;
-  onRowMove: (pos: { x: number; y: number }) => void;
+  /** `position` is the row's index in `traceLines` (not the trace step). */
+  onRowEnter: (e: React.MouseEvent, position: number) => void;
+  onRowMove: (e: React.MouseEvent) => void;
   onRowLeave: () => void;
 }) {
+  const { columnWidths, handleColumnResizeStart } = useColumnWidths<keyof TraceColumnWidths>(TRACE_COLUMNS_KEY, DEFAULT_TRACE_COLUMNS);
+  const rowMinWidth = `${16 /* px-2 */ + columnWidths.index + columnWidths.address + columnWidths.asm + TRACE_VALUES_MIN}px`;
+  const { headerInnerRef, handleViewportScroll, handleHeaderScroll } = useHeaderScrollSync(rowMinWidth);
+
+  let body: React.ReactNode;
   if (traceLines.length === 0 && !hasAnyData && !isLoading) {
-    return (
-      <ScrollArea style={{ height }}>
+    body = (
+      <ScrollArea className="flex-1 min-h-0">
         <div className="px-3 py-2 text-muted-foreground text-center">
           Pause the debugger to see quick emulation results
         </div>
       </ScrollArea>
     );
-  }
-
-  if (traceLines.length === 0) {
-    return <ScrollArea style={{ height }} />;
+  } else if (traceLines.length === 0) {
+    body = <ScrollArea className="flex-1 min-h-0" />;
+  } else {
+    body = (
+      <VirtualizedList
+        items={traceLines}
+        rowHeight={TRACE_ROW_HEIGHT}
+        className="flex-1 min-h-0"
+        minContentWidth={rowMinWidth}
+        onViewportScroll={handleViewportScroll}
+        renderItem={(line, position) => (
+          <div
+            data-testid="emulation-trace-row"
+            className="flex items-center px-2 whitespace-nowrap hover:bg-muted/50 h-full"
+            onMouseEnter={(e) => onRowEnter(e, position)}
+            onMouseMove={onRowMove}
+            onMouseLeave={onRowLeave}
+          >
+            <span className="text-muted-foreground shrink-0 truncate pr-1 text-right" style={{ width: columnWidths.index }}>
+              {line.index}
+            </span>
+            <span className="text-muted-foreground shrink-0 truncate pr-1" style={{ width: columnWidths.address }} title={stepLabel(line)}>
+              {stepLabel(line)}
+            </span>
+            <span className="shrink-0 truncate pr-1" style={{ width: columnWidths.asm }}>
+              {line.mnemonic}
+              {line.opStr && <> {line.opStr}</>}
+            </span>
+            <span className="flex-1 truncate flex items-center gap-1" style={{ minWidth: TRACE_VALUES_MIN }}>
+              {line.kind && (
+                <Badge variant="secondary" size="xs" className="shrink-0 px-1 py-0 leading-none font-mono">
+                  {line.kind} →
+                </Badge>
+              )}
+              {line.changes && <span className="text-syn-accent">{line.changes}</span>}
+              {line.changes && line.memory && <span className="text-muted-foreground">, </span>}
+              {line.memory && <span className="text-foreground">{line.memory}</span>}
+            </span>
+          </div>
+        )}
+      />
+    );
   }
 
   return (
-    <VirtualizedList
-      items={traceLines}
-      rowHeight={TRACE_ROW_HEIGHT}
-      style={{ height }}
-      minContentWidth="560px"
-      renderItem={(line) => (
+    <div className="flex flex-col" style={{ height }}>
+      {/* Column header — fixed vertically, follows horizontal scroll */}
+      <div className="shrink-0 overflow-hidden border-b border-border/50" onScroll={handleHeaderScroll}>
         <div
-          className="flex items-center px-2 whitespace-nowrap hover:bg-muted/50 h-full"
-          onMouseEnter={(e) => onRowEnter(line.index, e)}
-          onMouseMove={(e) => onRowMove({ x: e.clientX, y: e.clientY })}
-          onMouseLeave={onRowLeave}
+          ref={headerInnerRef}
+          style={{ minWidth: rowMinWidth }}
+          className="flex items-center px-2 py-0.5 text-xs text-foreground/60 select-none"
         >
-          <span className="text-muted-foreground w-8 shrink-0 text-right mr-2">
-            {line.index}
-          </span>
-          <span className="text-muted-foreground shrink-0 mr-3" style={{ minWidth: 180 }}>
-            {line.address.length > 35 ? line.address.slice(0, 34) + "\u2026" : line.address}
-          </span>
-          <span className="shrink-0 mr-3" style={{ minWidth: 140 }}>
-            {line.mnemonic}
-            {line.opStr && <> {line.opStr}</>}
-          </span>
-          {(line.changes || line.memory) && (
-            <>
-              {line.changes && <span className="text-syn-accent mr-1">{line.changes}</span>}
-              {line.changes && line.memory && <span className="text-muted-foreground mr-1">, </span>}
-              {line.memory && <span className="text-foreground">{line.memory}</span>}
-            </>
-          )}
+          <ResizableHeaderCell width={columnWidths.index} className="text-right" onResizeStart={(e) => handleColumnResizeStart("index", e)}>
+            <span data-testid="emu-col-index">#</span>
+          </ResizableHeaderCell>
+          <ResizableHeaderCell width={columnWidths.address} onResizeStart={(e) => handleColumnResizeStart("address", e)}>
+            <span data-testid="emu-col-address">Symbol / address</span>
+          </ResizableHeaderCell>
+          <ResizableHeaderCell width={columnWidths.asm} onResizeStart={(e) => handleColumnResizeStart("asm", e)}>
+            <span data-testid="emu-col-asm">Asm</span>
+          </ResizableHeaderCell>
+          <span className="flex-1" data-testid="emu-col-values">Emu values</span>
         </div>
-      )}
-    />
+      </div>
+      {body}
+    </div>
   );
 }
 
@@ -185,169 +232,30 @@ export const EmulationQuickView = memo(function EmulationQuickView({ emulation, 
     toggleTraceMode,
     maxInstructions,
     setMaxInstructions,
-    collapsed,
-    toggleCollapsed,
+    toggles,
+    setToggle,
   } = emulation;
 
-  // Hover tooltip state (trace rows)
-  const [visibleTooltipRow, setVisibleTooltipRow] = useState<number | null>(null);
-  const [tooltipPos, setTooltipPos] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
-  const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const tooltipHoveredRef = useRef(false);
-
-  // Stats popover state
-  const [statsPopover, setStatsPopover] = useState<string | null>(null);
-  const [statsPopoverPos, setStatsPopoverPos] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
-  const statsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const statsHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const statsHoveredRef = useRef(false);
-
-  useEffect(() => {
-    return () => {
-      if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
-      if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
-      if (statsTimerRef.current) clearTimeout(statsTimerRef.current);
-      if (statsHideTimerRef.current) clearTimeout(statsHideTimerRef.current);
-    };
-  }, []);
-
-  const handleRowEnter = useCallback((index: number, e: React.MouseEvent) => {
-    if (hideTimerRef.current) { clearTimeout(hideTimerRef.current); hideTimerRef.current = null; }
-    setTooltipPos({ x: e.clientX, y: e.clientY });
-    if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
-    hoverTimerRef.current = setTimeout(() => setVisibleTooltipRow(index), 1000);
-  }, []);
-
-  const dismissTooltip = useCallback(() => {
-    setVisibleTooltipRow(null);
-    if (hoverTimerRef.current) { clearTimeout(hoverTimerRef.current); hoverTimerRef.current = null; }
-  }, []);
-
-  const handleRowLeave = useCallback(() => {
-    if (hoverTimerRef.current) { clearTimeout(hoverTimerRef.current); hoverTimerRef.current = null; }
-    // Delay hide so cursor can reach the tooltip
-    hideTimerRef.current = setTimeout(() => {
-      if (!tooltipHoveredRef.current) dismissTooltip();
-    }, 150);
-  }, [dismissTooltip]);
-
-  const handleTooltipEnter = useCallback(() => {
-    tooltipHoveredRef.current = true;
-    if (hideTimerRef.current) { clearTimeout(hideTimerRef.current); hideTimerRef.current = null; }
-  }, []);
-
-  const handleTooltipLeave = useCallback(() => {
-    tooltipHoveredRef.current = false;
-    dismissTooltip();
-  }, [dismissTooltip]);
-
-  // Stats popover handlers
-  const dismissStatsPopover = useCallback(() => {
-    setStatsPopover(null);
-    if (statsTimerRef.current) { clearTimeout(statsTimerRef.current); statsTimerRef.current = null; }
-  }, []);
-
-  const handleStatsEnter = useCallback((statsText: string, e: React.MouseEvent) => {
-    if (statsHideTimerRef.current) { clearTimeout(statsHideTimerRef.current); statsHideTimerRef.current = null; }
-    setStatsPopoverPos({ x: e.clientX, y: e.clientY });
-    if (statsTimerRef.current) clearTimeout(statsTimerRef.current);
-    statsTimerRef.current = setTimeout(() => setStatsPopover(statsText), 500);
-  }, []);
-
-  const handleStatsLeave = useCallback(() => {
-    if (statsTimerRef.current) { clearTimeout(statsTimerRef.current); statsTimerRef.current = null; }
-    statsHideTimerRef.current = setTimeout(() => {
-      if (!statsHoveredRef.current) dismissStatsPopover();
-    }, 150);
-  }, [dismissStatsPopover]);
-
-  const handleStatsPopoverEnter = useCallback(() => {
-    statsHoveredRef.current = true;
-    if (statsHideTimerRef.current) { clearTimeout(statsHideTimerRef.current); statsHideTimerRef.current = null; }
-  }, []);
-
-  const handleStatsPopoverLeave = useCallback(() => {
-    statsHoveredRef.current = false;
-    dismissStatsPopover();
-  }, [dismissStatsPopover]);
+  // Two delayed hover popups over the footer: the per-row trace tooltip and
+  // the stats popover behind each timing value. Both share the trigger/grace
+  // contract with the disassembly listing's lightning popup.
+  const tooltip = useHoverPopup<number>();
+  const stats = useHoverPopup<string>(500);
 
   const syscall = parseSummaryRow(syscallResult, "syscall");
   const module = parseSummaryRow(moduleResult, "module");
 
-  // Parse trace lines
-  const traceLines = useMemo(() => {
-    if (!traceResult) return [];
-
-    if (traceResult.mode === "InstructionTrace" && traceResult.trace_text) {
-      const entries = parseTenetTrace(traceResult.trace_text);
-      const instrMap = new Map<string, { symbol: string | null; mnemonic: string; op_str: string }>();
-      for (const info of traceResult.instruction_info) {
-        instrMap.set(info.address.toUpperCase(), info);
-      }
-
-      return entries.map((entry, i) => {
-        const pcKey = 'rip' in entry.registers ? 'rip' : 'pc' in entry.registers ? 'pc' : Object.keys(entry.registers)[0] || 'rip';
-        const pcValue = entry.registers[pcKey] || "";
-        const info = instrMap.get(pcValue.toUpperCase());
-
-        // Changed registers
-        let changes = "";
-        if (i === 0) {
-          changes = "(initial)";
-        } else {
-          const prev = entries[i - 1];
-          const parts: string[] = [];
-          for (const [key, value] of Object.entries(entry.registers)) {
-            if (key === pcKey) continue;
-            if (prev.registers[key] !== value) parts.push(`${key}=${value}`);
-          }
-          changes = parts.join(", ");
-        }
-
-        // Memory accesses
-        const memParts: string[] = [];
-        for (const m of entry.memoryReads) memParts.push(`R ${m.address} [${m.data}]`);
-        for (const m of entry.memoryWrites) memParts.push(`W ${m.address} [${m.data}]`);
-
-        // Tooltip: full register state
-        const tooltip = Object.entries(entry.registers)
-          .map(([k, v]) => `${k}: ${v}`)
-          .join("\n");
-
-        return {
-          index: i,
-          address: info?.symbol ?? pcValue,
-          mnemonic: info?.mnemonic ?? "",
-          opStr: info?.op_str ?? "",
-          changes,
-          memory: memParts.join(", "),
-          tooltip,
-        };
-      });
-    }
-
-    if (traceResult.mode === "BasicBlock" && traceResult.basic_blocks.length > 0) {
-      const instrMap = new Map<string, { symbol: string | null; mnemonic: string; op_str: string }>();
-      for (const info of traceResult.instruction_info) {
-        instrMap.set(info.address.toUpperCase(), info);
-      }
-      return traceResult.basic_blocks.map((addr, i) => {
-        const info = instrMap.get(addr.toUpperCase());
-        return {
-          index: i,
-          address: info?.symbol ?? addr,
-          mnemonic: info?.mnemonic ?? "",
-          opStr: info?.op_str ?? "",
-          changes: "",
-          memory: "",
-          tooltip: info?.symbol ?? addr,
-        };
-      });
-    }
-
-    return [];
-  }, [traceResult]);
+  // Trace steps, from the shared builder (the same one the lightning
+  // annotations use). Parsing is keyed on the payload alone so cycling to
+  // Calls — a client-side view over the same trace — never re-parses it.
+  const traceSteps = useMemo(
+    () => (toggles.instructions ? buildTraceSteps(traceResult) : []),
+    [traceResult, toggles.instructions],
+  );
+  const traceLines = useMemo(
+    () => (traceMode === "Calls" ? buildCallSteps(traceSteps) : traceSteps),
+    [traceSteps, traceMode],
+  );
 
   // Derive accurate distances from trace data when available
   // (the separate Syscall/ModuleTransition emulations may count differently)
@@ -363,19 +271,22 @@ export const EmulationQuickView = memo(function EmulationQuickView({ emulation, 
   }, [traceLines]);
 
   const hasAnyData = syscallResult || moduleResult || traceResult;
+  const anyToggle = toggles.module || toggles.syscall || toggles.instructions;
   const dimmed = isLoading && hasAnyData;
 
   // Render the visible emulation output (summary + trace lines) as plain text,
   // with the trace columns aligned like the on-screen layout.
   const handleCopyLog = useCallback(() => {
     const lines: string[] = [];
-    lines.push(
-      `Next Syscall: ${syscall.label}` +
-        (traceDistances.syscall !== undefined
-          ? ` (${traceDistances.syscall.toLocaleString()} instr away)`
-          : ""),
-    );
-    lines.push(`Next Module: ${module.label}`);
+    if (toggles.syscall) {
+      lines.push(
+        `Next Syscall: ${syscall.label}` +
+          (traceDistances.syscall !== undefined
+            ? ` (${traceDistances.syscall.toLocaleString()} instr away)`
+            : ""),
+      );
+    }
+    if (toggles.module) lines.push(`Next Module: ${module.label}`);
     const timings = [
       syscallResult && `syscall ${formatTimingUs(syscallResult.emulation_time_us)}`,
       moduleResult && `module ${formatTimingUs(moduleResult.emulation_time_us)}`,
@@ -387,102 +298,121 @@ export const EmulationQuickView = memo(function EmulationQuickView({ emulation, 
 
     if (traceLines.length > 0) {
       lines.push("");
-      const addrWidth = Math.max(...traceLines.map((l) => l.address.length));
+      const addrTexts = traceLines.map(stepLabel);
+      const addrWidth = Math.max(...addrTexts.map((a) => a.length));
       const asmTexts = traceLines.map((l) => (l.opStr ? `${l.mnemonic} ${l.opStr}` : l.mnemonic));
       const asmWidth = Math.max(...asmTexts.map((a) => a.length));
       const idxWidth = String(traceLines.length - 1).length;
       traceLines.forEach((l, i) => {
-        const extras = [l.changes, l.memory].filter(Boolean).join(", ");
+        const extras = [l.kind && `${l.kind} →`, formatStepValues(l)].filter(Boolean).join(", ");
         lines.push(
-          `${String(l.index).padStart(idxWidth)}  ${l.address.padEnd(addrWidth)}  ${asmTexts[i].padEnd(asmWidth)}${extras ? `  ${extras}` : ""}`.trimEnd(),
+          `${String(l.index).padStart(idxWidth)}  ${addrTexts[i].padEnd(addrWidth)}  ${asmTexts[i].padEnd(asmWidth)}${extras ? `  ${extras}` : ""}`.trimEnd(),
         );
       });
     }
 
     copyToClipboard(lines.join("\n"), "emulation log");
-  }, [syscall.label, module.label, traceDistances.syscall, syscallResult, moduleResult, traceResult, traceLines]);
+  }, [toggles.syscall, toggles.module, syscall.label, module.label, traceDistances.syscall, syscallResult, moduleResult, traceResult, traceLines]);
+
+  const toggleButton = (name: EmulationToggle, label: string) => (
+    <Button
+      variant={toggles[name] ? "secondary" : "outline"}
+      size="xs"
+      aria-pressed={toggles[name]}
+      data-testid={`emu-toggle-${name}`}
+      onClick={() => setToggle(name, !toggles[name])}
+    >
+      {label}
+    </Button>
+  );
 
   return (
     <div ref={rootRef} className="shrink-0 border-t border-border bg-muted/20">
-      {/* Resize handle */}
-      <div
-        className="h-1 cursor-row-resize hover:bg-ring/40 active:bg-ring/60 transition-colors"
-        onMouseDown={handleResizeStart}
-      />
-      {/* Header */}
-      <div
-        className="flex items-center justify-between px-2 py-1 cursor-pointer hover:bg-muted/40 select-none"
-        onClick={toggleCollapsed}
-      >
+      {/* Resize handle — only meaningful while the trace listing is shown */}
+      {toggles.instructions && (
+        <div
+          className="h-1 cursor-row-resize hover:bg-ring/40 active:bg-ring/60 transition-colors"
+          onMouseDown={handleResizeStart}
+        />
+      )}
+      {/* Header: title + the three independent probe toggles */}
+      <div className="flex items-center justify-between px-2 py-1 select-none">
         <div className="flex items-center gap-1 text-xs text-muted-foreground">
-          {collapsed ? <ChevronRight className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
           <span className="font-medium">Quick Emulation</span>
-          {isLoading && <Loader2 className="h-3 w-3 animate-spin ml-1" />}
+          {isLoading && anyToggle && <Loader2 className="h-3 w-3 animate-spin ml-1" />}
         </div>
-        {!collapsed && (
-          <div className="flex items-center gap-1">
-            <Button
-              variant="outline"
-              size="icon-xs"
-              title="Copy emulation log"
-              disabled={!hasAnyData}
-              onClick={(e) => { e.stopPropagation(); handleCopyLog(); }}
-            >
-              <Copy />
-            </Button>
+        <div className="flex items-center gap-1">
+          {toggleButton("module", "Module")}
+          {toggleButton("syscall", "Syscall")}
+          {toggleButton("instructions", "Instructions")}
+          {toggles.instructions && (
             <Button
               variant="outline"
               size="xs"
-              onClick={(e) => { e.stopPropagation(); toggleTraceMode(); }}
+              title="Trace granularity"
+              onClick={toggleTraceMode}
             >
-              {traceMode === "InstructionTrace" ? "Instructions" : "Basic blocks"}
+              {TRACE_MODE_LABEL[traceMode]}
             </Button>
-          </div>
-        )}
+          )}
+          <Button
+            variant="outline"
+            size="icon-xs"
+            title="Copy emulation log"
+            disabled={!hasAnyData}
+            onClick={handleCopyLog}
+          >
+            <Copy />
+          </Button>
+        </div>
       </div>
 
-      {/* Body */}
-      {!collapsed && (
+      {/* Body: only the enabled probes */}
+      {anyToggle && (
         <div className={`text-data font-mono ${dimmed ? "opacity-50" : ""}`}>
           {/* Summary rows - fixed above scroll */}
-          <div className="px-3 py-1 space-y-0.5 border-b border-border/50">
-            <div className="flex items-center gap-2">
-              <span className="text-muted-foreground w-24 shrink-0">Next Syscall:</span>
-              <span
-                className={cn(
-                  syscall.muted ? "text-muted-foreground" : "text-syn-link",
-                  !syscall.muted && onNavigateToAddress && syscall.finalPc && "cursor-pointer hover:underline"
-                )}
-                onClick={() => {
-                  if (!syscall.muted && onNavigateToAddress && syscall.finalPc) {
-                    onNavigateToAddress(syscall.finalPc);
-                  }
-                }}
-              >
-                {syscall.label}
-              </span>
-              {traceDistances.syscall !== undefined && (
-                <span className="text-muted-foreground ml-auto">
-                  {traceDistances.syscall.toLocaleString()} instr away
+          <div className={cn("px-3 py-1 space-y-0.5", toggles.instructions && "border-b border-border/50")}>
+            {toggles.syscall && (
+              <div className="flex items-center gap-2" data-testid="emu-row-syscall">
+                <span className="text-muted-foreground w-24 shrink-0">Next Syscall:</span>
+                <span
+                  className={cn(
+                    syscall.muted ? "text-muted-foreground" : "text-syn-link",
+                    !syscall.muted && onNavigateToAddress && syscall.finalPc && "cursor-pointer hover:underline"
+                  )}
+                  onClick={() => {
+                    if (!syscall.muted && onNavigateToAddress && syscall.finalPc) {
+                      onNavigateToAddress(syscall.finalPc);
+                    }
+                  }}
+                >
+                  {syscall.label}
                 </span>
-              )}
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="text-muted-foreground w-24 shrink-0">Next Module:</span>
-              <span
-                className={cn(
-                  module.muted ? "text-muted-foreground" : "text-syn-link",
-                  !module.muted && onNavigateToAddress && module.finalPc && "cursor-pointer hover:underline"
+                {traceDistances.syscall !== undefined && (
+                  <span className="text-muted-foreground ml-auto">
+                    {traceDistances.syscall.toLocaleString()} instr away
+                  </span>
                 )}
-                onClick={() => {
-                  if (!module.muted && onNavigateToAddress && module.finalPc) {
-                    onNavigateToAddress(module.finalPc);
-                  }
-                }}
-              >
-                {module.label}
-              </span>
-            </div>
+              </div>
+            )}
+            {toggles.module && (
+              <div className="flex items-center gap-2" data-testid="emu-row-module">
+                <span className="text-muted-foreground w-24 shrink-0">Next Module:</span>
+                <span
+                  className={cn(
+                    module.muted ? "text-muted-foreground" : "text-syn-link",
+                    !module.muted && onNavigateToAddress && module.finalPc && "cursor-pointer hover:underline"
+                  )}
+                  onClick={() => {
+                    if (!module.muted && onNavigateToAddress && module.finalPc) {
+                      onNavigateToAddress(module.finalPc);
+                    }
+                  }}
+                >
+                  {module.label}
+                </span>
+              </div>
+            )}
             <div className="flex items-center gap-2 text-muted-foreground">
               <span className="w-24 shrink-0">Emulation:</span>
               {hasAnyData && (
@@ -492,9 +422,9 @@ export const EmulationQuickView = memo(function EmulationQuickView({ emulation, 
                       <span
                         key="s"
                         className="cursor-default hover:text-foreground"
-                        onMouseEnter={(e) => handleStatsEnter(syscallResult.stats_text, e)}
-                        onMouseMove={(e) => setStatsPopoverPos({ x: e.clientX, y: e.clientY })}
-                        onMouseLeave={handleStatsLeave}
+                        onMouseEnter={(e) => stats.show(e, syscallResult.stats_text)}
+                        onMouseMove={stats.move}
+                        onMouseLeave={stats.leave}
                       >
                         syscall {formatTimingUs(syscallResult.emulation_time_us)}
                       </span>
@@ -503,9 +433,9 @@ export const EmulationQuickView = memo(function EmulationQuickView({ emulation, 
                       <span
                         key="m"
                         className="cursor-default hover:text-foreground"
-                        onMouseEnter={(e) => handleStatsEnter(moduleResult.stats_text, e)}
-                        onMouseMove={(e) => setStatsPopoverPos({ x: e.clientX, y: e.clientY })}
-                        onMouseLeave={handleStatsLeave}
+                        onMouseEnter={(e) => stats.show(e, moduleResult.stats_text)}
+                        onMouseMove={stats.move}
+                        onMouseLeave={stats.leave}
                       >
                         module {formatTimingUs(moduleResult.emulation_time_us)}
                       </span>
@@ -514,9 +444,9 @@ export const EmulationQuickView = memo(function EmulationQuickView({ emulation, 
                       <span
                         key="t"
                         className="cursor-default hover:text-foreground"
-                        onMouseEnter={(e) => handleStatsEnter(traceResult.stats_text, e)}
-                        onMouseMove={(e) => setStatsPopoverPos({ x: e.clientX, y: e.clientY })}
-                        onMouseLeave={handleStatsLeave}
+                        onMouseEnter={(e) => stats.show(e, traceResult.stats_text)}
+                        onMouseMove={stats.move}
+                        onMouseLeave={stats.leave}
                       >
                         trace {formatTimingUs(traceResult.emulation_time_us)}
                       </span>
@@ -532,10 +462,11 @@ export const EmulationQuickView = memo(function EmulationQuickView({ emulation, 
                 limit
                 <HistoryInput
                   historyKey="emu-instr-limit"
+                  presets={LIMIT_PRESETS}
                   key={maxInstructions}
                   type="text"
-                  inputSize="inline"
-                  className="w-14 text-right font-mono"
+                  inputSize="xs"
+                  className="w-24 text-right font-mono"
                   defaultValue={maxInstructions.toLocaleString()}
                   onClick={(e) => e.stopPropagation()}
                   onFocus={(e) => e.target.select()}
@@ -564,32 +495,31 @@ export const EmulationQuickView = memo(function EmulationQuickView({ emulation, 
           </div>
 
           {/* Trace lines - scrollable + virtualized */}
-          <VirtualizedTraceLines
-            height={height}
-            traceLines={traceLines}
-            hasAnyData={!!hasAnyData}
-            isLoading={isLoading}
-            onRowEnter={handleRowEnter}
-            onRowMove={setTooltipPos}
-            onRowLeave={handleRowLeave}
-          />
+          {toggles.instructions && (
+            <VirtualizedTraceLines
+              height={height}
+              traceLines={traceLines}
+              hasAnyData={!!traceResult}
+              isLoading={isLoading}
+              onRowEnter={tooltip.show}
+              onRowMove={tooltip.move}
+              onRowLeave={tooltip.leave}
+            />
+          )}
         </div>
       )}
 
       {/* Stats popover (appears on hover over timing values) */}
-      {statsPopover && (
-        <div
-          className="fixed z-50 bg-popover border border-border rounded shadow-lg p-2 text-xs font-mono select-text"
-          onMouseEnter={handleStatsPopoverEnter}
-          onMouseLeave={handleStatsPopoverLeave}
-          style={{
-            left: Math.min(statsPopoverPos.x + 12, window.innerWidth - 420),
-            top: Math.min(statsPopoverPos.y + 12, window.innerHeight - 200),
-          }}
+      {stats.target && (
+        <HoverPopupPanel
+          x={stats.pos.x}
+          y={stats.pos.y}
+          height={200}
+          {...stats.popupProps}
         >
           <table className="border-separate" style={{ borderSpacing: "8px 1px" }}>
             <tbody>
-              {statsPopover.split(" | ").map((part, i) => {
+              {stats.target.split(" | ").map((part, i) => {
                 const [label, ...rest] = part.split(": ");
                 const value = rest.join(": ");
                 return (
@@ -601,33 +531,26 @@ export const EmulationQuickView = memo(function EmulationQuickView({ emulation, 
               })}
             </tbody>
           </table>
-        </div>
+        </HoverPopupPanel>
       )}
 
       {/* Hover tooltip (appears after 1s delay, interactive so user can copy) */}
-      {visibleTooltipRow !== null && traceLines[visibleTooltipRow] && (() => {
-        const line = traceLines[visibleTooltipRow];
-        const isTruncated = line.address.length > 35;
+      {tooltip.target !== null && traceLines[tooltip.target] && (() => {
+        const line = traceLines[tooltip.target];
+        const label = stepLabel(line);
         return (
-          <div
-            className="fixed z-50 bg-popover border border-border rounded shadow-lg p-2 text-xs font-mono max-w-md select-text"
-            onMouseEnter={handleTooltipEnter}
-            onMouseLeave={handleTooltipLeave}
-            style={{
-              left: Math.min(tooltipPos.x + 12, window.innerWidth - 420),
-              top: Math.min(tooltipPos.y + 12, window.innerHeight - 300),
-            }}
+          <HoverPopupPanel
+            x={tooltip.pos.x}
+            y={tooltip.pos.y}
+            className="max-w-md"
+            {...tooltip.popupProps}
           >
-            {isTruncated && (
-              <div className="text-foreground mb-1">{line.address}</div>
-            )}
-            <div className="text-muted-foreground mb-1">
-              {traceMode === "InstructionTrace"
-                ? `Registers at step ${visibleTooltipRow}:`
-                : `Block ${visibleTooltipRow}:`}
-            </div>
-            <pre className="whitespace-pre-wrap">{line.tooltip}</pre>
-          </div>
+            {label.length > 35 && <div className="text-foreground mb-1">{label}</div>}
+            <TraceStepDetails
+              step={line}
+              label={traceMode === "BasicBlock" ? `Block #${line.index}:` : undefined}
+            />
+          </HoverPopupPanel>
         );
       })()}
     </div>

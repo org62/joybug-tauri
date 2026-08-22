@@ -34,6 +34,7 @@ pub struct ExceptionRule {
 }
 
 fn default_true() -> bool { true }
+fn default_lightning_instructions() -> usize { 100 }
 
 /// "Debugger Hiding" — anti-anti-debug toggles applied on process start.
 /// `hide_from_peb` is the parent switch; the five child flags pick which
@@ -116,6 +117,10 @@ pub struct DebugSettings {
     /// automatic check; the About page's manual check always runs.
     #[serde(default = "default_true")]
     pub auto_update_check: bool,
+    /// Instructions the always-on "lightning" emulation runs at every pause to
+    /// annotate the disassembly with what happens next.
+    #[serde(default = "default_lightning_instructions")]
+    pub lightning_instructions: usize,
 }
 
 impl Default for DebugSettings {
@@ -141,6 +146,7 @@ impl Default for DebugSettings {
             symbol_offline: false,
             source_map: Vec::new(),
             auto_update_check: true,
+            lightning_instructions: 100,
         }
     }
 }

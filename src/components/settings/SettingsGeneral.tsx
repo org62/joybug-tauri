@@ -24,8 +24,45 @@ const SETTING_ITEMS: SettingItem[] = [
   { key: "accentColor", label: "Accent color", keywords: ["accent", "color", "appearance", "link", "blue", "teal", "purple", "rose", "highlight"] },
   { key: "uiScale", label: "UI scale", keywords: ["zoom", "scale", "ui", "enlarge", "bigger", "size", "font", "magnify", "text", "large", "small"] },
   { key: "scanThreads", label: "Memory scan threads (0 = all cores)", keywords: ["scan", "thread", "threads", "memory", "performance", "cores", "parallel", "cpu"] },
+  { key: "lightningInstructions", label: "Lightning emulation: instructions emulated at every pause", keywords: ["lightning", "emulation", "emulate", "trace", "instructions", "disassembly", "preview", "quick"] },
   { key: "autoUpdateCheck", label: "Automatically check for updates", keywords: ["update", "updates", "upgrade", "version", "release", "releases", "check", "github", "new"] },
 ];
+
+/**
+ * Numeric settings row: edits freely as text and commits on blur. The shared
+ * setter in `useDebugSettings` owns the valid range, so an unparseable draft
+ * is simply handed over and normalized there.
+ */
+function NumberSetting({
+  value,
+  min,
+  onCommit,
+  ...props
+}: {
+  value: number;
+  min: number;
+  onCommit: (value: number) => void;
+} & Omit<React.ComponentProps<typeof Input>, "value" | "min" | "onChange" | "onBlur" | "type">) {
+  const [draft, setDraft] = useState<string | null>(null);
+  return (
+    <Input
+      type="number"
+      min={min}
+      step={1}
+      inputSize="xs"
+      className="w-[130px]"
+      value={draft ?? String(value)}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={() => {
+        if (draft !== null) {
+          onCommit(parseInt(draft, 10));
+          setDraft(null);
+        }
+      }}
+      {...props}
+    />
+  );
+}
 
 interface SettingsGeneralProps {
   searchQuery: string;
@@ -34,8 +71,7 @@ interface SettingsGeneralProps {
 /** Renders a "General" category block matching the keybinding section style. */
 export function SettingsGeneral({ searchQuery }: SettingsGeneralProps) {
   const { theme, setTheme } = useTheme();
-  const { settings, setScanThreadCount, toggle } = useDebugSettings();
-  const [scanThreadsDraft, setScanThreadsDraft] = useState<string | null>(null);
+  const { settings, setScanThreadCount, setLightningInstructions, toggle } = useDebugSettings();
   const [uiScale, setUiScale] = useState(() => getStoredZoom());
   const [accent, setAccent] = useState<AccentId>(() => getStoredAccent());
 
@@ -129,21 +165,14 @@ export function SettingsGeneral({ searchQuery }: SettingsGeneralProps) {
               </Select>
             )}
             {item.key === "scanThreads" && (
-              <Input
-                type="number"
-                min={0}
-                step={1}
-                inputSize="xs"
-                className="w-[130px]"
-                value={scanThreadsDraft ?? String(settings.scan_thread_count)}
-                onChange={(e) => setScanThreadsDraft(e.target.value)}
-                onBlur={() => {
-                  if (scanThreadsDraft !== null) {
-                    const parsed = parseInt(scanThreadsDraft, 10);
-                    setScanThreadCount(Number.isNaN(parsed) ? 0 : parsed);
-                    setScanThreadsDraft(null);
-                  }
-                }}
+              <NumberSetting min={0} value={settings.scan_thread_count} onCommit={setScanThreadCount} />
+            )}
+            {item.key === "lightningInstructions" && (
+              <NumberSetting
+                min={1}
+                value={settings.lightning_instructions}
+                onCommit={setLightningInstructions}
+                data-testid="setting-lightning-instructions"
               />
             )}
             {item.key === "autoUpdateCheck" && (

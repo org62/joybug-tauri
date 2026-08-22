@@ -71,9 +71,11 @@ export const test = base.extend<TestFixtures>({
       const theme = localStorage.getItem("theme");
       localStorage.clear();
       if (theme) localStorage.setItem("theme", theme);
-      // Disable quick emulation in disassembly view — it consumes CPU without
-      // being tested by e2e and can slow down / interfere with other tests.
-      localStorage.setItem("assembly-quick-emulation-collapsed", "true");
+      // Disable the always-on lightning emulation in the disassembly view — it
+      // costs an emulator run per pause without being tested here and could
+      // slow down / interfere with other tests. The Quick Emulation footer
+      // probes default to off. emulation-highlight.spec.ts clears this.
+      localStorage.setItem("assembly-lightning-disabled", "true");
     });
 
     // The app-wide back/forward history (lib/navHistory.ts) would otherwise

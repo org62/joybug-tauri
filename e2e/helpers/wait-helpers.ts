@@ -1,5 +1,6 @@
 import { Page, expect } from "@playwright/test";
 import { invoke } from "./session-helpers";
+import { ASM_ROW_ONLY } from "./selectors";
 
 /**
  * Wait until the backend reports the session in the given status, polling
@@ -110,20 +111,23 @@ export async function waitForStopped(
 }
 
 /**
- * Poll until disassembly instructions are rendered (common x64 mnemonics
- * appear). `scopeSelector` narrows the scan (e.g. to the assembly panel);
- * without it the whole page body is scanned.
+ * Poll until disassembly instructions are rendered: at least one instruction
+ * row exists and common x64 mnemonics appear in its text. `scopeSelector`
+ * narrows the scan (e.g. to the assembly panel); without it the whole page
+ * body is scanned. The row check matters because panel chrome can contain
+ * mnemonic substrings (the Quick Emulation "Syscall" toggle contains "call").
  */
 export async function waitForDisassemblyLoaded(
   page: Page,
   scopeSelector?: string,
 ): Promise<void> {
   await expect(async () => {
-    const text = scopeSelector
-      ? await page.locator(scopeSelector).innerText()
-      : await page.evaluate(() => document.body.innerText);
+    const texts = await page
+      .locator(scopeSelector ?? "body")
+      .locator(ASM_ROW_ONLY)
+      .allInnerTexts();
     const hasAsm = ["mov", "push", "sub", "call", "int", "lea"].some((m) =>
-      text.includes(m),
+      texts.some((t) => t.includes(m)),
     );
     expect(hasAsm).toBe(true);
   }).toPass({ timeout: 15_000, intervals: [100, 250] });

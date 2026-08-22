@@ -9,7 +9,8 @@ import { HistoryInput } from "./ui/history-input";
 import { pushInputHistory } from "@/lib/inputHistory";
 import { Switch } from "./ui/switch";
 import { Label } from "./ui/label";
-import { Cpu, ArrowLeft, ArrowRight, RefreshCw, ChevronRight, Circle, CircleDot, Wrench, Copy, Bookmark, FileCode, HardDrive, LocateFixed, Zap, Undo2 } from "lucide-react";
+import { Cpu, ArrowLeft, ArrowRight, RefreshCw, ChevronRight, Circle, CircleDot, Wrench, Copy, Bookmark, FileCode, HardDrive, LocateFixed, Zap, Undo2, Ellipsis } from "lucide-react";
+import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuCheckboxItem } from "@/components/ui/dropdown-menu";
 import { sourceNavigation } from "@/lib/navigationStore";
 import { cn, DATA_ROW_HEIGHT, LINK_VALUE_CLASS, PC_ROW_HIGHLIGHT_CLASS } from "@/lib/utils";
 import { useAssemblyView, buildAsmRows, Instruction, AsmDisassembleFn } from "@/hooks/useAssemblyView";
@@ -24,6 +25,11 @@ import { useColumnWidths } from "@/hooks/useColumnWidths";
 import { useHeaderScrollSync } from "@/hooks/useHeaderScrollSync";
 import { EmulationQuickView } from "./EmulationQuickView";
 import { QuickEmulationState } from "@/hooks/useQuickEmulation";
+import { Badge } from "./ui/badge";
+import { formatStepValues, type RowTrace } from "@/lib/emulationTrace";
+import { TraceStepDetails } from "./EmulationTraceStep";
+import { useHoverPopup } from "@/hooks/useHoverPopup";
+import { HoverPopupPanel } from "@/components/ui/hover-popup";
 import { Virtualizer } from "@tanstack/react-virtual";
 import { useKeybindingContext } from "@/contexts/KeybindingContext";
 import { keyboardEventToChord } from "@/lib/keybindings";
@@ -35,6 +41,8 @@ type ColumnWidths = { symbol: number; bytes: number; mnemonic: number };
 
 const DEFAULT_COLUMN_WIDTHS: ColumnWidths = { symbol: 320, bytes: 144, mnemonic: 64 };
 const ASSEMBLY_ROW_HEIGHT = DATA_ROW_HEIGHT;
+// Passes listed in the lightning-trace popup for a repeatedly executed row.
+const TRACE_POPUP_MAX_PASSES = 20;
 
 // Multi-row selection: `addrs` are selected instruction addresses (uppercase —
 // stable across scroll prepends/appends, unlike row indexes); `anchor` is the
@@ -106,8 +114,10 @@ export function AssemblyView({ sessionId, isPaused, canLoad, address, registers,
   const { columnWidths, handleColumnResizeStart } = useColumnWidths<keyof ColumnWidths>(COLUMN_WIDTHS_KEY, DEFAULT_COLUMN_WIDTHS);
   // Context menu for right-click
   const { contextMenu, openContextMenu, closeContextMenu } = useContextMenu<{ address: string; mnemonic: string; op_str: string; is_patched: boolean }>();
-  // Addresses executed by the quick emulator (session hosts only).
-  const executedAddresses = emulation?.executedAddresses ?? null;
+  // What the always-on lightning emulation did from the current PC (session
+  // hosts only): per-address deltas and where it stopped. Coverage is simply
+  // "this address has a trace", so there is no separate executed set.
+  const lightning = emulation?.lightning ?? null;
 
   const {
     instructions,
@@ -268,6 +278,12 @@ export function AssemblyView({ sessionId, isPaused, canLoad, address, registers,
   const handleMemRefClick = useCallback((addr: string) => {
     onNavigateToMemoryRef.current?.(addr);
   }, []);
+
+  // Lightning-trace hover popup: one fixed-position panel beside the cursor.
+  // Only rows that carry a trace attach the handlers, so untouched rows stay
+  // cheap (and the handler identities are stable, so memoized rows stay memoized).
+  const tracePopup = useHoverPopup<string>();
+  const tracePopupRow = tracePopup.target ? lightning?.byAddress.get(tracePopup.target) ?? null : null;
 
   // Handle hover on jump target link
   const handleJumpTargetHover = useCallback((jumpTarget: string | null) => {
@@ -562,29 +578,44 @@ export function AssemblyView({ sessionId, isPaused, canLoad, address, registers,
         {/* Spacer */}
         <div className="flex-1" />
 
-        {/* Patch comparison toggle (session mode only — file mode has no live image to diff) */}
-        {!disassemble && (
-          <div className="flex items-center gap-2" title="Highlight code that differs from the on-disk image (patches/hooks)">
-            <Label htmlFor="compare-image" className="text-xs">Image Patches</Label>
-            <Switch
-              id="compare-image"
-              size="xs"
-              checked={compareImage}
-              onCheckedChange={toggleImageCompare}
-            />
-          </div>
-        )}
-
-        {/* Bytes column toggle */}
-        <div className="flex items-center gap-2">
-          <Label htmlFor="show-bytes" className="text-xs">Bytes</Label>
-          <Switch
-            id="show-bytes"
-            size="xs"
-            checked={showBytes}
-            onCheckedChange={toggleBytesColumn}
-          />
-        </div>
+        {/* View settings live behind "…" so the toolbar stays short */}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" size="icon-xs" title="View settings" data-testid="asm-more-menu">
+              <Ellipsis />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            {/* Bytes column */}
+            <DropdownMenuCheckboxItem
+              checked={showBytes}
+              onCheckedChange={() => toggleBytesColumn()}
+              data-testid="asm-bytes-toggle"
+            >
+              Bytes column
+            </DropdownMenuCheckboxItem>
+            {/* Patch comparison (session mode only — file mode has no live image to diff) */}
+            {!disassemble && (
+              <DropdownMenuCheckboxItem
+                checked={compareImage}
+                onCheckedChange={() => toggleImageCompare()}
+                data-testid="asm-image-patches-toggle"
+                title="Highlight code that differs from the on-disk image (patches/hooks)"
+              >
+                Image Patches
+              </DropdownMenuCheckboxItem>
+            )}
+            {emulation && (
+              <DropdownMenuCheckboxItem
+                checked={emulation.lightningEnabled}
+                onCheckedChange={(on) => emulation.setLightningEnabled(on === true)}
+                data-testid="asm-lightning-toggle"
+              >
+                Lightning emulation
+              </DropdownMenuCheckboxItem>
+            )}
+          </DropdownMenuContent>
+        </DropdownMenu>
       </PanelToolbar>
 
       {/* Inline assembly input */}
@@ -697,13 +728,15 @@ export function AssemblyView({ sessionId, isPaused, canLoad, address, registers,
             const isPC = pcAddress !== null && instAddrUpper === `0X${pcAddress.toString(16).toUpperCase()}`;
             const isHoverTarget = hoveredJumpTarget !== null && instAddrUpper === `0X${hoveredJumpTarget.toString(16).toUpperCase()}`;
             const hasBreakpoint = breakpointAddresses?.has(instAddrUpper) ?? false;
-            const isExecuted = executedAddresses?.has(instAddrUpper) ?? false;
+            const isGhostPC = lightning !== null && lightning.finalPc === instAddrUpper;
+            const rowTrace = lightning?.byAddress.get(instAddrUpper) ?? null;
 
             return (
               <InstructionRow
                 instruction={inst}
                 isPC={isPC}
-                isExecuted={isExecuted}
+                isGhostPC={isGhostPC}
+                rowTrace={rowTrace}
                 isSelected={selection.addrs.has(instAddrUpper)}
                 isHoverTarget={isHoverTarget}
                 hasBreakpoint={hasBreakpoint}
@@ -718,6 +751,9 @@ export function AssemblyView({ sessionId, isPaused, canLoad, address, registers,
                 onJumpTargetHover={handleJumpTargetHover}
                 onMemRefClick={onNavigateToMemory ? handleMemRefClick : undefined}
                 onContextMenu={handleRowContextMenu}
+                onTraceHover={tracePopup.show}
+                onTraceMove={tracePopup.move}
+                onTraceLeave={tracePopup.leave}
               />
             );
           }}
@@ -754,6 +790,45 @@ export function AssemblyView({ sessionId, isPaused, canLoad, address, registers,
 
       {/* Quick Emulation footer — session hosts pass `emulation`; the PE viewer doesn't */}
       {emulation && <EmulationQuickView emulation={emulation} onNavigateToAddress={handleNavigateToEmulationAddress} />}
+
+      {/* Lightning-trace hover popup (beside the cursor, interactive) */}
+      {tracePopupRow && (
+        <HoverPopupPanel
+          data-testid="asm-trace-popup"
+          x={tracePopup.pos.x}
+          y={tracePopup.pos.y}
+          width={440}
+          height={320}
+          className="max-w-lg"
+          {...tracePopup.popupProps}
+        >
+          {/* The row itself, untruncated: operands and values are clipped in the listing. */}
+          <div className="mb-1 pb-1 border-b border-border/50">
+            <div className="text-muted-foreground">
+              {tracePopupRow.last.address.toLowerCase()}
+              {tracePopupRow.last.symbol && <span className="ml-2">{tracePopupRow.last.symbol}</span>}
+            </div>
+            <div className="whitespace-pre-wrap">
+              {tracePopupRow.last.mnemonic} {tracePopupRow.last.opStr}
+            </div>
+            {tracePopupRow.last.changes && (
+              <div className="text-syn-accent whitespace-pre-wrap">{tracePopupRow.last.changes}</div>
+            )}
+          </div>
+          {tracePopupRow.count > 1 && (
+            <div className="mb-1">
+              <div className="font-medium mb-0.5">Executed ×{tracePopupRow.count}</div>
+              <pre className="text-[10px] text-muted-foreground whitespace-pre-wrap">
+                {tracePopupRow.steps.slice(-TRACE_POPUP_MAX_PASSES).map((st) =>
+                  `#${st.index}: ${formatStepValues(st, " | ")}`
+                ).join("\n")}
+                {tracePopupRow.count > TRACE_POPUP_MAX_PASSES ? `\n… and ${tracePopupRow.count - TRACE_POPUP_MAX_PASSES} earlier` : ""}
+              </pre>
+            </div>
+          )}
+          <TraceStepDetails step={tracePopupRow.last} />
+        </HoverPopupPanel>
+      )}
 
       {/* Context Menu */}
       {contextMenu && (
@@ -899,7 +974,11 @@ const LabelRow = memo(function LabelRow({ symbol, address }: { symbol: string; a
 interface InstructionRowProps {
   instruction: Instruction;
   isPC: boolean;
-  isExecuted: boolean;
+  /** Where the lightning emulation stopped — the instruction that runs next. */
+  isGhostPC: boolean;
+  /** What the lightning emulation did at this address, if it ran here; also
+   *  what makes the row count as "executed". */
+  rowTrace: RowTrace | null;
   isSelected: boolean;
   isHoverTarget: boolean;
   hasBreakpoint: boolean;
@@ -915,6 +994,10 @@ interface InstructionRowProps {
   onMemRefClick?: (address: string) => void;
   onContextMenu: (e: React.MouseEvent, address: string, mnemonic: string, opStr: string, isPatched: boolean) => void;
   addressFormatter?: (va: bigint) => string;
+  /** Lightning-trace hover popup; attached only when `rowTrace` is present. */
+  onTraceHover?: (e: React.MouseEvent, address: string) => void;
+  onTraceMove?: (e: React.MouseEvent) => void;
+  onTraceLeave?: () => void;
 }
 
 // Grip between resizable header columns; mirrors ResizableHeaderCell's grip tint.
@@ -922,7 +1005,7 @@ const COLUMN_GRIP_CLASS = "w-1 shrink-0 self-stretch cursor-col-resize hover:bg-
 
 // Row background per highlight state. Precedence is the order of the ladder in
 // InstructionRow — a new state slots in as one line there plus one entry here.
-type RowHighlight = "selected" | "hover-target" | "pc" | "patched" | "executed";
+type RowHighlight = "selected" | "hover-target" | "pc" | "ghost-pc" | "patched" | "executed";
 // Tints are a *light* hue at *low* alpha rather than a dark hue at medium alpha:
 // over the near-black dark background, dark-hue fills (yellow-900/40 and friends)
 // desaturate into mud, while a light hue at ~10% stays chromatic and clean.
@@ -934,13 +1017,16 @@ const ROW_HIGHLIGHT_BG: Record<RowHighlight, string> = {
   selected: "bg-foreground/10 shadow-[inset_0_0_0_1px_color-mix(in_oklab,var(--ring)_50%,transparent)]",
   "hover-target": "bg-syn-link/10",
   pc: PC_ROW_HIGHLIGHT_CLASS,
+  // Half the PC tint: "execution would be here after the lightning run" —
+  // same hue so it reads as a PC, half the weight so it never competes with it.
+  "ghost-pc": "bg-syn-state/[0.06] shadow-[inset_2px_0_0_color-mix(in_oklab,var(--syn-state)_50%,transparent)]",
   patched: "bg-syn-patched/10",
   // Weakest of the ladder on purpose: `executed` is a bulk state spanning many
   // consecutive rows, so it must not outshout the single PC row sitting in it.
   executed: "bg-syn-covered/[0.07]",
 };
 
-const InstructionRow = memo(function InstructionRow({ instruction, isPC, isExecuted, isSelected, isHoverTarget, hasBreakpoint, isPatched, showBytes, columnWidths, onClick, onMouseDown, onMouseEnter, onJumpTargetClick, onJumpTargetHover, onMemRefClick, onContextMenu, addressFormatter }: InstructionRowProps) {
+const InstructionRow = memo(function InstructionRow({ instruction, isPC, isGhostPC, rowTrace, isSelected, isHoverTarget, hasBreakpoint, isPatched, showBytes, columnWidths, onClick, onMouseDown, onMouseEnter, onJumpTargetClick, onJumpTargetHover, onMemRefClick, onContextMenu, addressFormatter, onTraceHover, onTraceMove, onTraceLeave }: InstructionRowProps) {
   // The first column always shows the address, reformatted per the PE viewer's
   // address mode (VA/RVA/file). Symbols render as label rows above, not here.
   const addressText =
@@ -991,8 +1077,9 @@ const InstructionRow = memo(function InstructionRow({ instruction, isPC, isExecu
     isSelected ? "selected"
     : isHoverTarget ? "hover-target"
     : isPC ? "pc"
+    : isGhostPC ? "ghost-pc"
     : isPatched ? "patched"
-    : isExecuted ? "executed"
+    : rowTrace ? "executed"
     : undefined;
 
   const body = (
@@ -1011,7 +1098,9 @@ const InstructionRow = memo(function InstructionRow({ instruction, isPC, isExecu
       style={{ height: ASSEMBLY_ROW_HEIGHT, lineHeight: `${ASSEMBLY_ROW_HEIGHT}px` }}
       onClick={() => onClick(instruction.address)}
       onMouseDown={(e) => onMouseDown(e, instruction.address)}
-      onMouseEnter={(e) => onMouseEnter(e, instruction.address)}
+      onMouseEnter={(e) => { onMouseEnter(e, instruction.address); if (rowTrace) onTraceHover?.(e, instruction.address.toUpperCase()); }}
+      onMouseMove={rowTrace ? onTraceMove : undefined}
+      onMouseLeave={rowTrace ? onTraceLeave : undefined}
       onContextMenu={(e) => onContextMenu(e, instruction.address, instruction.mnemonic, instruction.op_str, isPatched)}
     >
       {/* PC indicator */}
@@ -1061,6 +1150,21 @@ const InstructionRow = memo(function InstructionRow({ instruction, isPC, isExecu
       <span className={cn("flex-1 truncate", is_invalid && "text-syn-invalid/80")}>
         {renderOperands()}
       </span>
+
+      {/* Lightning trace: what this instruction did in the emulated run-ahead.
+          Bounded width and dimmed so it annotates the row without competing
+          with the operands; loops show the last pass plus a hit count. */}
+      {rowTrace && (
+        <span
+          data-testid="asm-row-trace"
+          className="shrink-0 ml-3 max-w-[45%] truncate text-muted-foreground/70 flex items-center gap-1.5"
+        >
+          {rowTrace.count > 1 && (
+            <Badge variant="secondary" size="xs" className="shrink-0 px-1 py-0 leading-none font-mono">×{rowTrace.count}</Badge>
+          )}
+          <span className="truncate">{formatStepValues(rowTrace.last, "  |  ")}</span>
+        </span>
+      )}
     </div>
   );
 

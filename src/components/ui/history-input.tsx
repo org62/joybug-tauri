@@ -15,6 +15,9 @@ import {
 export interface HistoryInputProps extends InputProps {
   /** Identity of this logical input; the storage key is `input-history:${historyKey}`. */
   historyKey: string;
+  /** Always-available values listed after the recalled history (deduped
+   *  against it), so the dropdown is useful before anything was submitted. */
+  presets?: string[];
 }
 
 /**
@@ -59,7 +62,12 @@ function mergeRefs<T>(...refs: Array<React.Ref<T> | undefined>): React.RefCallba
  * styling classes still reach the input itself.
  */
 export const HistoryInput = React.forwardRef<HTMLInputElement, HistoryInputProps>(
-  ({ historyKey, className, onChange, onKeyDown, onFocus, ...props }, forwardedRef) => {
+  ({ historyKey, presets, className, onChange, onKeyDown, onFocus, ...props }, forwardedRef) => {
+    const readItems = (): string[] => {
+      const history = readInputHistory(historyKey);
+      const extra = (presets ?? []).filter((v) => !history.includes(v));
+      return [...history, ...extra];
+    };
     const inputRef = React.useRef<HTMLInputElement>(null);
     const wrapperRef = React.useRef<HTMLDivElement>(null);
     const dropdownRef = React.useRef<HTMLDivElement>(null);
@@ -117,7 +125,7 @@ export const HistoryInput = React.forwardRef<HTMLInputElement, HistoryInputProps
     const openNav = (): string[] | null => {
       const node = inputRef.current;
       if (!node) return null;
-      const history = readInputHistory(historyKey);
+      const history = readItems();
       if (history.length === 0) return null;
       setItems(history);
       setDraft(currentValue());
@@ -188,7 +196,7 @@ export const HistoryInput = React.forwardRef<HTMLInputElement, HistoryInputProps
 
     const mergedRef = React.useMemo(() => mergeRefs(inputRef, forwardedRef), [forwardedRef]);
 
-    const showTrigger = hasHistory && !props.disabled;
+    const showTrigger = (hasHistory || (presets?.length ?? 0) > 0) && !props.disabled;
     // The 20px `inline` size has no room for the standard chevron inset.
     const dense = props.inputSize === "inline";
 

@@ -1,6 +1,8 @@
 /** Shared assembly-view selectors used across specs. */
 export const ASM_PANEL = '[data-testid="assembly-panel"]';
-export const ASM_ROW = `${ASM_PANEL} [data-testid="asm-row"]`;
+/** The instruction row itself, unscoped — for composing against another root. */
+export const ASM_ROW_ONLY = '[data-testid="asm-row"]';
+export const ASM_ROW = `${ASM_PANEL} ${ASM_ROW_ONLY}`;
 export const PC_ROW = `${ASM_ROW}[data-highlight="pc"]`;
 /** Synthetic `db 0xXX` rows emitted where a byte couldn't be decoded. */
 export const ASM_INVALID_ROW = `${ASM_ROW}[data-invalid]`;

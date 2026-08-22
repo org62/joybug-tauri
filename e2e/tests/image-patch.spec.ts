@@ -16,7 +16,7 @@ import {
   clearCapturedEvents,
   waitForCapturedEvent,
 } from "../helpers/event-helpers";
-import { ASM_ROW } from "../helpers/selectors";
+import { ASM_PANEL, ASM_ROW } from "../helpers/selectors";
 import type { Page } from "@playwright/test";
 
 const FN_DISASM = "function-disassembly-updated";
@@ -72,9 +72,12 @@ test.describe("Image patch detection", () => {
       // stepping doesn't pay the per-instruction on-disk-image diff). This test
       // exercises it, so turn it on in the view — otherwise the view's own
       // re-decodes would clear the highlight this test asserts.
-      const imageToggle = page.locator("#compare-image");
+      await page.locator(ASM_PANEL).getByTestId("asm-more-menu").click();
+      const imageToggle = page.getByTestId("asm-image-patches-toggle");
       if ((await imageToggle.getAttribute("data-state")) === "unchecked") {
         await imageToggle.click();
+      } else {
+        await page.keyboard.press("Escape");
       }
 
       const rip = await getRip(page, sessionId);
