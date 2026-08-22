@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import { useSessionContext } from '@/contexts/SessionContext';
 import { AssemblyView } from '@/components/AssemblyView';
 import { contextToRegisters, isProcessAvailable } from '@/lib/sessionHelpers';
-import { sessionNavHistory } from '@/lib/navHistory';
+import { appNavHistory } from '@/lib/navHistory';
 import { useQuickEmulation } from '@/hooks/useQuickEmulation';
 import { useSymbolResolver } from '@/hooks/useSymbolResolver';
 
@@ -64,7 +64,7 @@ export const ContextAssemblyView = () => {
       onNavigateToSource={sessionData.onNavigateToSource}
       onNavigateToMemory={sessionData.onNavigateToMemory}
       onShowInMemoryRegions={sessionData.onNavigateToMemoryRegion}
-      navHistory={sessionNavHistory}
+      navHistory={appNavHistory}
     />
   );
 };

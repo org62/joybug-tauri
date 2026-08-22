@@ -1,42 +1,38 @@
-import { useCallback, useEffect } from 'react';
+import { useCallback, useLayoutEffect } from 'react';
 import type { RefObject } from 'react';
-import { NavHistoryStore } from '@/lib/navHistory';
+import { appNavHistory } from '@/lib/navHistory';
 import type { DockingLayoutRef } from '@/components/DockingLayout';
-import { setMouseNavHandler } from '@/lib/mouseNav';
 
-/** Wire a NavHistoryStore to its dock host (SessionDocked / PeReader):
- *  registers the tab controller and the mouse back/forward handler, and
- *  returns the `onTabSwitch` callback to pass to DockingLayout. */
+/** Wire a dock host (SessionDocked / PeReader) to the app-wide navigation
+ *  history: registers the dock controller and returns the `onTabSwitch`
+ *  callback to pass to DockingLayout. `scope` identifies the host's content
+ *  (session id / PE file path); tab/address history is only restored into
+ *  the scope it was recorded in. */
 export function useNavHistoryDock(
-  navHistory: NavHistoryStore,
   dockingRef: RefObject<DockingLayoutRef | null>,
+  opts: { disasmTabId: string; scope: string | undefined },
 ): { onTabSwitch: (fromTabId: string) => void } {
+  const { disasmTabId, scope } = opts;
+
   // The store restores dock tabs through this controller; recordHistory: false
   // keeps the restoration itself from being re-recorded as a new switch.
-  useEffect(() => {
-    return navHistory.setController({
+  // Layout effect, not passive: on unmount the cleanup snapshots the host's
+  // active tab for the route-departure record, and React runs a parent's
+  // layout-effect cleanup before it detaches the child's imperative ref —
+  // by the passive phase `dockingRef.current` is already null.
+  useLayoutEffect(() => {
+    return appNavHistory.setController({
+      disasmTabId,
+      scope,
       restoreTab: (tabId) => dockingRef.current?.showTab(tabId, { recordHistory: false }),
       activeTabOf: (tabId) => dockingRef.current?.activeTabOf(tabId) ?? null,
     });
-  }, [navHistory, dockingRef]);
-
-  // Mouse back/forward buttons walk the unified history. Always consumed
-  // while the dock host is open: an exhausted history must be a no-op, not
-  // a fall-through to native page navigation that yanks the user out of the
-  // view. Unregisters on unmount, so mouse back/forward on real pages
-  // (e.g. /logs) still navigates the router normally.
-  useEffect(() => {
-    return setMouseNavHandler((dir) => {
-      if (dir === 'back') navHistory.goBack();
-      else navHistory.goForward();
-      return true;
-    });
-  }, [navHistory]);
+  }, [dockingRef, disasmTabId, scope]);
 
   // A user tab switch is a navigation action: record the departed location.
   const onTabSwitch = useCallback(
-    (fromTabId: string) => navHistory.recordDeparture(fromTabId),
-    [navHistory],
+    (fromTabId: string) => appNavHistory.recordDeparture(fromTabId),
+    [],
   );
 
   return { onTabSwitch };

@@ -1,5 +1,5 @@
 import { Page } from "@playwright/test";
-import { test, expect } from "../helpers/test-fixtures";
+import { test, expect, navigateTo, gotoFreshPe, APP_ORIGIN } from "../helpers/test-fixtures";
 import {
   createAndStartSession,
   cleanupSession,
@@ -16,9 +16,16 @@ import {
 } from "../helpers/wait-helpers";
 import { ASM_PANEL, ASM_ROW } from "../helpers/selectors";
 
-// Unified back/forward navigation history: one chronological stack covering
-// both disassembly address navigation and dock tab switches. Back always
-// undoes the most recent user navigation action, whichever kind it was.
+// Unified back/forward navigation history: one app-wide chronological stack
+// covering page changes, dock tab switches and disassembly address
+// navigation. Back always undoes the most recent user navigation action,
+// whichever kind it was.
+
+/** Start from an empty trail (the fixture resets it too, but reaching the
+ *  session page — /debugger → /session/:id — is itself history). */
+async function resetNavHistory(page: Page): Promise<void> {
+  await page.evaluate(() => window.dispatchEvent(new Event("joybug:reset-nav-history")));
+}
 
 async function firstRowText(page: Page): Promise<string> {
   return page.locator(ASM_ROW).first().innerText();
@@ -71,6 +78,7 @@ test.describe("Unified navigation history", () => {
       const sessionId = await createAndStartSession(page, "NavHist Disasm");
       await waitForPaused(page, sessionId);
       await waitForDisassemblyLoaded(page, ASM_PANEL);
+      await resetNavHistory(page);
 
       // The initial PC-follow load is not a user navigation — history empty.
       await expect(backButton(page)).toBeDisabled();
@@ -116,6 +124,7 @@ test.describe("Unified navigation history", () => {
       const sessionId = await createAndStartSession(page, "NavHist Tabs");
       await waitForPaused(page, sessionId);
       await waitForDisassemblyLoaded(page, ASM_PANEL);
+      await resetNavHistory(page);
 
       // Switch away from Disassembly (Source shares its panel).
       await goToWindow(page, "Source");
@@ -148,6 +157,7 @@ test.describe("Unified navigation history", () => {
       const sessionId = await createAndStartSession(page, "NavHist Steps");
       await waitForPaused(page, sessionId);
       await waitForDisassemblyLoaded(page, ASM_PANEL);
+      await resetNavHistory(page);
 
       // Fresh session: initial PC load is not a user action — history empty.
       await expect(backButton(page)).toBeDisabled();
@@ -190,6 +200,7 @@ test.describe("Unified navigation history", () => {
       const sessionId = await createAndStartSession(page, "NavHist Jump");
       await waitForPaused(page, sessionId);
       await waitForDisassemblyLoaded(page, ASM_PANEL);
+      await resetNavHistory(page);
       const original = await firstRowText(page);
 
       // Leave Disassembly for Source (records the departed disasm location).
@@ -223,5 +234,86 @@ test.describe("Unified navigation history", () => {
     } finally {
       await restoreDefaultSettings(page);
     }
+  });
+
+  test("back crosses pages: session disassembly → previous page → forward again", async ({
+    tauriPage: page,
+  }) => {
+    await configureMinimalStopSettings(page);
+
+    try {
+      const sessionId = await createAndStartSession(page, "NavHist Pages");
+      await waitForPaused(page, sessionId);
+      await waitForDisassemblyLoaded(page, ASM_PANEL);
+
+      // Visit Logs, then come back to the session — both are history.
+      await navigateTo(page, "/logs");
+      await expect(page.getByRole("heading", { name: "Application Logs" })).toBeVisible();
+      await resetNavHistory(page);
+      await navigateTo(page, `/session/${sessionId}`);
+      await waitForDisassemblyLoaded(page, ASM_PANEL);
+      const original = await firstRowText(page);
+
+      await gotoAddress(page, `${await pcRegister(page, sessionId)}+0x2000`);
+      await expectFirstRow(page, original, { not: true });
+      const jumped = await firstRowText(page);
+
+      // Back #1: undo the goto (most recent action) — still on the session page.
+      await page.keyboard.press("Alt+ArrowLeft");
+      await expectFirstRow(page, original);
+      await expect(page).toHaveURL(new RegExp(`/session/${sessionId}`));
+
+      // Back #2: the page change before it — Logs, not older disassembly history.
+      await page.keyboard.press("Alt+ArrowLeft");
+      await expect(page).toHaveURL(/\/logs$/);
+      await expect(page.getByRole("heading", { name: "Application Logs" })).toBeVisible();
+
+      // Back #3: history exhausted — stays put.
+      await pressMouseBack(page);
+      await expect(page).toHaveURL(/\/logs$/);
+
+      // Forward: back into the session, disassembly at the pre-goto address,
+      // then forward again re-applies the goto.
+      await page.keyboard.press("Alt+ArrowRight");
+      await expect(page).toHaveURL(new RegExp(`/session/${sessionId}`));
+      await waitForDisassemblyLoaded(page, ASM_PANEL);
+      await expectFirstRow(page, original);
+      await page.keyboard.press("Alt+ArrowRight");
+      await expectFirstRow(page, jumped);
+
+      await cleanupSession(page, sessionId);
+    } finally {
+      await restoreDefaultSettings(page);
+    }
+  });
+
+  test("PE reader: back leaves the page; a fresh history is a no-op", async ({
+    tauriPage: page,
+  }) => {
+    const NTDLL = "C:\\Windows\\System32\\ntdll.dll";
+
+    // No history at all: back must not navigate anywhere (nor get stuck).
+    await gotoFreshPe(page);
+    await resetNavHistory(page);
+    await pressMouseBack(page);
+    await page.keyboard.press("Alt+ArrowLeft");
+    await expect(page).toHaveURL(`${APP_ORIGIN}/pe`);
+
+    // Logs → PE (deep link, which the reader rewrites to /pe — a REPLACE that
+    // must not count as a move) → back returns to Logs.
+    await navigateTo(page, "/logs");
+    await expect(page.getByRole("heading", { name: "Application Logs" })).toBeVisible();
+    await navigateTo(page, "/pe?path=" + encodeURIComponent(NTDLL));
+    await expect(page.getByText("DOS Header", { exact: true }).first()).toBeVisible({ timeout: 15_000 });
+    await expect(page).toHaveURL(`${APP_ORIGIN}/pe`);
+
+    await pressMouseBack(page);
+    await expect(page).toHaveURL(/\/logs$/);
+    await expect(page.getByRole("heading", { name: "Application Logs" })).toBeVisible();
+
+    // Forward returns to the reader with the file still open.
+    await page.keyboard.press("Alt+ArrowRight");
+    await expect(page).toHaveURL(`${APP_ORIGIN}/pe`);
+    await expect(page.getByText("DOS Header", { exact: true }).first()).toBeVisible({ timeout: 15_000 });
   });
 });

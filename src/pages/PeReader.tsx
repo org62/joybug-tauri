@@ -29,7 +29,7 @@ import { SymbolResolver } from "@/lib/hexUtils";
 import { PeMapping, AddrMode, ADDR_MODE_LABELS, buildMapping, formatOffset, formatVa, rvaToVa, tripleFromInput, tripleFromVa } from "@/lib/peAddress";
 import { applyFieldEdit } from "@/lib/peDecode";
 import { memoryNavigation, disassemblyNavigation } from "@/lib/navigationStore";
-import { NavHistoryStore } from "@/lib/navHistory";
+import { NavHistoryStore, appNavHistory } from "@/lib/navHistory";
 import { useNavHistoryDock } from "@/hooks/useNavHistoryDock";
 import { moduleBasename } from "@/lib/sessionHelpers";
 import { toastError, toastSuccess } from "@/lib/logger";
@@ -386,12 +386,17 @@ export default function PeReader() {
     return (va, count) => invoke<Instruction[]>("pe_disassemble", { path, va: Number(va), count });
   }, [path]);
 
-  // Unified back/forward history, reset per opened file (addresses from a
-  // previously opened PE would be meaningless).
-  const navHistory = useMemo(() => new NavHistoryStore("pe-disassembly"), [summary?.path]);
-
-  // Controller, tab-switch recording, mouse buttons.
-  const { onTabSwitch } = useNavHistoryDock(navHistory, dockingRef);
+  // App-wide back/forward history, scoped by the opened file: addresses from
+  // a previously opened PE are meaningless, so switching files reduces that
+  // file's entries to bare page locations (back still leaves the page).
+  const navHistory = appNavHistory;
+  const { onTabSwitch } = useNavHistoryDock(dockingRef, { disasmTabId: "pe-disassembly", scope: summary?.path });
+  const prevFileScope = useRef(summary?.path);
+  useEffect(() => {
+    if (prevFileScope.current === summary?.path) return;
+    appNavHistory.invalidateScope(prevFileScope.current);
+    prevFileScope.current = summary?.path;
+  }, [summary?.path]);
 
   // Jump to a coordinate in a tab: hex is file-offset addressed, disassembly is
   // VA addressed. `addr` is already in that tab's coordinate space.

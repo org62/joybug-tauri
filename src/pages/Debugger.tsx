@@ -39,6 +39,7 @@ import { isProcessAvailable, formatTauriError, pathDirname, buildLaunchCommand, 
 import { pickDroppedFile } from "@/hooks/useFileDrop";
 import { useFileDropTarget } from "@/contexts/FileDropContext";
 import { createSessionRecord, launchExecutable } from "@/lib/launchFile";
+import { appNavHistory } from "@/lib/navHistory";
 
 interface ProcessInfo {
   pid: number;
@@ -435,7 +436,9 @@ export default function Debugger() {
       
       // Remove session from storage
       removeSessionFromStorage(sessionId);
-      
+      // Its addresses/tabs in the back/forward trail are meaningless now.
+      appNavHistory.invalidateScope(sessionId);
+
       toast.success("Debug session deleted");
       // Live updates will arrive via events; no manual refresh
     } catch (error) {

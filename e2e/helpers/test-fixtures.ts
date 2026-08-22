@@ -76,6 +76,10 @@ export const test = base.extend<TestFixtures>({
       localStorage.setItem("assembly-quick-emulation-collapsed", "true");
     });
 
+    // The app-wide back/forward history (lib/navHistory.ts) would otherwise
+    // carry the previous spec's page trail into this one.
+    await page.evaluate(() => window.dispatchEvent(new Event("joybug:reset-nav-history")));
+
     // Clean up any existing sessions and restore settings before test
     await cleanupAllSessions(page);
     await restoreSettings(page);

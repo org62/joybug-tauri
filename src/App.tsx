@@ -1,4 +1,4 @@
-import { BrowserRouter as Router, Routes, Route, useNavigate } from "react-router-dom";
+import { BrowserRouter as Router, Routes, Route, useNavigate, useLocation, useNavigationType } from "react-router-dom";
 import React, { Suspense, useEffect } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { useTheme } from "next-themes";
@@ -8,6 +8,8 @@ import Header from "@/components/Header";
 import { KeybindingContext, useKeybindingContext } from "@/contexts/KeybindingContext";
 import { useKeybindings } from "@/hooks/useKeybindings";
 import { keyboardEventToChord } from "@/lib/keybindings";
+import { appNavHistory } from "@/lib/navHistory";
+import { setMouseNavHandler } from "@/lib/mouseNav";
 import { CommandPaletteContext, useCommandPaletteContext } from "@/contexts/CommandPaletteContext";
 import { useCommandPalette } from "@/hooks/useCommandPalette";
 import { CommandPalette } from "@/components/CommandPalette";
@@ -36,6 +38,36 @@ import RcDockThemeLoader from "./components/RcDockThemeLoader";
 
 function AppContent() {
   const navigate = useNavigate();
+  const location = useLocation();
+  const navigationType = useNavigationType();
+
+  // App-wide back/forward history (see lib/navHistory.ts). The router is one
+  // of its layers: page changes are recorded as departures and restored via
+  // navigate(); the mouse X-buttons and the back/forward chords drive it from
+  // here so they work on every page, not just inside a dock host. The mouse
+  // handler always consumes the press — native WebView2 page history is never
+  // the fallback (an exhausted history is a no-op, never a yank off the page).
+  useEffect(() => appNavHistory.setRouter({ navigate: (path) => navigate(path) }), [navigate]);
+  useEffect(() => setMouseNavHandler((dir) => {
+    if (dir === 'back') appNavHistory.goBack();
+    else appNavHistory.goForward();
+    return true;
+  }), []);
+  // Test hook: the E2E suite attaches to one long-lived app instance, so each
+  // spec resets the app-wide history to start from a known-empty trail.
+  useEffect(() => {
+    const reset = () => appNavHistory.clear();
+    window.addEventListener('joybug:reset-nav-history', reset);
+    return () => window.removeEventListener('joybug:reset-nav-history', reset);
+  }, []);
+  // Child (dock host) effects have already run by the time this fires, so the
+  // departed host's snapshot is in place. A REPLACE (e.g. the PE reader
+  // consuming its ?path= deep link) rewrites the current page, not a move.
+  useEffect(() => {
+    const path = location.pathname + location.search;
+    if (navigationType === 'REPLACE') appNavHistory.currentPath = path;
+    else appNavHistory.setRoute(path);
+  }, [location.pathname, location.search, navigationType]);
   const { resolvedTheme, setTheme } = useTheme();
   const { reverseLookup } = useKeybindingContext();
   const { toggle, registerCommands } = useCommandPaletteContext();
@@ -81,6 +113,16 @@ function AppContent() {
           event.preventDefault();
           event.stopPropagation();
           navigate('/logs');
+          break;
+        case "assembly.goBack":
+          event.preventDefault();
+          event.stopPropagation();
+          appNavHistory.goBack();
+          break;
+        case "assembly.goForward":
+          event.preventDefault();
+          event.stopPropagation();
+          appNavHistory.goForward();
           break;
         case "nav.toggleTheme":
           event.preventDefault();

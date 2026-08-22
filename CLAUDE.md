@@ -88,6 +88,7 @@ The joybug-core external crate has integration tests (`external/joybug-core/test
   ```
 - **Debounced status**: `useDebugSession` provides `displayStatus` (debounced) to prevent UI flicker during rapid stepping.
 - **Navigation**: Cross-component navigation (jump to disassembly address, jump to memory) uses callback props through `SessionContext` (`onNavigateToDisassembly`, `onNavigateToMemory`).
+- **Back/forward history**: one app-wide store, `appNavHistory` (`src/lib/navHistory.ts`), records every user navigation — route changes (App's location effect), dock tab switches (`useNavHistoryDock`), disassembly jumps/steps (`useAssemblyView`). Mouse X-buttons and Alt+Left/Right are handled once in `App.tsx` and always consumed (native WebView2 history is never the fallback). A dock host registers with a `scope` (session id / PE path); tab/address parts only restore into their own scope — call `invalidateScope()` when that content goes away. E2E resets it per test via the `joybug:reset-nav-history` window event.
 
 ### Key Tauri Events
 

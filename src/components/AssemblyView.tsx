@@ -464,16 +464,8 @@ export function AssemblyView({ sessionId, isPaused, canLoad, address, registers,
       if (!chord) return;
 
       const action = reverseLookup.get(chord);
-      // Back/forward chords are handled here only in file mode (PE reader). In
-      // session mode SessionDocked owns them, so back works even when this
-      // view's tab is closed — handling both would double-navigate.
-      if (action === "assembly.goBack" && disassemble) {
-        e.preventDefault();
-        navHistory.goBack();
-      } else if (action === "assembly.goForward" && disassemble) {
-        e.preventDefault();
-        navHistory.goForward();
-      } else if (action === "assembly.toggleBreakpoint") {
+      // Back/forward chords are app-wide (handled in App), not here.
+      if (action === "assembly.toggleBreakpoint") {
         e.preventDefault();
         const addr = selectedAddress ?? (pcAddress !== null ? `0X${pcAddress.toString(16).toUpperCase()}` : null);
         if (addr && onToggleBreakpoint) onToggleBreakpoint(addr);
@@ -487,7 +479,7 @@ export function AssemblyView({ sessionId, isPaused, canLoad, address, registers,
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [navHistory, disassemble, reverseLookup, selectedAddress, pcAddress, onToggleBreakpoint, onAssemblePatch, assembleTarget, instructions]);
+  }, [reverseLookup, selectedAddress, pcAddress, onToggleBreakpoint, onAssemblePatch, assembleTarget, instructions]);
 
   // Determine content to show. A "no active process" / "must be paused" condition
   // isn't a real error — treat it as the neutral empty state ("No disassembly
