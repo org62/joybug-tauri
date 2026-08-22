@@ -14,7 +14,8 @@ function sameModules(a: Module[], b: Module[]): boolean {
 }
 
 function sameThreads(a: Thread[], b: Thread[]): boolean {
-  return a.length === b.length && a.every((t, i) => t.id === b[i].id && t.start_address === b[i].start_address);
+  return a.length === b.length && a.every((t, i) =>
+    t.id === b[i].id && t.start_address === b[i].start_address && t.suspend_count === b[i].suspend_count);
 }
 
 function sameSymbolStatuses(a: ModuleSymbolStatus[], b: ModuleSymbolStatus[]): boolean {

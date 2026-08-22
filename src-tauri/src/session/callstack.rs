@@ -31,7 +31,7 @@ pub(crate) fn process_callstack_request(
     event: &joybug_core::protocol_io::DebugEvent,
 ) {
     let pid = event.pid();
-    let tid = event.tid();
+    let tid = session.state.lock().unwrap().active_tid(event);
     debug!("📤 Processing callstack request: pid={}, tid={}", pid, tid);
 
     let modules = get_modules_snapshot(session);

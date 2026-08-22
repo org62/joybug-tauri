@@ -11,8 +11,27 @@ pub struct ModuleData {
 #[derive(serde::Serialize)]
 pub struct ThreadData {
     pub id: u32,
-    pub status: String,
     pub start_address: String,
+    /// Live user-mode suspend count (see core `ThreadInfo::suspend_count`).
+    /// 0 = runnable; the view derives the "Running"/"Suspended" label from it.
+    pub suspend_count: u32,
+}
+
+impl From<&joybug_core::protocol_io::ThreadInfo> for ThreadData {
+    fn from(t: &joybug_core::protocol_io::ThreadInfo) -> Self {
+        ThreadData {
+            id: t.tid,
+            start_address: format!("0x{:X}", t.start_address),
+            suspend_count: t.suspend_count,
+        }
+    }
+}
+
+/// Outcome of one per-thread control call (suspend / resume / terminate).
+#[derive(serde::Serialize)]
+pub struct ThreadActionResult {
+    pub tid: u32,
+    pub error: Option<String>,
 }
 
 #[derive(serde::Serialize)]

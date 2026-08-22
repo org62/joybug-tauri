@@ -47,6 +47,8 @@ pub enum UICommand {
     // panel only follows non-preview (explicit selection) results.
     GetThreadCallStack { tid: u32, preview: bool },
     ResolveThreadSymbols,
+    /// Switch the UI context thread (registers/call stack) to `tid`.
+    SelectThread { tid: u32 },
     GetModuleExtraInfo { module_base: u64 },
     ResolveAddressToLine { address: u64 },
     GetSourceFileLineMap { module_base: u64, file_path: String, start_line: Option<u32>, end_line: Option<u32> },

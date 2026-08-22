@@ -71,6 +71,8 @@ export interface DebugSession {
   non_invasive: boolean;
   status: SessionStatus;
   current_event: DebugEventInfo | null;
+  /** Thread the user switched to while paused (null = event thread). */
+  selected_thread_id?: number | null;
   created_at: string;
   disassembly_window_open: boolean;
   registers_window_open: boolean;
@@ -83,6 +85,8 @@ export interface DebugSession {
 export interface DebugEventInfo {
   event_type: string;
   process_id: number;
+  /** Thread that raised the event. The thread whose context is displayed is
+   *  `DebugSession.selected_thread_id`, falling back to this. */
   thread_id: number;
   details: string;
   can_continue: boolean;
@@ -131,8 +135,10 @@ export interface PdbLoadResult {
 
 export interface Thread {
   id: number;
-  status: string;
   start_address: string;
+  /** Live SuspendThread nesting count; 0 = runnable. The view derives the
+   *  "Running"/"Suspended" label from it. */
+  suspend_count: number;
 }
 
 export interface Symbol {

@@ -216,6 +216,7 @@ pub(crate) fn update_session_from_event(state: &mut SessionStateUI, event: &joyb
             let thread = joybug_core::protocol_io::ThreadInfo {
                 tid: *tid,
                 start_address: *start_address,
+                ..Default::default()
             };
             if !state.threads.iter().any(|t| t.tid == thread.tid) {
                 state.threads.push(thread);
@@ -237,6 +238,7 @@ pub(crate) fn update_session_from_event(state: &mut SessionStateUI, event: &joyb
             let thread = joybug_core::protocol_io::ThreadInfo {
                 tid: *tid,
                 start_address: *base_of_image,
+                ..Default::default()
             };
             if !state.threads.iter().any(|t| t.tid == thread.tid) {
                 state.threads.push(thread);

@@ -6,10 +6,18 @@ import { useSessionContext } from '@/contexts/SessionContext';
 import { formatTauriError } from '@/lib/sessionHelpers';
 import { LINK_VALUE_CLASS } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { TruncatedSymbol } from '@/components/ui/truncated-symbol';
 import { VirtualizedList } from '@/components/ui/virtualized-list';
-import { DockPanel } from '@/components/ui/panel';
-import { Cpu, Loader2 } from 'lucide-react';
+import { DockPanel, PanelToolbar } from '@/components/ui/panel';
+import { ContextMenu, ContextMenuItem, ContextMenuSeparator } from '@/components/ui/context-menu';
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
+} from '@/components/ui/dialog';
+import { useContextMenu } from '@/hooks/useContextMenu';
+import { Cpu, Loader2, Pause, Play, Skull } from 'lucide-react';
+import { toast } from 'sonner';
 import { CallStackFrameList, CallStackFrame } from '@/components/CallStackFrameList';
 
 interface ThreadSymbolInfo {
@@ -18,6 +26,13 @@ interface ThreadSymbolInfo {
   symbol_info: string | null;
   is_function: boolean;
 }
+
+interface ThreadActionResult {
+  tid: number;
+  error: string | null;
+}
+
+type ThreadActionCmd = 'suspend_threads' | 'resume_threads' | 'terminate_threads';
 
 interface ContextThreadsViewProps {
   onNavigateToDisassembly?: (address: string) => void;
@@ -36,6 +51,20 @@ export const ContextThreadsView = ({ onNavigateToDisassembly, onNavigateToMemory
   // Call stacks are available whenever a process is (paused, running, or the
   // non-invasive Open session), since they run over the OOB connection.
   const canUse = sessionData.canUseMemoryOps;
+  // Raw status, not the debounced `displayStatus`: this gates a backend
+  // precondition (`select_thread` is paused-only) and decides how to read a
+  // fresh `current_event`. The debounce exists for rendering, not decisions.
+  const isPaused = sessionData?.session?.status === 'Paused';
+  // Event = the thread that raised the pause; active = the thread whose context
+  // the views show, which is the event thread until the user switches away.
+  // Only meaningful while paused.
+  const currentEvent = sessionData?.session?.current_event;
+  const eventTid = isPaused ? currentEvent?.thread_id ?? null : null;
+  const activeTid = isPaused ? sessionData?.session?.selected_thread_id ?? eventTid : null;
+
+  // Pulled out so callbacks depend on this stable function rather than on the
+  // whole context object, whose identity changes on every session update.
+  const loadThreads = sessionData.loadThreads;
 
   // Context-level navigation (reuses existing memory tab, like symbols view)
   const onNavigateToDisassemblyCtx = sessionData.onNavigateToDisassembly;
@@ -59,6 +88,13 @@ export const ContextThreadsView = ({ onNavigateToDisassembly, onNavigateToMemory
 
   // Thread symbol resolution
   const [threadSymbols, setThreadSymbols] = useState<Map<number, ThreadSymbolInfo>>(new Map());
+
+  // Multi-selection (by tid) for the bulk suspend/resume/kill actions.
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const lastToggledRef = useRef<number | null>(null);
+  // Tids awaiting the Kill confirmation dialog.
+  const [killPending, setKillPending] = useState<number[] | null>(null);
+  const { contextMenu, openContextMenu, closeContextMenu } = useContextMenu<{ tid: number }>();
 
   // Per-thread TEB base addresses (tid → hex), fetched over OOB when threads load.
   const [threadTebs, setThreadTebs] = useState<Map<number, string>>(new Map());
@@ -88,7 +124,7 @@ export const ContextThreadsView = ({ onNavigateToDisassembly, onNavigateToMemory
   // Load threads when component mounts or session changes
   useEffect(() => {
     if (sessionData?.session?.id) {
-      sessionData.loadThreads();
+      loadThreads();
     }
   }, [sessionData?.session?.id, sessionData?.session?.status, sessionData?.session?.current_event]);
 
@@ -191,6 +227,9 @@ export const ContextThreadsView = ({ onNavigateToDisassembly, onNavigateToMemory
   // process becomes unavailable (Stopped/Error). Kept while paused/running/open.
   useEffect(() => {
     if (!sessionId || !canUse) {
+      setSelected(new Set());
+      setKillPending(null);
+      closeContextMenu();
       setHoveredThread(null);
       setPopoverPos(null);
       setThreadCallStacks(new Map());
@@ -204,7 +243,66 @@ export const ContextThreadsView = ({ onNavigateToDisassembly, onNavigateToMemory
       if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
       if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
     }
-  }, [sessionId, canUse, setLoadingThread, setHoveredThread]);
+  }, [sessionId, canUse, setLoadingThread, setHoveredThread, closeContextMenu]);
+
+  // ---- Selection ----
+  const toggleSelect = useCallback((tid: number, shift: boolean) => {
+    const ids = (sessionData?.threads ?? []).map((t) => t.id);
+    setSelected((prev) => {
+      const next = new Set(prev);
+      const anchor = lastToggledRef.current;
+      if (shift && anchor !== null && ids.includes(anchor) && ids.includes(tid)) {
+        const [a, b] = [ids.indexOf(anchor), ids.indexOf(tid)].sort((x, y) => x - y);
+        for (const id of ids.slice(a, b + 1)) next.add(id);
+      } else if (next.has(tid)) {
+        next.delete(tid);
+      } else {
+        next.add(tid);
+      }
+      return next;
+    });
+    lastToggledRef.current = tid;
+  }, [sessionData?.threads]);
+
+  const selectAll = useCallback(() => {
+    setSelected(new Set((sessionData?.threads ?? []).map((t) => t.id)));
+  }, [sessionData?.threads]);
+
+  const clearSelection = useCallback(() => setSelected(new Set()), []);
+
+  // ---- Thread control ----
+  // Per-tid results: one dead thread must not hide the outcome for the rest.
+  const runThreadAction = useCallback(async (cmd: ThreadActionCmd, tids: number[]) => {
+    if (!sessionId || tids.length === 0) return;
+    try {
+      const results = await invoke<ThreadActionResult[]>(cmd, { sessionId, tids });
+      for (const r of results) {
+        if (r.error) toast.error(`Thread ${r.tid}: ${r.error}`);
+      }
+    } catch (err) {
+      toast.error(`Thread action failed: ${formatTauriError(err)}`);
+    }
+    loadThreads();
+  }, [sessionId, loadThreads]);
+
+  // Switching the context thread is paused-only; the backend resets the
+  // selection on the next pause.
+  const switchToThread = useCallback((tid: number) => {
+    if (!sessionId) return;
+    invoke('select_thread', { sessionId, tid }).catch((err) => {
+      toast.error(`Failed to switch thread: ${formatTauriError(err)}`);
+    });
+  }, [sessionId]);
+
+  const requestKill = useCallback((tids: number[]) => {
+    if (tids.length > 0) setKillPending(tids);
+  }, []);
+
+  const confirmKill = useCallback(() => {
+    const tids = killPending ?? [];
+    setKillPending(null);
+    void runThreadAction('terminate_threads', tids);
+  }, [killPending, runThreadAction]);
 
   const clearHoverTimers = useCallback(() => {
     if (hoverTimerRef.current) {
@@ -272,12 +370,17 @@ export const ContextThreadsView = ({ onNavigateToDisassembly, onNavigateToMemory
     }, 400);
   }, [showThreadCallstack]);
 
-  // Clicking a thread opens its call stack immediately (no hover delay).
+  // Clicking a thread opens its call stack immediately (no hover delay) and,
+  // while paused, switches the context thread (registers, disassembly IP,
+  // call stack follow it until the next pause). Stepping stays on the event
+  // thread. In Open/Running sessions there is no context to switch, so the
+  // click only redirects the Call Stack panel.
   const handleThreadClick = useCallback((tid: number, e: React.MouseEvent) => {
     if (hoverTimerRef.current) { clearTimeout(hoverTimerRef.current); hoverTimerRef.current = null; }
     if (hideTimerRef.current) { clearTimeout(hideTimerRef.current); hideTimerRef.current = null; }
+    if (isPaused) switchToThread(tid);
     showThreadCallstack(tid, e.clientX, e.clientY, false);
-  }, [showThreadCallstack]);
+  }, [isPaused, switchToThread, showThreadCallstack]);
 
   const handleThreadMouseLeave = useCallback(() => {
     if (hoverTimerRef.current) {
@@ -316,17 +419,6 @@ export const ContextThreadsView = ({ onNavigateToDisassembly, onNavigateToMemory
     };
   }, [clearHoverTimers]);
 
-  const getThreadStatusColor = (status: string) => {
-    switch (status) {
-      case "Suspended":
-        return "bg-syn-state/15 text-syn-state border-syn-state/30";
-      case "Terminated":
-        return "bg-destructive/15 text-destructive border-destructive/30";
-      default:
-        return "bg-muted text-muted-foreground border-border";
-    }
-  };
-
   const cachedFrames = hoveredThreadId !== null ? threadCallStacks.get(hoveredThreadId) : undefined;
   // Spinner only when there's nothing to show yet; a refetch of an already
   // cached stack keeps the previous frames visible until fresh ones arrive.
@@ -334,39 +426,127 @@ export const ContextThreadsView = ({ onNavigateToDisassembly, onNavigateToMemory
   const popoverError = hoveredThreadId !== null && callstackError?.tid === hoveredThreadId ? callstackError.message : null;
 
   const threads = sessionData?.threads ?? [];
+  // Intersected with the live list rather than pruned by an effect: a tid left
+  // in `selected` after its thread exits is simply never counted or acted on.
+  const selectedTids = threads.filter((t) => selected.has(t.id)).map((t) => t.id);
+  const actionsDisabled = !canUse || selectedTids.length === 0;
+  const allSelected = threads.length > 0 && selectedTids.length === threads.length;
+  // Context-menu target: the selection when the clicked row is part of it,
+  // otherwise just that row (file-manager convention).
+  const targetsFor = (tid: number): number[] => (selected.has(tid) ? selectedTids : [tid]);
 
   return (
     <DockPanel>
+      {threads.length > 0 && (
+        <PanelToolbar className="flex items-center gap-1 text-xs">
+          {/* The panel is narrow by default: the all/none toggle is a single
+              checkbox and the actions are icon-only, so the bar never overflows. */}
+          <Checkbox
+            className="mx-1"
+            data-testid="thread-select-all"
+            title={allSelected ? 'Clear selection' : 'Select all threads'}
+            checked={allSelected ? true : selectedTids.length > 0 ? 'indeterminate' : false}
+            onCheckedChange={allSelected ? clearSelection : selectAll}
+          />
+          <span className="text-muted-foreground flex-1 min-w-0 truncate" data-testid="thread-selection-count">
+            {selectedTids.length > 0 ? `${selectedTids.length} selected` : `${threads.length} threads`}
+          </span>
+          <Button
+            size="icon-xs"
+            variant="outline"
+            title="Suspend selected threads"
+            disabled={actionsDisabled}
+            onClick={() => runThreadAction('suspend_threads', selectedTids)}
+            data-testid="thread-action-suspend"
+          >
+            <Pause />
+          </Button>
+          <Button
+            size="icon-xs"
+            variant="outline"
+            title="Resume selected threads"
+            disabled={actionsDisabled}
+            onClick={() => runThreadAction('resume_threads', selectedTids)}
+            data-testid="thread-action-resume"
+          >
+            <Play />
+          </Button>
+          <Button
+            size="icon-xs"
+            variant="destructive"
+            title="Terminate selected threads"
+            disabled={actionsDisabled}
+            onClick={() => requestKill(selectedTids)}
+            data-testid="thread-action-kill"
+          >
+            <Skull />
+          </Button>
+        </PanelToolbar>
+      )}
       {threads.length > 0 ? (
         <VirtualizedList
           items={threads}
           rowHeight={THREAD_ROW_HEIGHT}
           overscan={15}
           className="flex-1 min-h-0"
-          getItemKey={(_thread, index) => index}
+          getItemKey={(thread) => thread.id}
           renderItem={(thread) => {
             const symInfo = threadSymbols.get(thread.id);
             const displayText = symInfo?.symbol_info ?? thread.start_address;
             const isFunction = symInfo?.is_function ?? true;
             const tebAddress = threadTebs.get(thread.id);
+            const isActive = thread.id === activeTid;
+            // Marked only when the user switched away from it.
+            const isEventThread = thread.id === eventTid && eventTid !== activeTid;
+            const isSelected = selected.has(thread.id);
+            // Suspend nesting is shown only when it actually nests.
+            const status = thread.suspend_count > 0 ? 'Suspended' : 'Running';
+            const statusLabel = thread.suspend_count > 1 ? `${status} (${thread.suspend_count})` : status;
 
             return (
               <div
-                className="flex items-center justify-between font-mono px-2 py-1 border-b hover:bg-gray-50 dark:hover:bg-gray-900 h-full cursor-pointer"
+                data-testid="thread-row"
+                data-tid={thread.id}
+                data-active={isActive ? 'true' : undefined}
+                data-status={status}
+                data-selected={isSelected ? 'true' : undefined}
+                onContextMenu={(e) => openContextMenu(e, { tid: thread.id })}
+                className={`flex items-center justify-between font-mono px-2 py-1 border-b h-full cursor-pointer border-l-2 ${
+                  isActive
+                    ? 'border-l-primary bg-accent/60'
+                    : 'border-l-transparent hover:bg-gray-50 dark:hover:bg-gray-900'
+                }`}
                 onMouseEnter={(e) => handleThreadMouseEnter(thread.id, e)}
                 onMouseLeave={handleThreadMouseLeave}
                 onClick={(e) => handleThreadClick(thread.id, e)}
               >
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 mb-1">
-                    <h3 className="font-medium text-sm">Thread {thread.id}</h3>
-                    <Badge
-                      variant="outline"
-                      size="xs"
-                      className={getThreadStatusColor(thread.status)}
-                    >
-                      {thread.status}
-                    </Badge>
+                    <Checkbox
+                      data-testid="thread-checkbox"
+                      checked={isSelected}
+                      onClick={(e) => { e.stopPropagation(); toggleSelect(thread.id, e.shiftKey); }}
+                    />
+                    <h3 className="font-medium text-sm whitespace-nowrap">Thread {thread.id}</h3>
+                    {isActive && (
+                      <Badge variant="outline" size="xs" className="bg-primary/15 text-primary border-primary/30">
+                        current
+                      </Badge>
+                    )}
+                    {isEventThread && (
+                      <Badge variant="outline" size="xs" className="bg-muted text-muted-foreground border-border">
+                        event
+                      </Badge>
+                    )}
+                    {thread.suspend_count > 0 && (
+                      <Badge
+                        variant="outline"
+                        size="xs"
+                        className="whitespace-nowrap bg-syn-state/15 text-syn-state border-syn-state/30"
+                      >
+                        {statusLabel}
+                      </Badge>
+                    )}
                   </div>
                   <p className="text-xs text-muted-foreground flex items-center gap-1 min-w-0">
                     <span className="shrink-0">Start:</span>
@@ -400,6 +580,60 @@ export const ContextThreadsView = ({ onNavigateToDisassembly, onNavigateToMemory
           </div>
         </div>
       )}
+
+      {contextMenu && (
+        <ContextMenu x={contextMenu.x} y={contextMenu.y} onClose={closeContextMenu} className="min-w-[180px]">
+          {isPaused && (
+            <>
+              <ContextMenuItem onClick={() => switchToThread(contextMenu.data.tid)}>
+                Switch to thread
+              </ContextMenuItem>
+              <ContextMenuSeparator />
+            </>
+          )}
+          <ContextMenuItem
+            icon={<Pause />}
+            disabled={!canUse}
+            onClick={() => runThreadAction('suspend_threads', targetsFor(contextMenu.data.tid))}
+          >
+            Suspend
+          </ContextMenuItem>
+          <ContextMenuItem
+            icon={<Play />}
+            disabled={!canUse}
+            onClick={() => runThreadAction('resume_threads', targetsFor(contextMenu.data.tid))}
+          >
+            Resume
+          </ContextMenuItem>
+          <ContextMenuSeparator />
+          <ContextMenuItem
+            icon={<Skull />}
+            destructive
+            disabled={!canUse}
+            onClick={() => requestKill(targetsFor(contextMenu.data.tid))}
+          >
+            Kill
+          </ContextMenuItem>
+        </ContextMenu>
+      )}
+
+      <Dialog open={killPending !== null} onOpenChange={(o) => !o && setKillPending(null)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>
+              Terminate {killPending?.length === 1 ? `thread ${killPending[0]}` : `${killPending?.length ?? 0} threads`}?
+            </DialogTitle>
+            <DialogDescription>
+              TerminateThread ends the thread immediately without unwinding: locks it holds stay
+              held and its stack is never freed. This cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setKillPending(null)}>Cancel</Button>
+            <Button variant="destructive" onClick={confirmKill} data-testid="thread-kill-confirm">Terminate</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Hover popover - portaled to body to escape rc-dock transforms */}
       {hoveredThreadId !== null && popoverPos && createPortal(

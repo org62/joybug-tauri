@@ -217,6 +217,9 @@ pub struct DebugSessionUI {
     pub non_invasive: bool,
     pub status: SessionStatusUI,
     pub current_event: Option<DebugEventInfo>,
+    /// Thread the user explicitly switched to (WinDbg `~Ns`); `None` = the
+    /// event thread. Reset on every new debug event.
+    pub selected_thread_id: Option<u32>,
     pub created_at: String,
     pub disassembly_window_open: bool,
     pub registers_window_open: bool,
@@ -310,6 +313,8 @@ pub enum SerializableThreadContext {
 pub struct DebugEventInfo {
     pub event_type: String,
     pub process_id: u32,
+    /// Thread that raised the debug event. The thread whose context is
+    /// displayed is `DebugSessionUI::selected_thread_id`, falling back to this.
     pub thread_id: u32,
     pub details: String,
     pub can_continue: bool,
@@ -347,6 +352,10 @@ pub struct SessionStateUI {
     pub threads: Vec<joybug_core::protocol_io::ThreadInfo>,
     pub current_event: Option<joybug_core::protocol_io::DebugEvent>,
     pub current_context: Option<SerializableThreadContext>,
+    /// Thread the UI is switched to while paused. Registers, call stack and
+    /// register writes target this thread; stepping always continues the event
+    /// thread (Windows can't step a non-event thread). Cleared on every pause.
+    pub selected_tid: Option<u32>,
     pub ui_sender: Option<mpsc::Sender<UICommand>>, // Send true to continue, false to stop
     pub ui_receiver: Option<mpsc::Receiver<UICommand>>,
     pub debug_result: Option<Result<(), String>>, // Track if debug session succeeded or failed
@@ -444,6 +453,7 @@ impl SessionStateUI {
             threads: Vec::new(),
             current_event: None,
             current_context: None,
+            selected_tid: None,
             ui_sender: Some(step_sender),
             ui_receiver: Some(step_receiver),
             debug_result: None,
@@ -474,6 +484,7 @@ impl SessionStateUI {
         self.threads.clear();
         self.current_event = None;
         self.current_context = None;
+        self.selected_tid = None;
         self.open_pid = None;
         self.embedded_server_port = None;
 
@@ -518,6 +529,22 @@ impl SessionStateUI {
         self.ui_receiver = Some(step_receiver);
     }
 
+    /// Thread that UI context operations (registers, call stack) target: the
+    /// user-selected thread, else the event thread.
+    pub fn active_tid(&self, event: &joybug_core::protocol_io::DebugEvent) -> u32 {
+        self.selected_tid.unwrap_or_else(|| event.tid())
+    }
+
+    /// Instruction pointer of `current_context`, if any.
+    fn context_ip(&self) -> Option<u64> {
+        let hex = match &self.current_context {
+            Some(SerializableThreadContext::X64(ctx)) => &ctx.rip,
+            Some(SerializableThreadContext::Arm64(ctx)) => &ctx.pc,
+            None => return None,
+        };
+        u64::from_str_radix(hex.trim_start_matches("0x"), 16).ok()
+    }
+
     // Create a serializable snapshot of this session state
     pub fn to_debug_session(&self) -> DebugSessionUI {
         DebugSessionUI {
@@ -533,25 +560,16 @@ impl SessionStateUI {
             current_event: self.current_event.as_ref().map(|event| {
                 let mut info = crate::events::debug_event_to_info(event);
                 info.context = self.current_context.clone();
-                
-                // If address is missing from the event, try to get it from the context's instruction pointer
-                if info.address.is_none() {
-                    match &self.current_context {
-                        Some(SerializableThreadContext::X64(ref ctx)) => {
-                            if let Ok(rip) = u64::from_str_radix(&ctx.rip.trim_start_matches("0x"), 16) {
-                                info.address = Some(rip);
-                            }
-                        }
-                        Some(SerializableThreadContext::Arm64(ref ctx)) => {
-                            if let Ok(pc) = u64::from_str_radix(&ctx.pc.trim_start_matches("0x"), 16) {
-                                info.address = Some(pc);
-                            }
-                        }
-                        None => {}
-                    }
+
+                // On a thread switch the event's own address (e.g. the
+                // breakpoint that fired) belongs to the event thread, so the
+                // shown location must come from the selected context instead.
+                if self.selected_tid.is_some() || info.address.is_none() {
+                    info.address = self.context_ip();
                 }
                 info
             }),
+            selected_thread_id: self.selected_tid,
             created_at: self.created_at.clone(),
             disassembly_window_open: self.is_disassembly_window_open,
             registers_window_open: self.is_registers_window_open,

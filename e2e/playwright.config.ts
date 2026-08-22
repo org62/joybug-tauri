@@ -43,6 +43,8 @@ export default defineConfig({
     "source-view.spec.ts",
     "attach-detach.spec.ts",
     "callstack.spec.ts",
+    "thread-switch.spec.ts",
+    "thread-control.spec.ts",
     "non-invasive.spec.ts",
     "strings-view.spec.ts",
     "memory-regions.spec.ts",

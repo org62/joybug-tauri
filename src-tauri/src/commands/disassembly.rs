@@ -101,19 +101,22 @@ pub fn get_session_threads(
     oob_pool: State<'_, super::OobPool>,
 ) -> Result<Vec<ThreadData>> {
     let session_arc = super::get_session_arc(&session_id, &session_states)?;
-    // Same polled pattern as get_session_modules: map under the lock, no Vec clone.
-    let to_data = |thread: &joybug_core::protocol_io::ThreadInfo| ThreadData {
-        id: thread.tid,
-        status: "Running".to_string(),
-        start_address: format!("0x{:X}", thread.start_address),
-    };
-    let cached: Vec<ThreadData> = { session_arc.lock().unwrap().threads.iter().map(to_data).collect() };
-    if !cached.is_empty() {
-        return Ok(cached);
-    }
-    let threads = super::with_oob_client(&session_arc, &session_id, &oob_pool, |oob, pid| oob.list_threads(pid).unwrap_or_default())
+    // Always ask the debugger over OOB: the cached event-driven list has no
+    // live suspend counts. Fall back to the cache when OOB is unavailable
+    // (e.g. the session is between runs).
+    let live = super::with_oob_client(&session_arc, &session_id, &oob_pool, |oob, pid| oob.list_threads(pid).unwrap_or_default())
         .unwrap_or_default();
-    Ok(threads.iter().map(to_data).collect())
+    let mut threads: Vec<ThreadData> = if live.is_empty() {
+        session_arc.lock().unwrap().threads.iter().map(ThreadData::from).collect()
+    } else {
+        live.iter().map(ThreadData::from).collect()
+    };
+    // Sort by tid: the OOB list comes from a `HashMap` on the core side, so its
+    // order is arbitrary and reshuffles as threads come and go. Rows would then
+    // jump around under the cursor between polls (and the panel's first row
+    // would not be a stable thing to point at).
+    threads.sort_by_key(|t| t.id);
+    Ok(threads)
 }
 
 /// Per-thread TEB base addresses — anchors for overlaying `_TEB` on a specific thread.
@@ -130,7 +133,7 @@ pub fn get_session_thread_tebs(
     super::with_oob_client(&session_arc, &session_id, &oob_pool, move |client, pid| {
         // Non-invasive Open sessions never populate the cached thread list —
         // same OOB fallback as get_session_threads.
-        let tids = if tids.is_empty() {
+        let mut tids: Vec<u32> = if tids.is_empty() {
             client
                 .list_threads(pid)
                 .map(|ts| ts.iter().map(|t| t.tid).collect())
@@ -138,6 +141,10 @@ pub fn get_session_thread_tebs(
         } else {
             tids
         };
+        // Same tid order as `get_session_threads`, so the Nth entry here and the
+        // Nth row in the Threads panel are the same thread whichever source
+        // (cached list / OOB `HashMap`) each of them ended up using.
+        tids.sort_unstable();
         tids.into_iter()
             .map(|tid| ThreadTebData {
                 tid,

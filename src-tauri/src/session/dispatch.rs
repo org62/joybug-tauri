@@ -11,6 +11,7 @@ use super::image_patches::process_scan_image_patches;
 use super::memory::*;
 use super::patches::*;
 use super::registers::*;
+use super::threads::*;
 use super::runner::emit_session_event;
 use super::source::*;
 use super::symbols::*;
@@ -252,6 +253,7 @@ fn process_command(
             if let Some(handle) = app_handle_clone.as_ref() {
                 let mut s = session.state.lock().unwrap();
                 s.status = SessionStatusUI::Running;
+                s.selected_tid = None;
                 drop(s);
                 emit_session_event(&session.state, handle);
             }
@@ -500,6 +502,10 @@ fn process_command(
         }
         UICommand::ResolveThreadSymbols => {
             process_resolve_thread_symbols(session, app_handle_clone, event);
+            CommandResult::Continue
+        }
+        UICommand::SelectThread { tid } => {
+            process_select_thread(session, app_handle_clone, event, tid);
             CommandResult::Continue
         }
         UICommand::GetModuleExtraInfo { module_base } => {

@@ -511,6 +511,7 @@ pub fn run_debug_session(
                     state.events.push(event.clone());
                     state.status = SessionStatusUI::Paused;
                     state.current_context = context.map(crate::events::convert_raw_context_to_serializable);
+                    state.selected_tid = None;
 
                     unloaded_module_name = get_unloaded_module_name(&state, event);
                     if let Some(ref name) = unloaded_module_name {

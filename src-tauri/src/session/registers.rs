@@ -14,7 +14,7 @@ pub(crate) fn process_set_register(
     value: u64,
 ) {
     let pid = event.pid();
-    let tid = event.tid();
+    let tid = session.state.lock().unwrap().active_tid(event);
     debug!("📤 Processing set register request: pid={}, tid={}, register={}, value=0x{:X}", pid, tid, register_name, value);
 
     // 1. Get current raw thread context

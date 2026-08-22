@@ -269,6 +269,22 @@ export async function stepAndWaitForNewPc(
 }
 
 /**
+ * Resume a paused target, wait for it to actually be running, then break back
+ * in. `BreakInto` raises its event on an injected break thread, so on return
+ * the target has a second thread and the original one is a distinct target for
+ * thread switch / suspend / kill.
+ */
+export async function breakIntoRunningTarget(
+  page: Page,
+  sessionId: string,
+): Promise<void> {
+  await continueSession(page, sessionId);
+  await waitForStatus(page, sessionId, "Running", 15_000);
+  await invoke(page, "pause_debug_session", { sessionId });
+  await waitForPaused(page, sessionId);
+}
+
+/**
  * Press F5 (Go/Continue) and wait for the session to pause again.
  */
 export async function goAndWaitForPause(

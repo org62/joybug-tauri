@@ -13,6 +13,7 @@ pub(crate) mod region_annotations;
 pub(crate) mod string_scan;
 pub(crate) mod patches;
 mod registers;
+pub(crate) mod threads;
 mod runner;
 pub(crate) mod source;
 pub(crate) mod symbols;

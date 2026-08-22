@@ -16,9 +16,17 @@ export function ContextCallStackView({ onNavigateToDisassembly, onNavigateToMemo
   const sessionData = useSessionContext();
   const [callStack, setCallStack] = useState<CallStackFrame[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [selectedTid, setSelectedTid] = useState<number | null>(null);
+  // Thread explicitly chosen via the Threads window in Open/Running sessions
+  // (no context to switch there, so the backend has no record of it).
+  const [redirectedTid, setRedirectedTid] = useState<number | null>(null);
   const isOpenRef = useRef(false);
   const canUse = sessionData.canUseMemoryOps;
+  // While paused the backend owns the selection (reset on every pause); the
+  // session payload is the source of truth so the label can't go stale.
+  const selectedTid =
+    sessionData.session?.status === 'Paused'
+      ? sessionData.session.selected_thread_id ?? null
+      : redirectedTid;
 
   const fetchCallStack = async () => {
     if (!sessionData?.session?.id) return;
@@ -48,7 +56,7 @@ export function ContextCallStackView({ onNavigateToDisassembly, onNavigateToMemo
     } else if (!available) {
       setCallStack([]);
       setError(null);
-      setSelectedTid(null);
+      setRedirectedTid(null);
     }
   }, [sessionData?.session?.status, sessionData?.session?.current_event]);
 
@@ -83,7 +91,7 @@ export function ContextCallStackView({ onNavigateToDisassembly, onNavigateToMemo
       'thread-callstack-updated',
       (event) => {
         if (event.payload.session_id === sessionData?.session?.id && !event.payload.preview) {
-          setSelectedTid(event.payload.tid);
+          setRedirectedTid(event.payload.tid);
           setCallStack(event.payload.frames);
           setError(null);
         }

@@ -14,6 +14,27 @@ interface LogEntry {
   message: string;
 }
 
+// Dense single-line rows: the list is virtualized with a fixed row height.
+const LOG_ROW_HEIGHT = 22;
+
+// Level column text + message tone. No icons: the level word and its color
+// carry the severity; DEBUG is dimmed so it recedes. Module-level so a
+// virtualized row doesn't allocate a fresh object per render.
+const LEVEL_TONE: Record<string, { label: string; message: string }> = {
+  debug: { label: 'text-muted-foreground/60', message: 'text-muted-foreground/70' },
+  info: { label: 'text-muted-foreground', message: 'text-foreground' },
+  warning: { label: 'text-syn-state font-medium', message: 'text-syn-state' },
+  error: { label: 'text-destructive font-medium', message: 'text-destructive' },
+};
+const LEVEL_TONE_DEFAULT = { label: 'text-muted-foreground', message: 'text-muted-foreground' };
+
+// Timestamps are "YYYY-MM-DD HH:MM:SS"; the date is noise in a live log, so
+// show only the time (full stamp in the tooltip, and still searchable).
+const shortTime = (timestamp: string) => {
+  const i = timestamp.indexOf(' ');
+  return i >= 0 ? timestamp.slice(i + 1) : timestamp;
+};
+
 export default function Logs() {
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [levelFilter, setLevelFilter] = useState<string>("all");
@@ -47,36 +68,6 @@ export default function Logs() {
     return () => clearInterval(interval);
   }, []);
 
-  const getLogIcon = (level: string) => {
-    switch (level.toLowerCase()) {
-      case 'debug':
-        return '🐛';
-      case 'info':
-        return 'ℹ';
-      case 'warning':
-        return '⚠️';
-      case 'error':
-        return '✗';
-      default:
-        return '•';
-    }
-  };
-
-  const getLogColor = (level: string) => {
-    switch (level.toLowerCase()) {
-      case 'debug':
-        return 'text-gray-500 dark:text-gray-400';
-      case 'info':
-        return 'text-foreground';
-      case 'warning':
-        return 'text-syn-state';
-      case 'error':
-        return 'text-destructive';
-      default:
-        return 'text-gray-600 dark:text-gray-400';
-    }
-  };
-
   const reversedFilteredLogs = useMemo(() => {
     const levelPriority: Record<string, number> = {
       'debug': 0,
@@ -105,9 +96,9 @@ export default function Logs() {
   const filteredLogs = reversedFilteredLogs.filtered;
 
   return (
-    <Page scroll={false} container={false} className="p-6">
+    <Page scroll={false} container={false} className="p-4">
       <div className="flex-1 flex flex-col min-h-0">
-        <div className="flex-shrink-0 mb-6">
+        <div className="flex-shrink-0 mb-3">
           <div className="flex justify-between items-center">
             <h1 className="text-2xl font-bold">Application Logs</h1>
             <div className="flex items-center gap-4">
@@ -146,7 +137,7 @@ export default function Logs() {
           </div>
         </div>
         <div className="flex-1 flex flex-col min-h-0">
-          <div className="mb-4 text-sm text-gray-500 dark:text-gray-400 flex-shrink-0">
+          <div className="mb-2 text-xs text-muted-foreground flex-shrink-0">
             Showing {filteredLogs.length} of {logs.length} logs
           </div>
           {logs.length === 0 ? (
@@ -164,18 +155,26 @@ export default function Logs() {
           ) : (
             <VirtualizedList
               items={reversedFilteredLogs.reversed}
-              rowHeight={36}
+              rowHeight={LOG_ROW_HEIGHT}
               className="flex-1 w-full rounded-md border min-h-0"
-              renderItem={(log) => (
-                <div className="flex items-start gap-2 px-3 py-2 border-b hover:bg-gray-50 dark:hover:bg-gray-900 h-full">
-                  <div className="text-xs text-gray-500 dark:text-neutral-400 font-mono shrink-0 min-w-0">
-                    {log.timestamp}
+              renderItem={(log) => {
+                const tone = LEVEL_TONE[log.level.toLowerCase()] ?? LEVEL_TONE_DEFAULT;
+                return (
+                  <div
+                    data-testid="log-row"
+                    data-level={log.level.toLowerCase()}
+                    className="flex items-center gap-2 px-2 border-b border-border/50 hover:bg-gray-50 dark:hover:bg-gray-900 h-full font-mono text-xs leading-none"
+                  >
+                    <span className="text-muted-foreground shrink-0 tabular-nums" title={log.timestamp}>
+                      {shortTime(log.timestamp)}
+                    </span>
+                    <span className={`w-16 shrink-0 uppercase ${tone.label}`}>{log.level}</span>
+                    <span className={`min-w-0 flex-1 truncate ${tone.message}`} title={log.message}>
+                      {log.message}
+                    </span>
                   </div>
-                  <div className={`text-sm ${getLogColor(log.level)} min-w-0 flex-1`}>
-                    {log.message.match(/^[✓✗ℹ•]/) ? log.message : `${getLogIcon(log.level)} ${log.message}`}
-                  </div>
-                </div>
-              )}
+                );
+              }}
             />
           )}
         </div>
