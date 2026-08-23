@@ -7,6 +7,8 @@ export interface TabPlacement {
   siblingTabIds?: string[];
   /** Panel id seeded in `initialLayout`. */
   homePanelId?: string;
+  /** Skip candidate panels narrower than this many px (see SessionTabDef.minWidth). */
+  minWidth?: number;
 }
 
 export interface DockingConfig {
@@ -115,16 +117,25 @@ function activateTab(dockbox: any, tabId: string) {
   walk(dockbox);
 }
 
-/** Find the first panel (box holding `tabs`) matching the predicate, or null. */
-function findPanel(dockbox: any, match: (panel: any) => boolean): any | null {
-  let result: any = null;
+/** Collect every panel (box holding `tabs`) in tree order. */
+function collectPanels(dockbox: any): any[] {
+  const panels: any[] = [];
   const walk = (box: any) => {
-    if (result || !box) return;
-    if (box.tabs && match(box)) { result = box; return; }
+    if (!box) return;
+    if (box.tabs) panels.push(box);
     if (box.children) box.children.forEach(walk);
   };
   walk(dockbox);
-  return result;
+  return panels;
+}
+
+/** Rendered width of a panel — rc-dock stamps every panel with
+ *  `data-dockid` and getSerializableLayout() preserves the ids, so layout
+ *  panel ids match the DOM. null when unmounted / id-less (treat as unknown). */
+function measurePanelWidth(panel: any): number | null {
+  if (!panel?.id || typeof document === "undefined") return null;
+  const el = document.querySelector(`.dock-panel[data-dockid="${panel.id}"]`);
+  return el ? el.getBoundingClientRect().width : null;
 }
 
 /**
@@ -133,13 +144,37 @@ function findPanel(dockbox: any, match: (panel: any) => boolean): any | null {
  * wherever the user dragged it), then the tab's declared home panel, then the
  * first panel as a last resort. Callers that pass no placement get that last
  * resort — the historical behaviour.
+ *
+ * A tab with `minWidth` walks the same order but skips panels that are too
+ * narrow for it (a PE viewer must not stack into the modules column); when
+ * nothing is wide enough it takes the widest panel the user currently has.
  */
 function addTabToBestPanel(dockbox: any, tabId: string, placement?: TabPlacement) {
-  const { siblingTabIds, homePanelId } = placement ?? {};
-  const panel =
-    (siblingTabIds?.length ? findPanel(dockbox, (p) => p.tabs.some((t: any) => siblingTabIds.includes(t.id))) : null) ??
-    (homePanelId ? findPanel(dockbox, (p) => p.id === homePanelId) : null) ??
-    findPanel(dockbox, () => true);
+  const { siblingTabIds, homePanelId, minWidth } = placement ?? {};
+  const all = collectPanels(dockbox);
+  const candidates = [
+    siblingTabIds?.length ? all.find((p) => p.tabs.some((t: any) => siblingTabIds.includes(t.id))) : null,
+    homePanelId ? all.find((p) => p.id === homePanelId) : null,
+    ...all,
+  ].filter((p, i, arr) => p && arr.indexOf(p) === i);
+
+  let panel = candidates[0];
+  if (minWidth !== undefined && candidates.length > 1) {
+    const fits = candidates.find((p) => {
+      const w = measurePanelWidth(p);
+      return w === null || w >= minWidth;
+    });
+    if (fits) {
+      panel = fits;
+    } else {
+      // Nothing is wide enough — settle for the widest.
+      let best = -1;
+      for (const p of candidates) {
+        const w = measurePanelWidth(p) ?? -1;
+        if (w > best) { best = w; panel = p; }
+      }
+    }
+  }
 
   if (panel?.tabs) {
     panel.tabs.push({ id: tabId });
@@ -386,6 +421,7 @@ export function useDocking(config: DockingConfig): DockingState & DockingOperati
       addTabToBestPanel(newLayout.dockbox, newId, {
         siblingTabIds,
         homePanelId: placement?.(type)?.homePanelId,
+        minWidth: placement?.(type)?.minWidth,
       });
 
       localStorage.setItem(LAYOUT_STORAGE_KEY, JSON.stringify(newLayout));

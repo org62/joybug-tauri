@@ -63,6 +63,23 @@ test.describe("Windows: navigation, grouping, and reset", () => {
     }
   });
 
+  test("a wide window skips a narrow home panel for the widest one", async ({ tauriPage: page }) => {
+    const sessionId = await createAndStartSession(page, "Windows Wide");
+    try {
+      await waitForPaused(page, sessionId);
+
+      // PE Viewer's home is the left-top column (Modules), which is far too
+      // narrow for it — placement must route it to the center panel instead.
+      await goToWindow(page, "PE Viewer");
+      await expect(async () => {
+        expect(await sharesPanelWith(page, "peviewer", "disassembly")).toBe(true);
+      }).toPass({ timeout: 5_000 });
+      expect(await sharesPanelWith(page, "peviewer", "modules")).toBe(false);
+    } finally {
+      await cleanupSession(page, sessionId);
+    }
+  });
+
   test("'Go to' never closes an open window", async ({ tauriPage: page }) => {
     const sessionId = await createAndStartSession(page, "Windows GoTo");
     try {

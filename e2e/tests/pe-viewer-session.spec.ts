@@ -87,6 +87,9 @@ test.describe("PE Viewer (session)", () => {
         expect(addr, `first row: ${JSON.stringify(first)}`).toBeTruthy();
         expect(BigInt(addr!)).toBe(BigInt(entryVa));
       }).toPass({ timeout: 10_000, intervals: [50, 100] });
+      // PE Viewer is a wide view, so it shares the center panel with
+      // Disassembly — the navigation above hid it behind that tab.
+      await goToWindow(page, "PE Viewer");
       // Switching module re-fetches; a DLL shows its export directory.
       await pick(page, "peviewer-module-select", /ntdll/i);
       await expect(page.getByText(/^Exports — ntdll\.dll/i)).toBeVisible({ timeout: 15_000 });

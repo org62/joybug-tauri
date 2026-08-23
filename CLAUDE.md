@@ -146,7 +146,7 @@ sidecars are only written for tagged releases, and the one-click install require
 
 ### Adding a New Dock Tab
 1. Build the view as `<DockPanel><PanelToolbar/><PanelBody/></DockPanel>` (from `@/components/ui/panel`); use `size="xs"` controls and `<ContextMenu>` for right-click menus (see UI layout primitives above)
-2. Add a row to `SESSION_TAB_DEFS` in `src/lib/sessionTabs.tsx` (id, title, category, home panel, icon, palette keywords, optional keybinding action). The Windows menu, command palette, and panel chords all derive from this table.
+2. Add a row to `SESSION_TAB_DEFS` in `src/lib/sessionTabs.tsx` (id, title, category, home panel, icon, palette keywords, optional keybinding action). The Windows menu, command palette, and panel chords all derive from this table. Wide views (hex dumps, tables, disassembly) set `minWidth: WIDE` so they never open into a narrow side column — placement skips panels narrower than that and falls back to the widest one.
 3. Add the content element to `dynamicTabContent` in `SessionDocked.tsx` — it's typed against the registry, so forgetting this is a compile error
 4. If the tab gets a chord, add the `panel.*` action in `src/lib/keybindings.ts`
 5. Optionally register the view's primary input with `usePanelFocus("<tab id>")` so "Go to X" focuses it

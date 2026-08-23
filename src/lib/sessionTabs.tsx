@@ -36,7 +36,14 @@ export interface SessionTabDef {
   icon: React.ReactNode;
   /** Extra cmdk fuzzy-match terms. */
   keywords?: string[];
+  /** Minimum useful panel width in px. When opening, candidate panels narrower
+   *  than this are skipped (falling back to the widest one). Omitted = fits
+   *  anywhere, so a narrow side column is fine. */
+  minWidth?: number;
 }
+
+/** Width below which the wide views (hex dumps, disassembly, PE tables) become unusable. */
+const WIDE = 560;
 
 export const SESSION_TAB_CATEGORIES: TabCategory[] = [
   "Code", "Process", "Memory", "Search", "Symbols", "Debug",
@@ -48,13 +55,13 @@ export const SESSION_TAB_CATEGORIES: TabCategory[] = [
 // widened SESSION_TAB_DEFS so optional fields stay accessible.
 const TAB_DEFS = [
   // ── Code ──
-  { id: "disassembly", title: "Disassembly", category: "Code", home: "panel-center",
+  { id: "disassembly", title: "Disassembly", category: "Code", home: "panel-center", minWidth: WIDE,
     action: "panel.disassembly", icon: <Code className="size-4" />,
     keywords: ["disassembly", "asm", "code"] },
-  { id: "source", title: "Source", category: "Code", home: "panel-center",
+  { id: "source", title: "Source", category: "Code", home: "panel-center", minWidth: WIDE,
     action: "panel.source", icon: <FileCode className="size-4" />,
     keywords: ["source", "code", "c", "cpp", "line"] },
-  { id: "code_explorer", title: "Code Explorer", category: "Code", home: "panel-center",
+  { id: "code_explorer", title: "Code Explorer", category: "Code", home: "panel-center", minWidth: WIDE,
     action: "panel.codeExplorer", icon: <Radar className="size-4" />,
     keywords: ["code", "explorer", "coverage", "heatmap", "functions", "breakpoint"] },
 
@@ -73,27 +80,27 @@ const TAB_DEFS = [
     keywords: ["modules", "dll"] },
 
   // ── Memory ──
-  { id: "memory", title: "Memory", category: "Memory", home: "panel-center",
+  { id: "memory", title: "Memory", category: "Memory", home: "panel-center", minWidth: WIDE,
     icon: <HardDrive className="size-4" />,
     keywords: ["memory", "hex", "dump"] },
-  { id: "memory_regions", title: "Memory Regions", category: "Memory", home: "panel-center",
+  { id: "memory_regions", title: "Memory Regions", category: "Memory", home: "panel-center", minWidth: WIDE,
     action: "panel.memoryRegions", icon: <HardDrive className="size-4" />,
     keywords: ["memory", "regions", "map"] },
-  { id: "strings", title: "Strings", category: "Memory", home: "panel-center",
+  { id: "strings", title: "Strings", category: "Memory", home: "panel-center", minWidth: WIDE,
     action: "panel.strings", icon: <Type className="size-4" />,
     keywords: ["strings", "ascii", "unicode", "utf16", "text"] },
 
   // ── Search ──
-  { id: "memory_search", title: "Memory Search", category: "Search", home: "panel-center",
+  { id: "memory_search", title: "Memory Search", category: "Search", home: "panel-center", minWidth: WIDE,
     action: "panel.memorySearch", icon: <Search className="size-4" />,
     keywords: ["memory", "search", "find", "pattern"] },
-  { id: "memory_scanner", title: "Memory Scanner", category: "Search", home: "panel-center",
+  { id: "memory_scanner", title: "Memory Scanner", category: "Search", home: "panel-center", minWidth: WIDE,
     action: "panel.memoryScanner", icon: <ScanSearch className="size-4" />,
     keywords: ["memory", "scanner", "scan", "cheat"] },
-  { id: "pointer_scan", title: "Pointer Scan", category: "Search", home: "panel-center",
+  { id: "pointer_scan", title: "Pointer Scan", category: "Search", home: "panel-center", minWidth: WIDE,
     action: "panel.pointerScan", icon: <Crosshair className="size-4" />,
     keywords: ["pointer", "scan", "path", "cheat", "static"] },
-  { id: "access_trace", title: "Access Trace", category: "Search", home: "panel-center",
+  { id: "access_trace", title: "Access Trace", category: "Search", home: "panel-center", minWidth: WIDE,
     icon: <Fingerprint className="size-4" />,
     keywords: ["access", "trace", "watchpoint", "reads", "writes", "hardware", "what accesses"] },
 
@@ -104,7 +111,7 @@ const TAB_DEFS = [
   { id: "types", title: "Types", category: "Symbols", home: "panel-left-top",
     action: "panel.types", icon: <Boxes className="size-4" />,
     keywords: ["types", "struct", "teb", "peb", "kuser"] },
-  { id: "peviewer", title: "PE Viewer", category: "Symbols", home: "panel-left-top",
+  { id: "peviewer", title: "PE Viewer", category: "Symbols", home: "panel-left-top", minWidth: WIDE,
     action: "panel.peViewer", icon: <FileCode className="size-4" />,
     keywords: ["pe", "portable", "executable", "viewer"] },
 
@@ -112,10 +119,10 @@ const TAB_DEFS = [
   { id: "breakpoints", title: "Breakpoints", category: "Debug", home: "panel-center",
     action: "panel.breakpoints", icon: <MapPin className="size-4" />,
     keywords: ["breakpoints", "bp"] },
-  { id: "patches", title: "User Patches", category: "Debug", home: "panel-center",
+  { id: "patches", title: "User Patches", category: "Debug", home: "panel-center", minWidth: WIDE,
     action: "panel.patches", icon: <Puzzle className="size-4" />,
     keywords: ["patches", "assemble", "patch", "user"] },
-  { id: "image_patches", title: "Image Patches", category: "Debug", home: "panel-center",
+  { id: "image_patches", title: "Image Patches", category: "Debug", home: "panel-center", minWidth: WIDE,
     action: "panel.imagePatches", icon: <FileDiff className="size-4" />,
     keywords: ["image", "patches", "patch", "hook", "diff", "modified", "detour"] },
   { id: "bookmarks", title: "Bookmarks", category: "Debug", home: "panel-center",

@@ -165,6 +165,7 @@ export default function SessionDocked() {
     if (!def) return undefined;
     return {
       homePanelId: def.home,
+      minWidth: def.minWidth,
       siblingTabIds: SESSION_TAB_DEFS
         .filter((d) => d.home === def.home && d.id !== def.id)
         .map((d) => d.id),
