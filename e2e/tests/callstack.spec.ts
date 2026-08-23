@@ -2,7 +2,7 @@ import { test, expect } from "../helpers/test-fixtures";
 import { createAndStartSession, cleanupSession, goToWindow } from "../helpers/session-helpers";
 import { waitForPaused } from "../helpers/wait-helpers";
 
-test.describe("Call Stack panel", () => {
+test.describe("Stack panel", () => {
   // Regression: the Threads hover popover fetches a thread's call stack for
   // preview. Those fetches carry preview=true and must NOT retarget the Call
   // Stack panel — only an explicit click on a thread row may do that.
@@ -19,7 +19,7 @@ test.describe("Call Stack panel", () => {
 
       // On pause the panel auto-fetches the current thread's stack: frames
       // appear, but no thread is explicitly selected.
-      await goToWindow(page, "Call Stack");
+      await goToWindow(page, "Stack");
       const firstFrame = panel.locator('[data-testid="callstack-frame"]').first();
       await expect(firstFrame).toBeVisible({ timeout: 15_000 });
       await expect(selectedThreadBar).toHaveCount(0);

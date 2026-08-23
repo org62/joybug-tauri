@@ -75,7 +75,7 @@ test.describe("Session stopped", () => {
       // Other live panels show the same neutral state.
       await goToWindow(page, "Registers");
       await expect(page.getByText("Registers unavailable")).toBeVisible({ timeout: 10_000 });
-      await goToWindow(page, "Call Stack");
+      await goToWindow(page, "Stack");
       await expect(page.getByText("Call stack unavailable")).toBeVisible({ timeout: 10_000 });
       await goToWindow(page, "Memory");
       await expect(page.getByText("Memory unavailable").first()).toBeVisible({ timeout: 10_000 });

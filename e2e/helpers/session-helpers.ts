@@ -65,6 +65,16 @@ export function contextPc(context: any): string | undefined {
   return context.arch === "Arm64" ? context.pc : context.rip;
 }
 
+/**
+ * Stack-pointer value ("0x..") out of a context object already in hand — `sp`
+ * on ARM64, `rsp` on x64. Undefined when there is no context, so callers can
+ * assert on it.
+ */
+export function contextSp(context: any): string | undefined {
+  if (!context) return undefined;
+  return context.arch === "Arm64" ? context.sp : context.rsp;
+}
+
 /** Module base ("0x..") for the first module whose path/name contains `substr`. */
 export async function moduleBase(
   page: Page,

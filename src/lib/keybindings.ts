@@ -75,7 +75,7 @@ export const ACTION_REGISTRY: Record<ActionId, ActionMeta> = {
   "panel.registers":     { label: "Go to Registers",      category: "Panels", description: "Open and focus the Registers panel",      scope: "session" },
   "panel.modules":       { label: "Go to Modules",        category: "Panels", description: "Open and focus the Modules panel",        scope: "session" },
   "panel.threads":       { label: "Go to Threads",        category: "Panels", description: "Open and focus the Threads panel",        scope: "session" },
-  "panel.callstack":     { label: "Go to Call Stack",     category: "Panels", description: "Open and focus the Call Stack panel",     scope: "session" },
+  "panel.callstack":     { label: "Go to Stack",          category: "Panels", description: "Open and focus the Stack panel",          scope: "session" },
   "panel.symbols":       { label: "Go to Symbols",        category: "Panels", description: "Open and focus the Symbols panel",        scope: "session" },
   "panel.types":         { label: "Go to Types",          category: "Panels", description: "Open and focus the Types panel",          scope: "session" },
   "panel.addMemory":     { label: "Add Memory Window",     category: "Panels", description: "Open a new Memory hex editor tab",      scope: "session" },

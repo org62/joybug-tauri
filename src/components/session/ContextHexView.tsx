@@ -9,9 +9,15 @@ interface ContextHexViewProps {
   memoryViewId?: string;
   initialAddress?: bigint;
   initialViewMode?: ViewMode;
+  /** Re-centre on this address (and make it the offset origin) whenever
+   *  `followKey` changes — see HexView. */
+  followAddress?: bigint;
+  followKey?: string;
+  /** "private" keeps an embedded instance off the shared "Go to Memory" channel. */
+  navScope?: "shared" | "private";
 }
 
-export const ContextHexView = ({ memoryViewId, initialAddress, initialViewMode }: ContextHexViewProps) => {
+export const ContextHexView = ({ memoryViewId, initialAddress, initialViewMode, followAddress, followKey, navScope }: ContextHexViewProps) => {
   const sessionData = useSessionContext();
   const context = sessionData?.session?.current_event?.context;
 
@@ -38,6 +44,9 @@ export const ContextHexView = ({ memoryViewId, initialAddress, initialViewMode }
       symbolsRefreshKey={sessionData.symbolsRefreshKey}
       initialAddress={initialAddress}
       initialViewMode={initialViewMode}
+      followAddress={followAddress}
+      followKey={followKey}
+      navScope={navScope}
       onSetHardwareBreakpoint={setHardwareBreakpoint}
       onAddBookmark={(address, valueType) => addBookmark({ kind: 'value', address, valueType })}
       onFindAccesses={sessionData.onFindAccesses}

@@ -186,10 +186,14 @@ export interface UseHexEditorOptions {
   dataSource?: HexDataSource;
   /** Changes when background symbol loading completes — re-resolves pointer-mode annotations. */
   symbolsRefreshKey?: string;
+  /** Address to re-centre on (and make the relative-offset origin) every time
+   *  `followKey` changes — e.g. RSP on each pause for a stack view. */
+  followAddress?: bigint;
+  followKey?: string;
 }
 
 export function useHexEditor(options: UseHexEditorOptions): HexEditorState & HexEditorActions {
-  const { sessionId, memoryViewId = 'memory', sessionStatus, registers = {}, resolveSymbol, initialAddress, initialViewMode, dataSource, symbolsRefreshKey } = options;
+  const { sessionId, memoryViewId = 'memory', sessionStatus, registers = {}, resolveSymbol, initialAddress, initialViewMode, dataSource, symbolsRefreshKey, followAddress, followKey } = options;
 
   // Whether the view has a byte source at all (live session or file).
   const active = !!sessionId || !!dataSource;
@@ -1014,6 +1018,10 @@ export function useHexEditor(options: UseHexEditorOptions): HexEditorState & Hex
       // and user has already loaded memory at an address. The memory map may
       // have changed, so boundary flags are cleared to allow re-probing.
       if (!listenersReady || !initialLoadDone.current) return;
+      // Following: the follow effect below runs on every pause and re-reads at
+      // the new address, so refreshing the window we are about to abandon is a
+      // wasted read (plus a wasted pointer telescope in pointer mode).
+      if (followKey !== undefined) return;
       setTopExhausted(false);
       setBottomExhausted(false);
       // Pointer-mode annotations can change across a step (values, symbols) but
@@ -1025,6 +1033,21 @@ export function useHexEditor(options: UseHexEditorOptions): HexEditorState & Hex
     }
     refreshWindow();
   });
+
+  // Follow mode: every new followKey (one per pause) re-centres the window on
+  // followAddress and makes it the relative-offset origin, so a stack view reads
+  // 0x0 / +0x8 / +0x10 from RSP after each step. Declared before the mount
+  // load so that, on first mount, this goto is the initial load (goToAddress
+  // marks initialLoadDone and the mount effect then skips).
+  const lastFollowKey = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if (followKey === undefined || followAddress === undefined) return;
+    if (!listenersReady || lastFollowKey.current === followKey) return;
+    if (!dataSource && (!sessionId || !isProcessAvailable(sessionStatus))) return;
+    lastFollowKey.current = followKey;
+    setOffsetOrigin(followAddress);
+    goToAddress(followAddress);
+  }, [followKey, followAddress, listenersReady, sessionId, dataSource, sessionStatus, goToAddress, setOffsetOrigin]);
 
   // Load memory on mount: persisted address > initialAddress
   useEffect(() => {

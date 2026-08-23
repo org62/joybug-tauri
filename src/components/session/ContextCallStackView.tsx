@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useMemo, useState, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { useSessionContext } from '@/contexts/SessionContext';
@@ -6,15 +6,47 @@ import { AlertCircle, List } from 'lucide-react';
 import { CallStackFrameList, CallStackFrame } from '@/components/CallStackFrameList';
 import { DockPanel, PanelToolbar } from '@/components/ui/panel';
 import { EmptyState, ProcessUnavailableState } from '@/components/ui/empty-state';
+import { Button } from '@/components/ui/button';
+import { ContextHexView } from '@/components/session/ContextHexView';
 import { formatTauriError, isBenignSessionError } from '@/lib/sessionHelpers';
+import { parseAddress } from '@/lib/hexUtils';
+import { useLocalStorageState } from '@/hooks/useLocalStorageState';
 
 interface ContextCallStackViewProps {
   onNavigateToDisassembly?: (address: string) => void;
   onNavigateToMemoryPointer?: (address: string) => void;
 }
 
+/** "Stack" tab sub-view: walked frames, or the raw stack memory at RSP in
+ *  pointer style. Persisted like the other panel preferences (registers.*). */
+type StackMode = 'frames' | 'hex';
+const STACK_MODES = [
+  ['frames', 'Call Stack'],
+  ['hex', 'Hex'],
+] as const;
+
+function StackModeToggle({ mode, onChange }: { mode: StackMode; onChange: (m: StackMode) => void }) {
+  return (
+    <div className="flex items-center gap-1 shrink-0">
+      {STACK_MODES.map(([value, label]) => (
+        <Button
+          key={value}
+          size="xs"
+          variant={mode === value ? 'default' : 'ghost'}
+          aria-pressed={mode === value}
+          data-testid={`stack-mode-${value}`}
+          onClick={() => onChange(value)}
+        >
+          {label}
+        </Button>
+      ))}
+    </div>
+  );
+}
+
 export function ContextCallStackView({ onNavigateToDisassembly, onNavigateToMemoryPointer }: ContextCallStackViewProps) {
   const sessionData = useSessionContext();
+  const sessionId = sessionData?.session?.id;
   const [callStack, setCallStack] = useState<CallStackFrame[]>([]);
   const [error, setError] = useState<string | null>(null);
   // Thread explicitly chosen via the Threads window in Open/Running sessions
@@ -29,6 +61,19 @@ export function ContextCallStackView({ onNavigateToDisassembly, onNavigateToMemo
     sessionData.session?.status === 'Paused'
       ? sessionData.session.selected_thread_id ?? null
       : redirectedTid;
+
+  const [mode, setMode] = useLocalStorageState<StackMode>('stack.mode', 'frames');
+
+  // Hex-mode inputs: RSP (x64) / SP (ARM64) from the current thread context, and
+  // a key that advances once per pause so the hex view re-follows the stack
+  // pointer even when a step leaves it unchanged.
+  const context = sessionData?.session?.current_event?.context;
+  const stackPointer = useMemo(() => {
+    if (!context) return undefined;
+    const raw = 'rsp' in context ? context.rsp : 'sp' in context ? context.sp : undefined;
+    return raw ? parseAddress(String(raw)) ?? undefined : undefined;
+  }, [context]);
+  const [followSeq, setFollowSeq] = useState(0);
 
   const fetchCallStack = async () => {
     if (!sessionData?.session?.id) return;
@@ -53,15 +98,19 @@ export function ContextCallStackView({ onNavigateToDisassembly, onNavigateToMemo
   // Open/Running the stack is driven by thread selection, so don't wipe it here.
   // Keyed on the debounced status like every other tab — Stopped applies to it
   // immediately, so clearing is still prompt.
+  // Walking the stack is expensive on the backend (StackWalk64 under the global
+  // dbghelp lock, symbolizing every frame), so hex mode — where the frames are
+  // never rendered — skips it; `mode` is a dep so switching back refetches.
   useEffect(() => {
     if (isPaused && isOpenRef.current) {
-      fetchCallStack();
+      if (mode === 'frames') fetchCallStack();
+      else setFollowSeq((s) => s + 1);
     } else if (!canUse) {
       setCallStack([]);
       setError(null);
       setRedirectedTid(null);
     }
-  }, [isPaused, canUse, sessionData?.session?.current_event]);
+  }, [isPaused, canUse, mode, sessionData?.session?.current_event]);
 
   // Fetch call stack when component first mounts if session is already paused
   useEffect(() => {
@@ -127,23 +176,37 @@ export function ContextCallStackView({ onNavigateToDisassembly, onNavigateToMemo
     );
   }
 
+  // One shell for both modes: the toggle sits in the panel's own toolbar, so it
+  // stays in a fixed place (and stays reachable in the empty/error states)
+  // instead of being injected into the hex view's toolbar.
+  const hasFrames = callStack.length > 0;
   return (
     <DockPanel data-testid="callstack-panel">
-      {callStack.length > 0 ? (
-        <>
-          {selectedTid !== null && (
-            <PanelToolbar className="text-xs text-muted-foreground">
-              Thread {selectedTid}
-            </PanelToolbar>
-          )}
-          <div className="flex-1 min-h-0">
-            <CallStackFrameList
-              frames={callStack}
-              onClickAddress={onNavigateToDisassembly}
-              onClickMemory={onNavigateToMemoryPointer}
-            />
-          </div>
-        </>
+      <PanelToolbar className="text-xs text-muted-foreground">
+        <StackModeToggle mode={mode} onChange={setMode} />
+        {mode === 'frames' && hasFrames && selectedTid !== null && <span>Thread {selectedTid}</span>}
+      </PanelToolbar>
+      {/* Hex mode needs a live process; otherwise fall through to the frames
+          empty states, which explain why there is nothing to show. */}
+      {mode === 'hex' && canUse ? (
+        <div className="flex-1 min-h-0 relative">
+          <ContextHexView
+            memoryViewId="stack"
+            initialAddress={stackPointer}
+            initialViewMode="pointer"
+            followAddress={stackPointer}
+            followKey={`${sessionId}:${followSeq}`}
+            navScope="private"
+          />
+        </div>
+      ) : hasFrames ? (
+        <div className="flex-1 min-h-0">
+          <CallStackFrameList
+            frames={callStack}
+            onClickAddress={onNavigateToDisassembly}
+            onClickMemory={onNavigateToMemoryPointer}
+          />
+        </div>
       ) : error ? (
         <EmptyState
           icon={<AlertCircle className="h-12 w-12 mx-auto mb-4 opacity-50" />}

@@ -68,7 +68,7 @@ test.describe("Threads panel: active thread", () => {
       await expect(
         page.locator(`[data-testid="thread-row"][data-tid="${eventTid}"]`).getByText("event"),
       ).toBeVisible();
-      await goToWindow(page, "Call Stack");
+      await goToWindow(page, "Stack");
       const panel = page.locator('[data-testid="callstack-panel"]');
       const selectedThreadBar = panel.locator("text=/^Thread \\d+$/");
       await expect(selectedThreadBar).toHaveText(`Thread ${otherTid}`, { timeout: 15_000 });

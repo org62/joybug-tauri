@@ -58,6 +58,14 @@ interface HexViewProps {
   // Reinterprets a goto-box address before navigating (PE viewer: map a VA or
   // an RVA typed per the address mode to the file offset this view needs).
   translateGotoInput?: (address: bigint) => bigint;
+  /** Re-centre on this address (and make it the offset origin) whenever
+   *  `followKey` changes — the Stack tab passes RSP + a per-pause key. */
+  followAddress?: bigint;
+  followKey?: string;
+  /** "shared" (default) claims the global "Go to Memory" channel; "private"
+   *  opts an embedded view (the Stack tab) out of it, leaving the payload for
+   *  the Memory tab(s). */
+  navScope?: "shared" | "private";
 }
 
 const VIEWMODE_VALUE_TYPE: Record<ViewMode, string> = {
@@ -72,7 +80,11 @@ const EDGE_EXTEND_THRESHOLD = ROW_HEIGHT * 6;
 // rows: at most one full chunk's worth of rows.
 const MAX_WHEEL_REVEAL = (DEFAULT_CHUNK_SIZE / BYTES_PER_ROW) * ROW_HEIGHT;
 
-export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}, resolveSymbol, initialAddress, initialViewMode, symbolsRefreshKey, onSetHardwareBreakpoint, onAddBookmark, onFindAccesses, onShowInMemoryRegions, dataSource, addressFormatter, translateGotoInput }: HexViewProps) {
+// navScope="private": subscribe to the shared memory channel but never claim a
+// payload, so an embedded view can't swallow a "Go to Memory" meant for a Memory tab.
+const CLAIM_NOTHING = () => false;
+
+export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}, resolveSymbol, initialAddress, initialViewMode, symbolsRefreshKey, onSetHardwareBreakpoint, onAddBookmark, onFindAccesses, onShowInMemoryRegions, dataSource, addressFormatter, translateGotoInput, followAddress, followKey, navScope }: HexViewProps) {
   const fmtAddr = addressFormatter ?? formatAddress;
   const {
     baseAddress,
@@ -126,15 +138,18 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
     copySelection,
     pasteBytes,
     toggleOffsetOrigin,
-  } = useHexEditor({ sessionId, memoryViewId, sessionStatus, registers, resolveSymbol, initialAddress, initialViewMode, dataSource, symbolsRefreshKey });
+  } = useHexEditor({ sessionId, memoryViewId, sessionStatus, registers, resolveSymbol, initialAddress, initialViewMode, dataSource, symbolsRefreshKey, followAddress, followKey });
 
   const [addressInput, setAddressInput] = useState("");
   const hexViewContainerRef = useRef<HTMLDivElement>(null);
 
   // External navigation (e.g., from symbol click or "Go to Memory"); object
   // payloads carry a byte range to select at the target (PE field spans).
-  useNavigationChannel(memoryNavigation, (payload) =>
-    typeof payload === "string" ? goToAddress(payload) : goToAddress(payload.address, payload.selectLength));
+  useNavigationChannel(
+    memoryNavigation,
+    (payload) => (typeof payload === "string" ? goToAddress(payload) : goToAddress(payload.address, payload.selectLength)),
+    navScope === "private" ? CLAIM_NOTHING : undefined,
+  );
 
   // Context menu state
   const { contextMenu, openContextMenu, closeContextMenu } = useContextMenu();
@@ -552,6 +567,7 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
     <DockPanel
       ref={hexViewContainerRef}
       data-testid="hex-panel"
+      data-memory-view-id={memoryViewId}
       className="outline-none"
       tabIndex={0}
       onKeyDown={handleContainerKeyDown}

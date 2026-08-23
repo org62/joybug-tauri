@@ -45,6 +45,7 @@ export default defineConfig({
     "attach-detach.spec.ts",
     "minidump.spec.ts",
     "callstack.spec.ts",
+    "stack-hex.spec.ts",
     "thread-switch.spec.ts",
     "thread-control.spec.ts",
     "non-invasive.spec.ts",
