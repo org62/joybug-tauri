@@ -8,6 +8,8 @@ import { Input } from "@/components/ui/input";
 import { HistoryInput } from "@/components/ui/history-input";
 import { pushInputHistory } from "@/lib/inputHistory";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { formatEnvText, parseEnvText, type EnvPairs } from "@/lib/envVars";
 import { Switch } from "@/components/ui/switch";
 import {
   Dialog,
@@ -57,6 +59,8 @@ export default function Debugger() {
   const [formServerUrl, setFormServerUrl] = useState("127.0.0.1:9000");
   const [formLaunchCommand, setFormLaunchCommand] = useState("cmd.exe /c echo Hello World!");
   const [formWorkingDirectory, setFormWorkingDirectory] = useState("");
+  // KEY=value lines; parsed on submit (see parseEnvText).
+  const [formEnvironment, setFormEnvironment] = useState("");
   const [formLocalRun, setFormLocalRun] = useState(true);
 
   // Attach-to-process dialog state
@@ -114,6 +118,7 @@ export default function Debugger() {
               serverUrl: config.server_url,
               launchCommand: config.launch_command,
               workingDirectory: config.working_directory ?? null,
+              environment: config.environment ?? null,
               isLocalRun: config.is_local_run ?? true,
               attachPid: null,
             });
@@ -224,13 +229,32 @@ export default function Debugger() {
     }
   };
 
-  const handleOpenNewSessionDialog = () => {
-    setSessionToEdit(null);
+  const resetSessionForm = () => {
     setFormName("");
     setFormServerUrl("127.0.0.1:9000");
     setFormLaunchCommand("cmd.exe /c echo Hello World!");
     setFormWorkingDirectory("");
+    setFormEnvironment("");
     setFormLocalRun(true);
+  };
+
+  /**
+   * Parse the environment textarea into the wire shape: `null` for "inherit"
+   * (blank), or `undefined` after toasting when a line is malformed — callers
+   * abort on `undefined`.
+   */
+  const readFormEnvironment = (): EnvPairs | null | undefined => {
+    const env = parseEnvText(formEnvironment);
+    if (!env.ok) {
+      toast.error(`Environment variables: ${env.error}`);
+      return undefined;
+    }
+    return env.pairs.length ? env.pairs : null;
+  };
+
+  const handleOpenNewSessionDialog = () => {
+    setSessionToEdit(null);
+    resetSessionForm();
     setIsSessionDialogOpen(true);
   };
 
@@ -240,6 +264,7 @@ export default function Debugger() {
     setFormServerUrl(session.server_url);
     setFormLaunchCommand(session.launch_command);
     setFormWorkingDirectory(session.working_directory ?? "");
+    setFormEnvironment(formatEnvText(session.environment));
     setFormLocalRun(session.is_local_run);
     setIsSessionDialogOpen(true);
   };
@@ -254,6 +279,8 @@ export default function Debugger() {
 
   const handleCreateSession = async () => {
     const sessionName = formName.trim() || DEFAULT_SESSION_NAME;
+    const environment = readFormEnvironment();
+    if (environment === undefined) return;
 
     try {
       const sessionId = await createSessionRecord({
@@ -261,6 +288,7 @@ export default function Debugger() {
         serverUrl: formLocalRun ? "" : formServerUrl,
         launchCommand: formLaunchCommand,
         workingDirectory: formWorkingDirectory.trim() || null,
+        environment,
         isLocalRun: formLocalRun,
       });
 
@@ -268,12 +296,7 @@ export default function Debugger() {
       toast.success("Debug session created successfully");
       setIsSessionDialogOpen(false);
 
-      // Clear form
-      setFormName("");
-      setFormServerUrl("127.0.0.1:9000");
-      setFormLaunchCommand("cmd.exe /c echo Hello World!");
-      setFormWorkingDirectory("");
-      setFormLocalRun(true);
+      resetSessionForm();
 
       // Live updates will arrive via events; no manual refresh
 
@@ -290,6 +313,9 @@ export default function Debugger() {
 
     const sessionName = formName.trim() || DEFAULT_SESSION_NAME;
 
+    const environment = readFormEnvironment();
+    if (environment === undefined) return;
+
     try {
       const workingDirectory = formWorkingDirectory.trim() || null;
 
@@ -299,6 +325,7 @@ export default function Debugger() {
         serverUrl: formLocalRun ? "" : formServerUrl,
         launchCommand: formLaunchCommand,
         workingDirectory,
+        environment,
         isLocalRun: formLocalRun,
         attachPid: null,
       });
@@ -310,6 +337,7 @@ export default function Debugger() {
         server_url: formLocalRun ? "" : formServerUrl,
         launch_command: formLaunchCommand,
         working_directory: workingDirectory,
+        environment,
         is_local_run: formLocalRun,
         created_at: sessionToEdit.created_at,
       });
@@ -374,6 +402,7 @@ export default function Debugger() {
       serverUrl: session.is_local_run ? "" : session.server_url,
       launchCommand: session.launch_command,
       workingDirectory: session.working_directory ?? null,
+      environment: session.environment ?? null,
       isLocalRun: session.is_local_run,
       attachPid: pid,
       nonInvasive: session.non_invasive,
@@ -699,6 +728,18 @@ export default function Debugger() {
                       </Button>
                     )}
                   </div>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="environment">Environment Variables (optional)</Label>
+                  <Textarea
+                    id="environment"
+                    rows={3}
+                    className="font-mono text-xs"
+                    value={formEnvironment}
+                    onChange={(e) => setFormEnvironment(e.target.value)}
+                    placeholder={"KEY=value, one per line\nMerged over the debugger's own environment"}
+                    spellCheck={false}
+                  />
                 </div>
               </div>
               <div className="flex justify-end gap-2">

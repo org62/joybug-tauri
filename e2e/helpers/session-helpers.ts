@@ -77,6 +77,18 @@ export async function moduleBase(
     ?.base_address;
 }
 
+/** Optional launch fields of the create-session dialog, beyond name/command. */
+export interface CreateSessionOptions {
+  /** Contents of the "Environment Variables" textarea (KEY=value lines). */
+  environment?: string;
+}
+
+async function fillOptionalSessionFields(page: Page, opts: CreateSessionOptions) {
+  if (opts.environment !== undefined) {
+    await page.getByLabel(/Environment Variables/i).fill(opts.environment);
+  }
+}
+
 /**
  * Create and start a debug session via the UI dialog.
  * Uses `cmd.exe /c "echo hello world"` as the debug target.
@@ -102,6 +114,7 @@ export async function createAndStartSession(
   page: Page,
   name = "E2E Test Session",
   launchCommand = "cmd.exe /c echo e2e_test",
+  opts: CreateSessionOptions = {},
 ): Promise<string> {
   await navigateTo(page, "/debugger");
 
@@ -115,6 +128,8 @@ export async function createAndStartSession(
   // Use a unique launch command to avoid loading persisted breakpoints
   // from previous manual debugging sessions
   await page.getByLabel("Launch Command").fill(launchCommand);
+
+  await fillOptionalSessionFields(page, opts);
 
   // Click "Create & Start"
   await page.getByRole("button", { name: "Create & Start" }).click();
@@ -139,6 +154,7 @@ export async function createAndStartSession(
 export async function createSession(
   page: Page,
   name = "E2E Test Session",
+  opts: CreateSessionOptions = {},
 ): Promise<string> {
   // Click "Create Process" button (header trigger)
   await page.getByRole("button", { name: /Create Process/i }).first().click();
@@ -146,26 +162,26 @@ export async function createSession(
   // Fill session name
   await page.getByLabel("Session Name").fill(name);
 
+  await fillOptionalSessionFields(page, opts);
+
   // Click "Create Session" (not "Create & Start")
   await page.getByRole("button", { name: "Create Session", exact: true }).click();
 
   // Wait for dialog to close and session card to appear
   await expect(page.getByText(name)).toBeVisible({ timeout: 5_000 });
 
-  // Get the session ID from the backend
-  const sessionId = await page.evaluate(async (sessionName: string) => {
-    const sessions = await (window as any).__TAURI_INTERNALS__.invoke(
-      "get_debug_sessions",
-    );
-    const session = sessions.find((s: any) => s.name === sessionName);
-    return session?.id;
-  }, name);
-
-  if (!sessionId) {
+  const session = await findSessionByName(page, name);
+  if (!session) {
     throw new Error(`Could not find session with name: ${name}`);
   }
 
-  return sessionId;
+  return session.id;
+}
+
+/** The session the backend stored under `name`, or undefined. */
+export async function findSessionByName(page: Page, name: string): Promise<any> {
+  const sessions = await invoke(page, "get_debug_sessions");
+  return sessions.find((s: any) => s.name === name);
 }
 
 /**

@@ -227,9 +227,9 @@ pub fn run_debug_session(
     session_state: Arc<Mutex<SessionStateUI>>,
     app_handle: Option<AppHandle>,
 ) -> Result<()> {
-    let (session_id, server_url, launch_command, working_directory, attach_pid) = {
+    let (session_id, server_url, launch_command, working_directory, environment, attach_pid) = {
         let state = session_state.lock().unwrap();
-        (state.id.clone(), state.server_url.clone(), state.launch_command.clone(), state.working_directory.clone(), state.attach_pid)
+        (state.id.clone(), state.server_url.clone(), state.launch_command.clone(), state.working_directory.clone(), state.environment.clone(), state.attach_pid)
     };
 
     info!("Starting debug session: {}", session_id);
@@ -585,7 +585,7 @@ pub fn run_debug_session(
                 .map_err(|e| Error::DebugLoop(e.to_string()))?
         }
         None => session_builder
-            .launch_in_dir(launch_command, working_directory)
+            .launch_with_options(launch_command, working_directory, environment)
             .map_err(|e| Error::DebugLoop(e.to_string()))?,
     };
 

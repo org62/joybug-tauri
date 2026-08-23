@@ -3,6 +3,8 @@ import {
   createAndStartSession,
   createSession,
   cleanupSession,
+  findSessionByName,
+  invoke,
 } from "../helpers/session-helpers";
 import {
   waitForPaused,
@@ -103,9 +105,68 @@ test.describe("Session Lifecycle", () => {
     });
 
     expect(session?.working_directory).toBe("C:\\Windows");
+    // No env vars entered → backend stores "inherit" (null), not an empty list.
+    expect(session?.environment).toBeNull();
 
     // Cleanup
     await cleanupSession(page, session.id);
+  });
+
+  test("create session with environment variables persists them to backend", async ({
+    tauriPage: page,
+  }) => {
+    await navigateTo(page, "/debugger");
+
+    // Blank lines and # comments are skipped; the value keeps everything
+    // after the first "=".
+    const sessionId = await createSession(page, "EnvVars Test", {
+      environment: "FOO=bar\n# comment\n\nBAZ=a=b",
+    });
+
+    const session = await findSessionByName(page, "EnvVars Test");
+    expect(session?.environment).toEqual([
+      ["FOO", "bar"],
+      ["BAZ", "a=b"],
+    ]);
+
+    await cleanupSession(page, sessionId);
+  });
+
+  test("environment variables reach the launched process", async ({
+    tauriPage: page,
+  }) => {
+    // cmd.exe exits with %JOYBUG_E2E_EXIT%, which only exists if our block was
+    // applied — and cmd.exe is only found at all because the rest of the
+    // environment (PATH/SystemRoot) is still inherited, so this also proves
+    // the merge is additive. The exit code is read off the ProcessExited break.
+    await configureMinimalStopSettings(page, { stop_on_process_exit: true });
+
+    let sessionId: string | undefined;
+    try {
+      sessionId = await createAndStartSession(
+        page,
+        "EnvVars Launch",
+        'cmd.exe /c "exit /b %JOYBUG_E2E_EXIT%"',
+        { environment: "JOYBUG_E2E_EXIT=42" },
+      );
+
+      await waitForPaused(page, sessionId);
+      await continueSession(page, sessionId);
+      let exited: any;
+      await expect(async () => {
+        exited = await invoke(page, "get_debug_session", { sessionId });
+        expect(exited?.current_event?.event_type).toBe("ProcessExited");
+      }).toPass({ timeout: 30_000, intervals: [50, 100] });
+
+      // 42 = 0x2A; without the variable cmd.exe would exit 0.
+      expect(exited.current_event.details).toContain("0x2A");
+
+      await continueSession(page, sessionId);
+      await waitForStopped(page, sessionId);
+    } finally {
+      await restoreDefaultSettings(page);
+      if (sessionId) await cleanupSession(page, sessionId);
+    }
   });
 
   test("delete session removes card from list", async ({

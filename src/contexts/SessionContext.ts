@@ -66,6 +66,8 @@ export interface DebugSession {
   server_url: string;
   launch_command: string;
   working_directory: string | null;
+  /** Extra env vars merged over the debugger's environment at launch; null inherits. */
+  environment: [string, string][] | null;
   is_local_run: boolean;
   attach_pid: number | null;
   non_invasive: boolean;

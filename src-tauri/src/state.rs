@@ -209,6 +209,9 @@ pub struct DebugSessionUI {
     pub server_url: String,
     pub launch_command: String,
     pub working_directory: Option<String>,
+    /// Extra environment variables for a launch, merged over the debugger's
+    /// own environment. `None` inherits unchanged.
+    pub environment: Option<Vec<(String, String)>>,
     pub is_local_run: bool,
     /// When set, this session attaches to an already-running process (by PID)
     /// instead of launching `launch_command`.
@@ -332,6 +335,9 @@ pub struct SessionStateUI {
     pub server_url: String,
     pub launch_command: String,
     pub working_directory: Option<String>,
+    /// Extra environment variables for a launch, merged over the debugger's
+    /// own environment. `None` inherits unchanged.
+    pub environment: Option<Vec<(String, String)>>,
     pub is_local_run: bool,
     /// When set, the session attaches to this already-running PID instead of
     /// launching `launch_command`.
@@ -430,6 +436,7 @@ impl SessionStateUI {
         server_url: String,
         launch_command: String,
         working_directory: Option<String>,
+        environment: Option<Vec<(String, String)>>,
         is_local_run: bool,
         attach_pid: Option<u32>,
         non_invasive: bool,
@@ -441,6 +448,7 @@ impl SessionStateUI {
             server_url,
             launch_command,
             working_directory,
+            environment,
             is_local_run,
             attach_pid,
             non_invasive,
@@ -553,6 +561,7 @@ impl SessionStateUI {
             server_url: self.server_url.clone(),
             launch_command: self.launch_command.clone(),
             working_directory: self.working_directory.clone(),
+            environment: self.environment.clone(),
             is_local_run: self.is_local_run,
             attach_pid: self.attach_pid,
             non_invasive: self.non_invasive,

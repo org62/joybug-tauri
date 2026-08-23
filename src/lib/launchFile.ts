@@ -1,12 +1,14 @@
 import { invoke } from '@tauri-apps/api/core';
 import { addSessionToStorage, touchSessionInStorage } from '@/lib/sessionStorage';
 import { buildLaunchCommand, moduleBasename, pathDirname } from '@/lib/sessionHelpers';
+import type { EnvPairs } from '@/lib/envVars';
 
 export interface SessionRecordConfig {
   name: string;
   serverUrl: string;
   launchCommand: string;
   workingDirectory: string | null;
+  environment: EnvPairs | null;
   isLocalRun: boolean;
 }
 
@@ -21,6 +23,7 @@ export async function createSessionRecord(cfg: SessionRecordConfig): Promise<str
     serverUrl: cfg.serverUrl,
     launchCommand: cfg.launchCommand,
     workingDirectory: cfg.workingDirectory,
+    environment: cfg.environment,
     isLocalRun: cfg.isLocalRun,
     attachPid: null,
   });
@@ -31,6 +34,7 @@ export async function createSessionRecord(cfg: SessionRecordConfig): Promise<str
     server_url: cfg.serverUrl,
     launch_command: cfg.launchCommand,
     working_directory: cfg.workingDirectory,
+    environment: cfg.environment,
     is_local_run: cfg.isLocalRun,
     created_at: new Date().toISOString(),
   });
@@ -48,6 +52,7 @@ export async function launchExecutable(exePath: string): Promise<string> {
     serverUrl: '',
     launchCommand: buildLaunchCommand(exePath),
     workingDirectory: pathDirname(exePath) || null,
+    environment: null,
     isLocalRun: true,
   });
   await invoke('start_debug_session', { sessionId });

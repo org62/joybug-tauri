@@ -49,6 +49,12 @@ fn default_working_directory(launch_command: &str) -> Option<String> {
         .map(|p| p.to_string_lossy().into_owned())
 }
 
+/// An empty environment list means "inherit" — store it as `None` so the
+/// frontend and the launch path only ever see one representation.
+fn normalize_environment(environment: Option<Vec<(String, String)>>) -> Option<Vec<(String, String)>> {
+    environment.filter(|vars| !vars.is_empty())
+}
+
 /// Normalize the working directory coming from the UI: blank means "not set",
 /// which for local launches defaults to the executable's directory.
 fn effective_working_directory(
@@ -74,6 +80,7 @@ pub async fn create_debug_session(
     server_url: String,
     launch_command: String,
     working_directory: Option<String>,
+    environment: Option<Vec<(String, String)>>,
     is_local_run: bool,
     attach_pid: Option<u32>,
     non_invasive: Option<bool>,
@@ -119,6 +126,7 @@ pub async fn create_debug_session(
         effective_server_url,
         launch_command,
         working_directory,
+        normalize_environment(environment),
         is_local_run,
         attach_pid,
         non_invasive,
@@ -155,6 +163,7 @@ pub async fn update_debug_session(
     server_url: String,
     launch_command: String,
     working_directory: Option<String>,
+    environment: Option<Vec<(String, String)>>,
     is_local_run: bool,
     attach_pid: Option<u32>,
     non_invasive: Option<bool>,
@@ -198,6 +207,7 @@ pub async fn update_debug_session(
         state.is_local_run = is_local_run;
         state.server_url = if is_local_run { String::new() } else { server_url };
         state.working_directory = working_directory;
+        state.environment = normalize_environment(environment);
         state.launch_command = launch_command;
         state.attach_pid = attach_pid;
         state.non_invasive = non_invasive;
@@ -717,6 +727,7 @@ fn connect_temp_client(server_url: &str) -> Result<crate::session::types::DebugS
         "tmp".to_string(),
         server_url.to_string(),
         "".to_string(),
+        None,
         None,
         false,
         None,
