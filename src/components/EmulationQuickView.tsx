@@ -316,7 +316,7 @@ export const EmulationQuickView = memo(function EmulationQuickView({ emulation, 
 
   const toggleButton = (name: EmulationToggle, label: string) => (
     <Button
-      variant={toggles[name] ? "secondary" : "outline"}
+      variant={toggles[name] ? "default" : "outline"}
       size="xs"
       aria-pressed={toggles[name]}
       data-testid={`emu-toggle-${name}`}

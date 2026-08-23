@@ -345,6 +345,10 @@ pub struct SessionStateUI {
     /// When true, the session opens the target process non-invasively
     /// (`OpenProcess` only, no `DebugActiveProcess`/debug loop).
     pub non_invasive: bool,
+    /// WER's event handle from a JIT (`-p/-e`) launch. Signalled once the
+    /// attach has produced its first event (or failed) so the OS stops waiting
+    /// on the crashed process; `None` for every other session.
+    pub jit_event_handle: Option<u64>,
     /// The live PID a non-invasive session is operating on, resolved at start.
     /// Used as the OOB pid source when there is no `current_event`.
     pub open_pid: Option<u32>,
@@ -440,6 +444,7 @@ impl SessionStateUI {
         is_local_run: bool,
         attach_pid: Option<u32>,
         non_invasive: bool,
+        jit_event_handle: Option<u64>,
     ) -> Self {
         let (step_sender, step_receiver) = mpsc::channel();
         Self {
@@ -452,6 +457,7 @@ impl SessionStateUI {
             is_local_run,
             attach_pid,
             non_invasive,
+            jit_event_handle,
             open_pid: None,
             embedded_server_port: None,
             created_at: chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string(),
@@ -618,4 +624,4 @@ impl LogEntry {
             session_id,
         }
     }
-} 
+}

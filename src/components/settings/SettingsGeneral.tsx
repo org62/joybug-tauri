@@ -10,6 +10,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { useDebugSettings } from "@/hooks/useDebugSettings";
+import { useJitDebugger } from "@/hooks/useJitDebugger";
 import { applyZoom, getStoredZoom, ZOOM_CHANGED_EVENT, ZOOM_STEPS } from "@/lib/uiZoom";
 import { ACCENT_OPTIONS, applyAccent, getStoredAccent, type AccentId } from "@/lib/accent";
 
@@ -26,6 +27,7 @@ const SETTING_ITEMS: SettingItem[] = [
   { key: "scanThreads", label: "Memory scan threads (0 = all cores)", keywords: ["scan", "thread", "threads", "memory", "performance", "cores", "parallel", "cpu"] },
   { key: "lightningInstructions", label: "Lightning emulation: instructions emulated at every pause", keywords: ["lightning", "emulation", "emulate", "trace", "instructions", "disassembly", "preview", "quick"] },
   { key: "autoUpdateCheck", label: "Automatically check for updates", keywords: ["update", "updates", "upgrade", "version", "release", "releases", "check", "github", "new"] },
+  { key: "jitDebugger", label: "Windows JIT / postmortem debugger", keywords: ["jit", "postmortem", "crash", "aedebug", "werfault", "wer", "attach", "debugger", "just-in-time", "exception"] },
 ];
 
 /**
@@ -72,6 +74,7 @@ interface SettingsGeneralProps {
 export function SettingsGeneral({ searchQuery }: SettingsGeneralProps) {
   const { theme, setTheme } = useTheme();
   const { settings, setScanThreadCount, setLightningInstructions, toggle } = useDebugSettings();
+  const jit = useJitDebugger();
   const [uiScale, setUiScale] = useState(() => getStoredZoom());
   const [accent, setAccent] = useState<AccentId>(() => getStoredAccent());
 
@@ -106,7 +109,22 @@ export function SettingsGeneral({ searchQuery }: SettingsGeneralProps) {
             key={item.key}
             className="flex items-center justify-between py-1.5 px-2 rounded hover:bg-muted/50 border-b border-border/50 last:border-b-0"
           >
-            <div className="text-sm font-medium">{item.label}</div>
+            <div className="min-w-0 pr-4">
+              <div className="text-sm font-medium">{item.label}</div>
+              {item.key === "jitDebugger" && jit.status && (
+                <div className="text-xs text-muted-foreground">
+                  {jit.status.registered ? (
+                    "Crashed processes open in Joybug. Turning off restores the previous debugger."
+                  ) : jit.status.current ? (
+                    <span className="block truncate" title={jit.status.current}>
+                      Current: {jit.status.current}
+                    </span>
+                  ) : (
+                    "No postmortem debugger is registered."
+                  )}
+                </div>
+              )}
+            </div>
             {item.key === "theme" && (
               <Select value={theme} onValueChange={setTheme}>
                 <SelectTrigger size="xs" className="w-[130px]">
@@ -181,6 +199,16 @@ export function SettingsGeneral({ searchQuery }: SettingsGeneralProps) {
                 checked={settings.auto_update_check}
                 onCheckedChange={() => toggle("auto_update_check")}
                 aria-label={item.label}
+              />
+            )}
+            {item.key === "jitDebugger" && (
+              <Switch
+                size="xs"
+                checked={jit.status?.registered ?? false}
+                disabled={jit.status === null || jit.busy}
+                onCheckedChange={jit.setEnabled}
+                aria-label={item.label}
+                data-testid="setting-jit-debugger"
               />
             )}
           </div>

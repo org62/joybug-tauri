@@ -227,6 +227,27 @@ export const ContextThreadsView = ({ onNavigateToDisassembly, onNavigateToMemory
     };
   }, [sessionId, setLoadingThread, setThreadCallStacksCb]);
 
+  const clearHoverTimers = useCallback(() => {
+    if (hoverTimerRef.current) {
+      clearTimeout(hoverTimerRef.current);
+      hoverTimerRef.current = null;
+    }
+    if (hideTimerRef.current) {
+      clearTimeout(hideTimerRef.current);
+      hideTimerRef.current = null;
+    }
+  }, []);
+
+  // Drop the hover popover immediately (right-click, session end) — no grace
+  // period, and cancel any pending show so it can't reappear under the menu.
+  const dismissPopover = useCallback(() => {
+    clearHoverTimers();
+    popoverHoveredRef.current = false;
+    setHoveredThread(null);
+    setPopoverPos(null);
+    setCallstackError(null);
+  }, [clearHoverTimers, setHoveredThread]);
+
   // Session cleanup: clear all hover/cache state when the session ends or the
   // process becomes unavailable (Stopped/Error). Kept while paused/running/open.
   useEffect(() => {
@@ -234,20 +255,15 @@ export const ContextThreadsView = ({ onNavigateToDisassembly, onNavigateToMemory
       setSelected(new Set());
       setKillPending(null);
       closeContextMenu();
-      setHoveredThread(null);
-      setPopoverPos(null);
+      dismissPopover();
       setThreadCallStacks(new Map());
       threadCallStacksRef.current = new Map();
       setLoadingThread(null);
-      setCallstackError(null);
       setThreadSymbols(new Map());
       setThreadTebs(new Map());
       queriedTebTidsRef.current = new Set();
-      popoverHoveredRef.current = false;
-      if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
-      if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
     }
-  }, [sessionId, canUse, setLoadingThread, setHoveredThread, closeContextMenu]);
+  }, [sessionId, canUse, setLoadingThread, closeContextMenu, dismissPopover]);
 
   // ---- Selection ----
   const toggleSelect = useCallback((tid: number, shift: boolean) => {
@@ -307,17 +323,6 @@ export const ContextThreadsView = ({ onNavigateToDisassembly, onNavigateToMemory
     setKillPending(null);
     void runThreadAction('terminate_threads', tids);
   }, [killPending, runThreadAction]);
-
-  const clearHoverTimers = useCallback(() => {
-    if (hoverTimerRef.current) {
-      clearTimeout(hoverTimerRef.current);
-      hoverTimerRef.current = null;
-    }
-    if (hideTimerRef.current) {
-      clearTimeout(hideTimerRef.current);
-      hideTimerRef.current = null;
-    }
-  }, []);
 
   const startHideTimer = useCallback(() => {
     if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
@@ -514,7 +519,10 @@ export const ContextThreadsView = ({ onNavigateToDisassembly, onNavigateToMemory
                 data-active={isActive ? 'true' : undefined}
                 data-status={status}
                 data-selected={isSelected ? 'true' : undefined}
-                onContextMenu={(e) => openContextMenu(e, { tid: thread.id })}
+                onContextMenu={(e) => {
+                  dismissPopover();
+                  openContextMenu(e, { tid: thread.id });
+                }}
                 className={`flex items-center justify-between font-mono px-2 py-1 border-b h-full cursor-pointer border-l-2 ${
                   isActive
                     ? 'border-l-primary bg-accent/60'

@@ -77,7 +77,7 @@ static EXE_PATH: LazyLock<Option<PathBuf>> = LazyLock::new(|| match std::env::cu
     }
 });
 
-fn exe_path() -> Result<&'static Path> {
+pub(crate) fn exe_path() -> Result<&'static Path> {
     EXE_PATH
         .as_deref()
         .ok_or_else(|| Error::UpdateInstall("Joybug can't locate its own executable".to_string()))

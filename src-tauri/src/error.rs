@@ -21,6 +21,12 @@ pub enum Error {
     UpdateCheck(String),
     #[error("Update install failed: {0}")]
     UpdateInstall(String),
+    #[error("JIT debugger registration failed: {0}")]
+    JitDebugger(String),
+    /// The user declined the UAC prompt. Not a failure — the UI toasts it
+    /// calmly and leaves the toggle where it was.
+    #[error("Elevation was cancelled")]
+    JitDebuggerCancelled,
 }
 
 pub type Result<T> = std::result::Result<T, Error>; 

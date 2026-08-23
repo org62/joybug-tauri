@@ -77,14 +77,18 @@ export function KeybindingRow({ actionId, currentChord, preset, checkConflict, o
           </Button>
         )}
 
-        {/* Remove button */}
-        {currentChord && !isCapturing && (
+        {/* Remove button. Unset rows render the same button, hidden but
+            still laid out, so the chord chips line up in one column and the
+            sizing stays owned by the `icon-xs` variant. */}
+        {!isCapturing && (
           <Button
             variant="ghost"
             size="icon-xs"
-            className="opacity-0 group-hover:opacity-100"
+            className={currentChord ? "opacity-0 group-hover:opacity-100" : "invisible"}
             onClick={handleRemove}
             title="Remove keybinding"
+            aria-hidden={!currentChord}
+            tabIndex={currentChord ? undefined : -1}
           >
             <X />
           </Button>

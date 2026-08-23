@@ -223,13 +223,32 @@ fn resolve_attach_pid(session: &mut DebugSession, stored_pid: u32, target_name: 
     super::helpers::match_target_pid(&processes, stored_pid, target_name).map_err(Error::DebugLoop)
 }
 
+/// Signal (once) the event handle a Windows JIT launch carried, then forget it.
+/// The single place a WER release is reported. Only call it on a JIT session —
+/// the lock it takes is on the debug-event hot path. `state` must NOT be locked.
+fn release_wer_event(state: &Arc<Mutex<SessionStateUI>>, app_handle: &Option<AppHandle>) {
+    let Some(handle) = state.lock().unwrap().jit_event_handle.take() else { return };
+    let result = crate::jit::signal_wer_event(handle);
+    let Some(app) = app_handle else { return };
+    // Only now is the session id worth cloning: this runs once per session.
+    let session_id = state.lock().unwrap().id.clone();
+    match result {
+        Ok(()) => crate::ui_logger::log_info(app, &format!("JIT: signalled WER event handle {handle:#x}"), Some(session_id)),
+        Err(e) => {
+            let msg = format!("JIT: {e}");
+            crate::ui_logger::log_error(app, &msg, Some(session_id));
+            crate::ui_logger::toast_error(app, &msg);
+        }
+    }
+}
+
 pub fn run_debug_session(
     session_state: Arc<Mutex<SessionStateUI>>,
     app_handle: Option<AppHandle>,
 ) -> Result<()> {
-    let (session_id, server_url, launch_command, working_directory, environment, attach_pid) = {
+    let (session_id, server_url, launch_command, working_directory, environment, attach_pid, jit_launch) = {
         let state = session_state.lock().unwrap();
-        (state.id.clone(), state.server_url.clone(), state.launch_command.clone(), state.working_directory.clone(), state.environment.clone(), state.attach_pid)
+        (state.id.clone(), state.server_url.clone(), state.launch_command.clone(), state.working_directory.clone(), state.environment.clone(), state.attach_pid, state.jit_event_handle.is_some())
     };
 
     info!("Starting debug session: {}", session_id);
@@ -291,6 +310,27 @@ pub fn run_debug_session(
         .on_event(move |session, event| {
             debug!("📥 Received debug event from server: {}", event);
             info!("Debug event: {}", event);
+
+            // JIT launch: release WER at the attach break (or whatever first
+            // pauses), not at ProcessCreated. Signalling earlier lets the
+            // crashed thread re-raise while the break-in thread is still
+            // parked in DbgBreakPoint, and its exit would then queue behind
+            // the crash. The list is the attach's synthetic replay, Output
+            // included (an OutputDebugString during it is not a pause); stated
+            // negatively on purpose, so an event we do not know about still
+            // discharges the obligation rather than stranding WER. The
+            // `jit_launch` guard keeps every non-JIT session off the lock.
+            if jit_launch
+                && !matches!(
+                    event,
+                    joybug_core::protocol_io::DebugEvent::ProcessCreated { .. }
+                        | joybug_core::protocol_io::DebugEvent::ThreadCreated { .. }
+                        | joybug_core::protocol_io::DebugEvent::DllLoaded { .. }
+                        | joybug_core::protocol_io::DebugEvent::Output { .. }
+                )
+            {
+                release_wer_event(&session.state, &app_handle_clone);
+            }
 
             let handle = match app_handle_clone.as_ref() {
                 Some(h) => h,
@@ -407,7 +447,12 @@ pub fn run_debug_session(
                     joybug_core::protocol_io::DebugEvent::ThreadExited { .. } => settings.stop_on_thread_exit,
                     joybug_core::protocol_io::DebugEvent::DllLoaded { .. } => settings.stop_on_dll_load,
                     joybug_core::protocol_io::DebugEvent::DllUnloaded { .. } => settings.stop_on_dll_unload,
-                    joybug_core::protocol_io::DebugEvent::InitialBreakpoint { .. } => settings.stop_on_initial_breakpoint,
+                    // A JIT (AeDebug) attach always runs through the attach
+                    // break: the crash itself is re-raised as a second-chance
+                    // exception on the faulting thread only after WER's event
+                    // is signalled and the debugger continues — the same reason
+                    // WinDbg registers itself with `-g`.
+                    joybug_core::protocol_io::DebugEvent::InitialBreakpoint { .. } => settings.stop_on_initial_breakpoint && !jit_launch,
                     // A single-step exception (0x80000004) reaching the client is
                     // always program-raised: debugger-initiated steps surface as
                     // StepComplete and internal re-arms are consumed server-side. So
@@ -580,9 +625,11 @@ pub fn run_debug_session(
                 session_state.lock().unwrap().attach_pid = Some(pid);
             }
             info!("Attaching debug session {} to pid {}", session_id, pid);
-            session_builder
-                .attach(pid)
-                .map_err(|e| Error::DebugLoop(e.to_string()))?
+            let result = session_builder.attach(pid);
+            // A JIT attach that failed before producing any event must still
+            // release WER, or the crashed process hangs forever behind us.
+            release_wer_event(&session_state, &app_handle);
+            result.map_err(|e| Error::DebugLoop(e.to_string()))?
         }
         None => session_builder
             .launch_with_options(launch_command, working_directory, environment)

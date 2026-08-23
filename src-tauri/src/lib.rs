@@ -6,6 +6,7 @@ mod custom_types;
 mod data_dir;
 mod error;
 mod events;
+mod jit;
 mod patch_store;
 mod symbol_store;
 mod ui_logger;
@@ -13,6 +14,7 @@ mod session;
 mod state;
 mod settings;
 
+use jit::StartupAttachState;
 use state::{EmbeddedServersMap, LogsState, SessionStatesMap};
 use settings::{SettingsState, load_settings_from_disk};
 
@@ -54,6 +56,20 @@ pub fn run() {
     // unambiguous.
     commands::cleanup_stale_artifacts();
 
+    // Command line: the elevated AeDebug helper modes exit without a window;
+    // a JIT launch (`-p <pid> -e <handle>`) is parked for the UI to attach to.
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.iter().any(|a| a == jit::REGISTER_FLAG) {
+        std::process::exit(jit::do_register());
+    }
+    if args.iter().any(|a| a == jit::UNREGISTER_FLAG) {
+        std::process::exit(jit::do_restore());
+    }
+    let startup_attach = jit::parse_startup_attach(args);
+    if let Some(attach) = &startup_attach {
+        tracing::info!("JIT launch: attaching to pid {} (WER event {:#x})", attach.pid, attach.event_handle);
+    }
+
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
@@ -78,6 +94,7 @@ pub fn run() {
         .manage(commands::OobPool::default())
         .manage(commands::SourceIndexCache::default())
         .manage(commands::PeFilesState::default())
+        .manage(StartupAttachState(std::sync::Mutex::new(startup_attach)))
         .invoke_handler(tauri::generate_handler![
             commands::greet,
             commands::create_debug_session,
@@ -150,6 +167,9 @@ pub fn run() {
             commands::restart_app,
             commands::get_welcome_state,
             commands::dismiss_welcome,
+            commands::get_jit_debugger_status,
+            commands::set_jit_debugger,
+            commands::get_startup_attach,
             commands::toggle_breakpoint,
             commands::set_breakpoints,
             commands::remove_breakpoint,

@@ -17,6 +17,7 @@ import { CommandPalette } from "@/components/CommandPalette";
 import { WelcomeDialog } from "@/components/WelcomeDialog";
 import { UpdateDialog } from "@/components/UpdateDialog";
 import { useStartupDialogs } from "@/hooks/useStartupDialogs";
+import { useStartupAttach } from "@/hooks/useStartupAttach";
 import { FileDropProvider } from "@/components/FileDropProvider";
 import { applyZoom, getStoredZoom, nudgeZoom } from "@/lib/uiZoom";
 import { useDebugSettings, EVENT_ITEMS } from "@/hooks/useDebugSettings";
@@ -76,6 +77,8 @@ function AppContent() {
   // never stack on top of each other.
   const { welcome, dismissWelcome, update, dismissUpdate } =
     useStartupDialogs();
+  // Launched by Windows as the postmortem debugger: attach to the crashed pid.
+  useStartupAttach(navigate);
 
   // Apply the saved UI scale on startup, and handle zoom hotkeys
   // (Ctrl/Cmd +/-/0) — persisted via uiZoom so the choice survives restarts.

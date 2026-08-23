@@ -37,16 +37,11 @@ import {
 } from "@/lib/sessionStorage";
 
 import { DebugSession, SessionStatus } from "@/contexts/SessionContext";
-import { isProcessAvailable, formatTauriError, pathDirname, buildLaunchCommand, DEFAULT_SESSION_NAME } from "@/lib/sessionHelpers";
+import { isProcessAvailable, formatTauriError, pathDirname, buildLaunchCommand, DEFAULT_SESSION_NAME, type ProcessInfo } from "@/lib/sessionHelpers";
 import { pickDroppedFile } from "@/hooks/useFileDrop";
 import { useFileDropTarget } from "@/contexts/FileDropContext";
 import { createSessionRecord, launchExecutable } from "@/lib/launchFile";
 import { appNavHistory } from "@/lib/navHistory";
-
-interface ProcessInfo {
-  pid: number;
-  name: string;
-}
 
 export default function Debugger() {
   const navigate = useNavigate();

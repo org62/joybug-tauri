@@ -110,6 +110,12 @@ export function reportSessionError(label: string, err: unknown, sessionId?: stri
 
 export { moduleBasename, pathDirname } from '@/lib/symbolUtils';
 
+/** One entry of the `list_processes` command's result. */
+export interface ProcessInfo {
+  pid: number;
+  name: string;
+}
+
 /** Placeholder the new-session dialog writes when the user names nothing. */
 export const DEFAULT_SESSION_NAME = 'Unnamed Session';
 

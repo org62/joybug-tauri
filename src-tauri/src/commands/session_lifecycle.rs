@@ -84,6 +84,7 @@ pub async fn create_debug_session(
     is_local_run: bool,
     attach_pid: Option<u32>,
     non_invasive: Option<bool>,
+    jit_event_handle: Option<u64>,
     session_states: State<'_, SessionStatesMap>,
     app_handle: tauri::AppHandle,
 ) -> std::result::Result<String, String> {
@@ -130,6 +131,7 @@ pub async fn create_debug_session(
         is_local_run,
         attach_pid,
         non_invasive,
+        jit_event_handle,
     )));
 
     {
@@ -732,6 +734,7 @@ fn connect_temp_client(server_url: &str) -> Result<crate::session::types::DebugS
         false,
         None,
         false,
+        None,
     )));
     joybug_core::protocol_io::DebugSession::new(tmp_state, Some(server_url))
         .map_err(|e| Error::ConnectionFailed(e.to_string()))
