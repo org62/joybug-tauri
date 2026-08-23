@@ -3,6 +3,7 @@ import React, { Suspense, useEffect } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { useTheme } from "next-themes";
 import { dispatchToast } from "@/lib/toastDispatcher";
+import { toast } from "sonner";
 import { isProcessAvailable } from "@/lib/sessionHelpers";
 import Header from "@/components/Header";
 import { KeybindingContext, useKeybindingContext } from "@/contexts/KeybindingContext";
@@ -143,11 +144,21 @@ function AppContent() {
     const unlistenError = listen<string>("show-toast-error", (event) => {
       dispatchToast("error", event.payload);
     });
+    // Outcome of a "Create Minidump" action. Listened for here, app-wide, so a
+    // result can't be lost to a session page that hasn't mounted its hooks yet,
+    // and toasted with sonner directly (not the burst dispatcher above) so a
+    // user-initiated result is never folded into a "N× ..." summary by the
+    // DLL-load toasts that follow a pause.
+    const unlistenMinidump = listen<{ message: string; error: boolean }>("minidump-result", (event) => {
+      const { message, error } = event.payload;
+      if (error) toast.error(message); else toast.success(message);
+    });
 
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
       unlistenInfo.then(f => f());
       unlistenError.then(f => f());
+      unlistenMinidump.then(f => f());
     };
   }, [navigate, resolvedTheme, setTheme, reverseLookup, toggle]);
 

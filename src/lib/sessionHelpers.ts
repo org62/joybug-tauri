@@ -14,6 +14,14 @@ export function isProcessAvailable(status: SessionStatus | string | undefined | 
 }
 
 /**
+ * True when the target is stopped at a debug event, so a command can be sent
+ * over the session's own connection from inside the paused debug loop.
+ */
+export function isPausedSession(status: SessionStatus | string | undefined | null): boolean {
+  return status === 'Paused';
+}
+
+/**
  * True while the target executes live and values drift between reads: running
  * (invasive), or a non-invasive Open session. Used to gate polling loops.
  */

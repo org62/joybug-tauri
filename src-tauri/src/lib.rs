@@ -95,6 +95,7 @@ pub fn run() {
             commands::pause_debug_session,
             commands::terminate_debug_session,
             commands::detach_debug_session,
+            commands::write_minidump,
             commands::attach_open_session,
             commands::list_processes,
             commands::delete_debug_session,

@@ -3,7 +3,7 @@ use crate::session::{run_debug_session, emit_session_event, LocalServer, UIComma
 use crate::state::{
     DebugSessionUI, EmbeddedServersMap, SessionStateUI, SessionStatesMap, SessionStatusUI,
 };
-use joybug_core::protocol::DebuggerRequest;
+use joybug_core::protocol::{DebuggerRequest, MinidumpKind};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use tauri::{State, Emitter, Manager};
@@ -659,6 +659,19 @@ pub fn detach_debug_session(
 
     crate::ui_logger::log_info(&app_handle, "Detach requested", Some(session_id));
     Ok(())
+}
+
+/// Write a minidump of the paused target to `path`. The result (size, or the
+/// dbghelp error) comes back as a toast + session-log line from the session loop.
+#[tauri::command]
+pub fn write_minidump(
+    session_id: String,
+    path: String,
+    full_memory: bool,
+    session_states: State<'_, SessionStatesMap>,
+) -> Result<()> {
+    let kind = if full_memory { MinidumpKind::Full } else { MinidumpKind::Mini };
+    super::send_paused_command(&session_id, &session_states, UICommand::WriteMinidump { path, kind })
 }
 
 /// Enumerate running processes so the UI can offer an attach target. Connects to

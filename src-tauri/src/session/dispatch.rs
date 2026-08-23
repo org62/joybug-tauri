@@ -9,6 +9,7 @@ use super::emulation::*;
 use super::helpers::report_step_error;
 use super::image_patches::process_scan_image_patches;
 use super::memory::*;
+use super::minidump::process_write_minidump;
 use super::patches::*;
 use super::registers::*;
 use super::threads::*;
@@ -574,6 +575,10 @@ fn process_command(
         }
         UICommand::RefreshBookmarks => {
             process_refresh_bookmarks(session, app_handle_clone, event.pid());
+            CommandResult::Continue
+        }
+        UICommand::WriteMinidump { path, kind } => {
+            process_write_minidump(session, app_handle_clone, event.pid(), path, kind);
             CommandResult::Continue
         }
         UICommand::Detach => {

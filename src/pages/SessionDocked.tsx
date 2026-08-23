@@ -50,7 +50,7 @@ import { useCommandPaletteContext } from "@/contexts/CommandPaletteContext";
 import type { PaletteCommand } from "@/contexts/CommandPaletteContext";
 import {
   Play, Square, Pause, ArrowDownToLine, CornerDownRight, ArrowUpFromLine, SkipForward,
-  Plus, RotateCcw, Navigation,
+  Plus, RotateCcw, Navigation, HardDriveDownload, FileDown,
 } from "lucide-react";
 
 export default function SessionDocked() {
@@ -84,12 +84,14 @@ export default function SessionDocked() {
     handleRestart,
     handlePause,
     handleDetach,
+    handleCreateDump,
     handleAttach,
     canStep,
     canStop,
     canStart,
     canPause,
     canDetach,
+    canDump,
   } = useDebugSession(sessionId);
 
   // Function to sync window states with backend
@@ -343,6 +345,16 @@ export default function SessionDocked() {
           event.stopPropagation();
           if (canDetach) handleDetach();
           break;
+        case "debug.dumpFull":
+          event.preventDefault();
+          event.stopPropagation();
+          if (canDump) handleCreateDump(true);
+          break;
+        case "debug.dumpMini":
+          event.preventDefault();
+          event.stopPropagation();
+          if (canDump) handleCreateDump(false);
+          break;
         case "panel.addMemory":
           event.preventDefault();
           event.stopPropagation();
@@ -379,7 +391,7 @@ export default function SessionDocked() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [handleGo, handleGoPassException, handlePause, handleStart, handleStop, handleRestart, handleDetach, canStep, canPassException, canPause, canStart, canStop, canDetach, handleStepIn, handleStepOver, handleStepOut, goToTab, handleAddNewMemoryTab, handleCloseActiveTab, reverseLookup, setOpen, enterSubInput, handleNavigateToDisassembly, handleNavigateToMemory]);
+  }, [handleGo, handleGoPassException, handlePause, handleStart, handleStop, handleRestart, handleDetach, handleCreateDump, canStep, canPassException, canPause, canStart, canStop, canDetach, canDump, handleStepIn, handleStepOver, handleStepOut, goToTab, handleAddNewMemoryTab, handleCloseActiveTab, reverseLookup, setOpen, enterSubInput, handleNavigateToDisassembly, handleNavigateToMemory]);
 
   const isPaused = displayStatus === 'Paused';
   // Memory/enumeration ops work over OOB whenever a process is available: paused,
@@ -427,6 +439,26 @@ export default function SessionDocked() {
         onSelect: handlePause,
         enabled: canPause,
         keywords: ["pause", "break", "interrupt"],
+      },
+      {
+        id: "session.dumpFull",
+        label: "Create Full Memory Dump…",
+        group: "Session",
+        icon: <HardDriveDownload className="size-4" />,
+        onSelect: () => handleCreateDump(true),
+        enabled: canDump,
+        keywords: ["dump", "minidump", "dmp", "crash", "save", "full", "memory"],
+        keybindingAction: "debug.dumpFull",
+      },
+      {
+        id: "session.dumpMini",
+        label: "Create Minidump…",
+        group: "Session",
+        icon: <FileDown className="size-4" />,
+        onSelect: () => handleCreateDump(false),
+        enabled: canDump,
+        keywords: ["dump", "minidump", "dmp", "crash", "save", "mini"],
+        keybindingAction: "debug.dumpMini",
       },
       // Debug stepping
       {
@@ -543,8 +575,8 @@ export default function SessionDocked() {
 
     return registerCommands(commands);
   }, [
-    canStart, canStop, canPause, canStep, isPaused, canUseMemoryOps, session?.current_event?.event_type,
-    handleStart, handleStop, handleRestart, handlePause,
+    canStart, canStop, canPause, canStep, canDump, isPaused, canUseMemoryOps, session?.current_event?.event_type,
+    handleStart, handleStop, handleRestart, handlePause, handleCreateDump,
     handleGo, handleGoPassException, handleStepIn, handleStepOver, handleStepOut,
     handleNavigateToDisassembly, handleNavigateToMemory,
     goToTab, handleAddNewMemoryTab, handleResetLayout,
@@ -700,12 +732,14 @@ export default function SessionDocked() {
           handleStart={handleStart}
           handlePause={handlePause}
           handleDetach={handleDetach}
+          handleCreateDump={handleCreateDump}
           canStep={canStep}
           canPassException={canPassException}
           canStop={canStop}
           canStart={canStart}
           canPause={canPause}
           canDetach={canDetach}
+          canDump={canDump}
           dockingRef={dockingRef}
           getStatusBadge={getStatusBadge}
           toggleTab={toggleTabWithBackendUpdate}

@@ -1,9 +1,10 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
+import { save as saveFileDialog } from '@tauri-apps/plugin-dialog';
 import { toast } from 'sonner';
 import { DebugSession, Module, ModuleSymbolStatus, PdbLoadResult, Thread, Symbol, hasUsableSymbols } from '@/contexts/SessionContext';
-import { isProcessAvailable, isTargetLive, formatTauriError } from '@/lib/sessionHelpers';
+import { isProcessAvailable, isPausedSession, isTargetLive, formatTauriError, sessionDisplayName } from '@/lib/sessionHelpers';
 import { useDisplayStatus } from '@/hooks/useDisplayStatus';
 
 // The 1s live poll returns fresh arrays every tick even when nothing changed;
@@ -27,7 +28,7 @@ export function useDebugSession(sessionId: string | undefined) {
   const [session, setSession] = useState<DebugSession | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [busyAction, setBusyAction] = useState<
-    "go" | "stepIn" | "stepOut" | "stepOver" | "stop" | "restart" | "pause" | "detach" | "attach" | null
+    "go" | "stepIn" | "stepOut" | "stepOver" | "stop" | "restart" | "pause" | "detach" | "attach" | "dump" | null
   >(null);
   const [modules, setModules] = useState<Module[]>([]);
   const [threads, setThreads] = useState<Thread[]>([]);
@@ -55,10 +56,9 @@ export function useDebugSession(sessionId: string | undefined) {
 
   // Detach is sent over the session's own connection from the paused debug loop,
   // so it's only available while paused.
-  const canDetach = useMemo(() => {
-    if (!session || typeof session.status !== "string") return false;
-    return ["Paused"].includes(session.status);
-  }, [session]);
+  const canDetach = useMemo(() => isPausedSession(session?.status), [session]);
+  // Minidumps are written from inside the paused debug loop as well.
+  const canDump = useMemo(() => isPausedSession(session?.status), [session]);
 
   const loadModules = useCallback(async () => {
     if (!sessionId) return [];
@@ -504,6 +504,34 @@ export function useDebugSession(sessionId: string | undefined) {
     }
   }, [sessionId, canDetach]);
 
+  // Pick a .dmp path, then ask the session loop to write the dump. The result
+  // arrives as a `minidump-result` event (toasted app-wide in App.tsx); only a failure to queue the
+  // command is reported here.
+  const handleCreateDump = useCallback(async (fullMemory: boolean) => {
+    if (!sessionId || !session || !canDump) return;
+    const stem = sessionDisplayName(session).replace(/[<>:"/\\|?*]+/g, "_");
+    const suffix = fullMemory ? "-full" : "";
+    let path: string | null;
+    try {
+      path = await saveFileDialog({
+        defaultPath: `${stem}${suffix}.dmp`,
+        filters: [{ name: "Minidump", extensions: ["dmp"] }, { name: "All Files", extensions: ["*"] }],
+      });
+    } catch (error) {
+      toast.error(`Failed to open save dialog: ${formatTauriError(error)}`);
+      return;
+    }
+    if (!path) return;
+    setBusyAction("dump");
+    try {
+      await invoke("write_minidump", { sessionId, path, fullMemory });
+    } catch (error) {
+      toast.error(`Failed to create minidump: ${formatTauriError(error)}`);
+    } finally {
+      setBusyAction(null);
+    }
+  }, [sessionId, session, canDump]);
+
   // Promote a non-invasive Open session to a full attached debug session.
   const handleAttach = useCallback(async () => {
     if (!sessionId || session?.status !== "Open") return;
@@ -545,11 +573,13 @@ export function useDebugSession(sessionId: string | undefined) {
     handleRestart,
     handlePause,
     handleDetach,
+    handleCreateDump,
     handleAttach,
     canStep,
     canStop,
     canStart,
     canPause,
     canDetach,
+    canDump,
   };
 } 

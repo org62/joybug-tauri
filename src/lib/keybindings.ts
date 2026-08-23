@@ -9,6 +9,8 @@ export type ActionId =
   | "debug.stop"
   | "debug.restart"
   | "debug.detach"
+  | "debug.dumpFull"
+  | "debug.dumpMini"
   // Panels — these navigate to a panel; only panel.closeTab closes one
   | "panel.disassembly"
   | "panel.source"
@@ -65,6 +67,8 @@ export const ACTION_REGISTRY: Record<ActionId, ActionMeta> = {
   "debug.stop":      { label: "Stop Session",      category: "Debug",    description: "Stop the session (terminates a running target)", scope: "session" },
   "debug.restart":   { label: "Restart Session",   category: "Debug",    description: "Stop the session and start a fresh run",      scope: "session" },
   "debug.detach":    { label: "Detach",            category: "Debug",    description: "Detach from the target and leave it running (while paused)", scope: "session" },
+  "debug.dumpFull":  { label: "Create Full Memory Dump", category: "Debug", description: "Write a full-memory minidump (.dmp) of the paused target", scope: "session" },
+  "debug.dumpMini":  { label: "Create Minidump",   category: "Debug",    description: "Write a small minidump (.dmp) of the paused target", scope: "session" },
 
   "panel.disassembly":   { label: "Go to Disassembly",    category: "Panels", description: "Open and focus the Disassembly panel",    scope: "session" },
   "panel.source":        { label: "Go to Source",         category: "Panels", description: "Open and focus the Source panel",         scope: "session" },
@@ -131,6 +135,9 @@ const SHARED_BINDINGS: Record<string, ChordString> = {
 
   "navigate.goToDisassembly": "ctrl+shift+1",
   "navigate.goToMemory":      "ctrl+shift+2",
+
+  "debug.dumpFull":  "",
+  "debug.dumpMini":  "",
 
   "palette.open":    "ctrl+k",
 

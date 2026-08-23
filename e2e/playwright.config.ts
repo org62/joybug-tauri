@@ -42,6 +42,7 @@ export default defineConfig({
     "stepping.spec.ts",
     "source-view.spec.ts",
     "attach-detach.spec.ts",
+    "minidump.spec.ts",
     "callstack.spec.ts",
     "thread-switch.spec.ts",
     "thread-control.spec.ts",

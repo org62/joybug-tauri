@@ -1,7 +1,7 @@
 import React from 'react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Square, Play, RedoDot, ArrowDownToDot, ArrowUpFromDot, Pause, Plus, ChevronDown, Unplug, Loader2, AlertTriangle, RotateCcw } from 'lucide-react';
+import { Square, Play, RedoDot, ArrowDownToDot, ArrowUpFromDot, Pause, Plus, ChevronDown, Unplug, Loader2, AlertTriangle, RotateCcw, HardDriveDownload, FileDown } from 'lucide-react';
 import { exceptionName, formatExceptionCode, EXCEPTION_SINGLE_STEP } from '@/lib/exceptionNames';
 import {
   DropdownMenu,
@@ -9,6 +9,7 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuShortcut,
+  DropdownMenuSeparator,
 } from '@/components/ui/dropdown-menu';
 import { DockWindowsMenu, DockWindowsMenuGroup } from '@/components/DockWindowsMenu';
 import { SESSION_TAB_DEFS, SESSION_TAB_CATEGORIES } from '@/lib/sessionTabs';
@@ -18,7 +19,7 @@ import { useKeybindingContext } from '@/contexts/KeybindingContext';
 
 export interface SessionHeaderProps {
   session: DebugSession;
-  busyAction: "go" | "stepIn" | "stepOut" | "stepOver" | "stop" | "restart" | "pause" | "detach" | "attach" | null;
+  busyAction: "go" | "stepIn" | "stepOut" | "stepOver" | "stop" | "restart" | "pause" | "detach" | "attach" | "dump" | null;
   handleGo: () => void;
   handleGoPassException: () => void;
   handleStepIn: () => void;
@@ -29,6 +30,7 @@ export interface SessionHeaderProps {
   handleRestart: () => void;
   handlePause: () => void;
   handleDetach: () => void;
+  handleCreateDump: (fullMemory: boolean) => void;
   handleAttach: () => void;
   canStep: boolean;
   canPassException: boolean;
@@ -36,6 +38,7 @@ export interface SessionHeaderProps {
   canStart: boolean;
   canPause: boolean;
   canDetach: boolean;
+  canDump: boolean;
   dockingRef: React.RefObject<{ getActiveTabs: () => string[] }>; // rc-dock doesn't export DockingLayoutRef type properly
   getStatusBadge: (status: SessionStatus) => React.ReactNode;
   toggleTab: (tabId: string) => void;
@@ -81,6 +84,7 @@ export const SessionHeader: React.FC<SessionHeaderProps> = ({
   handleRestart,
   handlePause,
   handleDetach,
+  handleCreateDump,
   handleAttach,
   canStep,
   canPassException,
@@ -88,6 +92,7 @@ export const SessionHeader: React.FC<SessionHeaderProps> = ({
   canStart,
   canPause,
   canDetach,
+  canDump,
   getStatusBadge,
   toggleTab,
   resetLayout,
@@ -289,7 +294,7 @@ export const SessionHeader: React.FC<SessionHeaderProps> = ({
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button
-                    disabled={busyAction !== null || (!canStop && !canDetach)}
+                    disabled={busyAction !== null || (!canStop && !canDetach && !canDump)}
                     size="sm"
                     variant="outline"
                     className="rounded-l-none border-l border-l-border px-1"
@@ -316,6 +321,25 @@ export const SessionHeader: React.FC<SessionHeaderProps> = ({
                     <Unplug className="h-4 w-4" />
                     <span className="flex-1">Detach (leave running)</span>
                     <DropdownMenuShortcut>{getKeybinding("debug.detach")}</DropdownMenuShortcut>
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    onSelect={() => handleCreateDump(true)}
+                    disabled={!canDump}
+                    title="Write a full-memory minidump (.dmp) of the paused target"
+                  >
+                    <HardDriveDownload className="h-4 w-4" />
+                    <span className="flex-1">Create Full Memory Dump…</span>
+                    <DropdownMenuShortcut>{getKeybinding("debug.dumpFull")}</DropdownMenuShortcut>
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onSelect={() => handleCreateDump(false)}
+                    disabled={!canDump}
+                    title="Write a small minidump (.dmp) of the paused target: stacks, modules, thread info and the memory they reference"
+                  >
+                    <FileDown className="h-4 w-4" />
+                    <span className="flex-1">Create Minidump…</span>
+                    <DropdownMenuShortcut>{getKeybinding("debug.dumpMini")}</DropdownMenuShortcut>
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>

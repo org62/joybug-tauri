@@ -1,4 +1,5 @@
 use crate::state::SessionStateUI;
+use joybug_core::protocol::MinidumpKind;
 use std::sync::{Arc, Mutex};
 
 pub type DebugSession = joybug_core::protocol_io::DebugSession<Arc<Mutex<SessionStateUI>>>;
@@ -88,6 +89,8 @@ pub enum UICommand {
     SetBookmarkValue { id: String, value: String },
     ToggleBookmarkLock { id: String, locked: bool },
     RefreshBookmarks,
+    /// Write a minidump of the paused target to `path`.
+    WriteMinidump { path: String, kind: MinidumpKind },
 }
 
 impl UICommand {
