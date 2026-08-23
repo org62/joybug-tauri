@@ -53,24 +53,32 @@ export function buildMapping(info: ModuleExtraInfo, base: bigint): PeMapping {
   };
 }
 
+/** The section `rva` falls in, or undefined for headers / outside any section. */
+function sectionForRva(m: PeMapping, rva: number): PeSectionMap | undefined {
+  return m.sections.find(
+    (s) => rva >= s.virtAddr && rva < s.virtAddr + Math.max(s.virtSize, s.rawSize),
+  );
+}
+
 /** True when `rva` falls in an executable section (points at code, not data). */
 export function rvaIsExecutable(m: PeMapping, rva: number): boolean {
-  for (const s of m.sections) {
-    if (rva >= s.virtAddr && rva < s.virtAddr + Math.max(s.virtSize, s.rawSize)) {
-      return s.exec;
-    }
-  }
-  return false;
+  return sectionForRva(m, rva)?.exec ?? false;
 }
 
 export function rvaToOffset(m: PeMapping, rva: number): number {
-  for (const s of m.sections) {
-    const size = Math.max(s.virtSize, s.rawSize);
-    if (rva >= s.virtAddr && rva < s.virtAddr + size) {
-      return s.rawPtr + (rva - s.virtAddr);
-    }
-  }
-  return rva; // headers / outside sections map identically
+  const s = sectionForRva(m, rva);
+  // headers / outside sections map identically
+  return s ? s.rawPtr + (rva - s.virtAddr) : rva;
+}
+
+/** Triple plus "does this point at code", from a single section lookup — the
+ *  pair every address link needs, on the tree's hottest render path. */
+export function addrForRva(m: PeMapping, rva: number): { triple: AddrTriple; isCode: boolean } {
+  const s = sectionForRva(m, rva);
+  return {
+    triple: { va: rvaToVa(m, rva), rva, file: s ? s.rawPtr + (rva - s.virtAddr) : rva },
+    isCode: s?.exec ?? false,
+  };
 }
 
 export function offsetToRva(m: PeMapping, offset: number): number {

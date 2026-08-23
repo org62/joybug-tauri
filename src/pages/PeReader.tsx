@@ -7,7 +7,6 @@ import { FileUp, Save, SaveAll, X, FileSearch } from "lucide-react";
 import { Page } from "@/components/ui/page";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { DockWindowsMenu, DockWindowsMenuTab } from "@/components/DockWindowsMenu";
 import { DockPanel, PanelBody } from "@/components/ui/panel";
 import { LayoutData, TabData } from "rc-dock";
@@ -15,7 +14,8 @@ import DockingLayout, { DockingLayoutRef } from "@/components/DockingLayout";
 import { DockingConfig } from "@/hooks/useDocking";
 import { HexView } from "@/components/HexView";
 import { AssemblyView } from "@/components/AssemblyView";
-import { PeStructureTree } from "@/components/pe/PeStructureTree";
+import { PeStructureTree, PE_TREE_MIN_WIDTH } from "@/components/pe/PeStructureTree";
+import { AddrModeSelect } from "@/components/pe/AddrModeSelect";
 import { PeSymbolsView, PeSymbol } from "@/components/pe/PeSymbolsView";
 import { SymbolPreview } from "@/components/SymbolSearchView";
 import { PeStringsView } from "@/components/pe/PeStringsView";
@@ -26,7 +26,7 @@ import { AsmDisassembleFn, Instruction } from "@/hooks/useAssemblyView";
 import { ModuleExtraInfo } from "@/hooks/useModuleInfo";
 import { PeScanFn, PeStringScanResult } from "@/hooks/usePeStringScan";
 import { SymbolResolver } from "@/lib/hexUtils";
-import { PeMapping, AddrMode, ADDR_MODE_LABELS, buildMapping, formatOffset, formatVa, rvaToVa, tripleFromInput, tripleFromVa } from "@/lib/peAddress";
+import { PeMapping, AddrMode, AddrTriple, buildMapping, formatOffset, formatVa, rvaToVa, tripleFromInput, tripleFromVa } from "@/lib/peAddress";
 import { applyFieldEdit } from "@/lib/peDecode";
 import { memoryNavigation, disassemblyNavigation } from "@/lib/navigationStore";
 import { NavHistoryStore, appNavHistory } from "@/lib/navHistory";
@@ -99,18 +99,23 @@ const PeStructuresTab: React.FC = () => {
   // The tree's big groups (imports/exports/exception) virtualize inline against
   // this panel viewport, so the panel has a single scroll region.
   const viewportRef = useRef<HTMLDivElement>(null);
+  // Stable adapters: the tree speaks address triples, this host's tabs are
+  // coordinate-typed (hex by file offset, disassembly by VA). Inline arrows
+  // here would rebuild the tree's navigation context on every render.
+  const goToHex = useCallback((t: AddrTriple) => onGoToHex(t.file), [onGoToHex]);
+  const goToDisasm = useCallback((t: AddrTriple) => onGoToDisasm(t.va), [onGoToDisasm]);
   if (!summary || !mapping) return <NoFilePlaceholder />;
   return (
     <DockPanel>
-      <PanelBody viewportRef={viewportRef}>
+      <PanelBody viewportRef={viewportRef} minContentWidth={PE_TREE_MIN_WIDTH}>
         <PeStructureTree
           info={summary.info}
           mapping={mapping}
           mode={mode}
           scrollRef={viewportRef}
           onSetField={setField}
-          onGoToHex={onGoToHex}
-          onGoToDisasm={onGoToDisasm}
+          onGoToHex={goToHex}
+          onGoToDisasm={goToDisasm}
           onSelectField={onSelectField}
         />
       </PanelBody>
@@ -486,16 +491,7 @@ export default function PeReader() {
             </Button>
           )}
           {path && (
-            <Select value={mode} onValueChange={(v) => setMode(v as AddrMode)}>
-              <SelectTrigger size="xs" className="w-32" title="Address display mode">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {(["va", "rva", "file"] as AddrMode[]).map((m) => (
-                  <SelectItem key={m} value={m} className="text-xs">{ADDR_MODE_LABELS[m]}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <AddrModeSelect value={mode} onChange={setMode} className="w-32" />
           )}
           <div className="ml-2 flex-1 min-w-0 text-sm font-mono truncate text-muted-foreground" title={path ?? undefined}>
             {path ? moduleBasename(path) : "No PE file open"}

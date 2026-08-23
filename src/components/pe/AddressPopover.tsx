@@ -13,10 +13,13 @@ interface PeAddressLinkProps {
   /** True when the address points at code — a click opens the disassembly view;
    *  otherwise it opens the hex view. */
   isCode?: boolean;
-  /** Jump to this address in the hex view (receives the file offset). */
-  onGoToHex: (offset: number) => void;
-  /** Jump to this address in the disassembly view (receives the VA). */
-  onGoToDisasm: (va: bigint) => void;
+  /** Jump to this address in the data (hex / memory) view. The host picks
+   *  its coordinate from the triple: file offset for a file, VA for a process. */
+  onGoToHex: (triple: AddrTriple) => void;
+  /** Jump to this address in the disassembly view. */
+  onGoToDisasm: (triple: AddrTriple) => void;
+  /** Label of the data-view button ("Hex" for a file, "Memory" for a process). */
+  hexLabel?: string;
   className?: string;
 }
 
@@ -33,7 +36,7 @@ const CLOSE_DELAY_MS = 120;
  * directly — to the disassembly view for code, or the hex view for data.
  * Rendered into a portal and positioned next to the trigger.
  */
-export const PeAddressLink: React.FC<PeAddressLinkProps> = ({ triple, mode, isCode, onGoToHex, onGoToDisasm, className }) => {
+export const PeAddressLink: React.FC<PeAddressLinkProps> = ({ triple, mode, isCode, onGoToHex, onGoToDisasm, hexLabel = "Hex", className }) => {
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
   const triggerRef = useRef<HTMLSpanElement>(null);
@@ -61,9 +64,9 @@ export const PeAddressLink: React.FC<PeAddressLinkProps> = ({ triple, mode, isCo
   // Direct navigation: code → disassembly (by VA), data → hex (by file offset).
   const navigate = useCallback(() => {
     close();
-    if (isCode) onGoToDisasm(triple.va);
-    else onGoToHex(triple.file);
-  }, [close, isCode, onGoToDisasm, onGoToHex, triple.va, triple.file]);
+    if (isCode) onGoToDisasm(triple);
+    else onGoToHex(triple);
+  }, [close, isCode, onGoToDisasm, onGoToHex, triple]);
 
   return (
     <>
@@ -103,10 +106,10 @@ export const PeAddressLink: React.FC<PeAddressLinkProps> = ({ triple, mode, isCo
             ))}
           </div>
           <div className="mt-2 pt-2 border-t flex gap-1">
-            <Button size="xs" variant="outline" onClick={() => { onGoToHex(triple.file); close(); }}>
-              <ArrowRight className="h-3 w-3 mr-1" /> Hex
+            <Button size="xs" variant="outline" onClick={() => { onGoToHex(triple); close(); }}>
+              <ArrowRight className="h-3 w-3 mr-1" /> {hexLabel}
             </Button>
-            <Button size="xs" variant="outline" onClick={() => { onGoToDisasm(triple.va); close(); }}>
+            <Button size="xs" variant="outline" onClick={() => { onGoToDisasm(triple); close(); }}>
               <Cpu className="h-3 w-3 mr-1" /> Disasm
             </Button>
           </div>

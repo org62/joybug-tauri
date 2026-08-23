@@ -1,14 +1,12 @@
 // Symbolic decoding of PE header fields — flag bit names, enum values, and
 // display formatters. Shared by the structure tree (read + edit) and the
-// read-only ModuleInfoView.
+// read-only session PE Viewer (ModuleInfoView renders the same tree).
 
 import type { ExportKind, ImportDescriptorInfo, ImportKind, ModuleExtraInfo } from "@/hooks/useModuleInfo";
 
 export interface FlagBit {
   bit: number;
   name: string;
-  /** Compact label for dense table cells; bits without one are omitted there. */
-  short?: string;
 }
 
 export interface EnumValue {
@@ -33,16 +31,16 @@ export const DLL_CHARACTERISTICS_FLAGS: FlagBit[] = [
 
 // IMAGE_SCN_* (the commonly-toggled subset)
 export const SECTION_CHARACTERISTICS_FLAGS: FlagBit[] = [
-  { bit: 0x00000020, name: "CNT_CODE", short: "Code" },
-  { bit: 0x00000040, name: "CNT_INITIALIZED_DATA", short: "InitData" },
-  { bit: 0x00000080, name: "CNT_UNINITIALIZED_DATA", short: "UninitData" },
+  { bit: 0x00000020, name: "CNT_CODE" },
+  { bit: 0x00000040, name: "CNT_INITIALIZED_DATA" },
+  { bit: 0x00000080, name: "CNT_UNINITIALIZED_DATA" },
   { bit: 0x02000000, name: "MEM_DISCARDABLE" },
   { bit: 0x04000000, name: "MEM_NOT_CACHED" },
   { bit: 0x08000000, name: "MEM_NOT_PAGED" },
   { bit: 0x10000000, name: "MEM_SHARED" },
-  { bit: 0x20000000, name: "MEM_EXECUTE", short: "X" },
-  { bit: 0x40000000, name: "MEM_READ", short: "R" },
-  { bit: 0x80000000, name: "MEM_WRITE", short: "W" },
+  { bit: 0x20000000, name: "MEM_EXECUTE" },
+  { bit: 0x40000000, name: "MEM_READ" },
+  { bit: 0x80000000, name: "MEM_WRITE" },
 ];
 
 // IMAGE_FILE_* characteristics (read-only display only for now)
@@ -90,21 +88,9 @@ export const DATA_DIRECTORY_NAMES = [
   "IAT", "Delay Import", "CLR Runtime", "Reserved",
 ];
 
-export function enumLabel(values: EnumValue[], value: number): string {
-  return values.find((v) => v.value === value)?.label ?? `Unknown (0x${value.toString(16)})`;
-}
-
 export function decodeFlags(flags: FlagBit[], value: number): string {
   const on = flags.filter((f) => (value & f.bit) !== 0).map((f) => f.name);
   return on.length ? on.join(" | ") : "(none)";
-}
-
-/** Compact variant of `decodeFlags` using the `short` labels (for table cells). */
-export function decodeShortFlags(flags: FlagBit[], value: number): string {
-  return flags
-    .filter((f) => f.short && (value & f.bit) !== 0)
-    .map((f) => f.short)
-    .join(" | ");
 }
 
 export function decodeSectionName(nameBytes: number[]): string {

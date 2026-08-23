@@ -4,7 +4,7 @@ import { useVirtualizer } from '@tanstack/react-virtual';
 // Virtualized rows rendered inline within an outer ScrollArea (rather than in
 // their own scroll region): measures the list's offset from the scroll
 // container so the virtualizer's scrollMargin stays correct as content above
-// the list changes size. Shared by ModuleInfoView's tables and the PE
+// the list changes size. Used by the PE
 // structure tree's imports/exports/exception groups.
 export function useInlineVirtualizer(
   scrollContainerRef: React.RefObject<HTMLDivElement | null>,

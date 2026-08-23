@@ -18,6 +18,7 @@ export default defineConfig({
   testMatch: [
     "routing.spec.ts",
     "pe-reader.spec.ts",
+    "pe-viewer-session.spec.ts",
     "drag-drop.spec.ts",
     "keyboard-shortcuts.spec.ts",
     "windows-menu.spec.ts",

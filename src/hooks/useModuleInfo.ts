@@ -128,6 +128,8 @@ export interface ModuleExtraInfo {
   // Present in the backend payload; optional here for backward compatibility.
   dos_header?: DosHeader;
   runtime_functions?: RuntimeFunction[] | null;
+  /** RVAs of the TLS callbacks (empty when the module has none). */
+  tls_callbacks?: number[];
 }
 
 interface ModuleExtraInfoResult {
