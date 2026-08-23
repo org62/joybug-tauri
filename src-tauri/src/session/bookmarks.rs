@@ -170,15 +170,98 @@ pub(crate) fn emit_bookmarks_event(
         resolved.push(ResolvedBookmark::build(bm, addr, current_value));
     }
 
-    #[derive(serde::Serialize)]
-    struct BookmarksUpdatedEvent {
-        session_id: String,
-        bookmarks: Vec<ResolvedBookmark>,
-    }
-    let payload = BookmarksUpdatedEvent { session_id, bookmarks: resolved };
+    emit_bookmarks_payload(handle, session_id, resolved);
+}
+
+#[derive(serde::Serialize)]
+struct BookmarksUpdatedEvent {
+    session_id: String,
+    bookmarks: Vec<ResolvedBookmark>,
+}
+
+fn emit_bookmarks_payload(handle: &AppHandle, session_id: String, bookmarks: Vec<ResolvedBookmark>) {
+    let payload = BookmarksUpdatedEvent { session_id, bookmarks };
     if let Err(e) = handle.emit("bookmarks-updated", &payload) {
         warn!("Failed to emit bookmarks-updated event: {}", e);
     }
+}
+
+/// Emit `bookmarks-updated` from session state alone: no memory reads, so every
+/// entry carries `current_value: None` and resolves statically (module+offset only).
+/// Used on process exit and for state-only edits while the session is Stopped.
+pub(crate) fn emit_bookmarks_event_from_state(
+    session_state: &Arc<Mutex<SessionStateUI>>,
+    handle: &AppHandle,
+) {
+    let (session_id, resolved) = {
+        let s = session_state.lock().unwrap();
+        let resolved = s.bookmarks.iter().map(|bm| bm.to_resolved_static(&s.modules)).collect();
+        (s.id.clone(), resolved)
+    };
+    emit_bookmarks_payload(handle, session_id, resolved);
+}
+
+// ----- state-only edits (session Stopped: no process, no live freezes) -----
+
+/// The shared tail of every state-only edit: mutate under the lock, then emit
+/// and persist -- in that order, once, so the offline paths can't drift apart.
+fn edit_and_publish(
+    session_state: &Arc<Mutex<SessionStateUI>>,
+    handle: &AppHandle,
+    edit: impl FnOnce(&mut SessionStateUI),
+) {
+    edit(&mut session_state.lock().unwrap());
+    emit_bookmarks_event_from_state(session_state, handle);
+    persist_bookmarks(session_state);
+}
+
+/// Drop bookmarks by id without touching a debuggee. Only valid while the session
+/// is Stopped (freeze handles were already dropped by `clear_runtime_caches`).
+pub(crate) fn remove_bookmarks_offline(
+    session_state: &Arc<Mutex<SessionStateUI>>,
+    handle: &AppHandle,
+    ids: &[String],
+) {
+    edit_and_publish(session_state, handle, |state| {
+        state.bookmarks.retain(|b| !ids.contains(&b.id));
+    });
+}
+
+/// Rename / comment / regroup / retype a bookmark. Only valid while Stopped.
+pub(crate) fn update_bookmark_offline(
+    session_state: &Arc<Mutex<SessionStateUI>>,
+    handle: &AppHandle,
+    id: &str,
+    name: Option<String>,
+    comment: Option<String>,
+    group: Option<String>,
+    value_type: Option<String>,
+) {
+    edit_and_publish(session_state, handle, |state| {
+        if let Some(bm) = state.bookmarks.iter_mut().find(|b| b.id == id) {
+            bm.name = name;
+            bm.comment = comment;
+            bm.group = group;
+            if value_type.is_some() {
+                bm.value_type = value_type;
+            }
+        }
+    });
+}
+
+/// Unlock a bookmark while Stopped (there is no live freeze to tear down; the
+/// persisted `locked` flag is what a future run would re-freeze from).
+pub(crate) fn unlock_bookmark_offline(
+    session_state: &Arc<Mutex<SessionStateUI>>,
+    handle: &AppHandle,
+    id: &str,
+) {
+    edit_and_publish(session_state, handle, |state| {
+        if let Some(b) = state.bookmarks.iter_mut().find(|b| b.id == id) {
+            b.locked = false;
+            b.freeze_id = None;
+        }
+    });
 }
 
 // ----- command processing -----

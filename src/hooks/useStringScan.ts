@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
+import { useResetOnNewProcess } from '@/hooks/useResetOnNewProcess';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { formatTauriError } from '@/lib/sessionHelpers';
@@ -87,7 +88,7 @@ interface StringScanErrorPayload {
   error: string;
 }
 
-export function useStringScan(sessionId: string | undefined, available: boolean) {
+export function useStringScan(sessionId: string | undefined, available: boolean, processId?: number | null) {
   const [resultsPath, setResultsPath] = useState<string | null>(null);
   const [scope, setScope] = useState<StringScanScope>('module');
   // Base address (hex string) of the module to scan; matches Module.base_address.
@@ -144,6 +145,16 @@ export function useStringScan(sessionId: string | undefined, available: boolean)
     resetResults();
     setFilter('');
   }, [resetResults]);
+
+  // Results survive a stop (still readable) but not a restart: their addresses
+  // belong to the dead process. Also drop a scan that was still running when
+  // the process went away, so the toolbar doesn't stay stuck on "scanning".
+  useResetOnNewProcess(
+    processId,
+    () => { resetResults(); setIsScanning(false); },
+    available,
+    () => setIsScanning(false),
+  );
 
   // Reset when the session ends, and best-effort delete the results file.
   useEffect(() => {

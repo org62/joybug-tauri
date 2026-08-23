@@ -27,6 +27,8 @@ interface SourceLine {
 interface SourceViewProps {
   sessionId?: string;
   isPaused?: boolean;
+  /** False when the session has no process (Stopped). */
+  canUseMemoryOps?: boolean;
   address?: number;
   symbolsRefreshKey?: string;
   /** Uppercase-hex breakpoint addresses, for gutter dots. */
@@ -42,6 +44,7 @@ const NAME_COLLATOR = new Intl.Collator(undefined, { sensitivity: "base" });
 export function SourceView({
   sessionId,
   isPaused,
+  canUseMemoryOps = true,
   address,
   symbolsRefreshKey,
   breakpointAddresses,
@@ -70,7 +73,7 @@ export function SourceView({
     extendUp,
     extendDown,
     lineToAddress,
-  } = useSourceView({ sessionId, isPaused, pcAddress: address, symbolsRefreshKey });
+  } = useSourceView({ sessionId, isPaused, canUseMemoryOps, pcAddress: address, symbolsRefreshKey });
 
   const virtualizerRef = useRef<Virtualizer<HTMLDivElement, Element>>(null);
   const [selectedLine, setSelectedLine] = useState<number | null>(null);
@@ -271,7 +274,7 @@ export function SourceView({
         </Button>
 
         {/* Refresh */}
-        <Button variant="outline" size="icon-xs" onClick={refresh} disabled={isLoading} title="Re-resolve current line">
+        <Button variant="outline" size="icon-xs" onClick={refresh} disabled={isLoading || !canUseMemoryOps} title="Re-resolve current line">
           <RefreshCw className={cn(isLoading && "animate-spin")} />
         </Button>
 

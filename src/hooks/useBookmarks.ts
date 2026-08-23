@@ -4,6 +4,7 @@ import { listen } from '@tauri-apps/api/event';
 import { ResolvedBookmark } from '@/contexts/SessionContext';
 import { useLiveRefresh } from '@/hooks/useLiveRefresh';
 import { useChangedValues } from '@/hooks/useChangedValues';
+import { reportSessionError } from '@/lib/sessionHelpers';
 
 export type { ResolvedBookmark } from '@/contexts/SessionContext';
 
@@ -23,7 +24,7 @@ interface BookmarksUpdatedPayload {
   bookmarks: ResolvedBookmark[];
 }
 
-export function useBookmarks(sessionId?: string, isPaused?: boolean, sessionBookmarks?: ResolvedBookmark[], isLive?: boolean) {
+export function useBookmarks(sessionId?: string, canUseMemoryOps?: boolean, sessionBookmarks?: ResolvedBookmark[], isLive?: boolean) {
   const [bookmarks, setBookmarks] = useState<ResolvedBookmark[]>([]);
 
   const sessionBookmarksRef = useRef(sessionBookmarks);
@@ -43,20 +44,21 @@ export function useBookmarks(sessionId?: string, isPaused?: boolean, sessionBook
     }
   }, [sessionId]);
 
-  // Session cleanup / seed + refresh live values when the session appears and
-  // on pause transitions. Not gated on isPaused — a non-invasive Open session
-  // never pauses but still has persisted bookmarks to show (and the live poll
-  // below skips its refresh while the list is empty, so seeding matters).
+  // Seed from the session payload when the session appears and re-seed when a
+  // process appears/disappears; read live values only while a process exists.
+  // Persisted bookmarks stay visible (and metadata-editable) while Stopped —
+  // only the session going away clears them. (The live poll below skips its
+  // refresh while the list is empty, so seeding matters.)
   useEffect(() => {
     if (!sessionId) {
       setBookmarks([]);
       return;
     }
-    if (sessionBookmarksRef.current) {
+    if (sessionBookmarksRef.current && sessionBookmarksRef.current.length > 0) {
       setBookmarks(sessionBookmarksRef.current);
     }
-    refresh();
-  }, [sessionId, isPaused, refresh]);
+    if (canUseMemoryOps) refresh();
+  }, [sessionId, canUseMemoryOps, refresh]);
 
   // Poll live values while the target runs (Running or non-invasive Open) and
   // refresh once on pause transitions, on the shared cadence. The backend reads
@@ -97,7 +99,7 @@ export function useBookmarks(sessionId?: string, isPaused?: boolean, sessionBook
         asmText: params.asmText ?? null,
       });
     } catch (e) {
-      console.error('Failed to add bookmark:', e);
+      reportSessionError('add bookmark', e, sessionId);
     }
   }, [sessionId]);
 
@@ -106,7 +108,7 @@ export function useBookmarks(sessionId?: string, isPaused?: boolean, sessionBook
     try {
       await invoke('remove_bookmark', { sessionId, id });
     } catch (e) {
-      console.error('Failed to remove bookmark:', e);
+      reportSessionError('remove bookmark', e, sessionId);
     }
   }, [sessionId]);
 
@@ -115,7 +117,7 @@ export function useBookmarks(sessionId?: string, isPaused?: boolean, sessionBook
     try {
       await invoke('remove_bookmarks', { sessionId, ids });
     } catch (e) {
-      console.error('Failed to remove bookmarks:', e);
+      reportSessionError('remove bookmarks', e, sessionId);
     }
   }, [sessionId]);
 
@@ -134,7 +136,7 @@ export function useBookmarks(sessionId?: string, isPaused?: boolean, sessionBook
         valueType: fields.valueType ?? null,
       });
     } catch (e) {
-      console.error('Failed to update bookmark:', e);
+      reportSessionError('update bookmark', e, sessionId);
     }
   }, [sessionId]);
 
@@ -143,7 +145,7 @@ export function useBookmarks(sessionId?: string, isPaused?: boolean, sessionBook
     try {
       await invoke('set_bookmark_value', { sessionId, id, value });
     } catch (e) {
-      console.error('Failed to set bookmark value:', e);
+      reportSessionError('set bookmark value', e, sessionId);
     }
   }, [sessionId]);
 
@@ -152,7 +154,7 @@ export function useBookmarks(sessionId?: string, isPaused?: boolean, sessionBook
     try {
       await invoke('toggle_bookmark_lock', { sessionId, id, locked });
     } catch (e) {
-      console.error('Failed to toggle bookmark lock:', e);
+      reportSessionError('toggle bookmark lock', e, sessionId);
     }
   }, [sessionId]);
 

@@ -32,6 +32,10 @@ interface BreakpointsViewProps {
   onNavigateToDisassembly?: (address: string) => void;
   registers?: RegisterContext;
   resolveSymbol?: SymbolResolver;
+  /** False when the session has no process (Stopped): adding by address needs
+   * module resolution, so the add input is disabled and a hint is shown. The
+   * persisted rows stay editable (remove / rename / group / enable flag). */
+  canUseMemoryOps?: boolean;
 }
 
 /** Breakpoint dot color depends on bp_kind: red software, amber hardware, violet watchpoint (access trace) */
@@ -74,6 +78,7 @@ export function BreakpointsView({
   onNavigateToDisassembly,
   registers,
   resolveSymbol,
+  canUseMemoryOps = true,
 }: BreakpointsViewProps) {
   const [addressInput, setAddressInput] = useState("");
   const { columnWidths, handleColumnResizeStart } = useColumnWidths<ColKey>(COLUMN_WIDTHS_KEY, DEFAULT_WIDTHS);
@@ -281,7 +286,19 @@ export function BreakpointsView({
               buttonLabel={<Plus />}
               buttonTitle="Add breakpoint"
               historyKey="bp-address"
+              disabled={!canUseMemoryOps}
             />
+            {!canUseMemoryOps && (
+              <Badge
+                size="xs"
+                variant="outline"
+                className="shrink-0 text-muted-foreground"
+                title="No process — breakpoints are re-armed when their module loads on the next run"
+                data-testid="breakpoints-offline-hint"
+              >
+                applied on next run
+              </Badge>
+            )}
           </PanelToolbar>
         )}
         renderHeader={() => (

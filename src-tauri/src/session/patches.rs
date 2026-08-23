@@ -40,26 +40,82 @@ pub(crate) fn emit_patches_event(
     changed: bool,
 ) {
     if let Some(ref handle) = app_handle_clone {
-        let (session_id, patches, revision) = {
-            let mut state = session.state.lock().unwrap();
-            if changed {
-                state.patches_revision += 1;
-            }
-            (state.id.clone(), state.patches.clone(), state.patches_revision)
-        };
-
-        #[derive(serde::Serialize)]
-        struct PatchesUpdatedEvent {
-            session_id: String,
-            patches: Vec<PatchInfo>,
-            revision: u64,
-        }
-
-        let payload = PatchesUpdatedEvent { session_id, patches, revision };
-        if let Err(e) = handle.emit("patches-updated", &payload) {
-            error!("Failed to emit patches-updated event: {}", e);
-        }
+        emit_patches_event_from_state(&session.state, handle, changed);
     }
+}
+
+/// Emit `patches-updated` straight from session state — no client needed.
+/// Used on process exit and for state-only edits while the session is Stopped.
+pub(crate) fn emit_patches_event_from_state(
+    session_state: &Arc<Mutex<SessionStateUI>>,
+    handle: &AppHandle,
+    changed: bool,
+) {
+    let (session_id, patches, revision) = {
+        let mut state = session_state.lock().unwrap();
+        if changed {
+            state.patches_revision += 1;
+        }
+        (state.id.clone(), state.patches.clone(), state.patches_revision)
+    };
+
+    #[derive(serde::Serialize)]
+    struct PatchesUpdatedEvent {
+        session_id: String,
+        patches: Vec<PatchInfo>,
+        revision: u64,
+    }
+
+    let payload = PatchesUpdatedEvent { session_id, patches, revision };
+    if let Err(e) = handle.emit("patches-updated", &payload) {
+        error!("Failed to emit patches-updated event: {}", e);
+    }
+}
+
+// ----- state-only edits (session Stopped: no process, no patch is applied) -----
+
+/// The shared tail of every state-only edit: mutate under the lock, then emit
+/// and persist -- in that order, once, so the offline paths can't drift apart.
+fn edit_and_publish(
+    session_state: &Arc<Mutex<SessionStateUI>>,
+    handle: &AppHandle,
+    edit: impl FnOnce(&mut SessionStateUI),
+) {
+    edit(&mut session_state.lock().unwrap());
+    emit_patches_event_from_state(session_state, handle, true);
+    persist_patches(session_state);
+}
+
+
+/// Flip the `enabled` flag of every patch matching `pred` without writing memory;
+/// the patch is (re)applied on the next module load via `reapply_patches_for_module`.
+/// Only valid while the session is Stopped. Emits + persists.
+pub(crate) fn set_patch_enabled_offline(
+    session_state: &Arc<Mutex<SessionStateUI>>,
+    handle: &AppHandle,
+    pred: impl Fn(&PatchInfo) -> bool,
+    enabled: bool,
+) {
+    edit_and_publish(session_state, handle, |state| {
+        for p in state.patches.iter_mut().filter(|p| pred(p)) {
+            p.enabled = enabled;
+            p.is_applied = false;
+        }
+    });
+}
+
+/// Regroup a patch. Only valid while the session is Stopped. Emits + persists.
+pub(crate) fn update_patch_offline(
+    session_state: &Arc<Mutex<SessionStateUI>>,
+    handle: &AppHandle,
+    patch_id: &str,
+    group: Option<String>,
+) {
+    edit_and_publish(session_state, handle, |state| {
+        if let Some(p) = state.patches.iter_mut().find(|p| p.id == patch_id) {
+            p.group = group;
+        }
+    });
 }
 
 /// Active software breakpoint addresses that fall inside `[address, address+size)`.
@@ -402,14 +458,10 @@ pub(crate) fn process_update_patch(
     patch_id: &str,
     group: Option<String>,
 ) {
-    {
-        let mut state = session.state.lock().unwrap();
-        if let Some(p) = state.patches.iter_mut().find(|p| p.id == patch_id) {
-            p.group = group;
-        }
+    // Metadata-only, so the state-only path is the whole operation.
+    if let Some(handle) = app_handle_clone {
+        update_patch_offline(&session.state, handle, patch_id, group);
     }
-    emit_patches_event(session, app_handle_clone, true);
-    persist_patches(&session.state);
 }
 
 pub(crate) fn process_enable_patch_group(

@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { RawPatch } from '@/contexts/SessionContext';
 import { toastError } from '@/lib/logger';
+import { reportSessionError } from '@/lib/sessionHelpers';
 
 export type { RawPatch } from '@/contexts/SessionContext';
 
@@ -49,21 +50,22 @@ function convertPatches(raw: RawPatch[]): Patch[] {
   }));
 }
 
-export function usePatches(sessionId?: string, isPaused?: boolean, sessionPatches?: RawPatch[]) {
+export function usePatches(sessionId?: string, canUseMemoryOps?: boolean, sessionPatches?: RawPatch[]) {
   const [patches, setPatches] = useState<Patch[]>([]);
 
   const sessionPatchRef = useRef(sessionPatches);
   sessionPatchRef.current = sessionPatches;
 
-  // Session cleanup / seed: not gated on isPaused — a non-invasive Open
-  // session never pauses but still has persisted patches to show.
+  // Seed from the session payload when the session appears and re-seed when a
+  // process appears/disappears. Persisted patches stay visible (and
+  // metadata-editable) while Stopped; only the session going away clears them.
   useEffect(() => {
     if (!sessionId) {
       setPatches([]);
     } else if (sessionPatchRef.current && sessionPatchRef.current.length > 0) {
       setPatches(convertPatches(sessionPatchRef.current));
     }
-  }, [sessionId, isPaused]);
+  }, [sessionId, canUseMemoryOps]);
 
   // Listen for patches-updated events
   useEffect(() => {
@@ -108,7 +110,7 @@ export function usePatches(sessionId?: string, isPaused?: boolean, sessionPatche
     try {
       await invoke('undo_patch', { sessionId, patchId });
     } catch (e) {
-      console.error('Failed to undo patch:', e);
+      reportSessionError('undo patch', e, sessionId);
     }
   }, [sessionId]);
 
@@ -117,7 +119,7 @@ export function usePatches(sessionId?: string, isPaused?: boolean, sessionPatche
     try {
       await invoke('undo_patches', { sessionId, patchIds });
     } catch (e) {
-      console.error('Failed to undo patches:', e);
+      reportSessionError('undo patches', e, sessionId);
     }
   }, [sessionId]);
 
@@ -126,7 +128,7 @@ export function usePatches(sessionId?: string, isPaused?: boolean, sessionPatche
     try {
       await invoke('enable_patch', { sessionId, patchId, enabled });
     } catch (e) {
-      console.error('Failed to enable/disable patch:', e);
+      reportSessionError('enable/disable patch', e, sessionId);
     }
   }, [sessionId]);
 
@@ -135,7 +137,7 @@ export function usePatches(sessionId?: string, isPaused?: boolean, sessionPatche
     try {
       await invoke('update_patch', { sessionId, patchId, group: group ?? null });
     } catch (e) {
-      console.error('Failed to update patch:', e);
+      reportSessionError('update patch', e, sessionId);
     }
   }, [sessionId]);
 
@@ -144,7 +146,7 @@ export function usePatches(sessionId?: string, isPaused?: boolean, sessionPatche
     try {
       await invoke('enable_patch_group', { sessionId, group, enabled });
     } catch (e) {
-      console.error('Failed to enable/disable patch group:', e);
+      reportSessionError('enable/disable patch group', e, sessionId);
     }
   }, [sessionId]);
 
@@ -157,7 +159,7 @@ export function usePatches(sessionId?: string, isPaused?: boolean, sessionPatche
     try {
       await invoke('restore_image_bytes', { sessionId, address });
     } catch (e) {
-      console.error('Failed to restore image bytes:', e);
+      reportSessionError('restore image bytes', e, sessionId);
     }
   }, [sessionId]);
 

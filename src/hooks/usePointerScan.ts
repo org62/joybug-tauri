@@ -144,10 +144,10 @@ export function usePointerScan(sessionId: string | undefined, available: boolean
   // Re-page from the top whenever the filter changes (debounced so typing each
   // hex digit doesn't spam the backend).
   useEffect(() => {
-    if (!sessionId || resultsPath === null) return;
+    if (!sessionId || !available || resultsPath === null) return;
     const t = setTimeout(() => { loadPage(0); }, 200);
     return () => clearTimeout(t);
-  }, [offsetFilter, sessionId, resultsPath, loadPage]);
+  }, [offsetFilter, sessionId, available, resultsPath, loadPage]);
 
   // Restore a persisted scan when the session becomes available and paused. The
   // on-disk results file outlives target/app restarts; reloading page 0 re-bases

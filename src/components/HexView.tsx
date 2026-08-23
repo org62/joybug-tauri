@@ -29,6 +29,7 @@ import {
 import { AddressExpressionInput } from "@/components/AddressExpressionInput";
 import { PointerDereferenceDisplay } from "@/components/DereferenceDisplay";
 import { DockPanel, PanelToolbar, PanelFooter } from "@/components/ui/panel";
+import { ProcessUnavailableState } from "@/components/ui/empty-state";
 import { ContextMenu, ContextMenuItem, ContextMenuSeparator } from "@/components/ui/context-menu";
 import { useContextMenu } from "@/hooks/useContextMenu";
 import { useHeaderScrollSync } from "@/hooks/useHeaderScrollSync";
@@ -509,15 +510,11 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
       );
     }
 
-    // Session is stopped - show simple empty state
+    // No process (session Stopped / not started) — the shared no-process state.
     return (
-      <div className="flex flex-col items-center justify-center h-full text-muted-foreground p-4">
-        <div className="text-center">
-          <Binary className="h-12 w-12 mx-auto mb-4 opacity-50" />
-          <p className="text-base font-medium">No memory loaded</p>
-          <p className="text-sm mt-1">Start debugging to view memory</p>
-        </div>
-      </div>
+      <DockPanel>
+        <ProcessUnavailableState icon={Binary} what="Memory" />
+      </DockPanel>
     );
   }
 

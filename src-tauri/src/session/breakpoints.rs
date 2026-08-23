@@ -121,22 +121,91 @@ pub(crate) fn emit_breakpoints_event(
     app_handle_clone: &Option<AppHandle>,
 ) {
     if let Some(ref handle) = app_handle_clone {
-        let (session_id, breakpoints) = {
-            let state = session.state.lock().unwrap();
-            (state.id.clone(), state.breakpoints.clone())
-        };
-
-        #[derive(serde::Serialize)]
-        struct BreakpointsUpdatedEvent {
-            session_id: String,
-            breakpoints: Vec<crate::state::BreakpointInfo>,
-        }
-
-        let payload = BreakpointsUpdatedEvent { session_id, breakpoints };
-        if let Err(e) = handle.emit("breakpoints-updated", &payload) {
-            error!("Failed to emit breakpoints-updated event: {}", e);
-        }
+        emit_breakpoints_event_from_state(&session.state, handle);
     }
+}
+
+/// Emit `breakpoints-updated` straight from session state — no client needed.
+/// Used on process exit and for state-only edits while the session is Stopped.
+pub(crate) fn emit_breakpoints_event_from_state(
+    session_state: &Arc<Mutex<SessionStateUI>>,
+    handle: &AppHandle,
+) {
+    let (session_id, breakpoints) = {
+        let state = session_state.lock().unwrap();
+        (state.id.clone(), state.breakpoints.clone())
+    };
+
+    #[derive(serde::Serialize)]
+    struct BreakpointsUpdatedEvent {
+        session_id: String,
+        breakpoints: Vec<crate::state::BreakpointInfo>,
+    }
+
+    let payload = BreakpointsUpdatedEvent { session_id, breakpoints };
+    if let Err(e) = handle.emit("breakpoints-updated", &payload) {
+        error!("Failed to emit breakpoints-updated event: {}", e);
+    }
+}
+
+// ----- state-only edits (session Stopped: no process, every row is inactive) -----
+
+/// The shared tail of every state-only edit: mutate under the lock, then emit
+/// and persist -- in that order, once, so the offline paths can't drift apart.
+fn edit_and_publish(
+    session_state: &Arc<Mutex<SessionStateUI>>,
+    handle: &AppHandle,
+    edit: impl FnOnce(&mut SessionStateUI),
+) {
+    edit(&mut session_state.lock().unwrap());
+    emit_breakpoints_event_from_state(session_state, handle);
+    persist_breakpoints(session_state);
+}
+
+/// Drop breakpoint rows by id without touching a debuggee. Only valid while the
+/// session is Stopped (every row is already `is_active == false`). Emits + persists.
+pub(crate) fn remove_breakpoint_rows_offline(
+    session_state: &Arc<Mutex<SessionStateUI>>,
+    handle: &AppHandle,
+    ids: &[String],
+) {
+    edit_and_publish(session_state, handle, |state| {
+        state.breakpoints.retain(|b| !ids.contains(&b.id));
+    });
+    info!("Removed {} breakpoint row(s) offline", ids.len());
+}
+
+/// Flip the `enabled` flag of every row matching `pred` without arming anything;
+/// rows are (re)armed on the next module load via `reapply_breakpoints_for_module`.
+/// Only valid while the session is Stopped. Emits + persists.
+pub(crate) fn set_breakpoint_enabled_offline(
+    session_state: &Arc<Mutex<SessionStateUI>>,
+    handle: &AppHandle,
+    pred: impl Fn(&crate::state::BreakpointInfo) -> bool,
+    enabled: bool,
+) {
+    edit_and_publish(session_state, handle, |state| {
+        for bp in state.breakpoints.iter_mut().filter(|b| pred(b)) {
+            bp.enabled = enabled;
+            bp.is_active = false;
+        }
+    });
+}
+
+/// Rename / regroup a row. Only valid while the session is Stopped. Emits + persists.
+pub(crate) fn update_breakpoint_offline(
+    session_state: &Arc<Mutex<SessionStateUI>>,
+    handle: &AppHandle,
+    breakpoint_id: &str,
+    name: Option<String>,
+    group: Option<String>,
+) {
+    edit_and_publish(session_state, handle, |state| {
+        if let Some(bp) = state.breakpoints.iter_mut().find(|b| b.id == breakpoint_id) {
+            bp.name = name;
+            bp.group = group;
+        }
+    });
 }
 
 /// Build a friendly hit message for a breakpoint-type debug event by looking up the
@@ -679,15 +748,10 @@ pub(crate) fn process_update_breakpoint(
     name: Option<String>,
     group: Option<String>,
 ) {
-    {
-        let mut state = session.state.lock().unwrap();
-        if let Some(bp) = state.breakpoints.iter_mut().find(|b| b.id == breakpoint_id) {
-            bp.name = name;
-            bp.group = group;
-        }
+    // Metadata-only, so the state-only path is the whole operation.
+    if let Some(handle) = app_handle_clone {
+        update_breakpoint_offline(&session.state, handle, breakpoint_id, name, group);
     }
-    emit_breakpoints_event(session, app_handle_clone);
-    persist_breakpoints(&session.state);
 }
 
 /// Re-resolve source file/line for a module's active breakpoints and, if any

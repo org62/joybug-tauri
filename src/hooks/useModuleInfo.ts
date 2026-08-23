@@ -145,7 +145,7 @@ interface ModuleExtraInfoError {
 export function useModuleInfo(
   sessionId: string | undefined,
   moduleBase: string | null,
-  isPaused: boolean,
+  canUseMemoryOps: boolean,
 ) {
   const [info, setInfo] = useState<ModuleExtraInfo | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -211,20 +211,20 @@ export function useModuleInfo(
 
   // Fetch when moduleBase changes
   useEffect(() => {
-    if (moduleBase && isPaused && sessionId) {
+    if (moduleBase && canUseMemoryOps && sessionId) {
       fetchModuleInfo(moduleBase);
     }
-  }, [moduleBase, isPaused, sessionId, fetchModuleInfo]);
+  }, [moduleBase, canUseMemoryOps, sessionId, fetchModuleInfo]);
 
-  // Session cleanup: clear state when session ends or resumes
+  // Session cleanup: clear state when the session ends or its process goes away
   useEffect(() => {
-    if (!sessionId || !isPaused) {
+    if (!sessionId || !canUseMemoryOps) {
       setInfo(null);
       setError(null);
       setIsLoading(false);
       lastRequestedBase.current = null;
     }
-  }, [sessionId, isPaused]);
+  }, [sessionId, canUseMemoryOps]);
 
   return { info, isLoading, error };
 }

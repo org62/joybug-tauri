@@ -18,6 +18,12 @@ interface PatchesViewProps {
   onUpdatePatch?: (patchId: string, group?: string) => void;
   onEnablePatchGroup?: (group: string, enabled: boolean) => void;
   onNavigateToDisassembly?: (address: string) => void;
+  /** Undoing (restoring bytes) needs a paused target. */
+  isPaused?: boolean;
+  /** False when the session has no process (Stopped). Enabling/disabling is
+   * then a flag-only edit applied on the next module load; with a process it
+   * writes bytes and needs a pause. Regrouping works in every state. */
+  canUseMemoryOps?: boolean;
 }
 
 export function PatchesView({
@@ -28,7 +34,13 @@ export function PatchesView({
   onUpdatePatch,
   onEnablePatchGroup,
   onNavigateToDisassembly,
+  isPaused = true,
+  canUseMemoryOps = true,
 }: PatchesViewProps) {
+  // Byte-writing actions: undo needs a paused target; toggling applies bytes
+  // when a process exists (so also needs a pause) and is flag-only without one.
+  const canUndo = isPaused;
+  const canToggle = isPaused || !canUseMemoryOps;
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
   const { contextMenu, openContextMenu, closeContextMenu } = useContextMenu<{
@@ -105,6 +117,8 @@ export function PatchesView({
         <Switch
           size="xs"
           checked={patch.enabled}
+          disabled={!canToggle}
+          title={patch.enabled ? (patch.is_applied ? "Enabled (applied)" : "Enabled (pending — applied on module load)") : "Disabled"}
           onCheckedChange={(checked) => onEnablePatch?.(patch.id, checked)}
         />
       </span>
@@ -115,7 +129,8 @@ export function PatchesView({
             size="icon-xs"
             className="opacity-0 group-hover:opacity-100 transition-opacity"
             onClick={() => onUndoPatch?.(patch.id)}
-            title="Undo patch"
+            disabled={!canUndo}
+            title={canUndo ? "Undo patch" : "Undo patch (pause the target first)"}
           >
             <X />
           </Button>
@@ -133,13 +148,15 @@ export function PatchesView({
         onDeleteGroup={(ids) => onUndoPatches?.(ids)}
         renderItem={renderPatchRow}
         groupDotColor="purple"
+        canDeleteGroup={canUndo}
+        canEnableGroup={canToggle}
         renderToolbar={() => (
           <>
             <PanelToolbar>
               <Button
                 variant="outline"
                 size="xs"
-                disabled={selectedIds.size === 0}
+                disabled={selectedIds.size === 0 || !canUndo}
                 onClick={handleUndoSelected}
               >
                 Undo Selected ({selectedIds.size})
@@ -178,6 +195,7 @@ export function PatchesView({
         return (
           <ContextMenu x={contextMenu.x} y={contextMenu.y} onClose={closeContextMenu}>
             <ContextMenuItem
+              disabled={!canToggle}
               onClick={() => {
                 if (patch) onEnablePatch?.(patch.id, !patch.enabled);
               }}
@@ -196,6 +214,7 @@ export function PatchesView({
             <ContextMenuSeparator />
             <ContextMenuItem
               destructive
+              disabled={!canUndo}
               onClick={() => onUndoPatch?.(contextMenu.data.patchId)}
             >
               Undo Patch

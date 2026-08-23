@@ -350,6 +350,13 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
   // sees null instead of a dead address.
   const pcAddress = isPaused === false || pcAddressProp == null ? null : BigInt(pcAddressProp);
 
+  // Live mirror of `canLoad` for async continuations: a request issued while a
+  // process existed can reject after it exited (the Stopped transition), and
+  // that late rejection must not surface as an error on a panel that has
+  // already cleared itself.
+  const canLoadRef = useRef(canLoad);
+  useEffect(() => { canLoadRef.current = canLoad; }, [canLoad]);
+
   // Mirror compareImage for the disassembly-request calls so they read the
   // current value without carrying it in every callback's dependency list.
   const compareImageRef = useRef(compareImage);
@@ -452,9 +459,11 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
       setCurrentAddress(address);
     } catch (err) {
       const errorMessage = formatTauriError(err);
-      // Benign = session running or mid-teardown — not a user-facing failure;
-      // the view clears itself on session end.
-      if (!isBenignSessionError(errorMessage)) {
+      // Stale (the process went away, or a newer request superseded this one)
+      // or benign (session running / mid-teardown): not a user-facing failure —
+      // the view clears itself on process exit.
+      const stale = !canLoadRef.current || lastRequestedAddress.current !== address;
+      if (!stale && !isBenignSessionError(errorMessage)) {
         console.error('Failed to request function disassembly:', err);
         setError(errorMessage);
         toastError(`Failed to request disassembly: ${errorMessage}`, sessionId);
@@ -726,7 +735,7 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
           try { echoed = BigInt(event.payload.address); } catch { echoed = null; }
           if (echoed === null || echoed !== lastRequestedAddress.current) return;
           const msg = event.payload.error || '';
-          if (!isBenignSessionError(msg)) {
+          if (canLoadRef.current && !isBenignSessionError(msg)) {
             setError(msg);
             // Drop the previous view's rows: this is a full-replace navigation
             // that failed (e.g. unreadable/unmapped target), so keeping the old
@@ -918,10 +927,13 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
     goToAddressDirect(initialAddress ?? 0n, { auto: true });
   }, [disassemble, initialAddress, currentAddress, instructions.length, goToAddressDirect]);
 
-  // Clear state when session ends or stops (session mode only)
+  // Clear state when the session ends or its process goes away (session mode
+  // only). Keyed on `canLoad`, not `isPaused`: a running target is still a
+  // process, and the last decoded view stays visible (without a PC row) until
+  // the next pause re-follows the PC.
   useEffect(() => {
     if (disassemble) return;
-    if (!sessionId || isPaused === false) {
+    if (!sessionId || !canLoad) {
       setInstructions([]);
       setCurrentAddress(null);
       setFunctionStart(null);
@@ -939,7 +951,7 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
       lastPatchRevision.current = null;
       resetExtension();
     }
-  }, [sessionId, isPaused, disassemble, resetExtension]);
+  }, [sessionId, canLoad, disassemble, resetExtension]);
 
   return {
     // State

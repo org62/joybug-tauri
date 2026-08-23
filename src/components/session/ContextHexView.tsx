@@ -20,8 +20,9 @@ export const ContextHexView = ({ memoryViewId, initialAddress, initialViewMode }
 
   const resolveSymbolFn = useSymbolResolver();
 
-  // Get session status as string
-  const sessionStatus = sessionData?.session?.status;
+  // Debounced status, like every other tab: Stopped/Paused apply immediately,
+  // only the Paused→Running flip is delayed so quick steps don't flicker.
+  const sessionStatus = sessionData?.displayStatus;
   const statusString = typeof sessionStatus === 'string' ? sessionStatus : undefined;
 
   const { setHardwareBreakpoint } = sessionData.breakpointState;

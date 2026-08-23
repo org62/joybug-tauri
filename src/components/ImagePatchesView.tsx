@@ -93,6 +93,11 @@ export function ImagePatchesView({
           {filter.trim() ? `${filtered.length} / ${patches.length}` : patches.length}
           {capped && " (capped)"}
         </span>
+        {!canScan && scanned && (
+          <Badge size="xs" variant="outline" className="shrink-0 text-muted-foreground" title="No process — results are from the last scan before it exited">
+            stale
+          </Badge>
+        )}
       </PanelToolbar>
       <PanelBody>
         {filtered.length > 0 ? (

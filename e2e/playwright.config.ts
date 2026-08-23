@@ -38,6 +38,7 @@ export default defineConfig({
     "types.spec.ts",
     "registers.spec.ts",
     "session-lifecycle.spec.ts",
+    "session-stopped.spec.ts",
     "restart-and-unload.spec.ts",
     "stepping.spec.ts",
     "source-view.spec.ts",

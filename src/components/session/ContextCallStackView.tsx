@@ -2,10 +2,11 @@ import { useEffect, useState, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { useSessionContext } from '@/contexts/SessionContext';
-import { isProcessAvailable } from '@/lib/sessionHelpers';
 import { AlertCircle, List } from 'lucide-react';
 import { CallStackFrameList, CallStackFrame } from '@/components/CallStackFrameList';
 import { DockPanel, PanelToolbar } from '@/components/ui/panel';
+import { EmptyState, ProcessUnavailableState } from '@/components/ui/empty-state';
+import { formatTauriError, isBenignSessionError } from '@/lib/sessionHelpers';
 
 interface ContextCallStackViewProps {
   onNavigateToDisassembly?: (address: string) => void;
@@ -21,6 +22,7 @@ export function ContextCallStackView({ onNavigateToDisassembly, onNavigateToMemo
   const [redirectedTid, setRedirectedTid] = useState<number | null>(null);
   const isOpenRef = useRef(false);
   const canUse = sessionData.canUseMemoryOps;
+  const isPaused = sessionData.isPaused;
   // While paused the backend owns the selection (reset on every pause); the
   // session payload is the source of truth so the label can't go stale.
   const selectedTid =
@@ -38,7 +40,10 @@ export function ContextCallStackView({ onNavigateToDisassembly, onNavigateToMemo
         sessionId: sessionData.session.id,
       });
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Failed to fetch call stack';
+      // A request that rejects because the process went away mid-flight is not
+      // an error — the panel shows its no-process state instead.
+      const errorMessage = formatTauriError(err) || 'Failed to fetch call stack';
+      if (isBenignSessionError(errorMessage)) return;
       setError(errorMessage);
     }
   };
@@ -46,19 +51,17 @@ export function ContextCallStackView({ onNavigateToDisassembly, onNavigateToMemo
   // Auto-fetch the current thread's call stack on every step (paused invasive
   // sessions). Clear only when the process is gone (Stopped/Error); in
   // Open/Running the stack is driven by thread selection, so don't wipe it here.
-  // Use the raw session status (not the debounced canUse) so clearing fires
-  // promptly on stop.
+  // Keyed on the debounced status like every other tab — Stopped applies to it
+  // immediately, so clearing is still prompt.
   useEffect(() => {
-    const status = sessionData?.session?.status;
-    const available = isProcessAvailable(status);
-    if (status === 'Paused' && isOpenRef.current) {
+    if (isPaused && isOpenRef.current) {
       fetchCallStack();
-    } else if (!available) {
+    } else if (!canUse) {
       setCallStack([]);
       setError(null);
       setRedirectedTid(null);
     }
-  }, [sessionData?.session?.status, sessionData?.session?.current_event]);
+  }, [isPaused, canUse, sessionData?.session?.current_event]);
 
   // Fetch call stack when component first mounts if session is already paused
   useEffect(() => {
@@ -142,39 +145,25 @@ export function ContextCallStackView({ onNavigateToDisassembly, onNavigateToMemo
           </div>
         </>
       ) : error ? (
-        <div className="flex flex-col items-center justify-center h-full text-muted-foreground p-4">
-          <div className="text-center">
-            <AlertCircle className="h-12 w-12 mx-auto mb-4 opacity-50" />
-            <p className="text-base font-medium">{error}</p>
-            <p className="text-sm mt-1">Call stack will retry automatically on next step</p>
-          </div>
-        </div>
+        <EmptyState
+          icon={<AlertCircle className="h-12 w-12 mx-auto mb-4 opacity-50" />}
+          title={error}
+          subtitle="Call stack will retry automatically on next step"
+        />
       ) : !canUse ? (
-        <div className="flex flex-col items-center justify-center h-full text-muted-foreground p-4">
-          <div className="text-center">
-            <AlertCircle className="h-12 w-12 mx-auto mb-4 opacity-50" />
-            <p className="text-base font-medium">No call stack available</p>
-            <p className="text-sm mt-1">Open, attach to, or run a process first</p>
-          </div>
-        </div>
-      ) : sessionData.session.status !== 'Paused' ? (
-        <div className="flex flex-col items-center justify-center h-full text-muted-foreground p-4">
-          <div className="text-center">
-            <List className="h-12 w-12 mx-auto mb-4 opacity-50" />
-            <p className="text-base font-medium">No call stack selected</p>
-            <p className="text-sm mt-1">Click a thread in the Threads window to view its call stack</p>
-          </div>
-        </div>
+        <ProcessUnavailableState icon={List} what="Call stack" />
+      ) : !isPaused ? (
+        <EmptyState
+          icon={<List className="h-12 w-12 mx-auto mb-4 opacity-50" />}
+          title="No call stack selected"
+          subtitle="Click a thread in the Threads window to view its call stack"
+        />
       ) : (
-        <div className="flex flex-col items-center justify-center h-full text-muted-foreground p-4">
-          <div className="text-center">
-            <List className="h-12 w-12 mx-auto mb-4 opacity-50" />
-            <p className="text-base font-medium">No call stack data available</p>
-            {sessionData.session.status === 'Paused' && (
-              <p className="text-sm mt-1">Call stack will be fetched automatically</p>
-            )}
-          </div>
-        </div>
+        <EmptyState
+          icon={<List className="h-12 w-12 mx-auto mb-4 opacity-50" />}
+          title="No call stack data available"
+          subtitle="Call stack will be fetched automatically"
+        />
       )}
     </DockPanel>
   );

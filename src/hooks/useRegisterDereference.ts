@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { SerializableThreadContext, RegisterDef, X64_REGISTERS, X64_DEBUG_REGISTERS, ARM64_REGISTERS } from '@/components/RegisterView';
 import { DereferenceEntry, DereferenceResultPayload } from '@/lib/hexUtils';
+import { isProcessAvailable } from '@/lib/sessionHelpers';
 import { SessionStatus } from '@/contexts/SessionContext';
 
 /**
@@ -139,9 +140,9 @@ export function useRegisterDereference(
     });
   }, [context, sessionId, sessionStatus, includeDebugRegisters, getRegisterAddresses, requestDereferenceBatch]);
 
-  // Reset when session stops
+  // Reset when the process goes away (Stopped or an Error terminal status)
   useEffect(() => {
-    if (sessionStatus === 'Stopped') {
+    if (!isProcessAvailable(sessionStatus)) {
       setDereferenceData(new Map());
       pendingAddresses.current.clear();
       requestedAddresses.current.clear();

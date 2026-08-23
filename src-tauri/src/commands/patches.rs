@@ -114,7 +114,16 @@ pub fn enable_patch(
     patch_id: String,
     enabled: bool,
     session_states: State<'_, SessionStatesMap>,
+    app_handle: tauri::AppHandle,
 ) -> Result<()> {
+    // Applying/undoing bytes needs a paused target; with no process at all the
+    // flag is flipped offline and takes effect on the next module load.
+    let session_arc = super::get_session_arc(&session_id, &session_states)?;
+    if super::is_stopped(&session_arc) {
+        crate::session::patches::set_patch_enabled_offline(&session_arc, &app_handle, |p| p.id == patch_id, enabled);
+        info!("Offline enable patch for session {}, patch_id {}, enabled={}", session_id, patch_id, enabled);
+        return Ok(());
+    }
     super::send_paused_command(
         &session_id,
         &session_states,
@@ -131,20 +140,19 @@ pub fn update_patch(
     patch_id: String,
     group: Option<String>,
     session_states: State<'_, SessionStatesMap>,
-    oob_pool: State<'_, super::OobPool>,
     app_handle: tauri::AppHandle,
 ) -> Result<()> {
     let session_arc = super::get_session_arc(&session_id, &session_states)?;
+    // Metadata-only: nothing to say to the server on any path, so when the
+    // paused channel isn't available the state edit is the whole operation —
+    // no OOB connection needed (and none to fail) whether running or stopped.
     match super::try_send_paused_command(&session_arc, UICommand::UpdatePatch { patch_id: patch_id.clone(), group: group.clone() }) {
         Ok(()) => {
             info!("Update patch request sent for session {}, patch_id {}", session_id, patch_id);
         }
         Err(_) => {
-            // Metadata-only, no server communication needed.
-            super::with_oob_client(&session_arc, &session_id, &oob_pool, |oob, _pid| {
-                crate::session::patches::process_update_patch(oob, &Some(app_handle), &patch_id, group);
-            })?;
-            info!("OOB update patch for session {}, patch_id {}", session_id, patch_id);
+            crate::session::patches::update_patch_offline(&session_arc, &app_handle, &patch_id, group);
+            info!("Update patch applied to state for session {}, patch_id {}", session_id, patch_id);
         }
     }
     Ok(())
@@ -160,23 +168,22 @@ pub fn enable_patch_group(
     app_handle: tauri::AppHandle,
 ) -> Result<()> {
     let session_arc = super::get_session_arc(&session_id, &session_states)?;
-    match super::try_send_paused_command(&session_arc, UICommand::EnablePatchGroup { group: group.clone(), enabled }) {
-        Ok(()) => {
-            info!("Enable patch group request sent for session {}, group '{}', enabled={}", session_id, group, enabled);
-        }
-        Err(_) => {
-            let event = {
-                let state = session_arc.lock().unwrap();
-                state.current_event.clone()
-            };
+    let event = {
+        let state = session_arc.lock().unwrap();
+        state.current_event.clone()
+    };
+    let handle = app_handle.clone();
+    let route = super::paused_or_offline_or_oob(
+        &session_arc, &session_id, &oob_pool,
+        UICommand::EnablePatchGroup { group: group.clone(), enabled },
+        || crate::session::patches::set_patch_enabled_offline(&session_arc, &handle, |p| p.group.as_deref() == Some(group.as_str()), enabled),
+        |oob, _pid| {
             if let Some(ref event) = event {
-                super::with_oob_client(&session_arc, &session_id, &oob_pool, |oob, _pid| {
-                    crate::session::patches::process_enable_patch_group(oob, &Some(app_handle), event, &group, enabled);
-                })?;
+                crate::session::patches::process_enable_patch_group(oob, &Some(app_handle), event, &group, enabled);
             }
-            info!("OOB enable patch group for session {}, group '{}', enabled={}", session_id, group, enabled);
-        }
-    }
+        },
+    )?;
+    info!("Enable patch group for session {}, group '{}', enabled={} ({:?})", session_id, group, enabled, route);
     Ok(())
 }
 

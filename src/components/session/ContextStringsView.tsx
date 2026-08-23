@@ -39,7 +39,7 @@ export const ContextStringsView = () => {
   const modules = sessionData?.modules ?? [];
   const loadModules = sessionData?.loadModules;
 
-  const scan = useStringScan(sessionId, canUse);
+  const scan = useStringScan(sessionId, canUse, sessionData.processId);
 
   // Load the module list so the user can pick which module to scan.
   useEffect(() => {

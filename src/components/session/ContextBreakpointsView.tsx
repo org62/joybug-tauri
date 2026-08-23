@@ -36,6 +36,7 @@ export function ContextBreakpointsView() {
       onNavigateToDisassembly={sessionData.onNavigateToDisassembly}
       registers={registers}
       resolveSymbol={resolveSymbol}
+      canUseMemoryOps={sessionData.canUseMemoryOps}
     />
   );
 }

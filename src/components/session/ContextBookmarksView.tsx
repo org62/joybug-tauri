@@ -26,6 +26,7 @@ export function ContextBookmarksView() {
       onNavigateToDisassembly={sessionData.onNavigateToDisassembly}
       onNavigateToMemory={sessionData.onNavigateToMemory}
       onFindAccesses={sessionData.onFindAccesses}
+      canUseMemoryOps={sessionData.canUseMemoryOps}
     />
   );
 }

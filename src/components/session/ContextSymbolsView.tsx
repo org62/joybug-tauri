@@ -2,7 +2,7 @@ import { useCallback, useMemo, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { useSessionContext, Symbol, hasUsableSymbols } from '@/contexts/SessionContext';
 import { useContextMenu } from '@/hooks/useContextMenu';
-import { invokeToggleBreakpoint, invokeSetBreakpoints } from '@/lib/sessionHelpers';
+import { invokeToggleBreakpoint, invokeSetBreakpoints, reportSessionError } from '@/lib/sessionHelpers';
 import { Button } from '@/components/ui/button';
 import { ContextMenu, ContextMenuItem } from '@/components/ui/context-menu';
 import {
@@ -52,7 +52,7 @@ export const ContextSymbolsView = () => {
     try {
       await invokeToggleBreakpoint(sessionId, address);
     } catch (e) {
-      console.error('Failed to toggle breakpoint:', e);
+      reportSessionError('toggle breakpoint', e, sessionId);
     }
   }, [sessionId]);
 
@@ -81,7 +81,7 @@ export const ContextSymbolsView = () => {
       await invokeSetBreakpoints(sessionId, bulk.symbols.map((s) => s.va), group, bulk.singleShot);
       bulk.clear();
     } catch (e) {
-      console.error('Failed to set breakpoints:', e);
+      reportSessionError('set breakpoints', e, sessionId);
     }
   }, [sessionId]);
 
@@ -106,7 +106,7 @@ export const ContextSymbolsView = () => {
         idleTitle={isActive ? `Symbols for ${loadedCount} module${loadedCount === 1 ? '' : 's'} are loaded` : undefined}
         onSelect={onSelect}
         onRowContextMenu={(e, symbol) => openContextMenu(e, { va: symbol.va, is_function: symbol.is_function })}
-        resetKey={sessionId}
+        resetKey={`${sessionId ?? ""}:${isActive}`}
         focusTabId="symbols"
         fetchPreviews={fetchPreviews}
         selectable
@@ -114,7 +114,7 @@ export const ContextSymbolsView = () => {
           <div className="flex items-center gap-1.5">
             <Button
               size="xs"
-              disabled={selectedSymbols.length === 0}
+              disabled={selectedSymbols.length === 0 || !isActive}
               onClick={() => setBreakpointsForSymbols(selectedSymbols, term, clear, false)}
             >
               Set Breakpoints{selectedSymbols.length > 0 ? ` (${selectedSymbols.length})` : ''}
@@ -122,7 +122,7 @@ export const ContextSymbolsView = () => {
             <Button
               size="xs"
               variant="outline"
-              disabled={selectedSymbols.length === 0}
+              disabled={selectedSymbols.length === 0 || !isActive}
               onClick={() => setBreakpointsForSymbols(selectedSymbols, term, clear, true)}
             >
               Set Single-Shot{selectedSymbols.length > 0 ? ` (${selectedSymbols.length})` : ''}
@@ -142,7 +142,7 @@ export const ContextSymbolsView = () => {
                 Go to Memory View
               </ContextMenuItem>
             )}
-            <ContextMenuItem onClick={() => toggleBreakpoint(contextMenu.data.va)}>
+            <ContextMenuItem disabled={!isActive} onClick={() => toggleBreakpoint(contextMenu.data.va)}>
               Toggle Breakpoint
             </ContextMenuItem>
           </ContextMenu>

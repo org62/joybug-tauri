@@ -7,6 +7,7 @@ import { useLocalStorageState } from '@/hooks/useLocalStorageState';
 import { useSymbolResolverWithName } from '@/hooks/useSymbolResolver';
 import { RegisterContext } from '@/lib/hexUtils';
 import { AlertCircle } from 'lucide-react';
+import { EmptyState, ProcessUnavailableState } from '@/components/ui/empty-state';
 import { invoke } from '@tauri-apps/api/core';
 
 function computeChangedRegisters(
@@ -146,13 +147,16 @@ export const ContextRegisterView = () => {
       </>
     );
   }
+  // No process → the shared no-process state; otherwise (running, or paused
+  // without a context yet) the generic placeholder.
+  if (sessionData?.session && !sessionData.canUseMemoryOps) {
+    return <ProcessUnavailableState icon={AlertCircle} what="Registers" />;
+  }
   return (
-    <div className="flex flex-col items-center justify-center h-full text-muted-foreground p-4">
-      <div className="text-center">
-        <AlertCircle className="h-12 w-12 mx-auto mb-4 opacity-50" />
-        <p className="text-base font-medium">No register data available</p>
-        <p className="text-sm mt-1">Register values will appear here when debugging</p>
-      </div>
-    </div>
+    <EmptyState
+      icon={<AlertCircle className="h-12 w-12 mx-auto mb-4 opacity-50" />}
+      title="No register data available"
+      subtitle="Register values will appear here when debugging"
+    />
   );
 };

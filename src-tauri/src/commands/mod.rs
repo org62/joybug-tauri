@@ -134,6 +134,13 @@ pub(crate) fn try_send_paused_command(
     }
 }
 
+/// True when the session exists but has no process (status `Stopped`). Metadata
+/// edits on persisted config (breakpoints / patches / bookmarks) take a
+/// state-only path in that case instead of failing in `oob_pid`.
+pub(crate) fn is_stopped(session_state: &Arc<Mutex<SessionStateUI>>) -> bool {
+    matches!(session_state.lock().unwrap().status, SessionStatusUI::Stopped)
+}
+
 /// Create an OOB joybug-core client sharing the real session's state.
 /// Returns (oob_client, pid).
 pub(crate) fn create_oob_client(
@@ -231,6 +238,40 @@ pub(crate) fn paused_or_oob(
         with_oob_client(&session_arc, session_id, pool, fallback)?;
     }
     Ok(())
+}
+
+/// Which route a persisted-config command took, for logging.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum Route {
+    /// Sent over the paused session's own channel.
+    Paused,
+    /// Session is `Stopped`: applied to session state only.
+    Offline,
+    /// Running / non-invasive `Open`: applied over the pooled OOB client.
+    Oob,
+}
+
+/// Route a persisted-config command (breakpoint / patch / bookmark) three ways:
+/// the paused session channel when the target is paused, a state-only edit when
+/// the session is `Stopped` (no process to touch), otherwise the pooled OOB
+/// client. One decision point, so a new command can't reinvent the ordering.
+pub(crate) fn paused_or_offline_or_oob(
+    session_arc: &Arc<Mutex<SessionStateUI>>,
+    session_id: &str,
+    pool: &OobPool,
+    command: UICommand,
+    offline: impl FnOnce(),
+    fallback: impl FnOnce(&mut crate::session::types::DebugSession, u32),
+) -> Result<Route> {
+    if try_send_paused_command(session_arc, command).is_ok() {
+        return Ok(Route::Paused);
+    }
+    if is_stopped(session_arc) {
+        offline();
+        return Ok(Route::Offline);
+    }
+    with_oob_client(session_arc, session_id, pool, fallback)?;
+    Ok(Route::Oob)
 }
 
 /// Shared body for the pooled-connection helpers. `map` selects which per-session

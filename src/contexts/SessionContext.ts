@@ -163,9 +163,17 @@ export type SessionStatus =
 export interface SessionContextData {
   session: DebugSession | null;
   displayStatus: SessionStatus;  // Debounced status for content views (prevents flicker on stepping)
+  /** True when the target is paused at a debug event: stepping, register edits
+   * and applying/undoing patch bytes need this. See the policy table in
+   * `lib/sessionHelpers.ts`. */
+  isPaused: boolean;
   /** True when memory/enumeration ops are usable: paused, running (invasive), or a
    * non-invasive Open session. These ops run over OOB and don't need a pause. */
   canUseMemoryOps: boolean;
+  /** Pid of the process the live data belongs to, or undefined with no process.
+   * Cached results (scans) key on this so they drop when the target restarts —
+   * their addresses belong to the dead process. */
+  processId: number | undefined;
   modules: Module[];
   threads: Thread[];
   symbolStatuses: ModuleSymbolStatus[];

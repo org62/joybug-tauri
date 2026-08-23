@@ -16,7 +16,7 @@ import DockingLayout, { DockingLayoutRef } from "@/components/DockingLayout";
 import { DebuggerDockingConfig } from "@/lib/dockingConfigs";
 import { TabData } from "rc-dock";
 import { SessionContext, SessionStatus } from "@/contexts/SessionContext";
-import { isProcessAvailable, isTargetLive } from "@/lib/sessionHelpers";
+import { isProcessAvailable, isPausedSession, isTargetLive } from "@/lib/sessionHelpers";
 import { ContextAssemblyView } from "@/components/session/ContextAssemblyView";
 import { ContextSourceView } from "@/components/session/ContextSourceView";
 import { ContextRegisterView } from "@/components/session/ContextRegisterView";
@@ -281,6 +281,12 @@ export default function SessionDocked() {
   // Pass-exception only makes sense while paused on an exception event.
   const canPassException = canStep && session?.current_event?.event_type === "Exception";
 
+  const isPaused = isPausedSession(displayStatus);
+  // Memory/enumeration ops work over OOB whenever a process is available: paused,
+  // running (invasive), or a non-invasive Open session. They never need a pause.
+  const canUseMemoryOps = isProcessAvailable(displayStatus);
+  const processId = session?.current_event?.process_id;
+
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       const chord = keyboardEventToChord(event);
@@ -369,6 +375,7 @@ export default function SessionDocked() {
         case "navigate.goToDisassembly":
           event.preventDefault();
           event.stopPropagation();
+          if (!canUseMemoryOps) break;
           enterSubInput({
             label: "Go to Address (Disassembly)",
             placeholder: "Enter address or symbol (e.g. 0x00007FF...)",
@@ -379,6 +386,7 @@ export default function SessionDocked() {
         case "navigate.goToMemory":
           event.preventDefault();
           event.stopPropagation();
+          if (!canUseMemoryOps) break;
           enterSubInput({
             label: "Go to Address (Memory)",
             placeholder: "Enter address or symbol (e.g. 0x00007FF...)",
@@ -391,12 +399,8 @@ export default function SessionDocked() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [handleGo, handleGoPassException, handlePause, handleStart, handleStop, handleRestart, handleDetach, handleCreateDump, canStep, canPassException, canPause, canStart, canStop, canDetach, canDump, handleStepIn, handleStepOver, handleStepOut, goToTab, handleAddNewMemoryTab, handleCloseActiveTab, reverseLookup, setOpen, enterSubInput, handleNavigateToDisassembly, handleNavigateToMemory]);
+  }, [handleGo, handleGoPassException, handlePause, handleStart, handleStop, handleRestart, handleDetach, handleCreateDump, canStep, canPassException, canPause, canStart, canStop, canDetach, canDump, handleStepIn, handleStepOver, handleStepOut, goToTab, handleAddNewMemoryTab, handleCloseActiveTab, reverseLookup, setOpen, enterSubInput, handleNavigateToDisassembly, handleNavigateToMemory, canUseMemoryOps]);
 
-  const isPaused = displayStatus === 'Paused';
-  // Memory/enumeration ops work over OOB whenever a process is available: paused,
-  // running (invasive), or a non-invasive Open session. They never need a pause.
-  const canUseMemoryOps = isProcessAvailable(displayStatus);
 
   // ── Command palette registration ──────────────────────────────────────────
   useEffect(() => {
@@ -575,7 +579,7 @@ export default function SessionDocked() {
 
     return registerCommands(commands);
   }, [
-    canStart, canStop, canPause, canStep, canDump, isPaused, canUseMemoryOps, session?.current_event?.event_type,
+    canStart, canStop, canPause, canStep, canDump, canUseMemoryOps, session?.current_event?.event_type,
     handleStart, handleStop, handleRestart, handlePause, handleCreateDump,
     handleGo, handleGoPassException, handleStepIn, handleStepOver, handleStepOut,
     handleNavigateToDisassembly, handleNavigateToMemory,
@@ -583,9 +587,9 @@ export default function SessionDocked() {
     registerCommands,
   ]);
 
-  const breakpointState = useBreakpoints(session?.id, isPaused, session?.breakpoints);
-  const patchState = usePatches(session?.id, isPaused, session?.patches);
-  const bookmarkState = useBookmarks(session?.id, isPaused, session?.bookmarks, isTargetLive(displayStatus));
+  const breakpointState = useBreakpoints(session?.id, canUseMemoryOps, session?.breakpoints);
+  const patchState = usePatches(session?.id, canUseMemoryOps, session?.patches);
+  const bookmarkState = useBookmarks(session?.id, canUseMemoryOps, session?.bookmarks, isTargetLive(displayStatus));
   const watchpointState = useWatchpointTrace(session?.id, breakpointState.breakpoints, isTargetLive(displayStatus));
 
   // "Find what reads/writes this address": arm a watchpoint access trace and open
@@ -598,7 +602,9 @@ export default function SessionDocked() {
   const contextValue = useMemo(() => ({
     session,
     displayStatus,
+    isPaused,
     canUseMemoryOps,
+    processId,
     modules,
     threads,
     symbolStatuses,
@@ -622,7 +628,7 @@ export default function SessionDocked() {
     onNavigateToSource: handleNavigateToSource,
     onNavigateToType: handleNavigateToType,
     onFindAccesses: handleFindAccesses,
-  }), [session, displayStatus, canUseMemoryOps, modules, threads, symbolStatuses, symbolsRefreshKey, loadModules, loadThreads, loadModulePdb, retryModuleSymbols, unloadModuleSymbols, searchSymbols, breakpointState, patchState, bookmarkState, watchpointState, handleNavigateToDisassembly, handleNavigateToMemory, handleNavigateToMemoryRegion, handleNavigateToSource, handleNavigateToType, handleFindAccesses]);
+  }), [session, displayStatus, isPaused, canUseMemoryOps, processId, modules, threads, symbolStatuses, symbolsRefreshKey, loadModules, loadThreads, loadModulePdb, retryModuleSymbols, unloadModuleSymbols, searchSymbols, breakpointState, patchState, bookmarkState, watchpointState, handleNavigateToDisassembly, handleNavigateToMemory, handleNavigateToMemoryRegion, handleNavigateToSource, handleNavigateToType, handleFindAccesses]);
   
   // Static tab content - components will update via context.
   // Typed against the registry, so adding a tab to SESSION_TAB_DEFS without

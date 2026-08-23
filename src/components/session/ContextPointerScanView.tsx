@@ -249,7 +249,7 @@ export const ContextPointerScanView = () => {
             size="xs"
             variant="outline"
             onClick={scan.handleNewScan}
-            disabled={scan.resultsPath === null}
+            disabled={!canUse || scan.resultsPath === null}
           >
             New Scan
           </Button>
@@ -273,6 +273,7 @@ export const ContextPointerScanView = () => {
               placeholder="Filter offsets (e.g. 0x88 0x10)"
               value={scan.offsetFilter}
               onChange={(e) => scan.setOffsetFilter(e.target.value)}
+              disabled={!canUse}
               inputSize="xs"
               className="flex-1 font-mono"
               title="Keep only paths whose chain offsets contain every value listed (order-independent)"

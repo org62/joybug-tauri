@@ -34,6 +34,11 @@ interface BookmarksViewProps {
   onNavigateToDisassembly?: (address: string) => void;
   onNavigateToMemory?: (address: string) => void;
   onFindAccesses?: (address: string, mode: "Write" | "ReadWrite", size: number) => void;
+  /** False when the session has no process (Stopped): value writes, locking
+   * (freezing) and access tracing need a live cell and are disabled; remove /
+   * rename / comment / regroup / unlock stay available. Values shown are the
+   * last read and are rendered as stale. */
+  canUseMemoryOps?: boolean;
 }
 
 /** Watchpoint size (bytes) implied by a bookmark's value type. */
@@ -70,6 +75,7 @@ export function BookmarksView({
   onNavigateToDisassembly,
   onNavigateToMemory,
   onFindAccesses,
+  canUseMemoryOps = true,
 }: BookmarksViewProps) {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [editing, setEditing] = useState<{ id: string; field: "name" | "value"; draft: string } | null>(null);
@@ -213,13 +219,17 @@ export function BookmarksView({
             onCommit={commitEdit}
             onCancel={() => setEditing(null)}
           />
-        ) : (
+        ) : canUseMemoryOps ? (
           <span
             data-changed={changedValueIds?.has(b.id) || undefined}
             className={cn("cursor-text hover:underline", changedValueIds?.has(b.id) && CHANGED_VALUE_CLASS)}
             title="Click to edit value"
             onClick={() => setEditing({ id: b.id, field: "value", draft: plainValue(b.current_value) })}
           >
+            {b.current_value ?? "??"}
+          </span>
+        ) : (
+          <span className="text-muted-foreground/60" title="No process — last value read before it exited">
             {b.current_value ?? "??"}
           </span>
         )}
@@ -233,7 +243,8 @@ export function BookmarksView({
             size="icon-xs"
             className={cn(b.locked ? "text-syn-state" : "text-muted-foreground")}
             onClick={() => onToggleLock?.(b.id, !b.locked)}
-            title={b.locked ? "Unlock value" : "Lock (freeze) value"}
+            disabled={!b.locked && !canUseMemoryOps}
+            title={b.locked ? "Unlock value" : canUseMemoryOps ? "Lock (freeze) value" : "Lock (freeze) value — needs a running process"}
           >
             {b.locked ? <Lock /> : <Unlock />}
           </Button>
@@ -274,6 +285,8 @@ export function BookmarksView({
         items={rows}
         minContentWidth={columnWidths.name + columnWidths.address + columnWidths.type + columnWidths.value + FIXED_COLS_PX}
         onUpdateItemGroup={(id, group) => update(id, { group: group ?? null })}
+        // Locking needs a live cell; unlocking is a flag clear that works offline.
+        canEnableGroup={(enabled) => !enabled || canUseMemoryOps}
         onEnableGroup={(group, enabled) => {
           bookmarks.filter((b) => b.group === group && b.kind !== "code").forEach((b) => onToggleLock?.(b.id, enabled));
         }}
@@ -331,7 +344,7 @@ export function BookmarksView({
         return (
           <ContextMenu x={contextMenu.x} y={contextMenu.y} onClose={closeContextMenu}>
             {b.kind !== "code" && (
-              <ContextMenuItem onClick={() => onToggleLock?.(b.id, !b.locked)}>
+              <ContextMenuItem disabled={!b.locked && !canUseMemoryOps} onClick={() => onToggleLock?.(b.id, !b.locked)}>
                 {b.locked ? "Unlock value" : "Lock (freeze) value"}
               </ContextMenuItem>
             )}
@@ -341,7 +354,7 @@ export function BookmarksView({
             <ContextMenuItem onClick={() => update(b.id, { group: generateNewGroupName() })}>
               Set Group
             </ContextMenuItem>
-            {onFindAccesses && b.kind !== "code" && b.is_resolved && b.resolved_address.startsWith("0x") && (
+            {onFindAccesses && canUseMemoryOps && b.kind !== "code" && b.is_resolved && b.resolved_address.startsWith("0x") && (
               <>
                 <ContextMenuSeparator />
                 <ContextMenuItem icon={<Fingerprint />} onClick={() => onFindAccesses(b.resolved_address, "Write", valueTypeSize(b.value_type))}>

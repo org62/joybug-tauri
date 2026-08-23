@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
+import { useResetOnNewProcess } from '@/hooks/useResetOnNewProcess';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { formatTauriError } from '@/lib/sessionHelpers';
@@ -66,7 +67,7 @@ interface ScanErrorPayload {
   error: string;
 }
 
-export function useMemoryScanner(sessionId: string | undefined, available: boolean, isLive: boolean) {
+export function useMemoryScanner(sessionId: string | undefined, available: boolean, isLive: boolean, processId?: number | null) {
   const [scanId, setScanId] = useState<number | null>(null);
   const [valueType, setValueType] = useState<ScanValueType>('U32');
   const [compareType, setCompareType] = useState<ScanCompareType>('ExactValue');
@@ -95,20 +96,25 @@ export function useMemoryScanner(sessionId: string | undefined, available: boole
   const currentPageRef = useRef(0);
   currentPageRef.current = currentPage;
 
-  // Reset only when session ends (not on pause/resume — scan survives stepping)
+  const resetScan = useCallback(() => {
+    setScanId(null);
+    setMatchCount(0);
+    setScanTimeUs(0);
+    setIsScanning(false);
+    setIsFirstScan(true);
+    setError(null);
+    setResults([]);
+    setTotalCount(0);
+    setCurrentPage(0);
+  }, []);
+
+  // Reset when the session ends (not on pause/resume — a scan survives
+  // stepping, and survives a stop so the results stay readable) and when a
+  // different process appears: the matches' addresses belong to the dead one.
   useEffect(() => {
-    if (!sessionId) {
-      setScanId(null);
-      setMatchCount(0);
-      setScanTimeUs(0);
-      setIsScanning(false);
-      setIsFirstScan(true);
-      setError(null);
-      setResults([]);
-      setTotalCount(0);
-      setCurrentPage(0);
-    }
-  }, [sessionId]);
+    if (!sessionId) resetScan();
+  }, [sessionId, resetScan]);
+  useResetOnNewProcess(processId, resetScan, available, () => setIsScanning(false));
 
   // Fetch a page of results
   const loadPage = useCallback(async (page: number) => {

@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { useSessionContext } from '@/contexts/SessionContext';
-import { formatTauriError } from '@/lib/sessionHelpers';
+import { formatTauriError, isProcessAvailable } from '@/lib/sessionHelpers';
 import { LINK_VALUE_CLASS } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -123,7 +123,11 @@ export const ContextThreadsView = ({ onNavigateToDisassembly, onNavigateToMemory
 
   // Load threads when component mounts or session changes
   useEffect(() => {
-    if (sessionData?.session?.id) {
+    // Only with a process. Guarded on the *raw* status, which is what triggers
+    // this effect: `canUseMemoryOps` comes from the debounced status, updated by
+    // a parent effect that runs after this one, so on the stop commit it would
+    // still read true here and fire a load against the dead process.
+    if (sessionData?.session?.id && isProcessAvailable(sessionData.session.status)) {
       loadThreads();
     }
   }, [sessionData?.session?.id, sessionData?.session?.status, sessionData?.session?.current_event]);

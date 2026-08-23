@@ -3,7 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { Virtualizer } from '@tanstack/react-virtual';
 import { useSessionContext } from '@/contexts/SessionContext';
-import { contextToRegisters, formatTauriError } from '@/lib/sessionHelpers';
+import { contextToRegisters, formatTauriError, isBenignSessionError } from '@/lib/sessionHelpers';
 import { formatAddress } from '@/lib/hexUtils';
 import { copyToClipboard } from '@/lib/clipboard';
 import { useSymbolResolver } from '@/hooks/useSymbolResolver';
@@ -14,6 +14,7 @@ import { toastError } from '@/lib/logger';
 import { cn } from '@/lib/utils';
 import { AlertCircle, MemoryStick, Loader2, Eye, Code, Copy } from 'lucide-react';
 import { DockPanel, PanelToolbar } from '@/components/ui/panel';
+import { ProcessUnavailableState } from '@/components/ui/empty-state';
 import { VirtualizedList } from '@/components/ui/virtualized-list';
 import { Badge } from '@/components/ui/badge';
 import { AddressExpressionInput } from '@/components/AddressExpressionInput';
@@ -151,7 +152,9 @@ export function ContextMemoryRegionsView({ onNavigateToAddress }: ContextMemoryR
       });
     } catch (err) {
       const errorMessage = formatTauriError(err);
-      setError(errorMessage);
+      // A rejection because the process went away mid-request is not an
+      // error; the no-process empty state covers it.
+      if (!isBenignSessionError(errorMessage)) setError(errorMessage);
       setIsLoading(false);
     }
   };
@@ -273,6 +276,7 @@ export function ContextMemoryRegionsView({ onNavigateToAddress }: ContextMemoryR
           inputClassName="w-48"
           focusTabId="memory_regions"
           historyKey="memory-regions-goto"
+          disabled={!sessionData.canUseMemoryOps}
         />
 
         {isLoading && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
@@ -401,12 +405,7 @@ export function ContextMemoryRegionsView({ onNavigateToAddress }: ContextMemoryR
               </div>
             </div>
           ) : !sessionData.canUseMemoryOps ? (
-            <div className="flex flex-col items-center justify-center h-full text-muted-foreground p-4">
-              <div className="text-center">
-                <AlertCircle className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                <p className="text-base font-medium">Open or run a process to view memory regions</p>
-              </div>
-            </div>
+            <ProcessUnavailableState icon={AlertCircle} what="Memory regions" />
           ) : isLoading ? (
             <div className="flex flex-col items-center justify-center h-full text-muted-foreground p-4">
               <div className="text-center">

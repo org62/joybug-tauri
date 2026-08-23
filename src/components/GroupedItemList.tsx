@@ -32,6 +32,12 @@ export interface GroupedItemListProps<T extends GroupableItem> {
   onUpdateItemGroup: (id: string, group: string | undefined) => void;
   onEnableGroup: (group: string, enabled: boolean) => void;
   onDeleteGroup: (itemIds: string[]) => void;
+  /** False disables group removal (trash button + context item); the host
+   * decides when the backing action is unavailable (e.g. patches need a pause). */
+  canDeleteGroup?: boolean;
+  /** Same for group enable/disable. A predicate when the two directions differ
+   *  (bookmarks: locking needs a process, unlocking works offline). */
+  canEnableGroup?: boolean | ((enabled: boolean) => boolean);
   renderItem: (item: T, isDragOverlay?: boolean) => React.ReactNode;
   renderToolbar?: () => React.ReactNode;
   /**
@@ -112,6 +118,8 @@ export function GroupedItemList<T extends GroupableItem>({
   onUpdateItemGroup,
   onEnableGroup,
   onDeleteGroup,
+  canDeleteGroup = true,
+  canEnableGroup = true,
   renderItem,
   renderToolbar,
   renderHeader,
@@ -119,6 +127,10 @@ export function GroupedItemList<T extends GroupableItem>({
   groupDotColor = "red",
   minContentWidth,
 }: GroupedItemListProps<T>) {
+  // `canEnableGroup` may be direction-aware (locking a bookmark group needs a
+  // process, unlocking does not), so resolve it per action rather than once.
+  const allowEnable = (enabled: boolean) =>
+    typeof canEnableGroup === 'function' ? canEnableGroup(enabled) : canEnableGroup;
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
 
   const { contextMenu, openContextMenu, closeContextMenu } = useContextMenu<{
@@ -322,6 +334,7 @@ export function GroupedItemList<T extends GroupableItem>({
                 <Button
                   variant="ghost"
                   size="icon-xs"
+                  disabled={!allowEnable(!allEnabled)}
                   className="w-4 h-4 p-0 shrink-0 hover:bg-transparent"
                   onClick={(e) => {
                     e.stopPropagation();
@@ -361,6 +374,7 @@ export function GroupedItemList<T extends GroupableItem>({
                         onDeleteGroup(groupItems.map((i) => i.id));
                       }}
                       title="Remove group"
+                      disabled={!canDeleteGroup}
                     >
                       <Trash2 className="h-3 w-3" />
                     </Button>
@@ -425,10 +439,10 @@ export function GroupedItemList<T extends GroupableItem>({
       {/* Group context menu */}
       {contextMenu && (
         <ContextMenu x={contextMenu.x} y={contextMenu.y} onClose={closeContextMenu}>
-          <ContextMenuItem onClick={() => onEnableGroup(contextMenu.data.groupName, true)}>
+          <ContextMenuItem disabled={!allowEnable(true)} onClick={() => onEnableGroup(contextMenu.data.groupName, true)}>
             Enable All
           </ContextMenuItem>
-          <ContextMenuItem onClick={() => onEnableGroup(contextMenu.data.groupName, false)}>
+          <ContextMenuItem disabled={!allowEnable(false)} onClick={() => onEnableGroup(contextMenu.data.groupName, false)}>
             Disable All
           </ContextMenuItem>
           <ContextMenuItem onClick={() => startGroupRename(contextMenu.data.groupName)}>
@@ -437,6 +451,7 @@ export function GroupedItemList<T extends GroupableItem>({
           <ContextMenuSeparator />
           <ContextMenuItem
             destructive
+            disabled={!canDeleteGroup}
             onClick={() => {
               const groupItems = items.filter((i) => i.group === contextMenu.data.groupName);
               onDeleteGroup(groupItems.map((i) => i.id));

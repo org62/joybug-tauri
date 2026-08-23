@@ -51,7 +51,7 @@ export const ContextMemoryScannerView = () => {
   const onNavigateToMemory = sessionData.onNavigateToMemory;
   const { addBookmark } = sessionData.bookmarkState;
 
-  const scanner = useMemoryScanner(sessionId, canUse, isLive);
+  const scanner = useMemoryScanner(sessionId, canUse, isLive, sessionData.processId);
   const { contextMenu, openContextMenu, closeContextMenu } = useContextMenu<{ address: string }>();
 
   const compareTypes = scanner.isFirstScan ? FIRST_SCAN_COMPARE_TYPES : NEXT_SCAN_COMPARE_TYPES;
@@ -288,7 +288,7 @@ export const ContextMemoryScannerView = () => {
             size="xs"
             variant="outline"
             onClick={scanner.handleNewScan}
-            disabled={scanner.isFirstScan && scanner.scanId === null}
+            disabled={!canUse || (scanner.isFirstScan && scanner.scanId === null)}
           >
             New Scan
           </Button>

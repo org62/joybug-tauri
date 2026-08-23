@@ -22,6 +22,8 @@ export function ContextPatchesView() {
       onUpdatePatch={updatePatch}
       onEnablePatchGroup={enablePatchGroup}
       onNavigateToDisassembly={sessionData.onNavigateToDisassembly}
+      isPaused={sessionData.isPaused}
+      canUseMemoryOps={sessionData.canUseMemoryOps}
     />
   );
 }

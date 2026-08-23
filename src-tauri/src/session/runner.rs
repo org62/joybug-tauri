@@ -599,9 +599,15 @@ pub fn run_debug_session(
         state.current_event = None;
     }
 
-    // Emit final session update
+    // Emit final session update, then the persisted-config lists: `reset()` just
+    // deactivated every breakpoint/patch and dropped bookmark freezes, and the
+    // frontend only learns about that through these events (a stop from Running
+    // never re-seeds from the session payload).
     if let Some(ref handle) = app_handle {
         emit_session_event(&session_state, handle);
+        super::breakpoints::emit_breakpoints_event_from_state(&session_state, handle);
+        super::patches::emit_patches_event_from_state(&session_state, handle, true);
+        super::bookmarks::emit_bookmarks_event_from_state(&session_state, handle);
     }
 
     info!("Debug session {} finished", session_id);

@@ -6,9 +6,8 @@ export const ContextSourceView = () => {
   const sessionData = useSessionContext();
   const currentEvent = sessionData?.session?.current_event;
 
-  const displayStatus = sessionData?.displayStatus;
   const address = currentEvent?.address;
-  const isPaused = displayStatus === 'Paused';
+  const isPaused = sessionData.isPaused;
   const sessionId = sessionData?.session?.id;
 
   const { breakpoints, toggleBreakpoint } = sessionData.breakpointState;
@@ -26,6 +25,7 @@ export const ContextSourceView = () => {
     <SourceView
       sessionId={sessionId}
       isPaused={isPaused}
+      canUseMemoryOps={sessionData.canUseMemoryOps}
       address={address}
       symbolsRefreshKey={sessionData.symbolsRefreshKey}
       breakpointAddresses={breakpointAddresses}

@@ -56,11 +56,16 @@ pub fn remove_bookmark(
     oob_pool: State<'_, super::OobPool>,
     app_handle: tauri::AppHandle,
 ) -> Result<()> {
-    let cmd = UICommand::RemoveBookmark { id: id.clone() };
+    let session_arc = super::get_session_arc(&session_id, &session_states)?;
+    let offline_handle = app_handle.clone();
     let handle = Some(app_handle);
-    super::paused_or_oob(&session_id, &session_states, &oob_pool, cmd, |client, pid| {
-        crate::session::bookmarks::process_remove_bookmark(client, &handle, pid, &id);
-    })
+    super::paused_or_offline_or_oob(
+        &session_arc, &session_id, &oob_pool,
+        UICommand::RemoveBookmark { id: id.clone() },
+        || crate::session::bookmarks::remove_bookmarks_offline(&session_arc, &offline_handle, std::slice::from_ref(&id)),
+        |client, pid| crate::session::bookmarks::process_remove_bookmark(client, &handle, pid, &id),
+    )?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -71,11 +76,16 @@ pub fn remove_bookmarks(
     oob_pool: State<'_, super::OobPool>,
     app_handle: tauri::AppHandle,
 ) -> Result<()> {
-    let cmd = UICommand::RemoveBookmarks { ids: ids.clone() };
+    let session_arc = super::get_session_arc(&session_id, &session_states)?;
+    let offline_handle = app_handle.clone();
     let handle = Some(app_handle);
-    super::paused_or_oob(&session_id, &session_states, &oob_pool, cmd, |client, pid| {
-        crate::session::bookmarks::process_remove_bookmarks(client, &handle, pid, &ids);
-    })
+    super::paused_or_offline_or_oob(
+        &session_arc, &session_id, &oob_pool,
+        UICommand::RemoveBookmarks { ids: ids.clone() },
+        || crate::session::bookmarks::remove_bookmarks_offline(&session_arc, &offline_handle, &ids),
+        |client, pid| crate::session::bookmarks::process_remove_bookmarks(client, &handle, pid, &ids),
+    )?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -90,14 +100,21 @@ pub fn update_bookmark(
     oob_pool: State<'_, super::OobPool>,
     app_handle: tauri::AppHandle,
 ) -> Result<()> {
+    let session_arc = super::get_session_arc(&session_id, &session_states)?;
     let cmd = UICommand::UpdateBookmark {
         id: id.clone(), name: name.clone(), comment: comment.clone(),
         group: group.clone(), value_type: value_type.clone(),
     };
+    let offline_handle = app_handle.clone();
     let handle = Some(app_handle);
-    super::paused_or_oob(&session_id, &session_states, &oob_pool, cmd, |client, pid| {
-        crate::session::bookmarks::process_update_bookmark(client, &handle, pid, &id, name, comment, group, value_type);
-    })
+    let (o_name, o_comment, o_group, o_value_type) =
+        (name.clone(), comment.clone(), group.clone(), value_type.clone());
+    super::paused_or_offline_or_oob(
+        &session_arc, &session_id, &oob_pool, cmd,
+        || crate::session::bookmarks::update_bookmark_offline(&session_arc, &offline_handle, &id, o_name, o_comment, o_group, o_value_type),
+        |client, pid| crate::session::bookmarks::process_update_bookmark(client, &handle, pid, &id, name, comment, group, value_type),
+    )?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -125,11 +142,21 @@ pub fn toggle_bookmark_lock(
     oob_pool: State<'_, super::OobPool>,
     app_handle: tauri::AppHandle,
 ) -> Result<()> {
-    let cmd = UICommand::ToggleBookmarkLock { id: id.clone(), locked };
+    let session_arc = super::get_session_arc(&session_id, &session_states)?;
+    // Locking needs a live cell to freeze, so it is refused with no process;
+    // unlocking is a flag clear the offline path handles.
+    if locked && super::is_stopped(&session_arc) {
+        return Err(crate::error::Error::InvalidSessionState("Session is stopped".to_string()));
+    }
+    let offline_handle = app_handle.clone();
     let handle = Some(app_handle);
-    super::paused_or_oob(&session_id, &session_states, &oob_pool, cmd, |client, pid| {
-        crate::session::bookmarks::process_toggle_bookmark_lock(client, &handle, pid, &id, locked);
-    })
+    super::paused_or_offline_or_oob(
+        &session_arc, &session_id, &oob_pool,
+        UICommand::ToggleBookmarkLock { id: id.clone(), locked },
+        || crate::session::bookmarks::unlock_bookmark_offline(&session_arc, &offline_handle, &id),
+        |client, pid| crate::session::bookmarks::process_toggle_bookmark_lock(client, &handle, pid, &id, locked),
+    )?;
+    Ok(())
 }
 
 #[tauri::command]

@@ -1,8 +1,35 @@
 import { invoke } from '@tauri-apps/api/core';
+import { toastError } from '@/lib/logger';
 import { RegisterContext, SymbolResolver } from '@/lib/hexUtils';
 import { resolveSymbol as resolveSymbolByName, SearchSymbolsFn, ModuleRef, moduleBasename as basename } from '@/lib/symbolUtils';
 import { SerializableThreadContext } from '@/components/RegisterView';
 import type { SessionStatus } from '@/contexts/SessionContext';
+
+/*
+ * Session-state policy — every panel gates on exactly one of these three
+ * predicates, never on the raw `session.status` string:
+ *
+ * | predicate                    | meaning                          | gates                                   |
+ * |------------------------------|----------------------------------|-----------------------------------------|
+ * | `isPaused`                   | target is paused at an event     | stepping, register edits, applying /    |
+ * |   (`displayStatus==='Paused'`)|                                  | undoing patch bytes, source step-line   |
+ * | `canUseMemoryOps`            | a process exists                 | every OOB op: read memory, disassemble, |
+ * |   (`isProcessAvailable(...)`)| (Paused / Running / Open)        | symbol search, scans, add breakpoint /  |
+ * |                              |                                  | bookmark by address, find-accesses      |
+ * | `sessionId`                  | the session object exists,       | persisted config (breakpoints, patches, |
+ * |                              | including Stopped                | bookmarks): visible + metadata-editable |
+ *
+ * Live-derived views (registers, call stack, memory, disassembly, threads,
+ * modules, source, symbol results) clear on `!sessionId || !canUseMemoryOps`
+ * (the canonical cleanup effect), never on `isPaused` — a running target is
+ * still a process. Scan caches (strings / scanner / pointer scan) hide behind
+ * an "unavailable" state instead and drop when a *new* pid appears.
+ *
+ * Any control whose handler invokes the backend against the process is
+ * `disabled={!canUseMemoryOps}` (or `!isPaused` where the command goes through
+ * `send_paused_command`). Metadata-only controls on persisted config stay
+ * enabled while Stopped — the backend takes a state-only path for them.
+ */
 
 /**
  * True when a process is available for memory/enumeration ops: paused, running
@@ -61,7 +88,24 @@ export function formatTauriError(err: unknown): string {
 export function isBenignSessionError(message: string): boolean {
   // `invalid ?session ?state` matches both the Display text ("Invalid session
   // state: ...") and the serialized variant name ("InvalidSessionState").
-  return /no active process|must be paused|session not|invalid ?session ?state/i.test(message);
+  // `session is stopped` is `oob_pid`'s wording for a Stopped session; via a
+  // direct invoke it arrives bare (formatTauriError unwraps the enum), so it
+  // must be matched on its own, not only through the "Invalid session state:"
+  // prefix the event path carries.
+  return /no active process|must be paused|session not|session is stopped|invalid ?session ?state/i.test(message);
+}
+
+/**
+ * Report a failed session command to the user. The single place the policy
+ * above is enforced for command handlers: an error that only means "the process
+ * went away" (a click that raced the Stopped transition) is dropped — the
+ * panel's no-process state already says it — and anything else is toasted.
+ * `label` names the action, e.g. "remove bookmark".
+ */
+export function reportSessionError(label: string, err: unknown, sessionId?: string): void {
+  const message = formatTauriError(err);
+  if (isBenignSessionError(message)) return;
+  void toastError(`Failed to ${label}: ${message}`, sessionId);
 }
 
 export { moduleBasename, pathDirname } from '@/lib/symbolUtils';

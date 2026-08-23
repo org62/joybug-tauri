@@ -17,7 +17,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { useContextMenu } from '@/hooks/useContextMenu';
-import { moduleBasename } from '@/lib/sessionHelpers';
+import { moduleBasename, isProcessAvailable } from '@/lib/sessionHelpers';
 import { parseAddress } from '@/lib/hexUtils';
 import { Layers, FileSymlink, RotateCcw, Loader2, Copy, Trash2 } from 'lucide-react';
 
@@ -114,7 +114,11 @@ export const ContextModulesView: React.FC<ContextModulesViewProps> = ({ onOpenMo
 
   // Load modules when component mounts or session changes
   useEffect(() => {
-    if (sessionData?.session?.id) {
+    // Only with a process. Guarded on the *raw* status, which is what triggers
+    // this effect: `canUseMemoryOps` comes from the debounced status, updated by
+    // a parent effect that runs after this one, so on the stop commit it would
+    // still read true here and fire a load against the dead process.
+    if (sessionData?.session?.id && isProcessAvailable(sessionData.session.status)) {
       sessionData.loadModules();
     }
   }, [sessionData?.session?.id, sessionData?.session?.status, sessionData?.session?.current_event]);

@@ -18,6 +18,7 @@ import { NavHistoryStore } from "@/lib/navHistory";
 import { RegisterContext, SymbolResolver } from "@/lib/hexUtils";
 import { AddressExpressionInput } from "@/components/AddressExpressionInput";
 import { isBenignSessionError } from "@/lib/sessionHelpers";
+import { EmptyState, ProcessUnavailableState } from "@/components/ui/empty-state";
 import { copyToClipboard } from "@/lib/clipboard";
 import { useContextMenu } from "@/hooks/useContextMenu";
 import { useRecenterOnReveal, applyOverFrames } from "@/hooks/useRecenterOnReveal";
@@ -511,6 +512,10 @@ export function AssemblyView({ sessionId, isPaused, canLoad, address, registers,
   // whose memory was unreadable/undecodable, so nothing came back" — the latter
   // previously left every state false and rendered an empty panel.
   const showEmptyState = !showInstructions && !showLoadingState && !showErrorState;
+  // Session mode with no process: the panel can't load anything, so its controls
+  // are dead and the empty state is the shared no-process one. (`disassemble`
+  // mode is the PE-file host, which has no session and always can load.)
+  const noProcess = !disassemble && canLoad === false;
 
   return (
     <DockPanel ref={containerRef} data-testid="assembly-panel">
@@ -527,6 +532,7 @@ export function AssemblyView({ sessionId, isPaused, canLoad, address, registers,
           className="flex-1 max-w-md"
           inputClassName="flex-1"
           historyKey="disasm-goto"
+          disabled={noProcess}
         />
 
         {/* Navigation back/forward */}
@@ -569,7 +575,7 @@ export function AssemblyView({ sessionId, isPaused, canLoad, address, registers,
           variant="outline"
           size="icon-xs"
           onClick={refresh}
-          disabled={isLoading}
+          disabled={isLoading || noProcess}
           title="Refresh"
         >
           <RefreshCw className={cn(isLoading && "animate-spin")} />
@@ -760,15 +766,15 @@ export function AssemblyView({ sessionId, isPaused, canLoad, address, registers,
         />
       ) : (
         <PanelBody>
-          {showEmptyState && (
-            <div className="flex flex-col items-center justify-center h-full text-muted-foreground p-4">
-              <div className="text-center">
-                <Cpu className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                <p className="text-base font-medium">No disassembly available</p>
-                <p className="text-sm mt-1">Enter an address or symbol above to disassemble</p>
-              </div>
-            </div>
-          )}
+          {showEmptyState && (noProcess && sessionId ? (
+            <ProcessUnavailableState icon={Cpu} what="Disassembly" />
+          ) : (
+            <EmptyState
+              icon={<Cpu className="h-12 w-12 mx-auto mb-4 opacity-50" />}
+              title="No disassembly available"
+              subtitle="Enter an address or symbol above to disassemble"
+            />
+          ))}
           {showErrorState && (
             <div className="flex items-center justify-center h-full text-syn-invalid p-4">
               <div className="text-center">

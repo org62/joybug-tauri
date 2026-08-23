@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { RawBreakpoint } from '@/contexts/SessionContext';
-import { invokeToggleBreakpoint } from '@/lib/sessionHelpers';
+import { invokeToggleBreakpoint, reportSessionError } from '@/lib/sessionHelpers';
 
 export type { RawBreakpoint } from '@/contexts/SessionContext';
 
@@ -51,25 +51,26 @@ function convertBreakpoints(raw: RawBreakpoint[]): Breakpoint[] {
   }));
 }
 
-export function useBreakpoints(sessionId?: string, isPaused?: boolean, sessionBreakpoints?: RawBreakpoint[]) {
+export function useBreakpoints(sessionId?: string, canUseMemoryOps?: boolean, sessionBreakpoints?: RawBreakpoint[]) {
   const [breakpoints, setBreakpoints] = useState<Breakpoint[]>([]);
 
-  // Keep a ref to sessionBreakpoints so the isPaused effect can read the
+  // Keep a ref to sessionBreakpoints so the re-seed effect can read the
   // latest value without adding it to the dependency array.
   const sessionBpRef = useRef(sessionBreakpoints);
   sessionBpRef.current = sessionBreakpoints;
 
-  // Session cleanup / seed: clear when session ends, seed from session context
-  // when the session appears and re-seed on pause transitions. Not gated on
-  // isPaused — a non-invasive Open session never pauses but still has
-  // persisted breakpoints to show.
+  // Seed from the session payload when the session appears and re-seed when a
+  // process appears/disappears. Not gated on the status — persisted breakpoints
+  // stay visible (and metadata-editable) while Stopped; only the session going
+  // away clears them. Live edits arrive via breakpoints-updated (the backend
+  // also emits it on process exit, marking every row inactive).
   useEffect(() => {
     if (!sessionId) {
       setBreakpoints([]);
     } else if (sessionBpRef.current && sessionBpRef.current.length > 0) {
       setBreakpoints(convertBreakpoints(sessionBpRef.current));
     }
-  }, [sessionId, isPaused]);
+  }, [sessionId, canUseMemoryOps]);
 
   // Listen for breakpoints-updated events (real-time updates during pause)
   useEffect(() => {
@@ -91,7 +92,7 @@ export function useBreakpoints(sessionId?: string, isPaused?: boolean, sessionBr
     try {
       await invokeToggleBreakpoint(sessionId, address, singleShot);
     } catch (e) {
-      console.error('Failed to toggle breakpoint:', e);
+      reportSessionError('toggle breakpoint', e, sessionId);
     }
   }, [sessionId]);
 
@@ -100,7 +101,7 @@ export function useBreakpoints(sessionId?: string, isPaused?: boolean, sessionBr
     try {
       await invoke('remove_breakpoint', { sessionId, breakpointId });
     } catch (e) {
-      console.error('Failed to remove breakpoint:', e);
+      reportSessionError('remove breakpoint', e, sessionId);
     }
   }, [sessionId]);
 
@@ -109,7 +110,7 @@ export function useBreakpoints(sessionId?: string, isPaused?: boolean, sessionBr
     try {
       await invoke('remove_breakpoints', { sessionId, breakpointIds });
     } catch (e) {
-      console.error('Failed to remove breakpoints:', e);
+      reportSessionError('remove breakpoints', e, sessionId);
     }
   }, [sessionId]);
 
@@ -118,7 +119,7 @@ export function useBreakpoints(sessionId?: string, isPaused?: boolean, sessionBr
     try {
       await invoke('enable_breakpoint', { sessionId, breakpointId, enabled });
     } catch (e) {
-      console.error('Failed to enable/disable breakpoint:', e);
+      reportSessionError('enable/disable breakpoint', e, sessionId);
     }
   }, [sessionId]);
 
@@ -127,7 +128,7 @@ export function useBreakpoints(sessionId?: string, isPaused?: boolean, sessionBr
     try {
       await invoke('enable_breakpoint_group', { sessionId, group, enabled });
     } catch (e) {
-      console.error('Failed to enable/disable breakpoint group:', e);
+      reportSessionError('enable/disable breakpoint group', e, sessionId);
     }
   }, [sessionId]);
 
@@ -136,7 +137,7 @@ export function useBreakpoints(sessionId?: string, isPaused?: boolean, sessionBr
     try {
       await invoke('update_breakpoint', { sessionId, breakpointId, name: name ?? null, group: group ?? null });
     } catch (e) {
-      console.error('Failed to update breakpoint:', e);
+      reportSessionError('update breakpoint', e, sessionId);
     }
   }, [sessionId]);
 
@@ -145,7 +146,7 @@ export function useBreakpoints(sessionId?: string, isPaused?: boolean, sessionBr
     try {
       await invoke('set_hardware_breakpoint', { sessionId, address, hwType, hwSize });
     } catch (e) {
-      console.error('Failed to set hardware breakpoint:', e);
+      reportSessionError('set hardware breakpoint', e, sessionId);
     }
   }, [sessionId]);
 

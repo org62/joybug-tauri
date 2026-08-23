@@ -82,6 +82,8 @@ function fileKey(moduleBase: string, filePath: string): string {
 export interface UseSourceViewOptions {
   sessionId: string | undefined;
   isPaused?: boolean;
+  /** False when the session has no process (Stopped): the view clears. */
+  canUseMemoryOps?: boolean;
   pcAddress?: number;
   /** Changes when a module's symbols finish loading; triggers a PC re-resolve so
    * line info appears once a module's PDB path becomes known. */
@@ -131,7 +133,7 @@ interface OpenFile {
 }
 
 export function useSourceView(options: UseSourceViewOptions): SourceViewState & SourceViewActions {
-  const { sessionId, isPaused, pcAddress: pcAddressProp, symbolsRefreshKey } = options;
+  const { sessionId, isPaused, canUseMemoryOps, pcAddress: pcAddressProp, symbolsRefreshKey } = options;
 
   const [filePath, setFilePath] = useState<string | null>(null);
   const [moduleBase, setModuleBase] = useState<string | null>(null);
@@ -475,9 +477,17 @@ export function useSourceView(options: UseSourceViewOptions): SourceViewState & 
     }
   });
 
-  // Reset all state when the session ends or resumes.
+  // Reset all state when the session ends or its process goes away. While the
+  // target merely runs, keep the file in view (like the disassembly) and only
+  // drop the PC-line highlight, which is stale until the next pause.
   useEffect(() => {
-    if (!sessionId || isPaused === false) {
+    if (sessionId && canUseMemoryOps !== false) {
+      // A process, just not paused: keep the file in view (like the
+      // disassembly) and drop only the PC line, stale until the next pause.
+      if (isPaused === false) setPcLine(null);
+      return;
+    }
+    {
       setFilePath(null);
       setModuleBase(null);
       setLineCount(0);
@@ -500,7 +510,7 @@ export function useSourceView(options: UseSourceViewOptions): SourceViewState & 
       listedBasesRef.current.clear();
       lastPcRef.current = null;
     }
-  }, [sessionId, isPaused]);
+  }, [sessionId, isPaused, canUseMemoryOps]);
 
   // --- Actions ---
   const selectFile = useCallback(

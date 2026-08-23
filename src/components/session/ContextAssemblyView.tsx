@@ -21,7 +21,7 @@ export const ContextAssemblyView = () => {
 
   const resolveSymbol = useSymbolResolver();
 
-  const isPaused = displayStatus === 'Paused';
+  const isPaused = sessionData.isPaused;
   const sessionId = sessionData?.session?.id;
 
   // Quick emulation is a session capability, so the hook lives in this wrapper —

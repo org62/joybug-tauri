@@ -18,6 +18,7 @@ import type {
   RuntimeFunction,
 } from '@/hooks/useModuleInfo';
 import { Loader2, FileWarning, FileSearch, ChevronDown, ChevronRight } from 'lucide-react';
+import { ProcessUnavailableState } from '@/components/ui/empty-state';
 import { useInlineVirtualizer } from '@/hooks/useInlineVirtualizer';
 import { moduleBasename } from '@/lib/sessionHelpers';
 import {
@@ -422,6 +423,7 @@ export const ModuleInfoView: React.FC<ModuleInfoViewProps> = ({
       <PanelToolbar>
         <Select
           value={selectedModuleBase ?? ''}
+          disabled={modules.length === 0}
           onValueChange={onModuleSelect}
         >
           <SelectTrigger size="xs" className="w-full">
@@ -465,6 +467,13 @@ export const ModuleInfoView: React.FC<ModuleInfoViewProps> = ({
                 <p className="text-sm mt-1">Select a module to view PE information</p>
               </div>
             </div>
+          )}
+
+          {/* A module is still selected (the choice persists across runs) but
+              there is nothing to show: the process went away and its info was
+              cleared. Without this branch the body renders blank. */}
+          {!isLoading && !error && !info && selectedModuleBase && !selectedModule && (
+            <ProcessUnavailableState icon={FileSearch} what="Module info" />
           )}
 
           {!isLoading && !error && info && selectedModule && (
