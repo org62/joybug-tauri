@@ -16,7 +16,7 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
 } from '@/components/ui/dialog';
 import { useContextMenu } from '@/hooks/useContextMenu';
-import { Cpu, Loader2, Pause, Play, Skull } from 'lucide-react';
+import { Cpu, Loader2, Pause, Play, Square } from 'lucide-react';
 import { toast } from 'sonner';
 import { CallStackFrameList, CallStackFrame } from '@/components/CallStackFrameList';
 
@@ -482,13 +482,13 @@ export const ContextThreadsView = ({ onNavigateToDisassembly, onNavigateToMemory
           </Button>
           <Button
             size="icon-xs"
-            variant="destructive"
+            variant="outline"
             title="Terminate selected threads"
             disabled={actionsDisabled}
             onClick={() => requestKill(selectedTids)}
             data-testid="thread-action-kill"
           >
-            <Skull />
+            <Square />
           </Button>
         </PanelToolbar>
       )}
@@ -619,7 +619,7 @@ export const ContextThreadsView = ({ onNavigateToDisassembly, onNavigateToMemory
           </ContextMenuItem>
           <ContextMenuSeparator />
           <ContextMenuItem
-            icon={<Skull />}
+            icon={<Square />}
             destructive
             disabled={!canUse}
             onClick={() => requestKill(targetsFor(contextMenu.data.tid))}
