@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useEffect, useMemo, ReactNode } from 'react';
-import { Search, Code, Loader2 } from 'lucide-react';
+import { Search, Code } from 'lucide-react';
 import { HistoryInput } from '@/components/ui/history-input';
 import { pushInputHistory } from '@/lib/inputHistory';
 import { Button } from '@/components/ui/button';
@@ -8,7 +8,7 @@ import { DockPanel, PanelToolbar } from '@/components/ui/panel';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { VirtualizedList } from '@/components/ui/virtualized-list';
 import { TruncatedSymbol } from '@/components/ui/truncated-symbol';
-import { EmptyState } from '@/components/ui/empty-state';
+import { EmptyState, LoadingState } from '@/components/ui/empty-state';
 import { ResizableHeaderCell } from '@/components/ui/resizable-header-cell';
 import { SortHeader } from '@/components/ui/sort-header';
 import { usePanelFocus } from '@/hooks/usePanelFocus';
@@ -329,7 +329,7 @@ export function SymbolSearchView<T extends SymbolSearchItem>({
 
   const stateContent = () => {
     if (searching) {
-      return <EmptyState icon={<Loader2 className="h-8 w-8 mx-auto mb-4 animate-spin" />} title="Searching symbols..." />;
+      return <LoadingState title="Searching symbols..." />;
     }
     if (!searched) {
       return (

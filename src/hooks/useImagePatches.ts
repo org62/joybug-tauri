@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
+import { useSnapshotOnPause } from '@/hooks/useSnapshotOnPause';
 
 /** One contiguous run of in-memory code differing from the on-disk image. */
 export interface ImagePatch {
@@ -101,23 +102,9 @@ export function useImagePatches(sessionId?: string, canScan?: boolean, isPaused?
     };
   }, [sessionId, scan]);
 
-  // Auto-scan on every pause (debounced upstream via displayStatus, so rapid
-  // stepping doesn't fire a scan per step) — and once when the target first
-  // becomes reachable, since a running or non-invasive `Open` session never
-  // pauses and so offers no edge to hang the rescan on. The ref keeps a resume
-  // from looking like that first time and firing a second scan.
-  const autoScanned = useRef(false);
-  useEffect(() => {
-    if (!sessionId || !canScan) {
-      autoScanned.current = false;
-      return;
-    }
-    const first = !autoScanned.current;
-    autoScanned.current = true;
-    if (isPaused || first) {
-      scan();
-    }
-  }, [sessionId, canScan, isPaused, scan]);
+  // Auto-scan on every (debounced) pause, and once when the target first
+  // becomes reachable.
+  useSnapshotOnPause(sessionId, canScan, isPaused, scan);
 
   return useMemo(() => ({
     patches,

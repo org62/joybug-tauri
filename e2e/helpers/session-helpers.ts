@@ -226,6 +226,19 @@ export async function goToWindow(page: Page, title: string): Promise<void> {
 }
 
 /**
+ * Close a dock window opened by `goToWindow`. The suite never reloads the page,
+ * so a tab left open stays open for every later spec — and a heavy view (one
+ * that re-fetches on each pause) then keeps paying that cost in tests that
+ * never asked for it. Any spec that opens a window should close it again.
+ */
+export async function closeWindow(page: Page, title: string): Promise<void> {
+  const tab = page.locator(".dock-tab", { hasText: new RegExp(`^${title}$`) }).first();
+  await tab.hover();
+  await tab.locator(".dock-tab-close-btn").click();
+  await expect(tab).toHaveCount(0);
+}
+
+/**
  * Toggle a window's checkbox item inside the Windows menu's `group` submenu,
  * then close the menu. Owns the whole open → submenu → click sequence and
  * restarts it from scratch if the menu collapses mid-flight: under heavy UI

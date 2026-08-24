@@ -11,6 +11,11 @@ pub enum Error {
     DebugLoop(String),
     #[error("Internal communication failed: {0}")]
     InternalCommunication(String),
+    /// The debug server reached the target but the operation itself failed
+    /// (e.g. `AdjustTokenPrivileges` denied). Distinct from
+    /// `InternalCommunication`, which means the request never got an answer.
+    #[error("Operation failed on the target: {0}")]
+    TargetOperation(String),
     #[error("Invalid session state: {0}")]
     InvalidSessionState(String),
     #[error("A session with the same server and command already exists")]

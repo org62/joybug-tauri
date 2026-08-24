@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { Loader2 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
 // Centered icon + title + subtitle, shared by every non-results panel state.
@@ -33,4 +34,11 @@ export function ProcessUnavailableState({ icon: Icon, what }: { icon: LucideIcon
       subtitle={NO_PROCESS_HINT}
     />
   );
+}
+
+// The "fetching, nothing to show yet" state. Same reason as
+// `ProcessUnavailableState`: the spinner sizing lives here so every loading
+// panel looks alike, instead of being retyped at each call site.
+export function LoadingState({ title }: { title: string }) {
+  return <EmptyState icon={<Loader2 className="h-8 w-8 mx-auto mb-4 animate-spin" />} title={title} />;
 }

@@ -1,10 +1,10 @@
 import { useMemo, useState } from "react";
-import { FileDiff, Loader2, RefreshCw, Undo2 } from "lucide-react";
+import { FileDiff, RefreshCw, Undo2 } from "lucide-react";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { DockPanel, PanelToolbar, PanelBody } from "./ui/panel";
-import { EmptyState } from "./ui/empty-state";
+import { EmptyState, LoadingState } from "./ui/empty-state";
 import { cn, LINK_VALUE_CLASS } from "@/lib/utils";
 import { usePanelFocus } from "@/hooks/usePanelFocus";
 import type { ImagePatch } from "@/hooks/useImagePatches";
@@ -53,7 +53,7 @@ export function ImagePatchesView({
 
   const emptyState = () => {
     if (scanning && patches.length === 0) {
-      return <EmptyState icon={<Loader2 className="h-8 w-8 mx-auto mb-4 animate-spin" />} title="Scanning modules..." />;
+      return <LoadingState title="Scanning modules..." />;
     }
     const { title, subtitle } = !scanned
       ? { title: "Not scanned yet", subtitle: "Start or open a process to scan its loaded modules for image patches" }

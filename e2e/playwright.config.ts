@@ -49,6 +49,7 @@ export default defineConfig({
     "stack-hex.spec.ts",
     "thread-switch.spec.ts",
     "thread-control.spec.ts",
+    "handles.spec.ts",
     "non-invasive.spec.ts",
     "strings-view.spec.ts",
     "memory-regions.spec.ts",

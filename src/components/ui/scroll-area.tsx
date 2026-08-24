@@ -69,7 +69,10 @@ function ScrollBar({
       data-slot="scroll-area-scrollbar"
       orientation={orientation}
       className={cn(
-        "flex touch-none p-px transition-colors select-none",
+        // z-20 keeps the bar above sticky section headers: a `sticky`+`z-10`
+        // header forms a stacking context in the ScrollArea root, where the
+        // absolute scrollbar is z-auto and would otherwise paint underneath it.
+        "flex touch-none p-px transition-colors select-none z-20",
         orientation === "vertical" &&
           "h-full w-2.5 border-l border-l-transparent",
         orientation === "horizontal" &&

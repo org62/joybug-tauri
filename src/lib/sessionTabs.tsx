@@ -1,7 +1,7 @@
 import React from "react";
 import {
   Code, Cpu, Box, Layers, ListTree, Search, HardDrive, MapPin, FileCode, FileDiff,
-  ScanSearch, Puzzle, Crosshair, Bookmark as BookmarkIcon, Boxes, Type, Radar, Fingerprint,
+  ScanSearch, Puzzle, Crosshair, Bookmark as BookmarkIcon, Boxes, Type, Radar, Fingerprint, KeyRound,
 } from "lucide-react";
 import type { ActionId } from "@/lib/keybindings";
 
@@ -75,6 +75,9 @@ const TAB_DEFS = [
   { id: "threads", title: "Threads", category: "Process", home: "panel-left-bottom",
     action: "panel.threads", icon: <Layers className="size-4" />,
     keywords: ["threads"] },
+  { id: "handles", title: "Handles", category: "Process", home: "panel-center", minWidth: WIDE,
+    action: "panel.handles", icon: <KeyRound className="size-4" />,
+    keywords: ["handles", "windows", "hwnd", "tcp", "connections", "sockets", "privileges", "token", "objects"] },
   { id: "modules", title: "Modules", category: "Process", home: "panel-left-top",
     action: "panel.modules", icon: <Box className="size-4" />,
     keywords: ["modules", "dll"] },

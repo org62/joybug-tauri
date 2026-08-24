@@ -22,6 +22,7 @@ import { ContextSourceView } from "@/components/session/ContextSourceView";
 import { ContextRegisterView } from "@/components/session/ContextRegisterView";
 import { ContextModulesView } from "@/components/session/ContextModulesView";
 import { ContextThreadsView } from "@/components/session/ContextThreadsView";
+import { ContextProcessHandlesView } from "@/components/session/ContextProcessHandlesView";
 import { ContextCallStackView } from "@/components/session/ContextCallStackView";
 import { ContextSymbolsView } from "@/components/session/ContextSymbolsView";
 import { ContextTypesView } from "@/components/session/ContextTypesView";
@@ -640,6 +641,7 @@ export default function SessionDocked() {
     registers: <ContextRegisterView />,
     modules: <ContextModulesView onOpenModuleInfo={handleOpenModuleInfo} />,
     threads: <ContextThreadsView onNavigateToDisassembly={handleNavigateToDisassembly} onNavigateToMemoryPointer={handleNavigateToMemoryPointer} />,
+    handles: <ContextProcessHandlesView />,
     callstack: <ContextCallStackView onNavigateToDisassembly={handleNavigateToDisassembly} onNavigateToMemoryPointer={handleNavigateToMemoryPointer} />,
     symbols: <ContextSymbolsView />,
     types: <ContextTypesView />,
