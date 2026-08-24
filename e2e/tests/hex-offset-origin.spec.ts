@@ -2,9 +2,11 @@ import { test, expect } from "../helpers/test-fixtures";
 import {
   createAndStartSession,
   cleanupSession,
-  goToWindow,
+  openMemoryHexPanel,
+  resetDockLayout,
 } from "../helpers/session-helpers";
 import { waitForPaused } from "../helpers/wait-helpers";
+import { HEX_ADDRESS, HEX_OFFSET_ORIGIN } from "../helpers/selectors";
 
 /**
  * The hex view's offset origin: double-clicking a row's address in the gutter
@@ -16,10 +18,6 @@ import { waitForPaused } from "../helpers/wait-helpers";
  * spec creates its own session, so nothing leaks between specs. Don't "fix" that
  * by reaching for a reset here.
  */
-const HEX_PANEL = '[data-testid="hex-panel"]';
-const HEX_ADDRESS = '[data-testid="hex-address"]';
-const OFFSET_ORIGIN = '[data-testid="hex-offset-origin"]';
-
 test.describe("Hex offset origin", () => {
   test("double-clicking an address measures the gutter from it", async ({
     tauriPage: page,
@@ -29,29 +27,12 @@ test.describe("Hex offset origin", () => {
     const sessionId = await createAndStartSession(page, "Hex Offset Origin");
     try {
       await waitForPaused(page, sessionId);
-      await goToWindow(page, "Memory");
 
       // The view opens empty; give it an address so there are rows to click.
-      // Scope to the visible panel: rc-dock keeps hidden panels mounted, and
-      // the disassembly view has an identical address input.
-      const memPanel = page
-        .locator(".absolute.inset-0", { hasText: "No memory loaded" })
-        .filter({ visible: true })
-        .last();
-      const gotoInput = memPanel.getByPlaceholder(/^Address/);
-      await gotoInput.waitFor({ state: "visible", timeout: 10_000 });
-      await gotoInput.fill("rsp");
-      await gotoInput.press("Enter");
-
-      const hex = page.locator(HEX_PANEL);
-      await expect(hex).toBeVisible({ timeout: 15_000 });
+      const hex = await openMemoryHexPanel(page, "rsp");
       const gutter = hex.locator(HEX_ADDRESS);
       const header = hex.locator("span").filter({ hasText: /^(Address|Offset)$/ }).first();
-      const originLabel = hex.locator(OFFSET_ORIGIN);
-
-      await expect(async () => {
-        expect(await gutter.count()).toBeGreaterThan(4);
-      }).toPass({ timeout: 15_000, intervals: [50, 100] });
+      const originLabel = hex.locator(HEX_OFFSET_ORIGIN);
 
       // --- Absolute by default ------------------------------------------------
       await expect(header).toHaveText("Address");
@@ -91,9 +72,7 @@ test.describe("Hex offset origin", () => {
       await cleanupSession(page, sessionId);
       // The Memory tab this spec opened would otherwise stay open for every
       // later spec, mounting its view (and its fetches) before they start.
-      await page.getByRole("main").getByRole("button", { name: "Windows" }).click();
-      await page.getByRole("menuitem", { name: "Reset Layout" }).click();
-      await page.keyboard.press("Escape");
+      await resetDockLayout(page);
     }
   });
 });

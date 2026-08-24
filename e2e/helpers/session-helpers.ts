@@ -2,6 +2,7 @@ import { Page, expect } from "@playwright/test";
 import path from "path";
 import { fileURLToPath } from "url";
 import { navigateTo } from "./test-fixtures";
+import { HEX_ADDRESS, hexPanelFor } from "./selectors";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -302,4 +303,47 @@ export async function cleanupSession(
       // May already be deleted
     }
   }, sessionId);
+}
+
+/**
+ * Undo a spec's dock-layout changes. The suite never reloads the page, so a tab
+ * left open stays open for every later spec — and a heavy view then keeps
+ * re-fetching in tests that never asked for it. Prefer `closeWindow` when a
+ * single tab was opened; use this when the layout itself moved (a tab dragged
+ * into a new panel, a panel resized) or when several tabs were opened.
+ */
+export async function resetDockLayout(page: Page): Promise<void> {
+  await page.getByRole("main").getByRole("button", { name: "Windows" }).click();
+  await page.getByRole("menuitem", { name: "Reset Layout" }).click();
+  await page.keyboard.press("Escape");
+}
+
+/**
+ * Open the Memory tab, navigate it to `addressExpr` (anything the goto box
+ * accepts: `rsp`, `ntdll!NtClose`, a literal address) and return the hex panel
+ * locator once it has rows.
+ *
+ * The empty-state panel has to be located by its copy because it renders before
+ * the hex panel's own testid exists; scoping to the *visible* one matters
+ * because rc-dock keeps hidden panels mounted and the disassembly view has an
+ * identical address input.
+ */
+export async function openMemoryHexPanel(page: Page, addressExpr: string) {
+  await goToWindow(page, "Memory");
+
+  const emptyPanel = page
+    .locator(".absolute.inset-0", { hasText: "No memory loaded" })
+    .filter({ visible: true })
+    .last();
+  const gotoInput = emptyPanel.getByPlaceholder(/^Address/);
+  await gotoInput.waitFor({ state: "visible", timeout: 10_000 });
+  await gotoInput.fill(addressExpr);
+  await gotoInput.press("Enter");
+
+  const hex = page.locator(hexPanelFor("memory"));
+  await expect(hex).toBeVisible({ timeout: 15_000 });
+  await expect(async () => {
+    expect(await hex.locator(HEX_ADDRESS).count()).toBeGreaterThan(4);
+  }).toPass({ timeout: 15_000, intervals: [50, 100] });
+  return hex;
 }

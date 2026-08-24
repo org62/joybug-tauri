@@ -1,4 +1,5 @@
 import { spawn, ChildProcess, execSync } from "child_process";
+import { CDP_PORT, CDP_VERSION_URL, connectToApp, waitForAppMount } from "./helpers/app";
 import { existsSync, mkdirSync } from "fs";
 import path from "path";
 import os from "os";
@@ -16,7 +17,6 @@ const TAURI_BINARY = path.resolve(
   `../src-tauri/target/${RELEASE ? "release" : "debug"}/joybug-tauri.exe`,
 );
 const VITE_URL = "http://localhost:1420";
-const CDP_URL = "http://localhost:9222/json/version";
 
 async function waitForUrl(url: string, timeoutMs: number): Promise<void> {
   const start = Date.now();
@@ -100,7 +100,7 @@ async function globalSetup(): Promise<void> {
   const tauri: ChildProcess = spawn(TAURI_BINARY, [], {
     env: {
       ...process.env,
-      WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: "--remote-debugging-port=9222",
+      WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${CDP_PORT}`,
       JOYBUG_DATA_DIR: e2eDataDir,
       // The app is launched once here and every test attaches to the page it's
       // already mounted, so a startup modal or network call happens before any
@@ -123,8 +123,26 @@ async function globalSetup(): Promise<void> {
   });
 
   console.log("Waiting for CDP endpoint...");
-  await waitForUrl(CDP_URL, 30_000);
+  await waitForUrl(CDP_VERSION_URL, 30_000);
   console.log("CDP endpoint ready.");
+
+  // Wait for the app to actually mount before handing over to the tests. On a
+  // fresh Vite dev server the first page load transforms the whole module
+  // graph (no persistent transform cache), which has been measured at ~35s.
+  // Playwright counts fixture setup toward a test's 60s timeout, so if that
+  // cold mount happened inside the first test it would eat most of its budget
+  // and the test would fail once and pass on retry — a flake with a concrete
+  // cause. Paying for the mount here, with its own budget, keeps every test's
+  // clock starting from a warm page.
+  const mountStart = Date.now();
+  const { browser, page } = await connectToApp();
+  try {
+    await waitForAppMount(page, 120_000);
+  } finally {
+    // Disconnects the CDP session only; the app keeps running for the tests.
+    await browser.close();
+  }
+  console.log(`App mounted after ${Date.now() - mountStart}ms.`);
 }
 
 export default globalSetup;

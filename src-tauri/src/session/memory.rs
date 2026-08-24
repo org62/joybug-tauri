@@ -344,7 +344,11 @@ pub(crate) fn process_dereference_request(
 ) {
     debug!("📤 Processing dereference request: pid={}, address=0x{:X}, count={}", pid, address, count);
 
-    let result = session.dereference(pid, address, count, None);
+    // Hex-view slots: their own address is just where the value lives, so only
+    // the stored value is followed (probe_start = false) — otherwise every cell
+    // inside code would report "the instruction at this slot" as if the QWORD
+    // pointed there.
+    let result = session.dereference(pid, address, count, None, false);
     if let Some(ref handle) = app_handle_clone {
         let session_id = { session.state.lock().unwrap().id.clone() };
         match result {
@@ -639,7 +643,9 @@ pub(crate) fn process_dereference_batch(
 ) {
     debug!("📤 Processing dereference batch: pid={}, {} addresses", pid, addresses.len());
 
-    let result = session.dereference_batch(pid, addresses.to_vec(), 1, None);
+    // Registers: the address IS the pointer, so describe its target first
+    // (rip → the instruction at rip), i.e. probe_start = true.
+    let result = session.dereference_batch(pid, addresses.to_vec(), 1, None, true);
     let Some(handle) = app_handle_clone.as_ref() else { return };
     let session_id = { session.state.lock().unwrap().id.clone() };
     match result {

@@ -54,6 +54,7 @@ export default defineConfig({
     "strings-view.spec.ts",
     "memory-regions.spec.ts",
     "hex-offset-origin.spec.ts",
+    "hex-symbols.spec.ts",
     "code-explorer.spec.ts",
     "watchpoint-trace.spec.ts",
     "updates.spec.ts",

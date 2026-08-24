@@ -50,7 +50,11 @@ function VirtualizedListInner<T>({
   }
 
   return (
+    // Rows are absolutely positioned and re-anchored explicitly by their
+    // owners (the hex view re-anchors on row-model changes); browser scroll
+    // anchoring must never move the viewport underneath them.
     <ScrollArea
+      scrollAnchoring={false}
       className={className}
       style={style}
       viewportRef={viewportRef}

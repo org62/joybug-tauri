@@ -19,6 +19,12 @@ interface ScrollAreaProps extends React.ComponentProps<typeof ScrollAreaPrimitiv
    * default never mounts a horizontal bar).
    */
   orientation?: "vertical" | "horizontal" | "both";
+  /**
+   * Browser scroll anchoring on the viewport. Turn it off for content whose
+   * rows are absolutely positioned and re-anchored explicitly (a virtualizer):
+   * there the browser's own correction fights the owner's scroll math.
+   */
+  scrollAnchoring?: boolean;
 }
 
 function ScrollArea({
@@ -27,6 +33,7 @@ function ScrollArea({
   onScroll,
   viewportRef,
   orientation = "vertical",
+  scrollAnchoring = true,
   ...props
 }: ScrollAreaProps) {
   return (
@@ -44,7 +51,8 @@ function ScrollArea({
           // without this the content spills past the root unclipped and never
           // scrolls). Roots without max-height inherit `none` — a no-op.
           "focus-visible:ring-ring/50 size-full max-h-[inherit] rounded-[inherit] transition-[color,box-shadow] outline-none focus-visible:ring-[3px] focus-visible:outline-1",
-          orientation === "vertical" && VERTICAL_CONTENT_FIX
+          orientation === "vertical" && VERTICAL_CONTENT_FIX,
+          !scrollAnchoring && "[overflow-anchor:none]"
         )}
         onScroll={onScroll}
       >

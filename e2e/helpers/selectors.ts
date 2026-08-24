@@ -15,3 +15,6 @@ export const HEX_PANEL = '[data-testid="hex-panel"]';
 export const hexPanelFor = (memoryViewId: string) => `${HEX_PANEL}[data-memory-view-id="${memoryViewId}"]`;
 export const HEX_ADDRESS = '[data-testid="hex-address"]';
 export const HEX_OFFSET_ORIGIN = '[data-testid="hex-offset-origin"]';
+/** Symbol/bookmark label rows interleaved above the data row holding their address. */
+export const HEX_SYMBOL_ROW = '[data-testid="hex-symbol-row"]';
+export const HEX_SYMBOLS_TOGGLE = '[data-testid="hex-symbols-toggle"]';

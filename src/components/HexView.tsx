@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo, KeyboardEvent, MouseEvent, UIEvent, WheelEvent } from "react";
+import { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo, memo, KeyboardEvent, MouseEvent, UIEvent, WheelEvent } from "react";
 import { Virtualizer } from "@tanstack/react-virtual";
 import { VirtualizedList } from "./ui/virtualized-list";
 import { Button } from "./ui/button";
@@ -9,8 +9,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "./ui/select";
-import { Binary, Save, X, ArrowRight, Copy, ClipboardPaste, Crosshair, Bookmark, Fingerprint, HardDrive } from "lucide-react";
+import { Binary, Save, X, ArrowRight, Copy, ClipboardPaste, Crosshair, Bookmark, Fingerprint, HardDrive, Tag } from "lucide-react";
 import { useHexEditor, ExtendStatus, HexDataSource } from "@/hooks/useHexEditor";
+import { useHexSymbols, HexSymbolSource, HexExtraLabel } from "@/hooks/useHexSymbols";
+import { useLocalStorageState } from "@/hooks/useLocalStorageState";
+import { buildHexRows, dataRowForOffset, displayIndexForOffset, HexRow } from "@/lib/hexRows";
+import { TruncatedSymbol } from "@/components/ui/truncated-symbol";
 import { isProcessAvailable } from "@/lib/sessionHelpers";
 import { CHANGED_VALUE_CLASS, DATA_ROW_HEIGHT } from "@/lib/utils";
 import { useNavigationChannel } from "@/hooks/useNavigationChannel";
@@ -66,6 +70,11 @@ interface HexViewProps {
    *  opts an embedded view (the Stack tab) out of it, leaving the payload for
    *  the Memory tab(s). */
   navScope?: "shared" | "private";
+  /** Module symbols inside a window, for the "show symbols" rows. Absent in
+   *  file (dataSource) mode, which also hides the toggle. */
+  symbolSource?: HexSymbolSource;
+  /** Host-known labels (bookmarks) merged into the symbol rows. */
+  extraLabels?: HexExtraLabel[];
 }
 
 const VIEWMODE_VALUE_TYPE: Record<ViewMode, string> = {
@@ -84,7 +93,7 @@ const MAX_WHEEL_REVEAL = (DEFAULT_CHUNK_SIZE / BYTES_PER_ROW) * ROW_HEIGHT;
 // payload, so an embedded view can't swallow a "Go to Memory" meant for a Memory tab.
 const CLAIM_NOTHING = () => false;
 
-export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}, resolveSymbol, initialAddress, initialViewMode, symbolsRefreshKey, onSetHardwareBreakpoint, onAddBookmark, onFindAccesses, onShowInMemoryRegions, dataSource, addressFormatter, translateGotoInput, followAddress, followKey, navScope }: HexViewProps) {
+export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}, resolveSymbol, initialAddress, initialViewMode, symbolsRefreshKey, onSetHardwareBreakpoint, onAddBookmark, onFindAccesses, onShowInMemoryRegions, dataSource, addressFormatter, translateGotoInput, followAddress, followKey, navScope, symbolSource, extraLabels }: HexViewProps) {
   const fmtAddr = addressFormatter ?? formatAddress;
   const {
     baseAddress,
@@ -142,6 +151,21 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
 
   const [addressInput, setAddressInput] = useState("");
   const hexViewContainerRef = useRef<HTMLDivElement>(null);
+
+  // "Show symbols": one app-wide preference, like the register/stack toggles.
+  // Only offered when the host supplies a symbol source (session views); the
+  // fetch itself is gated on a live process per the session-state policy.
+  const [showSymbols, setShowSymbols] = useLocalStorageState<boolean>("hex.showSymbols", false);
+  const toggleSymbols = useCallback(() => setShowSymbols((v) => !v), [setShowSymbols]);
+  const symbolsEnabled = showSymbols && !!symbolSource && !dataSource && isProcessAvailable(sessionStatus);
+  const symbols = useHexSymbols({
+    source: symbolSource,
+    enabled: symbolsEnabled,
+    baseAddress,
+    length: memoryData.length,
+    refreshKey: symbolsRefreshKey,
+    extra: extraLabels,
+  });
 
   // External navigation (e.g., from symbol click or "Go to Memory"); object
   // payloads carry a byte range to select at the target (PE field spans).
@@ -382,7 +406,28 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
   const bytesPerRow = viewMode === 'pointer' ? config.bytesPerUnit : BYTES_PER_ROW;
   const unitsPerRow = viewMode === 'pointer' ? 1 : Math.floor(BYTES_PER_ROW / config.bytesPerUnit);
   const totalRows = Math.ceil(memoryData.length / bytesPerRow);
-  const rowIndices = useMemo(() => Array.from({ length: totalRows }, (_, i) => i), [totalRows]);
+  // Display rows: data rows split around the symbol rows interleaved into
+  // them. With symbols off this is the identity mapping (see hexRows.ts).
+  const rowModel = useMemo(
+    () => buildHexRows(totalRows, bytesPerRow, config.bytesPerUnit, unitsPerRow, baseAddress, symbols),
+    [totalRows, bytesPerRow, config.bytesPerUnit, unitsPerRow, baseAddress, symbols],
+  );
+  // Invisible text that gives a blank placeholder the exact width of a data
+  // cell: a cell is `max(displayWidth ch, content + padding)`, so fixed-width
+  // modes need `displayWidth` glyphs of content here and float (whose values
+  // are always narrower than its minWidth) needs none. Used by symbol rows
+  // and by the units a data-row fragment doesn't show.
+  const ghost = useMemo(
+    () => (viewMode === "float" ? "" : "0".repeat(config.displayWidth)),
+    [viewMode, config.displayWidth],
+  );
+  // How the gutter renders an address — absolute, or measured from the user's
+  // origin. Shared by the data rows and the symbol rows so the two columns
+  // can't disagree about which anchor is in effect.
+  const gutterLabel = useCallback(
+    (address: bigint) => (offsetOrigin === null ? fmtAddr(address) : formatSignedOffset(address - offsetOrigin)),
+    [offsetOrigin, fmtAddr],
+  );
   const virtualizerRef = useRef<Virtualizer<HTMLDivElement, Element> | null>(null);
 
   // Minimum row width: below this the view scrolls horizontally instead of
@@ -433,49 +478,89 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
     }
   }, [extendUp, extendDown]);
 
-  // Keep the scroll position meaningful across window changes:
+  // Keep the scroll position meaningful across window and row-model changes:
   // - goto (viewGeneration bump): scroll to the target row — again once the
   //   replace read lands, since the first attempt clamps to the old content
   // - window base moved (prepend/trim): anchor so content stays put, plus any
   //   remembered wheel-at-edge distance to reveal the fetched rows
   // - pure append while pinned at the bottom: apply the remembered wheel distance
-  const prevWindowRef = useRef({ base: baseAddress, generation: viewGeneration, data: memoryData });
-  const gotoTargetRowRef = useRef<number | null>(null);
+  // - symbol rows inserted/removed (fetch landed, toggle, symbols reloaded) or
+  //   bytesPerRow changed with the view mode: same anchor, no reveal
+  // All cases share one rule: the data row under the viewport top, located in
+  // the previous row model, is re-located in the new one by window byte offset.
+  // With no symbol rows this is exactly `scrollTop + (deltaBytes / bytesPerRow) * ROW_HEIGHT`.
+  const prevWindowRef = useRef({ base: baseAddress, generation: viewGeneration, data: memoryData, model: rowModel, bytesPerRow });
+  // Goto target as a window byte offset, resolved through whichever row model
+  // is current on each run (symbol rows may land between the two attempts).
+  const gotoTargetOffsetRef = useRef<number | null>(null);
   useLayoutEffect(() => {
     const prev = prevWindowRef.current;
-    prevWindowRef.current = { base: baseAddress, generation: viewGeneration, data: memoryData };
+    prevWindowRef.current = { base: baseAddress, generation: viewGeneration, data: memoryData, model: rowModel, bytesPerRow };
 
     const isNewGeneration = viewGeneration !== prev.generation;
     if (isNewGeneration) {
       pendingRevealRef.current = 0;
-      gotoTargetRowRef.current = Math.floor(viewTargetOffset / bytesPerRow);
+      gotoTargetOffsetRef.current = viewTargetOffset;
     }
     const virtualizer = virtualizerRef.current;
     const viewport = virtualizer?.scrollElement;
     // No list rendered yet (goto from an empty view) — the goto scroll stays
-    // pending in gotoTargetRowRef until the replace read lands.
+    // pending in gotoTargetOffsetRef until the replace read lands.
     if (!virtualizer || !viewport) return;
     const isNewData = memoryData !== prev.data;
-    if (!isNewGeneration && !isNewData) return;
+    const isNewModel = rowModel !== prev.model;
+    if (!isNewGeneration && !isNewData && !isNewModel) return;
 
-    if (gotoTargetRowRef.current !== null) {
+    if (gotoTargetOffsetRef.current !== null) {
       // Scroll to the goto target row. On the generation bump the replace
       // read usually hasn't landed (scroll clamps to the old content), so
       // repeat when the data arrives and finish there.
-      virtualizer.scrollToOffset(gotoTargetRowRef.current * ROW_HEIGHT);
-      if (!isNewGeneration && isNewData) gotoTargetRowRef.current = null;
+      virtualizer.scrollToOffset(displayIndexForOffset(rowModel, gotoTargetOffsetRef.current, bytesPerRow) * ROW_HEIGHT);
+      if (!isNewGeneration && isNewData) gotoTargetOffsetRef.current = null;
       return;
     }
-    const deltaBytes = Number(prev.base - baseAddress);
-    if (deltaBytes !== 0) {
-      const anchored = viewport.scrollTop + (deltaBytes / bytesPerRow) * ROW_HEIGHT + pendingRevealRef.current;
-      pendingRevealRef.current = 0;
-      virtualizer.scrollToOffset(Math.max(0, anchored));
-    } else if (pendingRevealRef.current !== 0) {
-      virtualizer.scrollToOffset(viewport.scrollTop + pendingRevealRef.current);
-      pendingRevealRef.current = 0;
-    }
-  }, [baseAddress, viewGeneration, bytesPerRow, memoryData, viewTargetOffset]);
+
+    if (rowModel.rows.length === 0 || prev.model.rows.length === 0) return;
+    const scrollTop = viewport.scrollTop;
+    const topDisplay = Math.min(Math.floor(scrollTop / ROW_HEIGHT), prev.model.rows.length - 1);
+    const topRow = prev.model.rows[topDisplay];
+    const remainder = scrollTop - topDisplay * ROW_HEIGHT;
+    // Rows into the top row's group (0 = its first symbol row), kept so a group
+    // that merely grew or shrank doesn't shift what the user was looking at.
+    const within = topDisplay - prev.model.displayStart[topRow.dataRow];
+    const anchorBytes = topRow.dataRow * prev.bytesPerRow + Number(prev.base - baseAddress);
+    const dNew = dataRowForOffset(rowModel, anchorBytes, bytesPerRow);
+    const groupStart = rowModel.displayStart[dNew];
+    const groupSize = rowModel.displayStart[dNew + 1] - groupStart;
+    // The wheel-at-edge distance reveals fetched *bytes*; spend it only when the
+    // window itself changed, never when a symbol fetch happens to land first.
+    const reveal = isNewData ? pendingRevealRef.current : 0;
+    if (isNewData) pendingRevealRef.current = 0;
+    const newTop = Math.max(0, (groupStart + Math.min(within, groupSize - 1)) * ROW_HEIGHT + remainder + reveal);
+    if (Math.abs(newTop - scrollTop) >= 0.5) virtualizer.scrollToOffset(newTop);
+  }, [baseAddress, viewGeneration, bytesPerRow, memoryData, viewTargetOffset, rowModel]);
+
+  // The toolbar is identical in every state that renders one (loaded, empty
+  // and error), so build it once — three copies of a 14-prop element drift the
+  // moment one gains a prop.
+  const toolbar = (
+    <HexToolbar
+      addressInput={addressInput}
+      setAddressInput={setAddressInput}
+      onResolveAddress={handleAddressResolved}
+      registers={registers}
+      resolveSymbol={resolveSymbol}
+      sessionId={sessionId}
+      memoryViewId={memoryViewId}
+      viewMode={viewMode}
+      setViewMode={setViewMode}
+      pendingChanges={pendingChanges}
+      applyPendingChanges={applyPendingChanges}
+      showSymbols={showSymbols}
+      onToggleSymbols={symbolSource ? toggleSymbols : undefined}
+      discardPendingChanges={discardPendingChanges}
+    />
+  );
 
   // Empty state — no byte source at all (no session and no file).
   if (!sessionId && !dataSource) {
@@ -500,20 +585,7 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
     if (isSessionActive) {
       return (
         <DockPanel>
-          <HexToolbar
-            addressInput={addressInput}
-            setAddressInput={setAddressInput}
-            onResolveAddress={handleAddressResolved}
-            registers={registers}
-            resolveSymbol={resolveSymbol}
-            sessionId={sessionId}
-            memoryViewId={memoryViewId}
-            viewMode={viewMode}
-            setViewMode={setViewMode}
-            pendingChanges={pendingChanges}
-            applyPendingChanges={applyPendingChanges}
-            discardPendingChanges={discardPendingChanges}
-          />
+          {toolbar}
           <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground p-4">
             <div className="text-center">
               <Binary className="h-12 w-12 mx-auto mb-4 opacity-50" />
@@ -537,20 +609,7 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
     // Show toolbar so user can try a different address
     return (
       <DockPanel>
-        <HexToolbar
-          addressInput={addressInput}
-          setAddressInput={setAddressInput}
-          onResolveAddress={handleAddressResolved}
-          registers={registers}
-          resolveSymbol={resolveSymbol}
-          sessionId={sessionId}
-          memoryViewId={memoryViewId}
-          viewMode={viewMode}
-          setViewMode={setViewMode}
-          pendingChanges={pendingChanges}
-          applyPendingChanges={applyPendingChanges}
-          discardPendingChanges={discardPendingChanges}
-        />
+        {toolbar}
         <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground p-4">
           <div className="text-center">
             <Binary className="h-12 w-12 mx-auto mb-4 opacity-50" />
@@ -573,19 +632,7 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
       onKeyDown={handleContainerKeyDown}
     >
       {/* Toolbar - Fixed */}
-      <HexToolbar
-        addressInput={addressInput}
-        setAddressInput={setAddressInput}
-        onResolveAddress={handleAddressResolved}
-        registers={registers}
-        resolveSymbol={resolveSymbol}
-        sessionId={sessionId}
-        viewMode={viewMode}
-        setViewMode={setViewMode}
-        pendingChanges={pendingChanges}
-        applyPendingChanges={applyPendingChanges}
-        discardPendingChanges={discardPendingChanges}
-      />
+      {toolbar}
 
       {/* Column Header - Fixed vertically, follows horizontal scroll */}
       <div className="shrink-0 overflow-hidden border-b border-border">
@@ -607,16 +654,34 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
       {/* Hex Data - Scrollable + Virtualized */}
       <div className="flex-1 min-h-0" onContextMenu={(e) => openContextMenu(e, {})} onWheel={handleWheel}>
         <VirtualizedList
-          items={rowIndices}
+          items={rowModel.rows}
           rowHeight={ROW_HEIGHT}
           className="h-full font-mono text-data"
           minContentWidth={rowMinWidth}
           onViewportScroll={handleViewportScroll}
           virtualizerRef={virtualizerRef}
-          renderItem={(rowIndex) => {
+          renderItem={(row) => {
+            if (row.kind === "symbol") {
+              return (
+                <HexSymbolRow
+                  row={row}
+                  displayWidth={config.displayWidth}
+                  ghost={ghost}
+                  gutterText={gutterLabel(row.address)}
+                  gutterRight={offsetOrigin !== null}
+                />
+              );
+            }
+            const rowIndex = row.dataRow;
             const rowOffset = rowIndex * bytesPerRow;
             const rowAddress = baseAddress + BigInt(rowOffset);
             const rowBytes = memoryData.slice(rowOffset, rowOffset + bytesPerRow);
+            // A fragment (row split around a symbol) shows only its own unit
+            // range; the other cells stay as blanks so columns line up. The
+            // continuation fragment repeats the row address, dimmed.
+            const isContinuation = row.unitFrom > 0;
+            const inFragment = (unitIndex: number) => unitIndex >= row.unitFrom && unitIndex < row.unitTo;
+            const byteInFragment = (byteInRow: number) => inFragment(Math.floor(byteInRow / config.bytesPerUnit));
 
             return (
               <div className="flex items-center hover:bg-muted/30 h-full px-2 select-none">
@@ -625,11 +690,13 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
                     first byte cell with `span.cursor-pointer`, and the gutter
                     comes first in DOM order. */}
                 <span
-                  className={`w-36 shrink-0 text-muted-foreground hover:text-foreground ${
-                    offsetOrigin === null ? "" : "text-right pr-3"
-                  }`}
+                  className={`w-36 shrink-0 hover:text-foreground ${
+                    isContinuation ? "text-muted-foreground/50" : "text-muted-foreground"
+                  } ${offsetOrigin === null ? "" : "text-right pr-3"}`}
                   data-testid="hex-address"
                   data-address={rowAddress.toString()}
+                  data-unit-from={row.unitFrom}
+                  data-unit-to={row.unitTo}
                   title={
                     offsetOrigin === rowAddress
                       ? "Double-click to show absolute addresses again"
@@ -641,9 +708,7 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
                     toggleOffsetOrigin(rowAddress);
                   }}
                 >
-                  {offsetOrigin === null
-                    ? fmtAddr(rowAddress)
-                    : formatSignedOffset(rowAddress - offsetOrigin)}
+                  {gutterLabel(rowAddress)}
                 </span>
 
                 {/* Hex values column */}
@@ -654,6 +719,10 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
                       unitOffset,
                       unitOffset + config.bytesPerUnit
                     );
+
+                    if (!inFragment(unitIndex)) {
+                      return <HexBlankUnit key={unitIndex} displayWidth={config.displayWidth} ghost={ghost} />;
+                    }
 
                     if (unitBytes.length < config.bytesPerUnit) {
                       return (
@@ -731,6 +800,9 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
                 {viewMode !== 'pointer' && (
                   <span className="w-[136px] shrink-0 text-right pr-2 text-muted-foreground">
                     {Array.from(rowBytes).map((byte, i) => {
+                      if (!byteInFragment(i)) {
+                        return <span key={i} aria-hidden className="invisible">.</span>;
+                      }
                       const offset = rowOffset + i;
                       const isSelected = selectedOffsets.has(offset);
                       const isAsciiEditing = editingOffset === offset && editingColumn === 'ascii';
@@ -918,6 +990,69 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
   );
 }
 
+// A unit cell that occupies its column without showing anything. The one
+// definition of the blank cell's box: the data row's out-of-fragment units and
+// the symbol row's leading padding must stay pixel-identical with a real cell,
+// or a mid-row label stops lining up under its byte.
+function HexBlankUnit({ displayWidth, ghost }: { displayWidth: number; ghost: string }) {
+  return (
+    <span aria-hidden className="inline-flex items-center gap-1 min-w-0 shrink-0">
+      <span className="px-0.5 inline-block invisible" style={{ minWidth: `${displayWidth}ch` }}>
+        {ghost}
+      </span>
+    </span>
+  );
+}
+
+// Symbol row — inserted at a symbol's address: above its data row, or between
+// the two fragments of that row when the address is mid-row.
+// Purely presentational (no selection, edit, hover or double-click gutter), and
+// deliberately without `cursor-pointer` / `data-testid="hex-address"`: the e2e
+// suite finds the first byte cell by the former and walks gutter neighbours by
+// the latter. Same fixed height as data rows so scroll math stays uniform.
+// The columns mirror the data row's markup term for term (gutter width, unit
+// padding, gap) so a mid-row label starts exactly under its byte cell.
+interface HexSymbolRowProps {
+  row: Extract<HexRow, { kind: "symbol" }>;
+  displayWidth: number;
+  /** Blank-cell filler text, see `ghost` in HexView. */
+  ghost: string;
+  gutterText: string;
+  gutterRight: boolean;
+}
+
+const HexSymbolRow = memo(function HexSymbolRow({ row, displayWidth, ghost, gutterText, gutterRight }: HexSymbolRowProps) {
+  return (
+    <div
+      data-testid="hex-symbol-row"
+      data-address={row.address.toString()}
+      className="flex items-center h-full px-2 select-none"
+    >
+      <span className={`w-36 shrink-0 text-muted-foreground/50 ${gutterRight ? "text-right pr-3" : ""}`}>
+        {gutterText}
+      </span>
+      <div className="flex-1 flex gap-x-1 min-w-0">
+        {Array.from({ length: row.unitIndex }, (_, i) => (
+          <HexBlankUnit key={i} displayWidth={displayWidth} ghost={ghost} />
+        ))}
+        {/* Labels shrink but never grow: names sharing an address sit side by
+            side with only the gap between them, and when the row is too
+            narrow each shrinks in proportion to its full text, which is what
+            MiddleTruncate cuts against (its sizer pins the basis, so a cut
+            never feeds back into the budget). */}
+        <span className="flex-1 flex items-center gap-x-3 min-w-0 font-semibold text-foreground/90">
+          {row.labels.map((label) => (
+            <span key={`${label.kind}:${label.text}`} className="inline-flex items-center gap-1 min-w-0">
+              {label.kind === "bookmark" && <Bookmark className="h-3 w-3 shrink-0 text-syn-state" />}
+              <TruncatedSymbol text={label.text} className="flex-auto min-w-0" />
+            </span>
+          ))}
+        </span>
+      </div>
+    </div>
+  );
+});
+
 // Toolbar component
 interface HexToolbarProps {
   addressInput: string;
@@ -933,6 +1068,9 @@ interface HexToolbarProps {
   pendingChanges: Map<number, number>;
   applyPendingChanges: () => void;
   discardPendingChanges: () => void;
+  showSymbols: boolean;
+  /** Present only when the view has a symbol source; the toggle renders iff set. */
+  onToggleSymbols?: () => void;
 }
 
 function HexToolbar({
@@ -948,6 +1086,8 @@ function HexToolbar({
   pendingChanges,
   applyPendingChanges,
   discardPendingChanges,
+  showSymbols,
+  onToggleSymbols,
 }: HexToolbarProps) {
   return (
     <PanelToolbar>
@@ -985,6 +1125,20 @@ function HexToolbar({
           <SelectItem value="pointer">Pointer</SelectItem>
         </SelectContent>
       </Select>
+
+      {/* Symbol rows toggle — session views only */}
+      {onToggleSymbols && (
+        <Button
+          size="icon-xs"
+          variant={showSymbols ? "secondary" : "ghost"}
+          aria-pressed={showSymbols}
+          onClick={onToggleSymbols}
+          title={showSymbols ? "Hide symbols" : "Show symbols"}
+          data-testid="hex-symbols-toggle"
+        >
+          <Tag />
+        </Button>
+      )}
 
       {/* Spacer */}
       <div className="flex-1" />

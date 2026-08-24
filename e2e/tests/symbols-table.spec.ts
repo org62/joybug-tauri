@@ -4,17 +4,14 @@ import {
   cleanupSession,
   goToWindow,
   invoke,
+  resetDockLayout,
 } from "../helpers/session-helpers";
 import {
   waitForPaused,
+  waitForModuleSymbols,
   configureMinimalStopSettings,
   restoreDefaultSettings,
 } from "../helpers/wait-helpers";
-
-interface SymbolStatus {
-  module_path: string;
-  status: string;
-}
 
 /**
  * Read the symbol names, in render order. `data-full-text` rather than the
@@ -50,24 +47,14 @@ test.describe("Symbols table", () => {
       await waitForPaused(page, sessionId);
 
       // ntdll symbols load in the background — the search needs them to resolve hits.
-      await expect(async () => {
-        const statuses = (await invoke(page, "get_session_symbol_status", {
-          sessionId,
-        })) as SymbolStatus[];
-        const ntdll = statuses.find((s) =>
-          s.module_path.toLowerCase().includes("ntdll"),
-        );
-        expect(ntdll?.status).toBe("loaded");
-      }).toPass({ timeout: 60_000, intervals: [250, 500] });
+      await waitForModuleSymbols(page, sessionId, "ntdll");
 
       // Panel sizes carry over between specs (the page is never reloaded), and
       // the resize step below drags a grip that sits at the right edge of the
       // Address column — a left column narrowed by an earlier spec would clip it
       // out of view and the drag would land on whatever is behind it. Reset to
       // the default layout so the panel's width is deterministic.
-      await page.getByRole("main").getByRole("button", { name: "Windows" }).click();
-      await page.getByRole("menuitem", { name: "Reset Layout" }).click();
-      await page.keyboard.press("Escape");
+      await resetDockLayout(page);
 
       await goToWindow(page, "Symbols");
       const search = page.getByPlaceholder("Search symbols...");

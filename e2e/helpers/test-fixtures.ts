@@ -1,4 +1,5 @@
-import { test as base, chromium, Page, TestInfo } from "@playwright/test";
+import { test as base, Page, TestInfo } from "@playwright/test";
+import { connectToApp, waitForAppMount } from "./app";
 import { rmSync } from "fs";
 import path from "path";
 
@@ -25,18 +26,6 @@ function clearPersistedStores(): void {
   }
 }
 
-/** Wait for the React app to mount (a connect/load may arrive before render). */
-async function waitForAppMount(page: Page): Promise<void> {
-  await page.waitForFunction(
-    () => {
-      const root = document.getElementById("root");
-      return !!root && root.children.length > 0;
-    },
-    { timeout: 15_000 },
-  );
-}
-
-const CDP_ENDPOINT = "http://localhost:9222";
 // In release mode the app serves its frontend over the Tauri custom protocol
 // (tauri.localhost); in dev it's the Vite dev server (localhost:1420).
 const APP_ORIGIN =
@@ -50,9 +39,7 @@ type TestFixtures = {
 
 export const test = base.extend<TestFixtures>({
   tauriPage: async ({}, use, testInfo: TestInfo) => {
-    const browser = await chromium.connectOverCDP(CDP_ENDPOINT);
-    const context = browser.contexts()[0];
-    const page = context.pages()[0] || (await context.newPage());
+    const { browser, page } = await connectToApp();
 
     await waitForAppMount(page);
 

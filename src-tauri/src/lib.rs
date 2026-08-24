@@ -131,6 +131,7 @@ pub fn run() {
             commands::get_session_thread_tebs,
             commands::search_session_symbols,
             commands::disassemble_preview_batch,
+            commands::get_symbols_in_range,
             commands::get_session_symbol_status,
             commands::load_module_pdb,
             commands::retry_module_symbols,

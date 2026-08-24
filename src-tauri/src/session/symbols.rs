@@ -212,22 +212,7 @@ pub(crate) fn process_symbol_search(
         Ok(resolved_symbols) => {
             debug!("📥 Received {} symbols from find_symbols", resolved_symbols.len());
 
-            let symbols: Vec<SymbolData> = resolved_symbols.iter().map(|resolved_symbol| {
-                let symbol_name = if let Some(pos) = resolved_symbol.name.find('!') {
-                    resolved_symbol.name[pos + 1..].to_string()
-                } else {
-                    resolved_symbol.name.clone()
-                };
-
-                SymbolData {
-                    name: symbol_name,
-                    module_name: resolved_symbol.module_name.clone(),
-                    rva: resolved_symbol.rva,
-                    va: format!("0x{:X}", resolved_symbol.va),
-                    display_name: resolved_symbol.name.clone(),
-                    is_function: resolved_symbol.is_function,
-                }
-            }).collect();
+            let symbols: Vec<SymbolData> = resolved_symbols.iter().map(SymbolData::from_resolved).collect();
 
             if let Some(ref handle) = app_handle_clone {
                 let session_id = {

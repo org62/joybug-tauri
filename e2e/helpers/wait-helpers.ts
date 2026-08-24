@@ -299,3 +299,42 @@ export async function goAndWaitForPause(
   }
   await waitForPaused(page, sessionId, timeout);
 }
+
+/** One entry of `get_session_symbol_status`. */
+interface ModuleSymbolStatus {
+  module_path: string;
+  status: string;
+  symbol_count?: number;
+}
+
+interface ModuleSymbolsOptions {
+  /**
+   * Statuses that count as usable. `["loaded"]` (the default) for a test that
+   * needs real PDB names; add `"exports_only"` when exported names are enough
+   * — that is all a system DLL may ever get on a machine with no symbol server.
+   */
+  accept?: string[];
+  /** Require at least this many symbols, for tests that then look one up. */
+  minSymbolCount?: number;
+  timeout?: number;
+}
+
+/** Wait until a module's symbols are usable. */
+export async function waitForModuleSymbols(
+  page: Page,
+  sessionId: string,
+  moduleSubstr: string,
+  { accept = ["loaded"], minSymbolCount = 0, timeout = 60_000 }: ModuleSymbolsOptions = {},
+): Promise<void> {
+  const needle = moduleSubstr.toLowerCase();
+  await expect(async () => {
+    const statuses = (await invoke(page, "get_session_symbol_status", { sessionId })) as ModuleSymbolStatus[];
+    const usable = (statuses ?? []).some(
+      (s) =>
+        String(s.module_path).toLowerCase().includes(needle) &&
+        accept.includes(s.status) &&
+        (s.symbol_count ?? 0) >= minSymbolCount,
+    );
+    expect(usable).toBe(true);
+  }).toPass({ timeout, intervals: [250, 500] });
+}

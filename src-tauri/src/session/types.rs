@@ -329,6 +329,25 @@ pub struct SymbolData {
     pub is_function: bool,
 }
 
+impl SymbolData {
+    /// The core reports `module!symbol` as one name; the UI wants the bare
+    /// symbol in `name` and the full form in `display_name`.
+    pub(crate) fn from_resolved(resolved: &joybug_core::interfaces::ResolvedSymbol) -> Self {
+        let name = match resolved.name.find('!') {
+            Some(pos) => resolved.name[pos + 1..].to_string(),
+            None => resolved.name.clone(),
+        };
+        SymbolData {
+            name,
+            module_name: resolved.module_name.clone(),
+            rva: resolved.rva,
+            va: format!("0x{:X}", resolved.va),
+            display_name: resolved.name.clone(),
+            is_function: resolved.is_function,
+        }
+    }
+}
+
 #[derive(serde::Serialize, Clone)]
 pub struct EmulationInstructionInfo {
     pub address: String,

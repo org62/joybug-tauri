@@ -2,6 +2,7 @@ import { test, expect } from "../helpers/test-fixtures";
 import { createAndStartSession, cleanupSession, fixtureExe, invoke, goToWindow, moduleBase } from "../helpers/session-helpers";
 import {
   waitForPaused,
+  waitForModuleSymbols,
   configureMinimalStopSettings,
   restoreDefaultSettings,
   continueSession,
@@ -28,19 +29,6 @@ async function invokeAndCaptureEvent<T = any>(
   }, opts.timeout ?? 8000);
 }
 
-/** Poll get_session_symbol_status until the named module reports "loaded". */
-async function waitForModuleSymbols(page: Page, sessionId: string, moduleSubstr: string): Promise<void> {
-  await expect(async () => {
-    const loaded = await page.evaluate(async ({ id, sub }) => {
-      const statuses = await (window as any).__TAURI_INTERNALS__.invoke("get_session_symbol_status", { sessionId: id });
-      return (statuses || []).some(
-        (s: any) => s.module_path.toLowerCase().includes(sub) && s.status === "loaded" && (s.symbol_count ?? 0) > 0,
-      );
-    }, { id: sessionId, sub: moduleSubstr });
-    expect(loaded).toBe(true);
-  }).toPass({ timeout: 20_000, intervals: [200, 500] });
-}
-
 /** Activate a dock tab by its header title, opening it if the layout lacks it. */
 async function activateTab(page: Page, title: string): Promise<void> {
   const tab = page.locator(".dock-tab", { hasText: title }).first();
@@ -59,7 +47,7 @@ test.describe("Source View", () => {
     const sessionId = await createAndStartSession(page, "Source C", `${fixtureExe("hello_c")} srcbp`);
     try {
       await waitForPaused(page, sessionId); // initial breakpoint (ntdll)
-      await waitForModuleSymbols(page, sessionId, "hello_c");
+      await waitForModuleSymbols(page, sessionId, "hello_c", { minSymbolCount: 1, timeout: 20_000 });
 
       const base = await moduleBase(page, sessionId, "hello_c");
       expect(base).toBeTruthy();
@@ -130,7 +118,7 @@ test.describe("Source View", () => {
     const sessionId = await createAndStartSession(page, "Source Step", `${fixtureExe("hello_c")} srcstep`);
     try {
       await waitForPaused(page, sessionId);
-      await waitForModuleSymbols(page, sessionId, "hello_c");
+      await waitForModuleSymbols(page, sessionId, "hello_c", { minSymbolCount: 1, timeout: 20_000 });
       const base = await moduleBase(page, sessionId, "hello_c");
 
       const files = await invokeAndCaptureEvent<{ files: { path: string }[] }>(page, {
@@ -176,7 +164,7 @@ test.describe("Source View", () => {
     const sessionId = await createAndStartSession(page, "Source ASM", `${fixtureExe("hello_asm")} srcasm`);
     try {
       await waitForPaused(page, sessionId);
-      await waitForModuleSymbols(page, sessionId, "hello_asm");
+      await waitForModuleSymbols(page, sessionId, "hello_asm", { minSymbolCount: 1, timeout: 20_000 });
       const base = await moduleBase(page, sessionId, "hello_asm");
 
       const files = await invokeAndCaptureEvent<{ files: { path: string }[] }>(page, {

@@ -217,6 +217,36 @@ pub async fn disassemble_preview_batch(
     })
 }
 
+/// Every symbol (PDB or export) whose address lies in `[start, start + size)`,
+/// ascending by address — the hex view's "show symbols" rows. Pooled live OOB
+/// client, so it works Paused, Running, and non-invasive Open; the core answers
+/// without waiting on in-flight symbol loads (the view re-requests when
+/// `symbolsRefreshKey` flips). A symbol-side error degrades to an empty list:
+/// this is advisory decoration and must never toast.
+#[tauri::command]
+pub async fn get_symbols_in_range(
+    session_id: String,
+    start: String,
+    size: u32,
+    session_states: State<'_, SessionStatesMap>,
+    oob_pool: State<'_, super::OobPool>,
+) -> Result<Vec<SymbolData>> {
+    // A 32 KiB window is at most 2048 hex rows; this bounds the payload when a
+    // private-symbol PDB has more names than the window has rows.
+    const MAX_SYMBOLS: usize = 8192;
+    let start = super::parse_hex_u64(&start, "start")?;
+    let session_arc = super::get_session_arc(&session_id, &session_states)?;
+    super::with_oob_client(&session_arc, &session_id, &oob_pool, |client, pid| {
+        match client.symbols_in_range(pid, start, size as u64, MAX_SYMBOLS) {
+            Ok(symbols) => symbols.iter().map(SymbolData::from_resolved).collect(),
+            Err(e) => {
+                debug!("symbols_in_range(0x{:X}, {}) failed: {}", start, size, e);
+                Vec::new()
+            }
+        }
+    })
+}
+
 #[tauri::command]
 pub fn request_resolve_thread_symbols(
     session_id: String,
