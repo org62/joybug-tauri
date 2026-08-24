@@ -4,6 +4,7 @@ import {
   cleanupSession,
   openMemoryHexPanel,
   resetDockLayout,
+  spRegister,
 } from "../helpers/session-helpers";
 import { waitForPaused } from "../helpers/wait-helpers";
 import { HEX_ADDRESS, HEX_OFFSET_ORIGIN } from "../helpers/selectors";
@@ -29,7 +30,7 @@ test.describe("Hex offset origin", () => {
       await waitForPaused(page, sessionId);
 
       // The view opens empty; give it an address so there are rows to click.
-      const hex = await openMemoryHexPanel(page, "rsp");
+      const hex = await openMemoryHexPanel(page, await spRegister(page, sessionId));
       const gutter = hex.locator(HEX_ADDRESS);
       const header = hex.locator("span").filter({ hasText: /^(Address|Offset)$/ }).first();
       const originLabel = hex.locator(HEX_OFFSET_ORIGIN);

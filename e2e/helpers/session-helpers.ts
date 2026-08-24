@@ -57,6 +57,15 @@ export async function pcRegister(page: Page, sessionId: string): Promise<"rip" |
 }
 
 /**
+ * Name of the stack-pointer register for the *debuggee's* architecture:
+ * "rsp" on x64, "sp" on ARM64. Use this in goto expressions that must resolve
+ * on either target.
+ */
+export async function spRegister(page: Page, sessionId: string): Promise<"rsp" | "sp"> {
+  return (await debuggeeArch(page, sessionId)) === "Arm64" ? "sp" : "rsp";
+}
+
+/**
  * Program-counter value ("0x..") out of a context object already in hand — the
  * `arch`-tagged union carries `rip` on x64 and `pc` on ARM64. Returns undefined
  * when there is no context (or it is neither arch), so callers can assert on it.

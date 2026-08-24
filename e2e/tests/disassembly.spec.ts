@@ -18,8 +18,8 @@ import {
   installEventCapture,
   getCapturedEvents,
 } from "../helpers/event-helpers";
-import { ASM_PANEL, ASM_ROW, PC_ROW, ASM_LABEL_ROW, ASM_INVALID_ROW } from "../helpers/selectors";
-import type { Page } from "@playwright/test";
+import { ASM_PANEL, ASM_ROW, PC_ROW, SELECTED_ROW, ASM_LABEL_ROW, ASM_INVALID_ROW } from "../helpers/selectors";
+import type { Locator, Page } from "@playwright/test";
 
 /** DOM scan shared by the invalid-byte tests: locate the rendered `db` row and
  * check a valid (non-invalid) instruction row still renders strictly below it —
@@ -499,34 +499,48 @@ test.describe("Disassembly View", () => {
 
       const pc = await pcRegister(page, sessionId);
       const input = page.locator(`${ASM_PANEL} input`).first();
-      const firstRow = () => page.locator(ASM_ROW).first().innerText();
       const goto = async (expression: string) => {
         await input.fill(expression);
         await input.press("Enter");
       };
-      /** Poll until the top instruction row reaches (or leaves) `text`. */
-      const expectFirstRow = async (text: string, opts: { not?: boolean } = {}) => {
-        await expect(async () => {
-          if (opts.not) expect(await firstRow()).not.toBe(text);
-          else expect(await firstRow()).toBe(text);
-        }).toPass({ timeout: 10_000, intervals: [100, 250] });
-      };
 
-      const atPc = await firstRow();
+      // Identify rows by data-address, and read it off the row the navigation
+      // *landed on* (the view selects its jump target) rather than the topmost
+      // row. "First row" is a scroll artifact, not row identity: a load's
+      // context prefetch prepends rows above the target and the view re-centres
+      // on it, so returning to an address leaves a different row on top than
+      // the first load did. Text is no good either — the address column swaps
+      // to symbol+offset once symbol loading catches up.
+      const rowAddress = async (locator: Locator) => {
+        await expect(locator).toHaveCount(1, { timeout: 10_000 });
+        const address = await locator.getAttribute("data-address");
+        expect(address, "row carries a data-address").toBeTruthy();
+        return address as string;
+      };
+      const landedRow = page.locator(SELECTED_ROW);
+      /** Poll until the goto has landed on `address`. */
+      const expectLandedAt = (address: string) =>
+        expect(landedRow).toHaveAttribute("data-address", address, { timeout: 10_000 });
+
+      // Establish the baseline through the goto box too, rather than off the
+      // PC-highlighted row: the highlight tracks the debug event's address,
+      // which need not be the row the `pc` register expression resolves to.
+      await goto(pc);
+      const atPc = await rowAddress(landedRow);
 
       // `*` binds tighter than `+`, so this must land exactly 0x2000 past the
       // PC — a plain +/- tokenizer used to hand "2*0x1000" to the symbol
       // resolver and fail with "Symbol not found".
       await goto(`${pc}+2*0x1000`);
-      await expectFirstRow(atPc, { not: true });
-      const scaled = await firstRow();
+      await expect(landedRow).not.toHaveAttribute("data-address", atPc, { timeout: 10_000 });
+      const scaled = await rowAddress(landedRow);
 
       // Return to the PC, then prove the arithmetic: the same address written
-      // without multiplication renders the identical row.
+      // without multiplication lands on the identical row.
       await goto(pc);
-      await expectFirstRow(atPc);
+      await expectLandedAt(atPc);
       await goto(`${pc}+0x2000`);
-      await expectFirstRow(scaled);
+      await expectLandedAt(scaled);
 
       await cleanupSession(page, sessionId);
     } finally {

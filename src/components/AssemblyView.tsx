@@ -1091,6 +1091,7 @@ const InstructionRow = memo(function InstructionRow({ instruction, isPC, isGhost
   const body = (
     <div
       data-testid="asm-row"
+      data-address={instruction.address}
       data-highlight={highlight}
       data-invalid={is_invalid ? "" : undefined}
       className={cn(
