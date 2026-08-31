@@ -24,7 +24,7 @@
 
 **ARM64 Windows feels at home.** ARM64 gets the same attention as x64 throughout — the disassembler, the register views (NEON `V0`–`V31` alongside x64's XMM), hardware breakpoints and watchpoints, the emulator, and the PE parser. CI builds and runs the E2E suite on both ARM64 and x64 Windows runners, so the two stay in step.
 
-**Analysis built in.** CPU emulation, module-wide code coverage, inline-hook detection, and Cheat Engine-style memory scanning are all dock tabs, ready when you want them. Joybug borrows liberally from the tools it admires; see [Prior art & inspiration](#prior-art--inspiration).
+**Analysis built in.** CPU emulation, module-wide code coverage, inline-hook detection, and Cheat Engine-style memory scanning are all dock tabs, ready when you want them — and anything you'd rather not run on your own machine can be detonated inside a disposable Windows Sandbox with ETW tracing on. Joybug borrows liberally from the tools it admires; see [Prior art & inspiration](#prior-art--inspiration).
 
 ---
 
@@ -53,6 +53,13 @@
 - **Most panels keep working while the target runs.** An out-of-band connection pool means memory reads, module lists, symbol status, bookmark values, scans, and coverage all update live — you don't have to break in first.
 - **Anti-anti-debug** — PEB hiding (`BeingDebugged`, `NtGlobalFlag`, heap flags, StartupInfo, OS build number) is a settings toggle.
 - **Remote debugging by design** — the debug core is a JSON-framed TCP server and the UI is just a client, so a session can point at another machine. Local runs spin up an embedded server on a loopback port.
+
+### Sandboxed detonation & tracing
+
+- **Run or debug inside a real Windows Sandbox.** Joybug provisions a disposable VM, shares the target in, and either attaches the full debugger to it over TCP — same panels, same stepping, the target's window visible on the sandbox desktop — or just launches it and watches. Your machine is untouched, and the VM is torn down with the session.
+- **ETW tracing of the whole process tree.** Process, file, registry and network activity, selectable per individual operation rather than by coarse category, with optional callstacks that symbolize to `module!func+0x…`. Tracing follows the tree transitively and outlives its root, so a dropper that spawns a successor and exits immediately is followed to the end of the chain instead of being truncated at its first process.
+- **Cross-process access.** `OpenProcess` and `OpenThread` are reported with the rights requested — `VM_OPERATION|VM_READ|VM_WRITE` against *another* process is the signature of injection or credential theft. The reads and writes themselves are not visible: those live in an ETW provider only a signed anti-malware process may consume. When you need the address and size, put a breakpoint on `ntdll!NtReadVirtualMemory` — you have a debugger.
+- **Tracing without a VM.** The same collector attaches to a local debuggee, or runs standalone with no debugger at all as a procmon-lite.
 
 ### Standalone PE reader
 
@@ -103,6 +110,8 @@ Joybug is early-stage and deliberately narrow. What that means concretely:
 - **x64 and ARM64 debuggees** — and **the host architecture must match the target's**. The core writes breakpoints and single-steps natively, so an ARM64 build does not correctly debug an emulated x64 target, or vice versa.
 - **No 32-bit / WOW64 targets.** WOW64 processes are detected but treated as 64-bit, and features that depend on the 64-bit PEB layout are skipped for them.
 - **No ARM64EC support.**
+- **Sandbox mode needs Windows 11 24H2** (build 26100+) with the *Windows Sandbox* optional feature installed, and Windows permits only one sandbox per user at a time.
+- **Tracing on the host needs admin.** Kernel ETW providers require elevation, so host tracing prompts for it. Tracing inside the sandbox does not — that guest is already privileged.
 - Ships as a bare `.exe` — there is no installer or MSI.
 - Expect rough edges.
 
@@ -123,7 +132,9 @@ The frontend is a Tauri client: it `invoke()`s Rust command handlers, which forw
 
 The debugger itself lives in [`external/joybug-core`](https://github.com/org62/joybug-core) — a Rust library and TCP server handling process control, stepping, breakpoints, memory, and symbols behind a framed-JSON protocol. It uses **Capstone** for disassembly, **Keystone** for assembly, **Unicorn** for emulation, and `pdb` + `symsrv` for symbols. Because the UI talks to it over a socket, a local session just spins up an embedded server on an ephemeral loopback port — and a remote session points at a different machine with no other changes.
 
-The core also ships **`jlua`**, a Lua REPL exposing the full debugger API. It's a core binary today, not yet surfaced in the GUI.
+Because the UI and the debug server are already separate over a socket, the sandbox reuses that split rather than shipping a second debugger: Joybug copies **its own exe** into the guest and launches it with `--listen` for the debug server or `--out` for the ETW collector, either of which runs headless instead of the GUI. One binary does all three jobs, guest and host are the same build by construction, and the download carries no duplicate copy of the debugger.
+
+The core also ships **`jlua`**, a Lua REPL exposing the full debugger API, plus `sbx` and `etw` globals that drive the sandbox and the tracer from a script. It's a core binary today, not yet surfaced in the GUI.
 
 ---
 

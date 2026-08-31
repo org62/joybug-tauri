@@ -304,9 +304,8 @@ pub(crate) fn process_resolve_thread_symbols(
     for (thread, resolved) in threads.iter().zip(resolved) {
         let (symbol_info, is_function) = match resolved {
             Some((module, sym, offset)) => {
-                let short_module = module.rsplit(&['\\', '/'][..]).next().unwrap_or(&module);
-                let short_module = short_module.rsplitn(2, '.').last().unwrap_or(short_module);
-                let display = format!("{}!{}+0x{:x}", short_module, sym.name, offset);
+                let short_module = crate::session::helpers::extract_module_name(&module);
+                let display = crate::session::helpers::format_symbol(&short_module, &sym.name, offset);
                 (Some(display), sym.is_function)
             }
             None => (None, true),

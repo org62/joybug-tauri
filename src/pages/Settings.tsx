@@ -10,11 +10,12 @@ import { SettingsKeybindings } from "@/components/settings/SettingsKeybindings";
 import { SettingsEvents } from "@/components/settings/SettingsEvents";
 import { SettingsDebuggerHiding } from "@/components/settings/SettingsDebuggerHiding";
 import { SettingsSymbols } from "@/components/settings/SettingsSymbols";
+import { SettingsSandbox } from "@/components/settings/SettingsSandbox";
 
 const SECTION_GRID = "grid gap-x-6 gap-y-5 items-start";
 const SECTION_GRID_COLS = { gridTemplateColumns: "repeat(auto-fill, minmax(20rem, 1fr))" };
 
-const VALID_TABS = ["all", "general", "keybindings", "events", "hiding"];
+const VALID_TABS = ["all", "general", "keybindings", "events", "hiding", "sandbox"];
 
 export default function Settings() {
   const [searchParams] = useSearchParams();
@@ -62,6 +63,7 @@ export default function Settings() {
               <TabsTrigger value="keybindings">Keyboard Shortcuts</TabsTrigger>
               <TabsTrigger value="events">Events and Exceptions</TabsTrigger>
               <TabsTrigger value="hiding">Debugger Hiding</TabsTrigger>
+              <TabsTrigger value="sandbox">Sandbox</TabsTrigger>
             </TabsList>
 
             {/* All: one flat grid with every section as a grid item */}
@@ -72,6 +74,7 @@ export default function Settings() {
                   <SettingsSymbols searchQuery={searchQuery} />
                   <SettingsEvents searchQuery={searchQuery} />
                   <SettingsDebuggerHiding searchQuery={searchQuery} />
+                  <SettingsSandbox searchQuery={searchQuery} />
                   <SettingsKeybindings searchQuery={searchQuery} embedded />
                 </div>
               </ScrollArea>
@@ -106,6 +109,15 @@ export default function Settings() {
               <ScrollArea className="h-full">
                 <div className={SECTION_GRID} style={SECTION_GRID_COLS}>
                   <SettingsDebuggerHiding searchQuery={searchQuery} />
+                </div>
+              </ScrollArea>
+            </TabsContent>
+
+            {/* Sandbox only */}
+            <TabsContent value="sandbox" className="mt-4 min-h-0 flex-1">
+              <ScrollArea className="h-full">
+                <div className={SECTION_GRID} style={SECTION_GRID_COLS}>
+                  <SettingsSandbox searchQuery={searchQuery} />
                 </div>
               </ScrollArea>
             </TabsContent>

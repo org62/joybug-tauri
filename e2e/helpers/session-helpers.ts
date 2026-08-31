@@ -105,7 +105,11 @@ export interface CreateSessionOptions {
 
 async function fillOptionalSessionFields(page: Page, opts: CreateSessionOptions) {
   if (opts.environment !== undefined) {
-    await page.getByLabel(/Environment Variables/i).fill(opts.environment);
+    // The env textarea lives inside the collapsed "Environment variables" fold.
+    // Target it by id — its aria-label matches the fold button's, so getByLabel
+    // would be ambiguous.
+    await page.getByRole("button", { name: "Environment variables" }).click();
+    await page.locator("#environment").fill(opts.environment);
   }
 }
 
@@ -142,11 +146,9 @@ export async function createAndStartSession(
   // empty-state button that shares the label when no sessions exist)
   await page.getByRole("button", { name: /Create Process/i }).first().click();
 
-  // Fill session name
-  await page.getByLabel("Session Name").fill(name);
-
   // Use a unique launch command to avoid loading persisted breakpoints
-  // from previous manual debugging sessions
+  // from previous manual debugging sessions. (Session naming was removed from
+  // the dialog; the session is identified by its id from the URL below.)
   await page.getByLabel("Launch Command").fill(launchCommand);
 
   await fillOptionalSessionFields(page, opts);
@@ -176,32 +178,38 @@ export async function createSession(
   name = "E2E Test Session",
   opts: CreateSessionOptions = {},
 ): Promise<string> {
+  const before = new Set(
+    ((await invoke(page, "get_debug_sessions")) as Array<{ id: string }>).map((s) => s.id),
+  );
+
   // Click "Create Process" button (header trigger)
   await page.getByRole("button", { name: /Create Process/i }).first().click();
 
-  // Fill session name
-  await page.getByLabel("Session Name").fill(name);
+  // Naming was removed from the dialog; a unique launch command keeps the new
+  // session identifiable and avoids loading persisted breakpoints.
+  await page.getByLabel("Launch Command").fill(`cmd.exe /c echo ${name}`);
 
   await fillOptionalSessionFields(page, opts);
 
   // Click "Create Session" (not "Create & Start")
   await page.getByRole("button", { name: "Create Session", exact: true }).click();
 
-  // Wait for dialog to close and session card to appear
-  await expect(page.getByText(name)).toBeVisible({ timeout: 5_000 });
+  // The created session is the one that wasn't present before.
+  let id: string | undefined;
+  await expect(async () => {
+    const now = (await invoke(page, "get_debug_sessions")) as Array<{ id: string }>;
+    const created = now.find((s) => !before.has(s.id));
+    expect(created, "a new session should appear").toBeTruthy();
+    id = created!.id;
+  }).toPass({ timeout: 5_000 });
 
-  const session = await findSessionByName(page, name);
-  if (!session) {
-    throw new Error(`Could not find session with name: ${name}`);
-  }
-
-  return session.id;
+  return id!;
 }
 
-/** The session the backend stored under `name`, or undefined. */
-export async function findSessionByName(page: Page, name: string): Promise<any> {
+/** The session the backend stored under `id`, or undefined. */
+export async function findSessionById(page: Page, id: string): Promise<any> {
   const sessions = await invoke(page, "get_debug_sessions");
-  return sessions.find((s: any) => s.name === name);
+  return sessions.find((s: any) => s.id === id);
 }
 
 /**

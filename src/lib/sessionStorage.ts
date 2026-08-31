@@ -1,3 +1,5 @@
+import type { SandboxLaunchConfig, EtwConfig } from '@/lib/sandbox';
+
 export interface SessionConfig {
   id: string;
   name: string;
@@ -6,6 +8,10 @@ export interface SessionConfig {
   working_directory?: string | null;
   environment?: [string, string][] | null;
   is_local_run: boolean;
+  /** Windows Sandbox config for sandbox sessions; null/absent otherwise. */
+  sandbox?: SandboxLaunchConfig | null;
+  /** Session-level (host) ETW config; null/absent when not collecting host ETW. */
+  etw?: EtwConfig | null;
   created_at: string;
   last_used_at?: string | null;
 }
@@ -13,9 +19,12 @@ export interface SessionConfig {
 const SESSIONS_KEY = 'joybug-debug-sessions';
 
 // Sessions are re-created with fresh IDs on every app restart, so cross-restart
-// matching is by content, mirroring restoreSessionsFromStorage.
-function contentKey(s: Pick<SessionConfig, 'name' | 'launch_command' | 'is_local_run'>): string {
-  return `${s.name}\0${s.launch_command}\0${s.is_local_run}`;
+// matching is by content, mirroring restoreSessionsFromStorage (which imports
+// this — the key format lives only here). The sandbox flag is part of the key
+// so a sandbox and a remote session with the same name/command (both empty
+// server_url) don't collide.
+export function contentKey(s: Pick<SessionConfig, 'name' | 'launch_command' | 'is_local_run' | 'sandbox'>): string {
+  return `${s.name}\0${s.launch_command}\0${s.is_local_run}\0${s.sandbox ? '1' : '0'}`;
 }
 
 export function saveSessionsToStorage(sessions: SessionConfig[]) {
@@ -78,6 +87,8 @@ export function sessionToConfig(session: any): SessionConfig {
     working_directory: session.working_directory ?? null,
     environment: session.environment ?? null,
     is_local_run: session.is_local_run ?? false,
+    sandbox: session.sandbox ?? null,
+    etw: session.etw ?? null,
     created_at: session.created_at,
   };
 }

@@ -1,7 +1,7 @@
 import React from "react";
 import {
   Code, Cpu, Box, Layers, ListTree, Search, HardDrive, MapPin, FileCode, FileDiff,
-  ScanSearch, Puzzle, Crosshair, Bookmark as BookmarkIcon, Boxes, Type, Radar, Fingerprint, KeyRound,
+  ScanSearch, Puzzle, Crosshair, Bookmark as BookmarkIcon, Boxes, Type, Radar, Fingerprint, KeyRound, Activity,
 } from "lucide-react";
 import type { ActionId } from "@/lib/keybindings";
 
@@ -81,6 +81,9 @@ const TAB_DEFS = [
   { id: "modules", title: "Modules", category: "Process", home: "panel-left-top",
     action: "panel.modules", icon: <Box className="size-4" />,
     keywords: ["modules", "dll"] },
+  { id: "etw_events", title: "ETW Events", category: "Process", home: "panel-center", minWidth: WIDE,
+    icon: <Activity className="size-4" />,
+    keywords: ["etw", "sandbox", "trace", "events", "file", "registry", "network", "process", "detonate", "telemetry"] },
 
   // ── Memory ──
   { id: "memory", title: "Memory", category: "Memory", home: "panel-center", minWidth: WIDE,

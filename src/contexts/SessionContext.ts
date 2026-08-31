@@ -4,6 +4,7 @@ import type { BreakpointState } from "@/hooks/useBreakpoints";
 import type { PatchState } from "@/hooks/usePatches";
 import type { BookmarkState } from "@/hooks/useBookmarks";
 import type { WatchpointTraceState } from "@/hooks/useWatchpointTrace";
+import type { SandboxLaunchConfig, EtwConfig } from "@/lib/sandbox";
 
 // Re-export for convenience in other components
 export { type SerializableThreadContext } from "@/components/RegisterView";
@@ -71,6 +72,10 @@ export interface DebugSession {
   is_local_run: boolean;
   attach_pid: number | null;
   non_invasive: boolean;
+  /** Windows Sandbox config when this session runs its target in a sandbox. */
+  sandbox: SandboxLaunchConfig | null;
+  /** Session-level (host) ETW config; present ⇒ the ETW panel is active. */
+  etw: EtwConfig | null;
   status: SessionStatus;
   current_event: DebugEventInfo | null;
   /** Thread the user switched to while paused (null = event thread). */
@@ -155,6 +160,7 @@ export interface Symbol {
 export type SessionStatus =
   | "Stopped"
   | "Running"
+  | "Provisioning"
   | "Paused"
   | "Open"
   | { Error: string };

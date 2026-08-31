@@ -1,4 +1,5 @@
-import { useState, useRef, useMemo, useCallback, memo } from "react";
+import { useMemo, useCallback, memo } from "react";
+import { useResizablePaneHeight } from "@/hooks/useResizablePaneHeight";
 import { Copy, Loader2 } from "lucide-react";
 import { copyToClipboard } from "@/lib/clipboard";
 import { ScrollArea } from "./ui/scroll-area";
@@ -24,21 +25,6 @@ interface EmulationQuickViewProps {
 
 function formatTimingUs(us: number): string {
   return `${(us / 1000).toFixed(1)}ms`;
-}
-
-const HEIGHT_KEY = "assembly-quick-emulation-height";
-const DEFAULT_HEIGHT = 180;
-const MIN_HEIGHT = 60;
-
-function getInitialHeight(): number {
-  try {
-    const stored = localStorage.getItem(HEIGHT_KEY);
-    if (stored) {
-      const val = parseInt(stored, 10);
-      if (!isNaN(val)) return Math.max(MIN_HEIGHT, val);
-    }
-  } catch {}
-  return DEFAULT_HEIGHT;
 }
 
 /** Parse label from a quick emulation result (no instruction distance —
@@ -192,36 +178,13 @@ function VirtualizedTraceLines({
 }
 
 export const EmulationQuickView = memo(function EmulationQuickView({ emulation, onNavigateToAddress }: EmulationQuickViewProps) {
-  const [height, setHeight] = useState(getInitialHeight);
-  const rootRef = useRef<HTMLDivElement>(null);
-
-  const handleResizeStart = useCallback((e: React.MouseEvent) => {
-    e.preventDefault();
-    const startY = e.clientY;
-    const startHeight = height;
-    // Compute dynamic max from parent flex container, reserving 80px for toolbar + status bar
-    const parentHeight = rootRef.current?.parentElement?.clientHeight;
-    const maxHeight = parentHeight ? parentHeight - 80 : 800;
-
-    const onMouseMove = (ev: MouseEvent) => {
-      // Dragging up (negative deltaY) should increase height
-      const delta = startY - ev.clientY;
-      setHeight(Math.max(MIN_HEIGHT, Math.min(maxHeight, startHeight + delta)));
-    };
-
-    const onMouseUp = () => {
-      document.removeEventListener("mousemove", onMouseMove);
-      document.removeEventListener("mouseup", onMouseUp);
-      // Persist final height
-      setHeight(h => {
-        try { localStorage.setItem(HEIGHT_KEY, String(h)); } catch {}
-        return h;
-      });
-    };
-
-    document.addEventListener("mousemove", onMouseMove);
-    document.addEventListener("mouseup", onMouseUp);
-  }, [height]);
+  // Reserve 80px of the parent for the toolbar + status bar above the strip.
+  const { height, handleResizeStart, ref: rootRef } = useResizablePaneHeight({
+    storageKey: "assembly-quick-emulation-height",
+    defaultHeight: 180,
+    minHeight: 60,
+    reserve: 80,
+  });
 
   const {
     syscallResult,

@@ -3,7 +3,7 @@ import {
   createAndStartSession,
   createSession,
   cleanupSession,
-  findSessionByName,
+  findSessionById,
   invoke,
 } from "../helpers/session-helpers";
 import {
@@ -32,7 +32,7 @@ test.describe("Session Lifecycle", () => {
     const sessionId = await createSession(page, "Lifecycle Test");
 
     // Session card should show with Stopped badge
-    await expect(page.getByText("Lifecycle Test")).toBeVisible();
+    await expect(page.locator(`[data-session-id="${sessionId}"]`)).toBeVisible();
     await expect(page.getByText("Stopped", { exact: true })).toBeVisible();
 
     // Cleanup
@@ -86,23 +86,23 @@ test.describe("Session Lifecycle", () => {
     await navigateTo(page, "/debugger");
 
     await page.getByRole("button", { name: /Create Process/i }).first().click();
-    await page.getByLabel("Session Name").fill("WorkingDir Test");
-    await page.getByLabel(/Working Directory/i).fill("C:\\Windows");
+    await page.getByLabel("Launch Command").fill("cmd.exe /c echo WorkingDir Test");
+    // Working directory lives inside its own collapsed fold; target the input by
+    // id (its aria-label matches the fold button's).
+    await page.getByRole("button", { name: "Working directory" }).click();
+    await page.locator("#workingDirectory").fill("C:\\Windows");
     await page
       .getByRole("button", { name: "Create Session", exact: true })
       .click();
 
-    await expect(page.getByText("WorkingDir Test")).toBeVisible({
-      timeout: 5_000,
-    });
-
-    // The backend should have stored the working directory we entered.
-    const session = await page.evaluate(async () => {
-      const sessions = await (window as any).__TAURI_INTERNALS__.invoke(
-        "get_debug_sessions",
-      );
-      return sessions.find((s: any) => s.name === "WorkingDir Test");
-    });
+    // The backend should have stored the working directory we entered. (Naming
+    // was removed from the dialog, so identify the session by that value.)
+    let session: any;
+    await expect(async () => {
+      const sessions = await invoke(page, "get_debug_sessions");
+      session = sessions.find((s: any) => s.working_directory === "C:\\Windows");
+      expect(session).toBeTruthy();
+    }).toPass({ timeout: 5_000 });
 
     expect(session?.working_directory).toBe("C:\\Windows");
     // No env vars entered → backend stores "inherit" (null), not an empty list.
@@ -123,7 +123,7 @@ test.describe("Session Lifecycle", () => {
       environment: "FOO=bar\n# comment\n\nBAZ=a=b",
     });
 
-    const session = await findSessionByName(page, "EnvVars Test");
+    const session = await findSessionById(page, sessionId);
     expect(session?.environment).toEqual([
       ["FOO", "bar"],
       ["BAZ", "a=b"],
@@ -175,7 +175,8 @@ test.describe("Session Lifecycle", () => {
     await navigateTo(page, "/debugger");
 
     const sessionId = await createSession(page, "Delete Test");
-    await expect(page.getByText("Delete Test")).toBeVisible();
+    const card = page.locator(`[data-session-id="${sessionId}"]`);
+    await expect(card).toBeVisible();
 
     // Delete via backend invoke
     await page.evaluate(async (id: string) => {
@@ -186,8 +187,6 @@ test.describe("Session Lifecycle", () => {
     }, sessionId);
 
     // Session card should disappear
-    await expect(page.getByText("Delete Test")).not.toBeVisible({
-      timeout: 5_000,
-    });
+    await expect(card).not.toBeVisible({ timeout: 5_000 });
   });
 });

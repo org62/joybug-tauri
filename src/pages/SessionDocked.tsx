@@ -39,6 +39,7 @@ import { ContextStringsView } from "@/components/session/ContextStringsView";
 import { ContextCodeExplorerView } from "@/components/session/ContextCodeExplorerView";
 import { ContextModuleInfoView } from "@/components/session/ContextModuleInfoView";
 import { ContextWatchpointAccessView } from "@/components/session/ContextWatchpointAccessView";
+import { ContextEtwEventsView } from "@/components/session/ContextEtwEventsView";
 import { useDebugSession } from "@/hooks/useDebugSession";
 import { useBreakpoints } from "@/hooks/useBreakpoints";
 import { useWatchpointTrace } from "@/hooks/useWatchpointTrace";
@@ -284,9 +285,13 @@ export default function SessionDocked() {
   const canPassException = canStep && session?.current_event?.event_type === "Exception";
 
   const isPaused = isPausedSession(displayStatus);
+  // A "just launch" (run-only) sandbox session has no host-queryable process —
+  // there is no in-guest server, so OOB memory/enumeration ops don't apply. Its
+  // surface is the Sandbox Events tab + the sandbox viewer.
+  const isRunOnlySandbox = !!session?.sandbox && !session.sandbox.debug;
   // Memory/enumeration ops work over OOB whenever a process is available: paused,
   // running (invasive), or a non-invasive Open session. They never need a pause.
-  const canUseMemoryOps = isProcessAvailable(displayStatus);
+  const canUseMemoryOps = isProcessAvailable(displayStatus) && !isRunOnlySandbox;
   const processId = session?.current_event?.process_id;
 
   useEffect(() => {
@@ -658,6 +663,7 @@ export default function SessionDocked() {
     code_explorer: <ContextCodeExplorerView />,
     peviewer: <ContextModuleInfoView />,
     access_trace: <ContextWatchpointAccessView />,
+    etw_events: <ContextEtwEventsView />,
   }), [handleNavigateToMemory, handleNavigateToDisassembly, handleNavigateToMemoryPointer, handleOpenModuleInfo]);
 
   // Factory for creating dynamic tab content (e.g., memory tabs restored from storage)

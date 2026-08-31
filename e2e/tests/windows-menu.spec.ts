@@ -65,17 +65,42 @@ test.describe("Windows: navigation, grouping, and reset", () => {
 
   test("a wide window skips a narrow home panel for the widest one", async ({ tauriPage: page }) => {
     const sessionId = await createAndStartSession(page, "Windows Wide");
+    // Pin the window narrow so the side columns are provably below a wide tab's
+    // minWidth (560px). On a large monitor the default columns exceed 560 (~563px
+    // at a 2560px window), so PE Viewer's home would legitimately "fit" and the
+    // test would flake. Restored in `finally` so other tests keep the real size.
+    const client = await page.context().newCDPSession(page);
+    const { windowId, bounds } = await client.send("Browser.getWindowForTarget");
     try {
       await waitForPaused(page, sessionId);
 
-      // PE Viewer's home is the left-top column (Modules), which is far too
-      // narrow for it — placement must route it to the center panel instead.
+      await client.send("Browser.setWindowBounds", {
+        windowId,
+        bounds: { width: 1200, height: bounds.height, windowState: "normal" },
+      });
+      // The left-top column (PE Viewer's home) must now be too narrow for it.
+      await expect(async () => {
+        const w = await page.evaluate(() => {
+          const p = document.querySelector('.dock-panel[data-dockid="panel-left-top"]');
+          return p ? p.getBoundingClientRect().width : 9999;
+        });
+        expect(w).toBeLessThan(560);
+      }).toPass({ timeout: 3_000 });
+
+      // PE Viewer's home is the left-top column (Modules), now far too narrow for
+      // it — placement must route it to the center panel instead.
       await goToWindow(page, "PE Viewer");
       await expect(async () => {
         expect(await sharesPanelWith(page, "peviewer", "disassembly")).toBe(true);
       }).toPass({ timeout: 5_000 });
       expect(await sharesPanelWith(page, "peviewer", "modules")).toBe(false);
     } finally {
+      await client
+        .send("Browser.setWindowBounds", {
+          windowId,
+          bounds: { width: bounds.width, height: bounds.height, windowState: bounds.windowState ?? "normal" },
+        })
+        .catch(() => {});
       await cleanupSession(page, sessionId);
     }
   });

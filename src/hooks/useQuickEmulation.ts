@@ -93,6 +93,11 @@ export function useQuickEmulation(
   sessionId: string | undefined,
   isPaused: boolean | undefined,
   pcAddress?: number,
+  // Whether the always-on probes may auto-fire on each pause/step. Off for
+  // sandbox (and other high-latency remote) sessions, where emulation is
+  // server-side work reached over a slow TCP link — auto-firing it stalled every
+  // step by ~8s. Manual toggles still fire once, user-initiated.
+  autoEmulate: boolean = true,
 ): QuickEmulationState {
   const [syscallResult, setSyscallResult] = useState<QuickEmulationResult | null>(null);
   const [moduleResult, setModuleResult] = useState<QuickEmulationResult | null>(null);
@@ -214,9 +219,10 @@ export function useQuickEmulation(
     }
   }, [sessionId, isPaused]);
 
-  // Auto-fire when paused and PC changes (covers both pause transitions and stepping)
+  // Auto-fire when paused and PC changes (covers both pause transitions and
+  // stepping). Suppressed when autoEmulate is off (sandbox/remote sessions).
   useEffect(() => {
-    if (!isPaused || !sessionId) return;
+    if (!isPaused || !sessionId || !autoEmulate) return;
 
     if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
     debounceTimerRef.current = setTimeout(() => {
@@ -229,7 +235,7 @@ export function useQuickEmulation(
         debounceTimerRef.current = null;
       }
     };
-  }, [isPaused, sessionId, pcAddress, fireProbes, enabledProbes, maxInstructions, lightningInstructions]);
+  }, [isPaused, sessionId, pcAddress, autoEmulate, fireProbes, enabledProbes, maxInstructions, lightningInstructions]);
 
   // Flipping a toggle off discards its result in the same render batch so the
   // footer clears instantly; flipping it on fires only that probe right away.

@@ -5,18 +5,22 @@ mod commands;
 mod custom_types;
 mod data_dir;
 mod error;
+mod etw;
 mod events;
+pub mod guest_mode;
 mod jit;
 mod patch_store;
 mod symbol_store;
 mod ui_logger;
+mod sandbox;
 mod session;
 mod state;
 mod settings;
 
 use jit::StartupAttachState;
-use state::{EmbeddedServersMap, LogsState, SessionStatesMap};
+use state::{EmbeddedServersMap, HostTracersMap, LogsState, SandboxHandlesMap, SessionStatesMap};
 use settings::{SettingsState, load_settings_from_disk};
+use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -89,6 +93,8 @@ pub fn run() {
         )
         .manage(SessionStatesMap::default())
         .manage(EmbeddedServersMap::default())
+        .manage(SandboxHandlesMap::default())
+        .manage(HostTracersMap::default())
         .manage(LogsState::default())
         .manage(SettingsState::new(load_settings_from_disk()))
         .manage(commands::OobPool::default())
@@ -237,7 +243,32 @@ pub fn run() {
             commands::pe_string_scan,
             commands::pe_set_field,
             commands::pe_field_span,
+            commands::get_sandbox_status,
+            commands::open_sandbox_view,
+            commands::poll_etw_events,
+            commands::resolve_etw_stack,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app_handle, event| {
+            // On exit, stop any still-running sandboxes so a hard app close never
+            // leaks a Windows Sandbox VM.
+            if let tauri::RunEvent::Exit = event {
+                let handles = app_handle.state::<SandboxHandlesMap>();
+                let drained: Vec<_> = handles.lock().unwrap().drain().collect();
+                for (session_id, handle) in drained {
+                    tracing::info!("app exit: stopping sandbox for session {}", session_id);
+                    drop(handle);
+                }
+                // Ask any resident (elevated) host-ETW tracers to exit — this app
+                // can't kill an elevated process, so the control-file `stop` is the
+                // only clean-shutdown path.
+                let tracers = app_handle.state::<HostTracersMap>();
+                let sessions: Vec<String> = tracers.lock().unwrap().keys().cloned().collect();
+                for session_id in sessions {
+                    tracing::info!("app exit: stopping host ETW tracer for session {}", session_id);
+                    crate::etw::stop_host_tracer(&tracers, &session_id);
+                }
+            }
+        });
 }

@@ -22,6 +22,8 @@ export function SessionStatusBadge({
       return <Badge data-session-status="Stopped" variant="secondary">Stopped</Badge>;
     case "Running":
       return <Badge data-session-status="Running" variant="outline" className="animate-pulse">Running</Badge>;
+    case "Provisioning":
+      return <Badge data-session-status="Provisioning" variant="outline" className="animate-pulse bg-syn-state/10 text-syn-state border-syn-state/30">Provisioning…</Badge>;
     case "Paused":
       return <Badge data-session-status="Paused" variant="outline" className="bg-syn-state/15 text-syn-state border-syn-state/30">Paused</Badge>;
     case "Open":

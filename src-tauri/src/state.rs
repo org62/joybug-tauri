@@ -201,6 +201,67 @@ impl BookmarkInfo {
     }
 }
 
+/// A host folder mounted into the Windows Sandbox guest. Wire shape shared with
+/// the frontend (`SandboxLaunchConfig`); serde field names must stay in sync.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SandboxMount {
+    pub host_path: String,
+    /// Mount read-only (the default for the debuggee's own image and data).
+    pub read_only: bool,
+}
+
+/// What the in-guest ETW tracer records. The backend turns this into the
+/// tracer's `--capture` flag (`sandbox::etw_capture_ops`). Wire shape shared
+/// with the frontend (`EtwCaptureConfig`).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct EtwCapture {
+    /// Explicit per-operation token set (rich configurator), e.g.
+    /// `["file.create","registry.set_value"]`. Empty ⇒ the tracer's built-in
+    /// default set (`joybug_core::sandbox::DEFAULT_OPS`).
+    #[serde(default)]
+    pub ops: Vec<String>,
+}
+
+/// Session-level ETW config, independent of the sandbox. Its presence on a
+/// session (`SessionStateUI::etw`) means "collect ETW for this target" — used for
+/// HOST ETW (a locally-debugged target, or a standalone ETW-only observer). The
+/// sandbox path nests the same type inside `SandboxSettings` (gated by its
+/// `collect_etw` flag). Wire shape shared with the frontend (`EtwConfig`).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct EtwConfig {
+    /// What the tracer records (same shape the sandbox uses).
+    #[serde(default)]
+    pub capture: EtwCapture,
+    /// Collect callstacks on recorded events (heavier; off by default).
+    #[serde(default)]
+    pub callstacks: bool,
+}
+
+/// Configuration for a session that launches/debugs its target inside a Windows
+/// Sandbox. Presence of this on a session (`SessionStateUI::sandbox`) selects the
+/// sandbox run mode. Deserialized from the `sandbox` argument of
+/// `create_debug_session` / `update_debug_session`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SandboxSettings {
+    /// Host folders staged/mapped into the guest.
+    pub mounts: Vec<SandboxMount>,
+    /// Guest memory in MB.
+    pub memory_mb: u32,
+    /// Run the ETW collector against the target process tree.
+    pub collect_etw: bool,
+    /// When true, attach the joybug debugger to the target (breakpoints, stepping,
+    /// memory). When false, "just run" the target in the sandbox without a
+    /// debugger — the ETW tracer launches and observes it (a safe detonation).
+    #[serde(default = "crate::settings::default_true")]
+    pub debug: bool,
+    /// What the ETW tracer records — the same nested [`EtwConfig`] shape the
+    /// host path uses (`SessionStateUI::etw`), so a capture knob exists in one
+    /// type only. Defaulted so sessions persisted before this field existed
+    /// still deserialize (→ the historical behavior).
+    #[serde(default)]
+    pub etw: EtwConfig,
+}
+
 // Serializable snapshot of session state for frontend communication
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DebugSessionUI {
@@ -218,6 +279,10 @@ pub struct DebugSessionUI {
     pub attach_pid: Option<u32>,
     /// When true, this session opens the target non-invasively (no debugger attach).
     pub non_invasive: bool,
+    /// When set, this session launches/debugs its target inside a Windows Sandbox.
+    pub sandbox: Option<SandboxSettings>,
+    /// Session-level (host) ETW config; present ⇒ the ETW panel is active.
+    pub etw: Option<EtwConfig>,
     pub status: SessionStatusUI,
     pub current_event: Option<DebugEventInfo>,
     /// Thread the user explicitly switched to (WinDbg `~Ns`); `None` = the
@@ -236,6 +301,11 @@ pub struct DebugSessionUI {
 pub enum SessionStatusUI {
     Stopped,
     Running,
+    /// Sandbox session only: the Windows Sandbox VM is booting/provisioning
+    /// (share folders, open viewer, start the guest server) before the debug
+    /// loop begins. A distinct status so the badge doesn't read "Running" during
+    /// the ~8s boot, and so process-dependent UI stays gated off (no process yet).
+    Provisioning,
     Paused,
     /// Non-invasive session: the target process is opened (by PID) for
     /// memory/enumeration operations but never attached with a debugger, so
@@ -345,6 +415,20 @@ pub struct SessionStateUI {
     /// When true, the session opens the target process non-invasively
     /// (`OpenProcess` only, no `DebugActiveProcess`/debug loop).
     pub non_invasive: bool,
+    /// When set, the session launches/debugs its target inside a Windows Sandbox
+    /// (a joybug-core server is provisioned inside the sandbox and `server_url`
+    /// is pointed at it). `None` for local/remote sessions.
+    pub sandbox: Option<SandboxSettings>,
+    /// Session-level ETW config (host ETW). Present ⇒ collect ETW for this target
+    /// even outside a sandbox. `None` for sessions with no host ETW. (Sandbox
+    /// sessions carry their ETW config inside `sandbox` for now.)
+    pub etw: Option<EtwConfig>,
+    /// Guest-path-rewritten launch command, produced by sandbox provisioning and
+    /// consumed by the runner in place of `launch_command` (which stays the
+    /// host-facing persistence key). `None` for non-sandbox runs.
+    pub effective_launch_command: Option<String>,
+    /// Guest working directory for a sandbox run; see `effective_launch_command`.
+    pub effective_working_directory: Option<String>,
     /// WER's event handle from a JIT (`-p/-e`) launch. Signalled once the
     /// attach has produced its first event (or failed) so the OS stops waiting
     /// on the crashed process; `None` for every other session.
@@ -433,19 +517,39 @@ pub struct SourceStepState {
     pub count: u32,
 }
 
+/// Inputs for constructing a `SessionStateUI`. Grouped into a struct so the
+/// several session-creation call sites stay readable as fields are added.
+pub struct SessionInit {
+    pub id: String,
+    pub name: String,
+    pub server_url: String,
+    pub launch_command: String,
+    pub working_directory: Option<String>,
+    pub environment: Option<Vec<(String, String)>>,
+    pub is_local_run: bool,
+    pub attach_pid: Option<u32>,
+    pub non_invasive: bool,
+    pub jit_event_handle: Option<u64>,
+    pub sandbox: Option<SandboxSettings>,
+    pub etw: Option<EtwConfig>,
+}
+
 impl SessionStateUI {
-    pub fn new(
-        id: String,
-        name: String,
-        server_url: String,
-        launch_command: String,
-        working_directory: Option<String>,
-        environment: Option<Vec<(String, String)>>,
-        is_local_run: bool,
-        attach_pid: Option<u32>,
-        non_invasive: bool,
-        jit_event_handle: Option<u64>,
-    ) -> Self {
+    pub fn new(init: SessionInit) -> Self {
+        let SessionInit {
+            id,
+            name,
+            server_url,
+            launch_command,
+            working_directory,
+            environment,
+            is_local_run,
+            attach_pid,
+            non_invasive,
+            jit_event_handle,
+            sandbox,
+            etw,
+        } = init;
         let (step_sender, step_receiver) = mpsc::channel();
         Self {
             id,
@@ -457,6 +561,10 @@ impl SessionStateUI {
             is_local_run,
             attach_pid,
             non_invasive,
+            sandbox,
+            etw,
+            effective_launch_command: None,
+            effective_working_directory: None,
             jit_event_handle,
             open_pid: None,
             embedded_server_port: None,
@@ -501,6 +609,9 @@ impl SessionStateUI {
         self.selected_tid = None;
         self.open_pid = None;
         self.embedded_server_port = None;
+        // Guest paths are regenerated by sandbox provisioning on each run.
+        self.effective_launch_command = None;
+        self.effective_working_directory = None;
 
         self.pass_exception_on_continue = false;
         self.source_step = None;
@@ -571,6 +682,8 @@ impl SessionStateUI {
             is_local_run: self.is_local_run,
             attach_pid: self.attach_pid,
             non_invasive: self.non_invasive,
+            sandbox: self.sandbox.clone(),
+            etw: self.etw.clone(),
             status: self.status.clone(),
             current_event: self.current_event.as_ref().map(|event| {
                 let mut info = crate::events::debug_event_to_info(event);
@@ -604,6 +717,19 @@ impl SessionStateUI {
 pub type SessionStatesMap = Mutex<HashMap<String, Arc<Mutex<SessionStateUI>>>>;
 pub type LogsState = Mutex<Vec<LogEntry>>;
 pub type EmbeddedServersMap = Mutex<HashMap<String, joybug_core::local_server::LocalServer>>;
+/// Live Windows Sandbox handles keyed by session id. Dropping a handle stops the
+/// sandbox (`wsb stop`); see `crate::sandbox::SandboxHandle`. Same lifecycle as
+/// `EmbeddedServersMap` — inserted at start, removed+dropped at stop/app-exit.
+pub type SandboxHandlesMap = Mutex<HashMap<String, crate::sandbox::SandboxHandle>>;
+/// Resident host-ETW tracers keyed by session id. Presence means an elevated
+/// tracer has already been launched for that session (one UAC); the value is the
+/// core [`joybug_core::etw::HostTracer`] handle, which writes `attach <pid>` into
+/// its control file on each debuggee (re)start and `stop` on delete/app-exit.
+/// This is what lets a debuggee restart reuse the running tracer instead of
+/// prompting UAC again. Same lifecycle as `SandboxHandlesMap` except it is NOT
+/// torn down on a plain stop (a restart is a stop+start and must keep the
+/// tracer) — only on delete and app exit.
+pub type HostTracersMap = Mutex<HashMap<String, joybug_core::etw::HostTracer>>;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LogEntry {

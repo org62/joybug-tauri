@@ -57,6 +57,15 @@ export function isTargetLive(status: SessionStatus | string | undefined | null):
 }
 
 /**
+ * True when the session can be stopped: a process exists, or a sandbox is still
+ * provisioning — the backend supports cancelling mid-provision (it tears the
+ * fresh VM back down), so a slow/stuck boot is never un-stoppable.
+ */
+export function canStopSession(status: SessionStatus | string | undefined | null): boolean {
+  return isProcessAvailable(status) || status === 'Provisioning';
+}
+
+/**
  * Extract a human-readable error message from a Tauri invoke error.
  * Tauri serializes Rust enum errors as objects like {"VariantName": "message"},
  * which String() renders as "[object Object]".

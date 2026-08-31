@@ -33,8 +33,10 @@ pub struct ExceptionRule {
     pub second_chance: String, // "stop" | "pass" | "handled"
 }
 
-fn default_true() -> bool { true }
+pub fn default_true() -> bool { true }
 fn default_lightning_instructions() -> usize { 100 }
+fn default_sandbox_memory_mb() -> u32 { 4096 }
+fn default_sandbox_etw_preset() -> String { "all".to_string() }
 
 /// "Debugger Hiding" — anti-anti-debug toggles applied on process start.
 /// `hide_from_peb` is the parent switch; the five child flags pick which
@@ -121,6 +123,17 @@ pub struct DebugSettings {
     /// annotate the disassembly with what happens next.
     #[serde(default = "default_lightning_instructions")]
     pub lightning_instructions: usize,
+
+    /// Default guest memory (MB) for new Windows Sandbox sessions.
+    #[serde(default = "default_sandbox_memory_mb")]
+    pub sandbox_default_memory_mb: u32,
+    /// Default "collect ETW trace" toggle for new Windows Sandbox sessions.
+    #[serde(default = "default_true")]
+    pub sandbox_collect_etw: bool,
+    /// Default ETW capture preset for new Windows Sandbox sessions:
+    /// "all" | "files" | "registry" | "network".
+    #[serde(default = "default_sandbox_etw_preset")]
+    pub sandbox_etw_preset: String,
 }
 
 impl Default for DebugSettings {
@@ -147,6 +160,9 @@ impl Default for DebugSettings {
             source_map: Vec::new(),
             auto_update_check: true,
             lightning_instructions: 100,
+            sandbox_default_memory_mb: 4096,
+            sandbox_collect_etw: true,
+            sandbox_etw_preset: "all".to_string(),
         }
     }
 }

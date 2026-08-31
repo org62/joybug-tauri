@@ -26,7 +26,11 @@ export const ContextAssemblyView = () => {
 
   // Quick emulation is a session capability, so the hook lives in this wrapper —
   // the shared AssemblyView (also hosted by the PE viewer) just receives the state.
-  const emulation = useQuickEmulation(sessionId, isPaused, address);
+  // Auto-emulation is disabled for sandbox sessions: the probes are server-side
+  // work reached over the guest's TCP link, and auto-firing them on every step
+  // stalled stepping by ~8s each. The user can still trigger a probe by hand.
+  const isSandbox = !!sessionData?.session?.sandbox;
+  const emulation = useQuickEmulation(sessionId, isPaused, address, !isSandbox);
 
   const { breakpoints, toggleBreakpoint, setHardwareBreakpoint } = sessionData.breakpointState;
   const { assemblePatch, restoreImageBytes } = sessionData.patchState;

@@ -2,6 +2,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { addSessionToStorage, touchSessionInStorage } from '@/lib/sessionStorage';
 import { buildLaunchCommand, moduleBasename, pathDirname } from '@/lib/sessionHelpers';
 import type { EnvPairs } from '@/lib/envVars';
+import type { SandboxLaunchConfig, EtwConfig } from '@/lib/sandbox';
 
 export interface SessionRecordConfig {
   name: string;
@@ -10,6 +11,10 @@ export interface SessionRecordConfig {
   workingDirectory: string | null;
   environment: EnvPairs | null;
   isLocalRun: boolean;
+  /** Windows Sandbox config when this is a sandbox session; null otherwise. */
+  sandbox?: SandboxLaunchConfig | null;
+  /** Session-level (host) ETW config; null when not collecting host ETW. */
+  etw?: EtwConfig | null;
 }
 
 /**
@@ -26,6 +31,8 @@ export async function createSessionRecord(cfg: SessionRecordConfig): Promise<str
     environment: cfg.environment,
     isLocalRun: cfg.isLocalRun,
     attachPid: null,
+    sandbox: cfg.sandbox ?? null,
+    etw: cfg.etw ?? null,
   });
 
   addSessionToStorage({
@@ -36,6 +43,8 @@ export async function createSessionRecord(cfg: SessionRecordConfig): Promise<str
     working_directory: cfg.workingDirectory,
     environment: cfg.environment,
     is_local_run: cfg.isLocalRun,
+    sandbox: cfg.sandbox ?? null,
+    etw: cfg.etw ?? null,
     created_at: new Date().toISOString(),
   });
 

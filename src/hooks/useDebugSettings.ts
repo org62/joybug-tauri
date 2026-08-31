@@ -36,6 +36,9 @@ export interface DebugSettings {
   symbol_offline: boolean; // never download symbols
   auto_update_check: boolean; // ask GitHub Releases for a newer version on startup
   lightning_instructions: number; // instructions the always-on lightning emulation runs per pause
+  sandbox_default_memory_mb: number; // default guest memory (MB) for new sandbox sessions
+  sandbox_collect_etw: boolean; // default "collect ETW trace" for new sandbox sessions
+  sandbox_etw_preset: string; // default ETW capture preset: "all" | "files" | "registry" | "network"
 }
 
 // Keys whose value is a boolean, derived structurally so new settings never
@@ -93,6 +96,9 @@ const DEFAULTS: DebugSettings = {
   symbol_offline: false,
   auto_update_check: true,
   lightning_instructions: 100,
+  sandbox_default_memory_mb: 4096,
+  sandbox_collect_etw: true,
+  sandbox_etw_preset: "all",
 };
 
 export function useDebugSettings() {
@@ -151,5 +157,13 @@ export function useDebugSettings() {
   const setSymbolPath = useCallback((path: string) =>
     update(prev => ({ ...prev, symbol_path: path })), [update]);
 
-  return { settings, toggle, updateExceptionRules, toggleHiding, setScanThreadCount, setSymbolPath, setLightningInstructions };
+  const setSandboxMemoryMb = useCallback((mb: number) => {
+    const sanitized = Number.isFinite(mb) && mb >= 1024 ? Math.floor(mb) : 4096;
+    return update(prev => ({ ...prev, sandbox_default_memory_mb: sanitized }));
+  }, [update]);
+
+  const setSandboxEtwPreset = useCallback((preset: string) =>
+    update(prev => ({ ...prev, sandbox_etw_preset: preset })), [update]);
+
+  return { settings, toggle, updateExceptionRules, toggleHiding, setScanThreadCount, setSymbolPath, setLightningInstructions, setSandboxMemoryMb, setSandboxEtwPreset };
 }

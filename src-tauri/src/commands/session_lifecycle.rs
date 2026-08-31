@@ -1,7 +1,8 @@
 use crate::error::{Error, Result};
 use crate::session::{run_debug_session, emit_session_event, LocalServer, UICommand};
 use crate::state::{
-    DebugSessionUI, EmbeddedServersMap, SessionStateUI, SessionStatesMap, SessionStatusUI,
+    DebugSessionUI, EmbeddedServersMap, SandboxHandlesMap, SandboxSettings, SessionInit,
+    SessionStateUI, SessionStatesMap, SessionStatusUI,
 };
 use joybug_core::protocol::{DebuggerRequest, MinidumpKind};
 use std::sync::{Arc, Mutex};
@@ -85,6 +86,8 @@ pub async fn create_debug_session(
     attach_pid: Option<u32>,
     non_invasive: Option<bool>,
     jit_event_handle: Option<u64>,
+    sandbox: Option<SandboxSettings>,
+    etw: Option<crate::state::EtwConfig>,
     session_states: State<'_, SessionStatesMap>,
     app_handle: tauri::AppHandle,
 ) -> std::result::Result<String, String> {
@@ -104,10 +107,13 @@ pub async fn create_debug_session(
 
     let mut states = session_states.lock().unwrap();
 
-    if !is_local_run && attach_pid.is_none() {
+    // Sandbox sessions all carry an empty server_url (the guest address is only
+    // known after provisioning), so they can't be de-duplicated by URL here —
+    // skip the check for them (and for local/attach sessions, as before).
+    if !is_local_run && attach_pid.is_none() && sandbox.is_none() {
         for session_state in states.values() {
             let state = session_state.lock().unwrap();
-            if !state.is_local_run && state.server_url == server_url && state.launch_command == launch_command {
+            if state.sandbox.is_none() && !state.is_local_run && state.server_url == server_url && state.launch_command == launch_command {
                 return Err(Error::SessionAlreadyExists.to_string());
             }
         }
@@ -115,24 +121,28 @@ pub async fn create_debug_session(
 
     let session_id = format!("session_{}", chrono::Utc::now().timestamp_millis());
 
-    let effective_server_url = if is_local_run {
+    // Local and sandbox sessions have no user-supplied server_url; sandbox
+    // provisioning fills it in at start with the guest address.
+    let effective_server_url = if is_local_run || sandbox.is_some() {
         String::new()
     } else {
         server_url
     };
 
-    let session_state_arc = Arc::new(Mutex::new(SessionStateUI::new(
-        session_id.clone(),
+    let session_state_arc = Arc::new(Mutex::new(SessionStateUI::new(SessionInit {
+        id: session_id.clone(),
         name,
-        effective_server_url,
+        server_url: effective_server_url,
         launch_command,
         working_directory,
-        normalize_environment(environment),
+        environment: normalize_environment(environment),
         is_local_run,
         attach_pid,
         non_invasive,
         jit_event_handle,
-    )));
+        sandbox,
+        etw,
+    })));
 
     {
         let mut state = session_state_arc.lock().unwrap();
@@ -169,6 +179,8 @@ pub async fn update_debug_session(
     is_local_run: bool,
     attach_pid: Option<u32>,
     non_invasive: Option<bool>,
+    sandbox: Option<SandboxSettings>,
+    etw: Option<crate::state::EtwConfig>,
     session_states: State<'_, SessionStatesMap>,
     app_handle: tauri::AppHandle,
 ) -> std::result::Result<(), String> {
@@ -187,11 +199,11 @@ pub async fn update_debug_session(
 
     let states = session_states.lock().unwrap();
 
-    if !is_local_run && attach_pid.is_none() {
+    if !is_local_run && attach_pid.is_none() && sandbox.is_none() {
         for (id, session_state) in states.iter() {
             if id != &session_id {
                 let state = session_state.lock().unwrap();
-                if !state.is_local_run && state.server_url == server_url && state.launch_command == launch_command {
+                if state.sandbox.is_none() && !state.is_local_run && state.server_url == server_url && state.launch_command == launch_command {
                     return Err(Error::SessionAlreadyExists.to_string());
                 }
             }
@@ -207,12 +219,14 @@ pub async fn update_debug_session(
 
         state.name = name;
         state.is_local_run = is_local_run;
-        state.server_url = if is_local_run { String::new() } else { server_url };
+        state.server_url = if is_local_run || sandbox.is_some() { String::new() } else { server_url };
         state.working_directory = working_directory;
         state.environment = normalize_environment(environment);
         state.launch_command = launch_command;
         state.attach_pid = attach_pid;
         state.non_invasive = non_invasive;
+        state.sandbox = sandbox;
+        state.etw = etw;
 
         let session_state_arc = session_state.clone();
 
@@ -291,28 +305,110 @@ pub fn start_debug_session(
         }
     }
 
+    // Run-mode fork. Sandbox and local both stand up a server and point
+    // `server_url` at it; remote uses the user-supplied URL untouched.
+    let symbol_cfg = {
+        let settings = app_handle.state::<crate::settings::SettingsState>();
+        let settings = settings.lock().unwrap();
+        settings.symbol_config()
+    };
+
+    let (sandbox_settings, launch_command, working_directory, is_local_run, etw_config, server_url_cur) = {
+        let state = session_state.lock().unwrap();
+        (
+            state.sandbox.clone(),
+            state.launch_command.clone(),
+            state.working_directory.clone(),
+            state.is_local_run,
+            state.etw.clone(),
+            state.server_url.clone(),
+        )
+    };
+
+    // Standalone "ETW only" host session: has an ETW config but no debugger (not
+    // sandbox, not local, no remote server). Launch the target under the elevated
+    // tracer and return — no debug loop.
+    if sandbox_settings.is_none()
+        && !is_local_run
+        && server_url_cur.is_empty()
+        && etw_config.is_some()
     {
-        let mut state = session_state.lock().unwrap();
-        if state.is_local_run {
-            info!("Starting embedded server for local run session: {}", session_id);
-            let symbol_cfg = {
-                let settings = app_handle.state::<crate::settings::SettingsState>();
-                let settings = settings.lock().unwrap();
-                settings.symbol_config()
-            };
-            let server_handle = LocalServer::start_with_config(symbol_cfg)
-                .map_err(|e| Error::ConnectionFailed(format!("Failed to start embedded server: {}", e)))?;
-
-            let port = server_handle.port();
-            let server_url = format!("127.0.0.1:{}", port);
-
-            embedded_servers.lock().unwrap().insert(session_id.clone(), server_handle);
-
-            state.server_url = server_url;
-            state.embedded_server_port = Some(port);
-
-            info!("Embedded server started on port {} for session {}", port, session_id);
+        let etw = etw_config.unwrap();
+        {
+            let mut state = session_state.lock().unwrap();
+            state.status = SessionStatusUI::Running;
         }
+        emit_session_event(&session_state, &app_handle);
+        match crate::etw::start_standalone_etw(
+            session_id.clone(),
+            launch_command.clone(),
+            etw,
+            session_state.clone(),
+            app_handle.clone(),
+        ) {
+            Ok(()) => info!("Standalone ETW session started: {}", session_id),
+            Err(e) => {
+                let msg = format!("Failed to start ETW: {e}");
+                {
+                    let mut state = session_state.lock().unwrap();
+                    state.status = SessionStatusUI::Error(msg.clone());
+                }
+                crate::ui_logger::log_error(&app_handle, &msg, Some(session_id.clone()));
+                crate::ui_logger::toast_error(&app_handle, &msg);
+                emit_session_event(&session_state, &app_handle);
+            }
+        }
+        return Ok(());
+    }
+
+    if let Some(settings) = sandbox_settings {
+        // Booting a Windows Sandbox takes 15-30s (boot + networking + in-guest
+        // server start). start_debug_session is a *synchronous* Tauri command, so
+        // it runs on the main thread — provisioning inline froze the entire UI
+        // until the target hit its first breakpoint. Instead: flip to an interim
+        // Provisioning state now (a distinct badge, not a misleading "Running"),
+        // hand the whole provision + start to a background thread, and return
+        // immediately. That thread emits the real terminal status (Paused via the
+        // debug loop, Running for run-only, or Error) when it finishes.
+        {
+            let mut state = session_state.lock().unwrap();
+            state.status = SessionStatusUI::Provisioning;
+        }
+        emit_session_event(&session_state, &app_handle);
+        crate::ui_logger::toast_info(
+            &app_handle,
+            "Provisioning Windows Sandbox — this can take 15–30s…",
+        );
+
+        let session_state = session_state.clone();
+        let app_handle = app_handle.clone();
+        thread::spawn(move || {
+            provision_sandbox_and_start(
+                session_state,
+                session_id,
+                settings,
+                launch_command,
+                working_directory,
+                symbol_cfg,
+                app_handle,
+            );
+        });
+        return Ok(());
+    } else if is_local_run {
+        info!("Starting embedded server for local run session: {}", session_id);
+        let server_handle = LocalServer::start_with_config(symbol_cfg)
+            .map_err(|e| Error::ConnectionFailed(format!("Failed to start embedded server: {}", e)))?;
+
+        let port = server_handle.port();
+        let server_url = format!("127.0.0.1:{}", port);
+
+        embedded_servers.lock().unwrap().insert(session_id.clone(), server_handle);
+
+        let mut state = session_state.lock().unwrap();
+        state.server_url = server_url;
+        state.embedded_server_port = Some(port);
+
+        info!("Embedded server started on port {} for session {}", port, session_id);
     }
 
     // Non-invasive session: open the target for memory/enumeration only. Resolve
@@ -407,10 +503,144 @@ fn spawn_debug_loop(
                 state.debug_result = Some(result.map_err(|e| e.to_string()));
             }
 
+            // If this was a sandbox session, tear the VM down now that the debug
+            // loop has ended — the target exited, or failed to start. Without this
+            // the sandbox leaks (only one per user is allowed) and blocks the next
+            // sandbox session until the whole app is restarted. A user-initiated
+            // Stop already removed the handle in `stop_debug_session`, so this is
+            // a harmless no-op in that path.
+            crate::sandbox::teardown(&app_handle.state::<SandboxHandlesMap>(), &session_id);
+
             emit_session_event(&session_state, &app_handle);
         }
     });
     session_state.lock().unwrap().debug_loop_handle = Some(handle);
+}
+
+/// Provision a Windows Sandbox for `session_id`, then either start the debug loop
+/// (debug mode) or mark the session Running (run-only). Runs on a background
+/// thread spawned by `start_debug_session` so booting the VM (15-30s) never
+/// blocks the UI thread. The session is already in the interim Running state.
+#[allow(clippy::too_many_arguments)]
+fn provision_sandbox_and_start(
+    session_state: Arc<Mutex<SessionStateUI>>,
+    session_id: String,
+    settings: SandboxSettings,
+    launch_command: String,
+    working_directory: Option<String>,
+    symbol_cfg: joybug_core::SymbolConfig,
+    app_handle: tauri::AppHandle,
+) {
+    info!("Provisioning Windows Sandbox for session: {}", session_id);
+    let handle = match crate::sandbox::provision(
+        &session_id,
+        &settings,
+        &launch_command,
+        working_directory.as_deref(),
+        &symbol_cfg,
+    ) {
+        Ok(handle) => handle,
+        Err(e) => {
+            // Provisioning failures (bad mount, no wsb, a still-running sandbox,
+            // an unreachable guest server) surface as an Error state + toast +
+            // log — never a silent drop back to Stopped.
+            let msg = format!("Sandbox provisioning failed: {}", e);
+            error!("{}", msg);
+            {
+                let mut state = session_state.lock().unwrap();
+                state.status = SessionStatusUI::Error(msg.clone());
+            }
+            crate::ui_logger::log_error(&app_handle, &msg, Some(session_id.clone()));
+            crate::ui_logger::toast_error(&app_handle, &msg);
+            emit_session_event(&session_state, &app_handle);
+            return;
+        }
+    };
+
+    // If the user stopped the session while we were provisioning (the interim
+    // Running state let them press Stop), tear the fresh VM back down instead of
+    // attaching to a session that's already gone — otherwise it leaks a sandbox.
+    if matches!(session_state.lock().unwrap().status, SessionStatusUI::Stopped) {
+        info!("Sandbox for session {} provisioned but the session was stopped meanwhile; tearing it down", session_id);
+        drop(handle); // RunningSandbox::Drop → wsb stop
+        return;
+    }
+
+    let mut handle = handle;
+    let is_debug = handle.debug;
+    let sandbox_id = handle.sandbox.id().to_string();
+    let run_only_cmd = handle.run_only_launch_cmd.take();
+    {
+        let mut state = session_state.lock().unwrap();
+        state.server_url = handle.server_url.clone();
+        if is_debug {
+            state.effective_launch_command = Some(handle.guest_launch_command.clone());
+            state.effective_working_directory = handle.guest_working_directory.clone();
+        }
+    }
+    app_handle
+        .state::<SandboxHandlesMap>()
+        .lock()
+        .unwrap()
+        .insert(session_id.clone(), handle);
+
+    if !is_debug {
+        // Run-only ("just launch") sandbox session: no debugger, no debug loop. The
+        // target runs (visibly) under the ETW tracer. A watcher thread owns the
+        // tracer's blocking exec — when the target exits, the exec returns and the
+        // session ends + the VM is torn down. Without this the session would sit in
+        // Running forever after the target exited (no debug loop to unwind it).
+        {
+            let mut state = session_state.lock().unwrap();
+            state.status = SessionStatusUI::Running;
+        }
+        emit_session_event(&session_state, &app_handle);
+        crate::ui_logger::log_info(
+            &app_handle,
+            &format!("Launched target in sandbox without a debugger: {}", session_id),
+            Some(session_id.clone()),
+        );
+        info!("Sandbox run-only session started: {}", session_id);
+
+        if let Some(tracer_cmd) = run_only_cmd {
+            let session_state = session_state.clone();
+            let app_handle = app_handle.clone();
+            let session_id = session_id.clone();
+            thread::spawn(move || {
+                // Blocks for the target's whole lifetime. ExistingLogin so the
+                // target is visible on the desktop the viewer shows.
+                crate::sandbox::exec_blocking(
+                    &sandbox_id,
+                    &tracer_cmd,
+                    crate::sandbox::RunAs::ExistingLogin,
+                );
+                // Target exited (or the session was stopped, which killed the VM and
+                // errored the exec). End the session if it isn't already ended.
+                {
+                    let mut state = session_state.lock().unwrap();
+                    if !matches!(
+                        state.status,
+                        SessionStatusUI::Stopped | SessionStatusUI::Error(_)
+                    ) {
+                        state.status = SessionStatusUI::Stopped;
+                        state.clear_runtime_caches();
+                    }
+                }
+                crate::sandbox::teardown(&app_handle.state::<SandboxHandlesMap>(), &session_id);
+                emit_session_event(&session_state, &app_handle);
+            });
+        }
+        return;
+    }
+
+    info!("Sandbox server ready for session {}", session_id);
+    emit_session_event(&session_state, &app_handle);
+    crate::ui_logger::log_info(
+        &app_handle,
+        &format!("Starting debug session: {}", session_id),
+        Some(session_id.clone()),
+    );
+    spawn_debug_loop(session_state, app_handle, session_id);
 }
 
 /// Promote a non-invasive `Open` session to a full attached debug session on the
@@ -523,6 +753,21 @@ pub fn stop_debug_session(
         if let Some(mut server_handle) = server_handle {
             info!("Stopping embedded server for session {}", session_id);
             server_handle.stop();
+        }
+
+        // Tear down the sandbox VM, if this was a sandbox session. The handle is
+        // removed inline (a map op), but the drop runs on a background thread:
+        // this is a sync command on the main thread and the handle's drop blocks
+        // on `wsb stop`, which takes seconds and would freeze the UI. Non-sandbox
+        // sessions (the common case) find no handle and skip the spawn.
+        let sandbox_handle = app_handle
+            .state::<SandboxHandlesMap>()
+            .lock()
+            .unwrap()
+            .remove(&session_id);
+        if let Some(sandbox_handle) = sandbox_handle {
+            info!("stopping Windows Sandbox for session {}", session_id);
+            thread::spawn(move || drop(sandbox_handle));
         }
 
         emit_session_event(&session_state, &app_handle);
@@ -724,18 +969,20 @@ pub fn list_processes(
 /// Connect a throwaway joybug-core client to `server_url` for a single one-shot
 /// request. The temp session state is untracked and carries no launch command.
 fn connect_temp_client(server_url: &str) -> Result<crate::session::types::DebugSession> {
-    let tmp_state = Arc::new(Mutex::new(SessionStateUI::new(
-        format!("tmp_{}", chrono::Utc::now().timestamp_millis()),
-        "tmp".to_string(),
-        server_url.to_string(),
-        "".to_string(),
-        None,
-        None,
-        false,
-        None,
-        false,
-        None,
-    )));
+    let tmp_state = Arc::new(Mutex::new(SessionStateUI::new(SessionInit {
+        id: format!("tmp_{}", chrono::Utc::now().timestamp_millis()),
+        name: "tmp".to_string(),
+        server_url: server_url.to_string(),
+        launch_command: "".to_string(),
+        working_directory: None,
+        environment: None,
+        is_local_run: false,
+        attach_pid: None,
+        non_invasive: false,
+        jit_event_handle: None,
+        sandbox: None,
+        etw: None,
+    })));
     joybug_core::protocol_io::DebugSession::new(tmp_state, Some(server_url))
         .map_err(|e| Error::ConnectionFailed(e.to_string()))
 }
@@ -778,10 +1025,16 @@ pub fn delete_debug_session(
     session_id: String,
     session_states: State<'_, SessionStatesMap>,
     embedded_servers: State<'_, EmbeddedServersMap>,
+    host_tracers: State<'_, crate::state::HostTracersMap>,
     oob_pool: State<'_, super::OobPool>,
     app_handle: tauri::AppHandle,
 ) -> Result<()> {
     let _ = stop_debug_session(session_id.clone(), session_states.clone(), embedded_servers.clone(), oob_pool.clone(), app_handle.clone());
+
+    // A plain stop keeps the resident host-ETW tracer alive (restart reuses it);
+    // deleting the session is the point to actually shut it down.
+    crate::etw::stop_host_tracer(&host_tracers, &session_id);
+    super::etw_trace::evict_cursors(&session_id);
 
     if session_states.lock().unwrap().remove(&session_id).is_some() {
         info!("Successfully deleted session: {}", session_id);

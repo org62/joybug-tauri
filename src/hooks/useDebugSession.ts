@@ -4,7 +4,7 @@ import { listen } from '@tauri-apps/api/event';
 import { save as saveFileDialog } from '@tauri-apps/plugin-dialog';
 import { toast } from 'sonner';
 import { DebugSession, Module, ModuleSymbolStatus, PdbLoadResult, Thread, Symbol, hasUsableSymbols } from '@/contexts/SessionContext';
-import { isProcessAvailable, isPausedSession, isTargetLive, formatTauriError, sessionDisplayName } from '@/lib/sessionHelpers';
+import { isProcessAvailable, isPausedSession, isTargetLive, canStopSession, formatTauriError, sessionDisplayName } from '@/lib/sessionHelpers';
 import { useDisplayStatus } from '@/hooks/useDisplayStatus';
 
 // The 1s live poll returns fresh arrays every tick even when nothing changed;
@@ -40,10 +40,7 @@ export function useDebugSession(sessionId: string | undefined) {
   const displayStatus = useDisplayStatus(session?.status);
 
   const canStep = useMemo(() => displayStatus === "Paused", [displayStatus]);
-  const canStop = useMemo(() => {
-    if (!session || typeof session.status !== "string") return false;
-    return isProcessAvailable(session.status);
-  }, [session]);
+  const canStop = useMemo(() => canStopSession(session?.status), [session]);
   const canStart = useMemo(() => {
     if (!session || typeof session.status !== "string") return false;
     return ["Stopped"].includes(session.status);
@@ -51,6 +48,9 @@ export function useDebugSession(sessionId: string | undefined) {
 
   const canPause = useMemo(() => {
     if (!session || typeof session.status !== "string") return false;
+    // A run-only ("just launch") sandbox session has no debugger, so there is
+    // nothing to break into — Pause doesn't apply even while it's Running.
+    if (session.sandbox && !session.sandbox.debug) return false;
     return ["Running"].includes(session.status);
   }, [session]);
 

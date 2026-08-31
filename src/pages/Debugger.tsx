@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useRef, useMemo, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -24,12 +24,14 @@ import {
 import { SessionStatusBadge } from "@/components/session/SessionStatusBadge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Page } from "@/components/ui/page";
-import { Plus, Play, Eye, Pencil, Trash2, Square, FileCode2, FolderOpen, Unplug, RefreshCw, Search } from "lucide-react";
+import { Plus, Play, Eye, Pencil, Trash2, Square, FileCode2, FolderOpen, Unplug, RefreshCw, Search, ChevronRight, Braces, Box, Activity } from "lucide-react";
+import { cn } from "@/lib/utils";
 import { open } from "@tauri-apps/plugin-dialog";
 import { toast } from "sonner";
-import { 
-  loadSessionsFromStorage, 
-  updateSessionInStorage, 
+import {
+  contentKey,
+  loadSessionsFromStorage,
+  updateSessionInStorage,
   removeSessionFromStorage,
   sessionToConfig,
   syncSessionsToStorage,
@@ -37,11 +39,62 @@ import {
 } from "@/lib/sessionStorage";
 
 import { DebugSession, SessionStatus } from "@/contexts/SessionContext";
-import { isProcessAvailable, formatTauriError, pathDirname, buildLaunchCommand, DEFAULT_SESSION_NAME, type ProcessInfo } from "@/lib/sessionHelpers";
+import { isProcessAvailable, canStopSession, formatTauriError, pathDirname, buildLaunchCommand, DEFAULT_SESSION_NAME, sessionDisplayName, type ProcessInfo } from "@/lib/sessionHelpers";
 import { pickDroppedFile } from "@/hooks/useFileDrop";
 import { useFileDropTarget } from "@/contexts/FileDropContext";
 import { createSessionRecord, launchExecutable } from "@/lib/launchFile";
 import { appNavHistory } from "@/lib/navHistory";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useDebugSettings } from "@/hooks/useDebugSettings";
+import { useSandbox } from "@/hooks/useSandbox";
+import { SandboxMountsEditor } from "@/components/session/SandboxMountsEditor";
+import { EtwConfigEditor, presetToOps } from "@/components/session/EtwConfigEditor";
+import type { SandboxMount, SandboxLaunchConfig, EtwConfig } from "@/lib/sandbox";
+
+type LaunchMode = "local" | "remote" | "sandbox" | "etw";
+
+/**
+ * A collapsible option card for the Create/Edit dialog. Collapsed, it shows a
+ * one-line summary of its current value on the right; open, it reveals its
+ * controls. Header carries an `aria-label` so its accessible name is stable
+ * (independent of the summary) for tests and screen readers.
+ */
+function FoldSection({
+  title,
+  icon,
+  summary,
+  open,
+  onToggle,
+  children,
+}: {
+  title: string;
+  icon: ReactNode;
+  summary?: string;
+  open: boolean;
+  onToggle: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <div className="rounded-md border">
+      <Button
+        type="button"
+        variant="ghost"
+        aria-label={title}
+        aria-expanded={open}
+        onClick={onToggle}
+        className="h-auto w-full justify-start gap-2 px-3 py-2 font-normal hover:bg-muted/50"
+      >
+        <ChevronRight className={cn("size-4 shrink-0 text-muted-foreground transition-transform", open && "rotate-90")} />
+        {icon}
+        <span className="text-sm">{title}</span>
+        {summary && !open && (
+          <span className="ml-auto max-w-[55%] truncate text-xs font-normal text-muted-foreground">{summary}</span>
+        )}
+      </Button>
+      {open && <div className="space-y-3 border-t p-3">{children}</div>}
+    </div>
+  );
+}
 
 export default function Debugger() {
   const navigate = useNavigate();
@@ -50,13 +103,73 @@ export default function Debugger() {
   const [isSessionDialogOpen, setIsSessionDialogOpen] = useState(false);
   
   // Form state for dialog
-  const [formName, setFormName] = useState("");
   const [formServerUrl, setFormServerUrl] = useState("127.0.0.1:9000");
   const [formLaunchCommand, setFormLaunchCommand] = useState("cmd.exe /c echo Hello World!");
   const [formWorkingDirectory, setFormWorkingDirectory] = useState("");
   // KEY=value lines; parsed on submit (see parseEnvText).
   const [formEnvironment, setFormEnvironment] = useState("");
-  const [formLocalRun, setFormLocalRun] = useState(true);
+  // Launch mode: embedded local server, remote URL, ETW-only (no debugger), or Sandbox.
+  const [formLaunchMode, setFormLaunchMode] = useState<LaunchMode>("local");
+  const [formSandboxMounts, setFormSandboxMounts] = useState<SandboxMount[]>([]);
+  const [formSandboxMemoryMb, setFormSandboxMemoryMb] = useState(4096);
+  const [formSandboxCollectEtw, setFormSandboxCollectEtw] = useState(true);
+  // Shared ETW capture op-set (rich configurator), used by both the sandbox and
+  // local (host) ETW forms.
+  const [formEtwOps, setFormEtwOps] = useState<string[]>(presetToOps("all"));
+  const [formEtwCallstacks, setFormEtwCallstacks] = useState(false);
+  const [formSandboxDebug, setFormSandboxDebug] = useState(true);
+  // Host ETW on a local (host-debugged) session.
+  const [formLocalCollectEtw, setFormLocalCollectEtw] = useState(false);
+  // Optional option groups (working dir, env, sandbox, etw) fold independently;
+  // this holds which are expanded. Collapsed by default so the dialog stays lean.
+  const [openSections, setOpenSections] = useState<Set<string>>(new Set());
+  const toggleSection = (id: string) =>
+    setOpenSections((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  const { settings: debugSettings } = useDebugSettings();
+  const { status: sandboxStatus, available: sandboxAvailable } = useSandbox();
+
+  // Run-only ("just launch") sandbox mode always traces; debug mode honors the toggle.
+  const sandboxCollectsEtw = formSandboxDebug ? formSandboxCollectEtw : true;
+
+  // Collapsed-header summaries.
+  const envVarCount = formEnvironment.split("\n").filter((l) => l.trim().includes("=")).length;
+  const etwOn =
+    formLaunchMode === "etw"
+      ? true
+      : formLaunchMode === "sandbox"
+        ? sandboxCollectsEtw
+        : formLocalCollectEtw;
+
+  // The ETW capture config the form describes — shared by the host-ETW and
+  // sandbox funnels (both carry the same `EtwConfig` shape).
+  const formEtwConfig = (): EtwConfig => ({
+    capture: { ops: formEtwOps },
+    callstacks: formEtwCallstacks,
+  });
+
+  /** Session-level (host) ETW config: standalone "etw" mode, or a local session
+   * with ETW collection enabled. */
+  const buildEtwConfig = (): EtwConfig | null =>
+    formLaunchMode === "etw" || (formLaunchMode === "local" && formLocalCollectEtw)
+      ? formEtwConfig()
+      : null;
+
+  /** The sandbox config for the current form, or null when not in sandbox mode. */
+  const buildSandboxConfig = (): SandboxLaunchConfig | null =>
+    formLaunchMode === "sandbox"
+      ? {
+          mounts: formSandboxMounts,
+          memory_mb: formSandboxMemoryMb,
+          collect_etw: sandboxCollectsEtw,
+          etw: formEtwConfig(),
+          debug: formSandboxDebug,
+        }
+      : null;
 
   // Attach-to-process dialog state
   const [isAttachDialogOpen, setIsAttachDialogOpen] = useState(false);
@@ -99,14 +212,12 @@ export default function Debugger() {
       const existingSessions = await invoke<DebugSession[]>("get_debug_sessions");
 
       // Match by content (name + command + mode), not by ID, because IDs change across restarts
-      const existingByContent = new Set(
-        existingSessions.map(s => `${s.name}\0${s.launch_command}\0${s.is_local_run}`)
-      );
+      const existingByContent = new Set(existingSessions.map(contentKey));
 
       // Create sessions in backend from stored configs that don't already exist
       for (const config of storedSessions) {
-        const contentKey = `${config.name}\0${config.launch_command}\0${config.is_local_run}`;
-        if (!existingByContent.has(contentKey)) {
+        const key = contentKey(config);
+        if (!existingByContent.has(key)) {
           try {
             await invoke("create_debug_session", {
               name: config.name,
@@ -116,8 +227,10 @@ export default function Debugger() {
               environment: config.environment ?? null,
               isLocalRun: config.is_local_run ?? true,
               attachPid: null,
+              sandbox: config.sandbox ?? null,
+              etw: config.etw ?? null,
             });
-            existingByContent.add(contentKey);
+            existingByContent.add(key);
           } catch (error) {
             console.warn(`Failed to restore session ${config.name}:`, error);
           }
@@ -201,7 +314,17 @@ export default function Debugger() {
       });
       if (selected) {
         setFormLaunchCommand(buildLaunchCommand(selected));
-        setFormWorkingDirectory((prev) => (prev.trim() ? prev : pathDirname(selected)));
+        const dir = pathDirname(selected);
+        setFormWorkingDirectory((prev) => (prev.trim() ? prev : dir));
+        // In sandbox mode the target must be reachable via a mount — add its
+        // folder (read-only) if not already mapped.
+        if (formLaunchMode === "sandbox" && dir) {
+          setFormSandboxMounts((prev) =>
+            prev.some((m) => m.host_path.toLowerCase() === dir.toLowerCase())
+              ? prev
+              : [...prev, { host_path: dir, read_only: true }],
+          );
+        }
       }
     } catch (error) {
       console.error("Failed to open file dialog:", error);
@@ -225,12 +348,18 @@ export default function Debugger() {
   };
 
   const resetSessionForm = () => {
-    setFormName("");
     setFormServerUrl("127.0.0.1:9000");
     setFormLaunchCommand("cmd.exe /c echo Hello World!");
     setFormWorkingDirectory("");
     setFormEnvironment("");
-    setFormLocalRun(true);
+    setFormLaunchMode("local");
+    setFormSandboxMounts([]);
+    setFormSandboxMemoryMb(debugSettings.sandbox_default_memory_mb);
+    setFormSandboxCollectEtw(debugSettings.sandbox_collect_etw);
+    setFormEtwOps(presetToOps(debugSettings.sandbox_etw_preset));
+    setFormEtwCallstacks(false);
+    setFormSandboxDebug(true);
+    setFormLocalCollectEtw(false);
   };
 
   /**
@@ -250,17 +379,40 @@ export default function Debugger() {
   const handleOpenNewSessionDialog = () => {
     setSessionToEdit(null);
     resetSessionForm();
+    setOpenSections(new Set()); // fresh dialog: everything folded
     setIsSessionDialogOpen(true);
   };
 
   const handleOpenEditSessionDialog = (session: DebugSession) => {
     setSessionToEdit(session);
-    setFormName(session.name === DEFAULT_SESSION_NAME ? "" : session.name);
     setFormServerUrl(session.server_url);
     setFormLaunchCommand(session.launch_command);
     setFormWorkingDirectory(session.working_directory ?? "");
     setFormEnvironment(formatEnvText(session.environment));
-    setFormLocalRun(session.is_local_run);
+    setFormLaunchMode(
+      session.sandbox ? "sandbox" : session.is_local_run ? "local" : session.etw ? "etw" : "local",
+    );
+    setFormSandboxMounts(session.sandbox?.mounts ?? []);
+    setFormSandboxMemoryMb(session.sandbox?.memory_mb ?? debugSettings.sandbox_default_memory_mb);
+    setFormSandboxCollectEtw(session.sandbox?.collect_etw ?? debugSettings.sandbox_collect_etw);
+    // Capture config is shared between the sandbox form and host-ETW form; seed
+    // from whichever the session carries (empty ⇒ the settings default preset).
+    const cap = session.sandbox?.etw?.capture ?? session.etw?.capture;
+    setFormEtwOps(
+      cap?.ops && cap.ops.length > 0
+        ? cap.ops
+        : presetToOps(debugSettings.sandbox_etw_preset),
+    );
+    setFormEtwCallstacks(session.sandbox?.etw?.callstacks ?? session.etw?.callstacks ?? false);
+    setFormSandboxDebug(session.sandbox?.debug ?? true);
+    setFormLocalCollectEtw(!!session.etw);
+    // Editing: pre-open the sections that carry configured values.
+    const seed = new Set<string>();
+    if (session.working_directory) seed.add("workdir");
+    if (session.environment && session.environment.length) seed.add("env");
+    if (session.sandbox) seed.add("sandbox");
+    if (session.etw || session.sandbox?.collect_etw) seed.add("etw");
+    setOpenSections(seed);
     setIsSessionDialogOpen(true);
   };
 
@@ -269,22 +421,26 @@ export default function Debugger() {
   const pushLaunchFormHistory = () => {
     pushInputHistory("launch-command", formLaunchCommand);
     pushInputHistory("launch-cwd", formWorkingDirectory);
-    if (!formLocalRun) pushInputHistory("server-url", formServerUrl);
+    if (formLaunchMode === "remote") pushInputHistory("server-url", formServerUrl);
   };
 
   const handleCreateSession = async () => {
-    const sessionName = formName.trim() || DEFAULT_SESSION_NAME;
+    // No name field anymore — the list derives a label from the launch command
+    // (see sessionDisplayName); the stored name is just the default placeholder.
+    const sessionName = DEFAULT_SESSION_NAME;
     const environment = readFormEnvironment();
     if (environment === undefined) return;
 
     try {
       const sessionId = await createSessionRecord({
         name: sessionName,
-        serverUrl: formLocalRun ? "" : formServerUrl,
+        serverUrl: formLaunchMode === "remote" ? formServerUrl : "",
         launchCommand: formLaunchCommand,
         workingDirectory: formWorkingDirectory.trim() || null,
         environment,
-        isLocalRun: formLocalRun,
+        isLocalRun: formLaunchMode === "local",
+        sandbox: buildSandboxConfig(),
+        etw: buildEtwConfig(),
       });
 
       pushLaunchFormHistory();
@@ -306,7 +462,8 @@ export default function Debugger() {
   const handleUpdateSession = async () => {
     if (!sessionToEdit) return;
 
-    const sessionName = formName.trim() || DEFAULT_SESSION_NAME;
+    // Preserve whatever name the session already had (naming is no longer editable).
+    const sessionName = sessionToEdit.name || DEFAULT_SESSION_NAME;
 
     const environment = readFormEnvironment();
     if (environment === undefined) return;
@@ -314,26 +471,32 @@ export default function Debugger() {
     try {
       const workingDirectory = formWorkingDirectory.trim() || null;
 
+      const sandbox = buildSandboxConfig();
+      const etw = buildEtwConfig();
       await invoke("update_debug_session", {
         sessionId: sessionToEdit.id,
         name: sessionName,
-        serverUrl: formLocalRun ? "" : formServerUrl,
+        serverUrl: formLaunchMode === "remote" ? formServerUrl : "",
         launchCommand: formLaunchCommand,
         workingDirectory,
         environment,
-        isLocalRun: formLocalRun,
+        isLocalRun: formLaunchMode === "local",
         attachPid: null,
+        sandbox,
+        etw,
       });
 
       // Update session config in storage
       updateSessionInStorage({
         id: sessionToEdit.id,
         name: sessionName,
-        server_url: formLocalRun ? "" : formServerUrl,
+        server_url: formLaunchMode === "remote" ? formServerUrl : "",
         launch_command: formLaunchCommand,
         working_directory: workingDirectory,
         environment,
-        is_local_run: formLocalRun,
+        is_local_run: formLaunchMode === "local",
+        sandbox,
+        etw,
         created_at: sessionToEdit.created_at,
       });
 
@@ -597,6 +760,8 @@ export default function Debugger() {
           return "Debug session is paused on an event";
         case "Open":
           return "Process opened non-invasively (no debugger attached)";
+        case "Provisioning":
+          return "Provisioning Windows Sandbox (booting VM, starting guest server)…";
         default:
           return status;
       }
@@ -617,7 +782,7 @@ export default function Debugger() {
 
   const canView = (status: SessionStatus) => isProcessAvailable(status);
 
-  const canStop = (status: SessionStatus) => isProcessAvailable(status);
+  const canStop = canStopSession;
 
   const canDelete = (status: SessionStatus) => {
     if (typeof status !== "string") return true; // Allow to delete on error
@@ -645,51 +810,18 @@ export default function Debugger() {
                 Create Process
               </Button>
             </DialogTrigger>
-            <DialogContent className="sm:max-w-[425px]">
+            <DialogContent className={formLaunchMode === "sandbox" || formLaunchMode === "etw" ? "sm:max-w-[560px]" : "sm:max-w-[425px]"}>
               <DialogHeader>
                 <DialogTitle>{sessionToEdit ? "Edit Process" : "Create Process"}</DialogTitle>
                 <DialogDescription>
-                  {sessionToEdit 
+                  {sessionToEdit
                     ? "Update the details for this debug session."
-                    : "Configure a new debug session with server connection and launch command"
+                    : "Set a launch command and mode. Expand a section below to tweak its options."
                   }
                 </DialogDescription>
               </DialogHeader>
               <div className="space-y-4 py-4">
-                <div className="space-y-2">
-                  <Label htmlFor="sessionName">Session Name</Label>
-                  <Input
-                    id="sessionName"
-                    value={formName}
-                    onChange={(e) => setFormName(e.target.value)}
-                    placeholder="My Debug Session"
-                  />
-                </div>
-                <div className="flex items-center space-x-2">
-                  <Switch
-                    id="localRun"
-                    checked={formLocalRun}
-                    onCheckedChange={(checked: boolean) => setFormLocalRun(checked)}
-                  />
-                  <Label
-                    htmlFor="localRun"
-                    className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
-                  >
-                    Local Run (start embedded debug server)
-                  </Label>
-                </div>
-                {!formLocalRun && (
-                  <div className="space-y-2">
-                    <Label htmlFor="serverUrl">Debug Server URL</Label>
-                    <HistoryInput
-                      historyKey="server-url"
-                      id="serverUrl"
-                      value={formServerUrl}
-                      onChange={(e) => setFormServerUrl(e.target.value)}
-                      placeholder="127.0.0.1:9000"
-                    />
-                  </div>
-                )}
+                {/* Launch Command — the primary field. */}
                 <div className="space-y-2">
                   <Label htmlFor="launchCommand">Launch Command</Label>
                   <div className="flex gap-2">
@@ -700,41 +832,189 @@ export default function Debugger() {
                       onChange={(e) => setFormLaunchCommand(e.target.value)}
                       placeholder="cmd.exe /c echo Hello World!"
                     />
-                    {formLocalRun && (
-                      <Button variant="outline" size="icon" onClick={handleBrowseExecutable} title="Browse for executable" type="button">
-                        <FolderOpen className="h-4 w-4" />
-                      </Button>
-                    )}
+                    <Button variant="outline" size="icon" onClick={handleBrowseExecutable} title="Browse for executable" type="button">
+                      <FolderOpen className="h-4 w-4" />
+                    </Button>
                   </div>
                 </div>
+
                 <div className="space-y-2">
-                  <Label htmlFor="workingDirectory">Working Directory (optional)</Label>
-                  <div className="flex gap-2">
-                    <HistoryInput
-                      historyKey="launch-cwd"
-                      id="workingDirectory"
-                      value={formWorkingDirectory}
-                      onChange={(e) => setFormWorkingDirectory(e.target.value)}
-                      placeholder="Defaults to the executable's directory"
-                    />
-                    {formLocalRun && (
+                  <Label>Launch mode</Label>
+                  <Tabs value={formLaunchMode} onValueChange={(v) => setFormLaunchMode(v as LaunchMode)}>
+                    <TabsList className="w-full">
+                      <TabsTrigger value="local" className="flex-1">Local</TabsTrigger>
+                      <TabsTrigger value="etw" className="flex-1" title="Run a target under ETW only (no debugger)">
+                        ETW only
+                      </TabsTrigger>
+                      <TabsTrigger
+                        value="sandbox"
+                        className="flex-1"
+                        disabled={!sandboxAvailable}
+                        title={sandboxStatus?.reason ?? undefined}
+                      >
+                        Sandbox
+                      </TabsTrigger>
+                    </TabsList>
+                  </Tabs>
+                  {!sandboxAvailable && sandboxStatus?.reason && (
+                    <p className="text-xs text-muted-foreground">{sandboxStatus.reason}</p>
+                  )}
+                  {formLaunchMode === "local" && (
+                    <p className="text-xs text-muted-foreground">Starts an embedded debug server on this machine.</p>
+                  )}
+                </div>
+                {/* Optional groups — each folds independently, collapsed by default. */}
+                <div className="space-y-3">
+                  <FoldSection
+                    title="Working directory"
+                    icon={<FolderOpen className="size-4 shrink-0 text-muted-foreground" />}
+                    summary={formWorkingDirectory || "Default (executable's directory)"}
+                    open={openSections.has("workdir")}
+                    onToggle={() => toggleSection("workdir")}
+                  >
+                    <div className="flex gap-2">
+                      <HistoryInput
+                        historyKey="launch-cwd"
+                        id="workingDirectory"
+                        aria-label="Working Directory"
+                        value={formWorkingDirectory}
+                        onChange={(e) => setFormWorkingDirectory(e.target.value)}
+                        placeholder="Defaults to the executable's directory"
+                      />
                       <Button variant="outline" size="icon" onClick={handleBrowseWorkingDirectory} title="Browse for working directory" type="button">
                         <FolderOpen className="h-4 w-4" />
                       </Button>
+                    </div>
+                  </FoldSection>
+
+                  <FoldSection
+                    title="Environment variables"
+                    icon={<Braces className="size-4 shrink-0 text-muted-foreground" />}
+                    summary={envVarCount > 0 ? `${envVarCount} variable${envVarCount === 1 ? "" : "s"}` : "None"}
+                    open={openSections.has("env")}
+                    onToggle={() => toggleSection("env")}
+                  >
+                    <Textarea
+                      id="environment"
+                      aria-label="Environment Variables"
+                      rows={3}
+                      className="font-mono text-xs"
+                      value={formEnvironment}
+                      onChange={(e) => setFormEnvironment(e.target.value)}
+                      placeholder={"KEY=value, one per line\nMerged over the debugger's own environment"}
+                      spellCheck={false}
+                    />
+                  </FoldSection>
+
+                  {formLaunchMode === "sandbox" && (
+                    <FoldSection
+                      title="Sandbox settings"
+                      icon={<Box className="size-4 shrink-0 text-muted-foreground" />}
+                      summary={`${formSandboxDebug ? "Debug" : "Run-only"} · ${formSandboxMemoryMb} MB${formSandboxMounts.length ? ` · ${formSandboxMounts.length} folder${formSandboxMounts.length === 1 ? "" : "s"}` : ""}`}
+                      open={openSections.has("sandbox")}
+                      onToggle={() => toggleSection("sandbox")}
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <div className="text-sm">Attach debugger</div>
+                          <div className="text-xs text-muted-foreground">
+                            {formSandboxDebug
+                              ? "Debug the target inside the sandbox (breakpoints, stepping, memory)."
+                              : "Just run the target under ETW — no debugger (safe detonation)."}
+                          </div>
+                        </div>
+                        <Switch checked={formSandboxDebug} onCheckedChange={setFormSandboxDebug} />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label className="text-xs text-muted-foreground">
+                          Shared folders (mounted into the sandbox)
+                        </Label>
+                        <SandboxMountsEditor mounts={formSandboxMounts} onChange={setFormSandboxMounts} />
+                      </div>
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <div className="text-sm">Networking</div>
+                          <div className="text-xs text-muted-foreground">
+                            Required — the debugger connects to the in-sandbox server over the network.
+                          </div>
+                        </div>
+                        <Switch checked disabled />
+                      </div>
+                      <div className="flex items-center justify-between gap-3">
+                        <Label htmlFor="sandboxMemory" className="text-sm">Memory (MB)</Label>
+                        <Input
+                          id="sandboxMemory"
+                          type="number"
+                          min={1024}
+                          step={1024}
+                          className="w-28 text-right tabular-nums"
+                          value={String(formSandboxMemoryMb)}
+                          onChange={(e) => {
+                            const n = parseInt(e.target.value, 10);
+                            if (Number.isFinite(n)) setFormSandboxMemoryMb(n);
+                          }}
+                        />
+                      </div>
+                    </FoldSection>
+                  )}
+
+                  <FoldSection
+                    title="ETW capture"
+                    icon={<Activity className="size-4 shrink-0 text-muted-foreground" />}
+                    summary={etwOn ? `${formEtwOps.length} event type${formEtwOps.length === 1 ? "" : "s"}${formEtwCallstacks ? " · callstacks" : ""}` : "Off"}
+                    open={openSections.has("etw")}
+                    onToggle={() => toggleSection("etw")}
+                  >
+                    {formLaunchMode === "etw" ? (
+                      <>
+                        <div className="text-xs text-muted-foreground">
+                          Runs the target under ETW with no debugger attached. Starting it prompts for
+                          admin (UAC). Callstacks are raw addresses (no debugger for symbols).
+                        </div>
+                        <EtwConfigEditor
+                          ops={formEtwOps}
+                          onChange={setFormEtwOps}
+                          callstacks={formEtwCallstacks}
+                          onCallstacksChange={setFormEtwCallstacks}
+                        />
+                      </>
+                    ) : formLaunchMode === "sandbox" ? (
+                      <>
+                        <div className="flex items-center justify-between gap-3">
+                          <div>
+                            <div className="text-sm">Collect ETW trace</div>
+                            <div className="text-xs text-muted-foreground">
+                              {formSandboxDebug
+                                ? "Streams process/file/registry/network activity to the Sandbox Events panel."
+                                : "Always on in run-only mode — the tracer launches and observes the target."}
+                            </div>
+                          </div>
+                          <Switch
+                            checked={sandboxCollectsEtw}
+                            disabled={!formSandboxDebug}
+                            onCheckedChange={setFormSandboxCollectEtw}
+                          />
+                        </div>
+                        {sandboxCollectsEtw && (
+                          <EtwConfigEditor ops={formEtwOps} onChange={setFormEtwOps} callstacks={formEtwCallstacks} onCallstacksChange={setFormEtwCallstacks} />
+                        )}
+                      </>
+                    ) : (
+                      <>
+                        <div className="flex items-center justify-between gap-3">
+                          <div>
+                            <div className="text-sm">Collect ETW trace</div>
+                            <div className="text-xs text-muted-foreground">
+                              Record the target's file/registry/network/process activity via host ETW.
+                              Starting it prompts for admin (UAC).
+                            </div>
+                          </div>
+                          <Switch checked={formLocalCollectEtw} onCheckedChange={setFormLocalCollectEtw} />
+                        </div>
+                        {formLocalCollectEtw && <EtwConfigEditor ops={formEtwOps} onChange={setFormEtwOps} callstacks={formEtwCallstacks} onCallstacksChange={setFormEtwCallstacks} />}
+                      </>
                     )}
-                  </div>
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="environment">Environment Variables (optional)</Label>
-                  <Textarea
-                    id="environment"
-                    rows={3}
-                    className="font-mono text-xs"
-                    value={formEnvironment}
-                    onChange={(e) => setFormEnvironment(e.target.value)}
-                    placeholder={"KEY=value, one per line\nMerged over the debugger's own environment"}
-                    spellCheck={false}
-                  />
+                  </FoldSection>
                 </div>
               </div>
               <div className="flex justify-end gap-2">
@@ -852,12 +1132,12 @@ export default function Debugger() {
         ) : (
           <div className="grid gap-4">
             {sortedSessions.map((session) => (
-              <Card key={session.id} className="hover:shadow-md transition-shadow">
+              <Card key={session.id} data-session-id={session.id} className="hover:shadow-md transition-shadow">
                 <CardHeader>
                   <div className="flex items-center justify-between">
                     <div className="flex-1">
                       <div className="flex items-center gap-3">
-                        <CardTitle className="text-xl">{session.name}</CardTitle>
+                        <CardTitle className="text-xl">{sessionDisplayName(session)}</CardTitle>
                         {getStatusBadge(session.status)}
                       </div>
                       <CardDescription className="mt-1">

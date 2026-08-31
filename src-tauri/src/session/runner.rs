@@ -3,7 +3,7 @@ use crate::settings::SettingsState;
 use crate::state::{SessionStateUI, SessionStatusUI};
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, Manager};
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 use super::bookmarks::reapply_bookmarks_for_module;
 use super::breakpoints::{apply_auto_module_breakpoints, deactivate_breakpoints_for_module, emit_breakpoints_event, reapply_breakpoints_for_module};
@@ -246,9 +246,28 @@ pub fn run_debug_session(
     session_state: Arc<Mutex<SessionStateUI>>,
     app_handle: Option<AppHandle>,
 ) -> Result<()> {
-    let (session_id, server_url, launch_command, working_directory, environment, attach_pid, jit_launch) = {
+    let (session_id, server_url, launch_command, working_directory, environment, attach_pid, jit_launch, sandbox_etw, host_etw) = {
         let state = session_state.lock().unwrap();
-        (state.id.clone(), state.server_url.clone(), state.launch_command.clone(), state.working_directory.clone(), state.environment.clone(), state.attach_pid, state.jit_event_handle.is_some())
+        // Sandbox runs debug the guest-path-rewritten command; the effective
+        // overlay is set by provisioning and takes precedence when present.
+        let (launch_command, working_directory) = match &state.effective_launch_command {
+            Some(cmd) => (cmd.clone(), state.effective_working_directory.clone()),
+            None => (state.launch_command.clone(), state.working_directory.clone()),
+        };
+        // Host (non-sandbox) ETW: a session-level `etw` config on a local/remote
+        // debug session. The elevated host tracer attaches to the debugged pid.
+        let host_etw = if state.sandbox.is_none() { state.etw.clone() } else { None };
+        (
+            state.id.clone(),
+            state.server_url.clone(),
+            launch_command,
+            working_directory,
+            state.environment.clone(),
+            state.attach_pid,
+            state.jit_event_handle.is_some(),
+            state.sandbox.as_ref().map(|s| s.collect_etw).unwrap_or(false),
+            host_etw,
+        )
     };
 
     info!("Starting debug session: {}", session_id);
@@ -273,6 +292,14 @@ pub fn run_debug_session(
 
     let app_handle_clone = app_handle.clone();
     let app_handle_for_exception = app_handle.clone();
+
+    // ETW: start the tracer once, on the first ProcessCreated. A sandbox session
+    // starts the in-guest tracer; a local/remote session with a host ETW config
+    // starts the elevated host tracer. Mutually exclusive by construction
+    // (`host_etw` is `None` for sandbox sessions), so one flag serves both.
+    let tracer_started = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let tracer_session_id = session_id.clone();
+    let host_etw_for_closure = host_etw.clone();
 
     let mut session_builder = joybug_core::protocol_io::DebugSession::new(session_state.clone(), Some(&server_url))
         .map_err(|e| Error::ConnectionFailed(e.to_string()))?
@@ -330,6 +357,39 @@ pub fn run_debug_session(
                 )
             {
                 release_wer_event(&session.state, &app_handle_clone);
+            }
+
+            // ETW: attach the tracer to the process tree on the first
+            // ProcessCreated (fires once). The target is held at the loader
+            // breakpoint here, so little runs before the tracer arms. Sandbox
+            // sessions start the in-guest tracer; host ETW ensures the elevated
+            // resident tracer is attached — on the session's first ever run that
+            // launches it (one UAC), on a later restart it re-targets the
+            // already-running tracer (no UAC) via the app-global registry, which
+            // outlives this per-run closure.
+            if (sandbox_etw || host_etw_for_closure.is_some())
+                && matches!(event, joybug_core::protocol_io::DebugEvent::ProcessCreated { .. })
+                && !tracer_started.swap(true, std::sync::atomic::Ordering::SeqCst)
+            {
+                if let Some(h) = app_handle_clone.as_ref() {
+                    let pid = event.pid();
+                    if sandbox_etw {
+                        let handles = h.state::<crate::state::SandboxHandlesMap>();
+                        let guard = handles.lock().unwrap();
+                        if let Some(sb) = guard.get(&tracer_session_id) {
+                            crate::sandbox::start_tracer(sb, pid);
+                            info!("started sandbox ETW tracer for pid {}", pid);
+                        }
+                    } else if let Some(ref etw) = host_etw_for_closure {
+                        let tracers = h.state::<crate::state::HostTracersMap>();
+                        if let Err(e) = crate::etw::ensure_host_tracer(&tracers, &tracer_session_id, pid, etw) {
+                            warn!("failed to start host ETW tracer: {e}");
+                            crate::ui_logger::toast_error(h, &format!("ETW tracer failed to start: {e}"));
+                        } else {
+                            info!("host ETW tracer attached to pid {}", pid);
+                        }
+                    }
+                }
             }
 
             let handle = match app_handle_clone.as_ref() {

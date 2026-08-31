@@ -36,6 +36,8 @@ function statusPresentation(status: SessionStatus): { label: string; dot: string
       return { label: "Paused", dot: "bg-syn-state" };
     case "Running":
       return { label: "Running", dot: "bg-syn-flow animate-pulse" };
+    case "Provisioning":
+      return { label: "Provisioning…", dot: "bg-syn-state animate-pulse" };
     case "Open":
       return { label: "Open", dot: "bg-muted-foreground" };
     default:
