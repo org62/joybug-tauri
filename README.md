@@ -14,7 +14,11 @@
 
 </div>
 
-![Joybug paused in ntdll — modules, disassembly with quick emulation, registers and call stack](docs/images/UI.png)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/ui-dark.png">
+  <source media="(prefers-color-scheme: light)" srcset="docs/images/ui-light.png">
+  <img alt="Joybug paused at the loader breakpoint in cmd.exe — modules, disassembly with quick emulation, registers and call stack" src="docs/images/ui-dark.png">
+</picture>
 
 ---
 
@@ -32,34 +36,34 @@
 
 ### Analysis
 
-- **Emulation** — Unicorn-backed forward emulation of the *live* process state. A footer under the disassembly answers "where does this land, which syscall does it hit, which module does it transition to" without executing anything. Five modes: Basic, InstructionTrace, BasicBlock, ModuleTransition or until first Syscall.
+- **Emulation** — Unicorn-backed forward emulation of the *live* process state. A footer under the disassembly answers "where does this land, which syscall does it hit, which module does it transition to" without letting the target run. Five modes: basic, instruction trace, basic block, stop on module transition, and stop on first syscall.
 - **Image Patches** — continuously diffs every loaded module's executable sections against its on-disk PE. Inline hooks, EDR/AV detours, packers, and self-modifying code get highlighted right in the disassembly and listed in their own panel, with one-click restore of the original bytes. Because it diffs against the on-disk image rather than tracking your own edits, it surfaces changes you didn't make as well as ones you did.
 - **Code Explorer** — a module-wide execution map. Arms coverage breakpoints across every function in a module and shows live hit counts, first-execution ordering, and which threads hit what — a workflow that usually means reaching for DynamoRIO, Pin, or Lighthouse, available here as a tab.
-- **Access Trace** — Cheat Engine's "find out what accesses this address," brought into a debugger. A silent hardware watchpoint accumulates every distinct accessing instruction — with symbol, disassembly, hit count and thread — while the target keeps running. On x86, where the CPU traps *after* the access, Joybug back-steps to attribute the real accessing instruction.
-- **Scanning** — the Cheat Engine workflow, natively: an iterative value scanner (11 compare types including Unknown Initial Value and float tolerance), a multi-level pointer-path scanner with filter and rescan, and bookmarks with server-side value freeze. Plus a string scanner over selectable scopes (one module / all modules / readable / writable / executable / private / mapped / custom range) and byte-pattern search.
+- **Access Trace** — Cheat Engine's "find out what accesses this address," brought into a debugger. A silent hardware watchpoint accumulates every distinct accessing instruction — with symbol, disassembly, hit count and thread — while the target keeps running. On x64, where the CPU traps *after* the access, Joybug back-steps to attribute the real accessing instruction.
+- **Scanning** — the Cheat Engine workflow, natively: an iterative value scanner (11 compare types including Unknown Initial Value and float tolerance), a multi-level pointer-path scanner with filter and rescan, and bookmarks whose frozen values the debug server keeps rewriting while the target runs. Plus a string scanner over selectable scopes (one module / all modules / readable / writable / executable / private / mapped / custom range) and byte-pattern search.
 
 ### Debugging
 
 - **Stepping** — Go, Step Into / Over / Out, Go-passing-exception-to-the-debuggee, plus source-level Step Over Line and Step Into Line.
-- **Breakpoints** — software, single-shot, hardware (Execute / Write / ReadWrite, 1–8 bytes), and source-line, with naming, grouping, bulk enable/disable, and persistence across restarts.
+- **Breakpoints** — software, single-shot, hardware (Execute / Write / ReadWrite, 1/2/4/8 bytes), and source-line, with naming, grouping, bulk enable/disable, and persistence across restarts.
 - **Memory** — a hex editor you can open several of at once, with byte/word/dword/qword/float/pointer views, in-place writes, copy-as-hex/text/dump, and a region map with **semantic annotations** (module, section, TEB, PEB, heap, stack, `KUSER_SHARED_DATA`) instead of a wall of undifferentiated VADs.
 - **Registers & stacks** — inline register editing, XMM / NEON / debug-register views, pointer dereference chains, and symbolized call stacks for any thread.
 - **Symbols & types** — symbol-server integration with a configurable cache path, `_NT_SYMBOL_PATH` fallback, and an offline mode for air-gapped work. Manual PDB load with GUID/age validation and a force-override. PDB source-line view that warns when the on-disk source doesn't match the build. A live struct overlay across PDB UDTs, built-in `_TEB` / `_PEB` / `KUSER_SHARED_DATA` anchors, and **user-defined types you paste in as C**.
 - **Patching** — an inline Keystone assembler (type `mov eax, 1` at an instruction), with NOP padding, undo, and grouped enable/disable.
 
-### Getting at the process
+### Sessions & targets
 
-- **Launch, attach by PID, or open non-invasively** — a non-invasive session uses only `OpenProcess`: no `DebugActiveProcess`, so nothing detects a debugger and detaching can't kill the target. Browse memory, modules, strings, and scans — then **promote it to a full attach in place** when you want breakpoints. Restart the target, or detach and leave it running.
+- **Launch, attach by PID, or open non-invasively** — a non-invasive session uses only `OpenProcess`: no `DebugActiveProcess`, so the usual debugger checks come up clean and detaching can't kill the target. Browse memory, modules, strings, and scans — then **promote it to a full attach in place** when you want breakpoints. Restart the target, or detach and leave it running.
 - **Most panels keep working while the target runs.** An out-of-band connection pool means memory reads, module lists, symbol status, bookmark values, scans, and coverage all update live — you don't have to break in first.
 - **Anti-anti-debug** — PEB hiding (`BeingDebugged`, `NtGlobalFlag`, heap flags, StartupInfo, OS build number) is a settings toggle.
-- **Remote debugging by design** — the debug core is a JSON-framed TCP server and the UI is just a client, so a session can point at another machine. Local runs spin up an embedded server on a loopback port.
+- **Remote debugging by design** — point a session at a debug server on another machine and every panel behaves exactly as it does locally. A local session takes the same path over loopback, so there is no separate "remote mode" to fall behind the rest of the app.
 
 ### Sandboxed detonation & tracing
 
 - **Run or debug inside a real Windows Sandbox.** Joybug provisions a disposable VM, shares the target in, and either attaches the full debugger to it over TCP — same panels, same stepping, the target's window visible on the sandbox desktop — or just launches it and watches. Your machine is untouched, and the VM is torn down with the session.
 - **ETW tracing of the whole process tree.** Process, file, registry and network activity, selectable per individual operation rather than by coarse category, with optional callstacks that symbolize to `module!func+0x…`. Tracing follows the tree transitively and outlives its root, so a dropper that spawns a successor and exits immediately is followed to the end of the chain instead of being truncated at its first process.
-- **Cross-process access.** `OpenProcess` and `OpenThread` are reported with the rights requested — `VM_OPERATION|VM_READ|VM_WRITE` against *another* process is the signature of injection or credential theft. The reads and writes themselves are not visible: those live in an ETW provider only a signed anti-malware process may consume. When you need the address and size, put a breakpoint on `ntdll!NtReadVirtualMemory` — you have a debugger.
-- **Tracing without a VM.** The same collector attaches to a local debuggee, or runs standalone with no debugger at all as a procmon-lite.
+- **Cross-process access.** Opt in to the *Sensitive APIs* group and every `OpenProcess` / `OpenThread` is logged with its decoded access mask — `VM_OPERATION|VM_READ|VM_WRITE` against *another* process is the signature of injection or credential theft. (The reads and writes themselves aren't in ETW: those live in a provider only a signed anti-malware process may consume.)
+- **Tracing without a VM.** The same collector attaches to a local debuggee, or runs standalone with no debugger at all, as a lightweight Procmon.
 
 ### Standalone PE reader
 
@@ -78,7 +82,7 @@ Grab the latest build from the [Releases page](https://github.com/org62/joybug-t
 | x64 | [`Joybug-UI-x64.exe`](https://github.com/org62/joybug-tauri/releases/latest/download/Joybug-UI-x64.exe) |
 | ARM64 | [`Joybug-UI-aarch64.exe`](https://github.com/org62/joybug-tauri/releases/latest/download/Joybug-UI-aarch64.exe) |
 
-Each has a `.sha256` sidecar next to it. It's a single portable `.exe` — no installer, nothing to uninstall. Requires the WebView2 runtime, which ships with Windows 11.
+Each has a `.sha256` sidecar next to it. It's a single portable `.exe` — no installer, nothing to uninstall. It updates itself in place: the update dialog downloads the new build, checks it against the `.sha256`, and swaps it in. Requires the WebView2 runtime, which ships with Windows 11.
 
 Download the build that matches **your machine's** architecture — see [Scope & limits](#scope--limits).
 
