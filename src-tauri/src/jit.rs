@@ -455,7 +455,7 @@ mod tests {
             let subkey = format!(r"SOFTWARE\JoybugTests\AeDebug-{tag}-{}", std::process::id());
             let backup_path = std::env::temp_dir().join(format!("joybug-jit-{tag}-{}.json", std::process::id()));
             let _ = std::fs::remove_file(&backup_path);
-            Self(Target { root: HKEY_CURRENT_USER, subkey, backup_path })
+            Self(Target { root: HKEY_CURRENT_USER, subkey, backup_path, view: 0 })
         }
     }
 
