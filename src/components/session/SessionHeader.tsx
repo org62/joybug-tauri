@@ -48,6 +48,24 @@ export interface SessionHeaderProps {
   symbolLoadingCount?: number;
 }
 
+/** Target architecture, shown once a process exists. WOW64 gets its own
+ *  label: the 32-bit register file and 4-byte pointers are visible everywhere. */
+const ARCH_LABEL: Record<NonNullable<DebugSession["arch"]>, string> = {
+  X86: "x86 (WOW64)",
+  X64: "x64",
+  Arm64: "ARM64",
+};
+
+const ArchBadge: React.FC<{ session: DebugSession }> = ({ session }) => {
+  const label = session.arch ? ARCH_LABEL[session.arch] : null;
+  if (!label) return null;
+  return (
+    <Badge variant="outline" size="xs" data-testid="session-arch" title="Target architecture">
+      {label}
+    </Badge>
+  );
+};
+
 const ExceptionBadge: React.FC<{ event: DebugEventInfo | null }> = ({ event }) => {
   if (event?.event_type !== "Exception" || event.exception_code == null) return null;
   const code = event.exception_code;
@@ -142,6 +160,7 @@ export const SessionHeader: React.FC<SessionHeaderProps> = ({
             {sessionDisplayName(session)}
           </h1>
           {getStatusBadge(session.status)}
+          <ArchBadge session={session} />
           <ExceptionBadge event={session.current_event} />
           {symbolLoadingCount > 0 && (
             <Badge variant="outline" size="xs" title="Symbol downloads in progress">

@@ -14,8 +14,9 @@ export interface ModuleData {
   path: string;
 }
 
-/** Absolute path to a built source-debugging fixture exe (see e2e/fixtures/build.mjs). */
-export function fixtureExe(name: "hello_c" | "hello_asm" | "watch_c"): string {
+/** Absolute path to a built source-debugging fixture exe (see e2e/fixtures/build.mjs).
+ *  `hello_c32` is the 32-bit (WOW64) build of hello_c. */
+export function fixtureExe(name: "hello_c" | "hello_asm" | "watch_c" | "hello_c32"): string {
   return path.resolve(__dirname, "..", "fixtures", "bin", `${name}.exe`);
 }
 
@@ -38,10 +39,16 @@ export async function invoke(
  * sniffing rendered text) is not a reliable proxy. Throws rather than silently
  * defaulting when the session has no paused context.
  */
-export async function debuggeeArch(page: Page, sessionId: string): Promise<"X64" | "Arm64"> {
+export type DebuggeeArch = keyof typeof PC_REGISTER;
+
+/** Program-counter / stack-pointer field of each architecture's context. */
+const PC_REGISTER = { X64: "rip", Arm64: "pc", X86: "eip" } as const;
+const SP_REGISTER = { X64: "rsp", Arm64: "sp", X86: "esp" } as const;
+
+export async function debuggeeArch(page: Page, sessionId: string): Promise<DebuggeeArch> {
   const s = await invoke(page, "get_debug_session", { sessionId });
   const arch = s?.current_event?.context?.arch;
-  if (arch !== "X64" && arch !== "Arm64") {
+  if (!(arch in PC_REGISTER)) {
     throw new Error(`Cannot determine debuggee arch (got ${arch}); is the session paused?`);
   }
   return arch;
@@ -52,8 +59,8 @@ export async function debuggeeArch(page: Page, sessionId: string): Promise<"X64"
  * "rip" on x64, "pc" on ARM64. Use this to build PC-relative goto expressions
  * (e.g. `${await pcRegister(page, id)}+0x2000`) that resolve on either target.
  */
-export async function pcRegister(page: Page, sessionId: string): Promise<"rip" | "pc"> {
-  return (await debuggeeArch(page, sessionId)) === "Arm64" ? "pc" : "rip";
+export async function pcRegister(page: Page, sessionId: string): Promise<(typeof PC_REGISTER)[DebuggeeArch]> {
+  return PC_REGISTER[await debuggeeArch(page, sessionId)];
 }
 
 /**
@@ -61,8 +68,8 @@ export async function pcRegister(page: Page, sessionId: string): Promise<"rip" |
  * "rsp" on x64, "sp" on ARM64. Use this in goto expressions that must resolve
  * on either target.
  */
-export async function spRegister(page: Page, sessionId: string): Promise<"rsp" | "sp"> {
-  return (await debuggeeArch(page, sessionId)) === "Arm64" ? "sp" : "rsp";
+export async function spRegister(page: Page, sessionId: string): Promise<(typeof SP_REGISTER)[DebuggeeArch]> {
+  return SP_REGISTER[await debuggeeArch(page, sessionId)];
 }
 
 /**
@@ -71,8 +78,7 @@ export async function spRegister(page: Page, sessionId: string): Promise<"rsp" |
  * when there is no context (or it is neither arch), so callers can assert on it.
  */
 export function contextPc(context: any): string | undefined {
-  if (!context) return undefined;
-  return context.arch === "Arm64" ? context.pc : context.rip;
+  return context?.[PC_REGISTER[context.arch as DebuggeeArch]];
 }
 
 /**
@@ -81,8 +87,7 @@ export function contextPc(context: any): string | undefined {
  * assert on it.
  */
 export function contextSp(context: any): string | undefined {
-  if (!context) return undefined;
-  return context.arch === "Arm64" ? context.sp : context.rsp;
+  return context?.[SP_REGISTER[context.arch as DebuggeeArch]];
 }
 
 /** Module base ("0x..") for the first module whose path/name contains `substr`. */

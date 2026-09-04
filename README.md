@@ -67,7 +67,7 @@
 
 ### Standalone PE reader
 
-Open a PE without running it. Symbolic header field editing by name (`opt.AddressOfEntryPoint`, `section.2.Characteristics`), byte patching, disassembly at a VA with symbols, string scanning, and save. Handles ARM64 PE32+ identically to x64.
+Open a PE without running it. Symbolic header field editing by name (`opt.AddressOfEntryPoint`, `section.2.Characteristics`), byte patching, disassembly at a VA with symbols, string scanning, and save. Handles ARM64 PE32+ identically to x64, and opens 32-bit PE32 (x86) images with their narrower headers, 4-byte IAT thunks and 32-bit disassembly.
 
 ---
 
@@ -111,8 +111,7 @@ npm run tauri dev      # or: npm run tauri build
 Joybug is early-stage and deliberately narrow. What that means concretely:
 
 - **Windows only.**
-- **x64 and ARM64 debuggees** — and **the host architecture must match the target's**. The core writes breakpoints and single-steps natively, so an ARM64 build does not correctly debug an emulated x64 target, or vice versa.
-- **No 32-bit / WOW64 targets.** WOW64 processes are detected but treated as 64-bit, and features that depend on the 64-bit PEB layout are skipped for them.
+- **x64, ARM64 and 32-bit x86 (WOW64) debuggees.** A 64-bit build debugs a 32-bit (WOW64) target through its 32-bit register file — registers, stepping, breakpoints, call stack, symbols, hex, emulation, hardware breakpoints, patches, pointer scanning and PEB hiding all work on it. For a **native 64-bit** target **the host architecture must still match** (the core writes breakpoints and single-steps natively, so an ARM64 build does not correctly debug an emulated x64 target, or vice versa); a WOW64 x86 target is fine on either host.
 - **No ARM64EC support.**
 - **Sandbox mode needs Windows 11 24H2** (build 26100+) with the *Windows Sandbox* optional feature installed, and Windows permits only one sandbox per user at a time.
 - **Tracing on the host needs admin.** Kernel ETW providers require elevation, so host tracing prompts for it. Tracing inside the sandbox does not — that guest is already privileged.

@@ -2264,7 +2264,6 @@ dependencies = [
  "clap",
  "dirs 5.0.1",
  "hexpatch-keystone",
- "joybug-core-veh-shared",
  "memmap2",
  "mlua",
  "msvc-demangler",
@@ -2285,10 +2284,6 @@ dependencies = [
  "windows-sys 0.59.0",
  "winsandbox",
 ]
-
-[[package]]
-name = "joybug-core-veh-shared"
-version = "0.1.0"
 
 [[package]]
 name = "joybug-tauri"

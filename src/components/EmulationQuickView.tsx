@@ -69,6 +69,10 @@ const TRACE_VALUES_MIN = 240;
 
 // Quick picks for the trace limit, offered in the input's recall dropdown.
 const LIMIT_PRESETS = [1_000, 10_000, 100_000].map((n) => n.toLocaleString());
+// Instructions that enter the kernel: x64 `syscall`; the 32-bit stubs use
+// `sysenter` / `int 2e` (and, under WOW64, a far jump the emulator reports as
+// the syscall stop itself).
+const SYSCALL_MNEMONICS = new Set(["syscall", "sysenter", "int"]);
 
 const TRACE_MODE_LABEL: Record<TraceMode, string> = {
   InstructionTrace: "Per instruction",
@@ -225,7 +229,7 @@ export const EmulationQuickView = memo(function EmulationQuickView({ emulation, 
   const traceDistances = useMemo(() => {
     const result: { syscall?: number } = {};
     for (const line of traceLines) {
-      if (result.syscall === undefined && line.mnemonic === "syscall") {
+      if (result.syscall === undefined && SYSCALL_MNEMONICS.has(line.mnemonic)) {
         result.syscall = line.index;
         break;
       }

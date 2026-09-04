@@ -119,21 +119,7 @@ pub(crate) fn process_emulation_request(
         Ok(result) => {
             debug!("📥 Received emulation result");
 
-            let arch = {
-                let state = session.state.lock().unwrap();
-                match &state.current_context {
-                    Some(crate::state::SerializableThreadContext::X64(_)) => joybug_core::interfaces::Architecture::X64,
-                    Some(crate::state::SerializableThreadContext::Arm64(_)) => joybug_core::interfaces::Architecture::Arm64,
-                    None => {
-                        #[cfg(target_arch = "x86_64")]
-                        { joybug_core::interfaces::Architecture::X64 }
-                        #[cfg(target_arch = "aarch64")]
-                        { joybug_core::interfaces::Architecture::Arm64 }
-                        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-                        { joybug_core::interfaces::Architecture::X64 }
-                    }
-                }
-            };
+            let arch = crate::commands::get_session_arch(&session.state);
 
             let needs_disassembly = matches!(mode,
                 joybug_core::protocol_io::EmulationMode::BasicBlock |

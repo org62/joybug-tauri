@@ -182,7 +182,8 @@ fn restore_suspended_breakpoints(
 
 fn nop_bytes(arch: joybug_core::interfaces::Architecture) -> &'static [u8] {
     match arch {
-        joybug_core::interfaces::Architecture::X64 => &[0x90],
+        joybug_core::interfaces::Architecture::X86
+        | joybug_core::interfaces::Architecture::X64 => &[0x90],
         joybug_core::interfaces::Architecture::Arm64 => &[0x1F, 0x20, 0x03, 0xD5],
     }
 }

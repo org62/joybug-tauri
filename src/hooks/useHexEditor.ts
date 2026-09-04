@@ -7,6 +7,8 @@ import { useLiveRefresh } from '@/hooks/useLiveRefresh';
 import {
   ViewMode,
   VIEW_MODE_CONFIGS,
+  viewModeConfig,
+  pointerIntegerMode,
   BYTES_PER_ROW,
   DEFAULT_CHUNK_SIZE,
   parseAddressExpression,
@@ -190,10 +192,13 @@ export interface UseHexEditorOptions {
    *  `followKey` changes — e.g. RSP on each pause for a stack view. */
   followAddress?: bigint;
   followKey?: string;
+  /** Target pointer width in bytes (4 for a WOW64 process); sizes `pointer`
+   *  mode units and the dereference stride. Default 8. */
+  pointerSize?: number;
 }
 
 export function useHexEditor(options: UseHexEditorOptions): HexEditorState & HexEditorActions {
-  const { sessionId, memoryViewId = 'memory', sessionStatus, registers = {}, resolveSymbol, initialAddress, initialViewMode, dataSource, symbolsRefreshKey, followAddress, followKey } = options;
+  const { sessionId, memoryViewId = 'memory', sessionStatus, registers = {}, resolveSymbol, initialAddress, initialViewMode, dataSource, symbolsRefreshKey, followAddress, followKey, pointerSize = 8 } = options;
 
   // Whether the view has a byte source at all (live session or file).
   const active = !!sessionId || !!dataSource;
@@ -559,7 +564,7 @@ export function useHexEditor(options: UseHexEditorOptions): HexEditorState & Hex
   // ============================================================================
 
   const extendSelection = useCallback((offset: number) => {
-    const config = VIEW_MODE_CONFIGS[viewMode];
+    const config = viewModeConfig(viewMode, pointerSize);
 
     if (selectionStart === null) {
       // Align to unit boundary
@@ -581,7 +586,7 @@ export function useHexEditor(options: UseHexEditorOptions): HexEditorState & Hex
         setSelectionEnd(unitStart);
       }
     }
-  }, [selectionStart, viewMode, memoryData.length]);
+  }, [selectionStart, viewMode, memoryData.length, pointerSize]);
 
   // ============================================================================
   // Editing actions - no visible input, byte stays visible, typing overwrites
@@ -589,7 +594,7 @@ export function useHexEditor(options: UseHexEditorOptions): HexEditorState & Hex
 
   // Start editing in hex mode (click on hex column)
   const startHexEdit = useCallback((offset: number) => {
-    const config = VIEW_MODE_CONFIGS[viewMode];
+    const config = viewModeConfig(viewMode, pointerSize);
     // Align offset to unit boundary for multi-byte modes
     const unitOffset = Math.floor(offset / config.bytesPerUnit) * config.bytesPerUnit;
 
@@ -644,7 +649,7 @@ export function useHexEditor(options: UseHexEditorOptions): HexEditorState & Hex
       }
     } else {
       // Hex column editing - mode-aware
-      const config = VIEW_MODE_CONFIGS[viewMode];
+      const config = viewModeConfig(viewMode, pointerSize);
 
       if (viewMode === 'float') {
         // Float mode: accept digits, decimal point, minus, exponent
@@ -714,7 +719,7 @@ export function useHexEditor(options: UseHexEditorOptions): HexEditorState & Hex
     }
 
     if (editBuffer.length > 0 && editingColumn === 'hex') {
-      const config = VIEW_MODE_CONFIGS[viewMode];
+      const config = viewModeConfig(viewMode, pointerSize);
       let bytes: Uint8Array | null = null;
 
       if (viewMode === 'float') {
@@ -760,7 +765,7 @@ export function useHexEditor(options: UseHexEditorOptions): HexEditorState & Hex
         text = formatBytesAsText(selectedBytes);
         break;
       case 'hex':
-        text = formatBytesAsHexUnits(selectedBytes, viewMode);
+        text = formatBytesAsHexUnits(selectedBytes, viewMode, pointerSize);
         break;
       case 'dump':
         text = formatBytesAsDump(memoryData, baseAddress, range.start, range.end);
@@ -807,7 +812,7 @@ export function useHexEditor(options: UseHexEditorOptions): HexEditorState & Hex
         if (viewMode === 'float') {
           effectiveMode = 'dword';
         } else if (viewMode === 'pointer') {
-          effectiveMode = 'qword';
+          effectiveMode = pointerIntegerMode(pointerSize);
         }
 
         const config = VIEW_MODE_CONFIGS[effectiveMode];
@@ -858,7 +863,7 @@ export function useHexEditor(options: UseHexEditorOptions): HexEditorState & Hex
       const nextOffset = selectionStart + pastedCount;
       if (nextOffset < memoryData.length) {
         // Align to unit boundary and select the full unit
-        const config = VIEW_MODE_CONFIGS[viewMode];
+        const config = viewModeConfig(viewMode, pointerSize);
         const unitStart = Math.floor(nextOffset / config.bytesPerUnit) * config.bytesPerUnit;
         const unitEnd = Math.min(unitStart + config.bytesPerUnit - 1, memoryData.length - 1);
         setSelection(unitStart, unitEnd);
@@ -1097,15 +1102,15 @@ export function useHexEditor(options: UseHexEditorOptions): HexEditorState & Hex
       return;
     }
 
-    // Calculate how many pointers we have (8 bytes each)
-    const pointerCount = Math.floor(memoryData.length / 8);
+    // One dereference slot per pointer-sized unit (8 bytes, or 4 for WOW64).
+    const pointerCount = Math.floor(memoryData.length / pointerSize);
     if (pointerCount > 0) {
       loadDereference(baseAddress, pointerCount);
     }
     // derefRefreshSeq: bumped per raw pause transition (see useLiveRefresh above).
     // symbolsRefreshKey: annotations fetched while PDBs were still loading come
     // back symbol-less; re-request once background symbol loading completes.
-  }, [viewMode, memoryData.length, baseAddress, sessionId, derefRefreshSeq, loadDereference, symbolsRefreshKey]);
+  }, [viewMode, memoryData.length, baseAddress, sessionId, derefRefreshSeq, loadDereference, symbolsRefreshKey, pointerSize]);
 
   // Computed: effective memory data with pending changes applied for display
   const effectiveMemoryData = useMemo(() => {

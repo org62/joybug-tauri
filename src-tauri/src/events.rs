@@ -1,4 +1,4 @@
-use crate::state::{DebugEventInfo, SerializableThreadContext};
+use crate::state::{DebugEventInfo, SerializableThreadContext, SerializableX86ThreadContext};
 
 #[cfg(target_arch = "x86_64")]
 use crate::state::Serializablex64ThreadContext;
@@ -10,6 +10,43 @@ pub fn convert_raw_context_to_serializable(
     raw_context: joybug_core::protocol::ThreadContext,
 ) -> SerializableThreadContext {
     match raw_context {
+        // A WOW64 (32-bit x86) thread — the same shape on x64 and ARM64 hosts.
+        joybug_core::protocol::ThreadContext::Wow64RawContext(ctx) => {
+            // ExtendedRegisters is the 512-byte FXSAVE image; XMM0-7 start at
+            // byte 160, 16 bytes each, little-endian (low quadword first).
+            let xmm = |i: usize| -> String {
+                let base = 160 + i * 16;
+                let lo = u64::from_le_bytes(ctx.ExtendedRegisters[base..base + 8].try_into().unwrap());
+                let hi = u64::from_le_bytes(ctx.ExtendedRegisters[base + 8..base + 16].try_into().unwrap());
+                format!("0x{:016x}{:016x}", hi, lo)
+            };
+            SerializableThreadContext::X86(SerializableX86ThreadContext {
+                eax: format!("{:#010x}", ctx.Eax),
+                ebx: format!("{:#010x}", ctx.Ebx),
+                ecx: format!("{:#010x}", ctx.Ecx),
+                edx: format!("{:#010x}", ctx.Edx),
+                esi: format!("{:#010x}", ctx.Esi),
+                edi: format!("{:#010x}", ctx.Edi),
+                ebp: format!("{:#010x}", ctx.Ebp),
+                esp: format!("{:#010x}", ctx.Esp),
+                eip: format!("{:#010x}", ctx.Eip),
+                eflags: format!("{:#010x}", ctx.EFlags),
+                cs: format!("{:#06x}", ctx.SegCs),
+                ds: format!("{:#06x}", ctx.SegDs),
+                es: format!("{:#06x}", ctx.SegEs),
+                fs: format!("{:#06x}", ctx.SegFs),
+                gs: format!("{:#06x}", ctx.SegGs),
+                ss: format!("{:#06x}", ctx.SegSs),
+                xmm0: xmm(0), xmm1: xmm(1), xmm2: xmm(2), xmm3: xmm(3),
+                xmm4: xmm(4), xmm5: xmm(5), xmm6: xmm(6), xmm7: xmm(7),
+                dr0: format!("{:#010x}", ctx.Dr0),
+                dr1: format!("{:#010x}", ctx.Dr1),
+                dr2: format!("{:#010x}", ctx.Dr2),
+                dr3: format!("{:#010x}", ctx.Dr3),
+                dr6: format!("{:#010x}", ctx.Dr6),
+                dr7: format!("{:#010x}", ctx.Dr7),
+            })
+        }
         joybug_core::protocol::ThreadContext::Win32RawContext(ctx) => {
             // Check target architecture at compile time
             #[cfg(target_arch = "x86_64")]

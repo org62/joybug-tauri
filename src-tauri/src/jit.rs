@@ -21,7 +21,10 @@
 //!   parked in [`StartupAttachState`] and handed to the UI once, which then
 //!   attaches like a normal "attach to PID" session.
 //!
-//! 64-bit only: no `WOW6432Node` mirror is written.
+//! Both registry views are written: the native AeDebug key catches 64-bit
+//! crashes, its `WOW6432Node` mirror (the same path opened with
+//! `KEY_WOW64_32KEY`) catches 32-bit ones, which WER routes through the 32-bit
+//! view. Each view keeps its own backup file.
 
 use crate::data_dir::joybug_data_dir;
 use crate::error::{Error, Result};
@@ -37,7 +40,7 @@ use windows_sys::Win32::Foundation::{
 };
 use windows_sys::Win32::System::Registry::{
     RegCloseKey, RegCreateKeyExW, RegDeleteValueW, RegOpenKeyExW, RegQueryValueExW, RegSetValueExW,
-    HKEY, HKEY_LOCAL_MACHINE, KEY_QUERY_VALUE, KEY_SET_VALUE, REG_OPTION_NON_VOLATILE, REG_SZ,
+    HKEY, HKEY_LOCAL_MACHINE, KEY_QUERY_VALUE, KEY_SET_VALUE, KEY_WOW64_32KEY, REG_OPTION_NON_VOLATILE, REG_SZ,
 };
 use windows_sys::Win32::System::Threading::{GetExitCodeProcess, SetEvent, WaitForSingleObject, INFINITE};
 use windows_sys::Win32::UI::Shell::{
@@ -49,6 +52,7 @@ const AEDEBUG_SUBKEY: &str = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\AeDe
 const DEBUGGER_VALUE: &str = "Debugger";
 const AUTO_VALUE: &str = "Auto";
 const BACKUP_FILE: &str = "jit_debugger_backup.json";
+const BACKUP_FILE_WOW64: &str = "jit_debugger_backup_wow64.json";
 
 /// CLI flags handled in `lib.rs::run()` before the Tauri app is built.
 pub const REGISTER_FLAG: &str = "--jit-register";
@@ -205,14 +209,19 @@ struct Target {
     root: HKEY,
     subkey: String,
     backup_path: PathBuf,
+    /// Extra access flags: `KEY_WOW64_32KEY` selects the 32-bit registry view.
+    view: u32,
 }
 
 impl Target {
-    fn aedebug() -> Self {
+    /// The machine AeDebug key. `wow64` selects its `WOW6432Node` view — what
+    /// a crashing 32-bit process is routed through — with its own backup file.
+    fn aedebug(wow64: bool) -> Self {
         Self {
             root: HKEY_LOCAL_MACHINE,
             subkey: AEDEBUG_SUBKEY.to_string(),
-            backup_path: joybug_data_dir().join(BACKUP_FILE),
+            backup_path: joybug_data_dir().join(if wow64 { BACKUP_FILE_WOW64 } else { BACKUP_FILE }),
+            view: if wow64 { KEY_WOW64_32KEY } else { 0 },
         }
     }
 
@@ -243,7 +252,7 @@ impl Target {
     /// backup already exists — a re-register must not overwrite the original
     /// machine setting with Joybug's own value.
     fn register(&self, exe: &Path) -> Result<()> {
-        let key = RegKey::create(self.root, &self.subkey, KEY_QUERY_VALUE | KEY_SET_VALUE)?;
+        let key = RegKey::create(self.root, &self.subkey, KEY_QUERY_VALUE | KEY_SET_VALUE | self.view)?;
         if !self.backup_path.exists() {
             let backup = Backup {
                 debugger: key.get_string(DEBUGGER_VALUE)?,
@@ -261,7 +270,7 @@ impl Target {
     /// is restored independently so one failure does not block the other.
     fn restore(&self) -> Result<()> {
         let backup = self.load_backup().unwrap_or_default();
-        let key = RegKey::create(self.root, &self.subkey, KEY_QUERY_VALUE | KEY_SET_VALUE)?;
+        let key = RegKey::create(self.root, &self.subkey, KEY_QUERY_VALUE | KEY_SET_VALUE | self.view)?;
         let mut first_err = None;
         for (name, value) in [(DEBUGGER_VALUE, &backup.debugger), (AUTO_VALUE, &backup.auto)] {
             if let Err(e) = key.put(name, value.as_deref()) {
@@ -281,7 +290,7 @@ impl Target {
     }
 
     fn current_debugger(&self) -> Result<Option<String>> {
-        match RegKey::open(self.root, &self.subkey, KEY_QUERY_VALUE) {
+        match RegKey::open(self.root, &self.subkey, KEY_QUERY_VALUE | self.view) {
             Ok(key) => key.get_string(DEBUGGER_VALUE),
             // No AeDebug key at all: nothing is registered.
             Err(_) => Ok(None),
@@ -306,13 +315,25 @@ fn elevated_exit(what: &str, op: impl FnOnce() -> Result<()>) -> i32 {
 /// Entry point of the elevated `--jit-register` child. Returns the process exit code.
 pub fn do_register() -> i32 {
     elevated_exit("register", || {
-        crate::commands::exe_path().and_then(|exe| Target::aedebug().register(exe))
+        let exe = crate::commands::exe_path()?;
+        Target::aedebug(false).register(&exe)?;
+        // The 32-bit view is best-effort: a host without it (no WOW64 layer)
+        // simply has no 32-bit crashes to route.
+        if let Err(e) = Target::aedebug(true).register(&exe) {
+            warn!("AeDebug WOW6432Node register failed: {e}");
+        }
+        Ok(())
     })
 }
 
 /// Entry point of the elevated `--jit-unregister` child. Returns the process exit code.
 pub fn do_restore() -> i32 {
-    elevated_exit("restore", || Target::aedebug().restore())
+    elevated_exit("restore", || {
+        if let Err(e) = Target::aedebug(true).restore() {
+            warn!("AeDebug WOW6432Node restore failed: {e}");
+        }
+        Target::aedebug(false).restore()
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -381,7 +402,7 @@ pub struct JitDebuggerStatus {
 }
 
 pub fn status() -> Result<JitDebuggerStatus> {
-    let current = Target::aedebug().current_debugger()?;
+    let current = Target::aedebug(false).current_debugger()?;
     let registered = match (&current, crate::commands::exe_path()) {
         (Some(value), Ok(exe)) => value.eq_ignore_ascii_case(&our_debugger_value(exe)),
         _ => false,

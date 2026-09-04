@@ -9,7 +9,9 @@
 //! `WindowsSymbolProvider` (no debug session, no dbghelp) — the PDB is loaded
 //! from an explicit path, from next to the file, or from the symbol server.
 //!
-//! v2 supports 64-bit PE images only (the parser uses pelite `pe64`).
+//! PE32 (x86) and PE32+ (x64, ARM64) images are both supported; the parser is
+//! the format-agnostic pelite wrap and the header-field offset table below
+//! branches on the optional header's `Magic`.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -31,16 +33,15 @@ use joybug_core::windows_platform::{parse_module_extra_info_from_bytes, parse_pd
 
 use joybug_core::pe_image::{rva_to_offset_loose, SectionMap};
 
+const IMAGE_FILE_MACHINE_I386: u16 = 0x014C;
 const IMAGE_FILE_MACHINE_AMD64: u16 = 0x8664;
 const IMAGE_FILE_MACHINE_ARM64: u16 = 0xAA64;
 
-/// The instruction set to disassemble an opened PE's code with. The underlying
-/// parser is pelite `pe64`, so the constraint is PE32+ (64-bit), not x64
-/// specifically — ARM64 images parse identically and only differ in the
-/// exception directory, which `parse_module_extra_info_from_bytes` already
-/// branches on.
+/// The instruction set to disassemble an opened PE's code with, from the
+/// image's machine field. Anything else (ARM32, Itanium, ...) has no decoder.
 fn arch_from_machine(machine: u16) -> Option<Architecture> {
     match machine {
+        IMAGE_FILE_MACHINE_I386 => Some(Architecture::X86),
         IMAGE_FILE_MACHINE_AMD64 => Some(Architecture::X64),
         IMAGE_FILE_MACHINE_ARM64 => Some(Architecture::Arm64),
         _ => None,
@@ -157,7 +158,7 @@ fn nt_headers_offset(bytes: &[u8]) -> Option<usize> {
 }
 
 /// Read the PE machine field directly from raw bytes to give a clean
-/// "unsupported" message before attempting a pe64 parse.
+/// "unsupported" message before attempting a full parse.
 fn machine_from_bytes(bytes: &[u8]) -> Option<u16> {
     let nt = nt_headers_offset(bytes)?;
     Some(u16::from_le_bytes(bytes[nt + 4..nt + 6].try_into().ok()?))
@@ -247,7 +248,7 @@ fn pe_open_impl(
     let arch = match machine_from_bytes(&bytes) {
         Some(machine) => arch_from_machine(machine).ok_or_else(|| {
             Error::InvalidParameter(format!(
-                "Unsupported PE machine 0x{:04X}. The PE viewer supports 64-bit (x64 and ARM64) images only.",
+                "Unsupported PE machine 0x{:04X}. The PE viewer supports x86, x64 and ARM64 images.",
                 machine
             ))
         })?,
@@ -263,7 +264,13 @@ fn pe_open_impl(
 
     let base = match base {
         Some(s) => crate::commands::parse_hex_u64(&s, "base")?,
-        None => info.nt_headers.OptionalHeader.ImageBase,
+        None => match info.nt_headers.OptionalHeader.ImageBase {
+            // A zero ImageBase (some hand-built images) would make every VA an
+            // RVA; fall back to the linker defaults for the format.
+            0 if info.nt_headers.OptionalHeader.is_pe32() => 0x40_0000,
+            0 => 0x1_4000_0000,
+            ib => ib,
+        },
     };
 
     let size = bytes.len();
@@ -541,6 +548,13 @@ pub fn pe_set_field(
         if offset + byte_len > file.bytes.len() {
             return Err(Error::InvalidParameter("Field offset out of range".into()));
         }
+        // Refuse rather than silently truncate: a 64-bit value typed into a
+        // PE32 `ImageBase` (4 bytes) would otherwise lose its top half.
+        if byte_len < 8 && value >> (byte_len * 8) != 0 {
+            return Err(Error::InvalidParameter(format!(
+                "Value 0x{:X} does not fit the {}-byte field '{}'", value, byte_len, field
+            )));
+        }
         // Little-endian write of the low `byte_len` bytes.
         let le = value.to_le_bytes();
         file.bytes[offset..offset + byte_len].copy_from_slice(&le[..byte_len]);
@@ -548,8 +562,19 @@ pub fn pe_set_field(
     })
 }
 
-/// (offset relative to the optional header, byte width) for an IMAGE_OPTIONAL_HEADER64 field.
-fn opt_field(name: &str) -> Option<(usize, usize)> {
+/// Offset of the data-directory array within the optional header: right
+/// after `NumberOfRvaAndSizes` (96 for PE32, 112 for PE32+).
+fn datadir_base(pe32: bool) -> usize {
+    80 + 4 * if pe32 { 4 } else { 8 }
+}
+
+/// (offset relative to the optional header, byte width) for an
+/// IMAGE_OPTIONAL_HEADER32 / IMAGE_OPTIONAL_HEADER64 field. The two layouts
+/// agree up to `BaseOfCode`; PE32 then has a 4-byte `BaseOfData` where PE32+
+/// widens `ImageBase` to 8 bytes, and the four SizeOf{Stack,Heap}* fields are
+/// pointer-sized, which shifts everything after them.
+fn opt_field(name: &str, pe32: bool) -> Option<(usize, usize)> {
+    let ptr = if pe32 { 4 } else { 8 };
     Some(match name {
         "Magic" => (0, 2),
         "MajorLinkerVersion" => (2, 1),
@@ -559,7 +584,8 @@ fn opt_field(name: &str) -> Option<(usize, usize)> {
         "SizeOfUninitializedData" => (12, 4),
         "AddressOfEntryPoint" => (16, 4),
         "BaseOfCode" => (20, 4),
-        "ImageBase" => (24, 8),
+        "BaseOfData" if pe32 => (24, 4),
+        "ImageBase" => (if pe32 { 28 } else { 24 }, ptr),
         "SectionAlignment" => (32, 4),
         "FileAlignment" => (36, 4),
         "MajorOperatingSystemVersion" => (40, 2),
@@ -574,12 +600,12 @@ fn opt_field(name: &str) -> Option<(usize, usize)> {
         "CheckSum" => (64, 4),
         "Subsystem" => (68, 2),
         "DllCharacteristics" => (70, 2),
-        "SizeOfStackReserve" => (72, 8),
-        "SizeOfStackCommit" => (80, 8),
-        "SizeOfHeapReserve" => (88, 8),
-        "SizeOfHeapCommit" => (96, 8),
-        "LoaderFlags" => (104, 4),
-        "NumberOfRvaAndSizes" => (108, 4),
+        "SizeOfStackReserve" => (72, ptr),
+        "SizeOfStackCommit" => (72 + ptr, ptr),
+        "SizeOfHeapReserve" => (72 + 2 * ptr, ptr),
+        "SizeOfHeapCommit" => (72 + 3 * ptr, ptr),
+        "LoaderFlags" => (72 + 4 * ptr, 4),
+        "NumberOfRvaAndSizes" => (76 + 4 * ptr, 4),
         _ => return None,
     })
 }
@@ -625,6 +651,7 @@ fn field_offset(bytes: &[u8], field: &str) -> Result<(usize, usize)> {
     let size_of_opt = read_u16(file_hdr + 16)?;
     let opt_hdr = file_hdr + 20;
     let sections = opt_hdr + size_of_opt;
+    let pe32 = read_u16(opt_hdr)? == joybug_core::pe_types::IMAGE_NT_OPTIONAL_HDR32_MAGIC as usize;
 
     let unknown = || Error::InvalidParameter(format!("Unknown field '{}'", field));
     let (scope, name) = field.split_once('.').ok_or_else(unknown)?;
@@ -639,14 +666,15 @@ fn field_offset(bytes: &[u8], field: &str) -> Result<(usize, usize)> {
             _ => Err(unknown()),
         },
         "file" => file_field(name).map(|(o, w)| (file_hdr + o, w)).ok_or_else(unknown),
-        "opt" => opt_field(name).map(|(o, w)| (opt_hdr + o, w)).ok_or_else(unknown),
+        "opt" => opt_field(name, pe32).map(|(o, w)| (opt_hdr + o, w)).ok_or_else(unknown),
         // A data-directory slot (IMAGE_DATA_DIRECTORY: VirtualAddress + Size).
         "datadir" => {
             let i: usize = name.parse().map_err(|_| Error::InvalidParameter(format!("Bad directory index in '{}'", field)))?;
-            if i >= 16 || 112 + (i + 1) * 8 > size_of_opt {
+            let dd = datadir_base(pe32);
+            if i >= 16 || dd + (i + 1) * 8 > size_of_opt {
                 return Err(Error::InvalidParameter(format!("Directory index {} out of range", i)));
             }
-            Ok((opt_hdr + 112 + i * 8, 8))
+            Ok((opt_hdr + dd + i * 8, 8))
         }
         "section" => {
             let (idx, sec_field) = name.split_once('.').ok_or_else(unknown)?;

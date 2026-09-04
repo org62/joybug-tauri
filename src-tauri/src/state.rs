@@ -288,6 +288,11 @@ pub struct DebugSessionUI {
     /// Thread the user explicitly switched to (WinDbg `~Ns`); `None` = the
     /// event thread. Reset on every new debug event.
     pub selected_thread_id: Option<u32>,
+    /// The target's instruction-set architecture once a process exists
+    /// (`X86` for a WOW64 target); `None` before launch/attach/open.
+    pub arch: Option<joybug_core::interfaces::Architecture>,
+    /// Pointer width of the target (4 for WOW64), 8 until the arch is known.
+    pub pointer_size: u8,
     pub created_at: String,
     pub disassembly_window_open: bool,
     pub registers_window_open: bool,
@@ -375,11 +380,38 @@ pub struct SerializableArm64ThreadContext {
     #[serde(default)] pub fpsr: String,
 }
 
+/// A 32-bit x86 (WOW64) thread. Values are "0x" + 8 hex digits; XMM0-7 come
+/// from the FXSAVE area of the WOW64 context and use the same 128-bit layout
+/// as the x64 XMM strings; the segment selectors are informational.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct SerializableX86ThreadContext {
+    pub eax: String, pub ebx: String, pub ecx: String, pub edx: String,
+    pub esi: String, pub edi: String, pub ebp: String, pub esp: String,
+    pub eip: String,
+    pub eflags: String,
+    pub cs: String, pub ds: String, pub es: String, pub fs: String, pub gs: String, pub ss: String,
+    pub xmm0: String, pub xmm1: String, pub xmm2: String, pub xmm3: String,
+    pub xmm4: String, pub xmm5: String, pub xmm6: String, pub xmm7: String,
+    pub dr0: String, pub dr1: String, pub dr2: String, pub dr3: String,
+    pub dr6: String, pub dr7: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "arch")]
 pub enum SerializableThreadContext {
     X64(Serializablex64ThreadContext),
     Arm64(SerializableArm64ThreadContext),
+    X86(SerializableX86ThreadContext),
+}
+
+impl SerializableThreadContext {
+    pub fn architecture(&self) -> joybug_core::interfaces::Architecture {
+        match self {
+            SerializableThreadContext::X64(_) => joybug_core::interfaces::Architecture::X64,
+            SerializableThreadContext::Arm64(_) => joybug_core::interfaces::Architecture::Arm64,
+            SerializableThreadContext::X86(_) => joybug_core::interfaces::Architecture::X86,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -446,6 +478,11 @@ pub struct SessionStateUI {
     pub threads: Vec<joybug_core::protocol_io::ThreadInfo>,
     pub current_event: Option<joybug_core::protocol_io::DebugEvent>,
     pub current_context: Option<SerializableThreadContext>,
+    /// Instruction-set architecture of the live target, recorded at
+    /// ProcessCreated / non-invasive open (`X86` for a WOW64 process). Drives
+    /// disassembly, emulation and every pointer-width decision while a process
+    /// exists; `None` when there is none.
+    pub arch: Option<joybug_core::interfaces::Architecture>,
     /// Thread the UI is switched to while paused. Registers, call stack and
     /// register writes target this thread; stepping always continues the event
     /// thread (Windows can't step a non-event thread). Cleared on every pause.
@@ -575,6 +612,7 @@ impl SessionStateUI {
             threads: Vec::new(),
             current_event: None,
             current_context: None,
+            arch: None,
             selected_tid: None,
             ui_sender: Some(step_sender),
             ui_receiver: Some(step_receiver),
@@ -606,6 +644,7 @@ impl SessionStateUI {
         self.threads.clear();
         self.current_event = None;
         self.current_context = None;
+        self.arch = None;
         self.selected_tid = None;
         self.open_pid = None;
         self.embedded_server_port = None;
@@ -660,11 +699,21 @@ impl SessionStateUI {
         self.selected_tid.unwrap_or_else(|| event.tid())
     }
 
+    /// The target's architecture: the process architecture recorded at
+    /// create/attach/open, else the shape of the current context, else the
+    /// host's.
+    pub fn target_arch(&self) -> joybug_core::interfaces::Architecture {
+        self.arch
+            .or_else(|| self.current_context.as_ref().map(|c| c.architecture()))
+            .unwrap_or_else(joybug_core::interfaces::Architecture::from_native)
+    }
+
     /// Instruction pointer of `current_context`, if any.
     fn context_ip(&self) -> Option<u64> {
         let hex = match &self.current_context {
             Some(SerializableThreadContext::X64(ctx)) => &ctx.rip,
             Some(SerializableThreadContext::Arm64(ctx)) => &ctx.pc,
+            Some(SerializableThreadContext::X86(ctx)) => &ctx.eip,
             None => return None,
         };
         u64::from_str_radix(hex.trim_start_matches("0x"), 16).ok()
@@ -698,6 +747,8 @@ impl SessionStateUI {
                 info
             }),
             selected_thread_id: self.selected_tid,
+            arch: self.arch,
+            pointer_size: self.target_arch().pointer_size() as u8,
             created_at: self.created_at.clone(),
             disassembly_window_open: self.is_disassembly_window_open,
             registers_window_open: self.is_registers_window_open,

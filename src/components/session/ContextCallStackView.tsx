@@ -70,7 +70,7 @@ export function ContextCallStackView({ onNavigateToDisassembly, onNavigateToMemo
   const context = sessionData?.session?.current_event?.context;
   const stackPointer = useMemo(() => {
     if (!context) return undefined;
-    const raw = 'rsp' in context ? context.rsp : 'sp' in context ? context.sp : undefined;
+    const raw = 'rsp' in context ? context.rsp : 'esp' in context ? context.esp : 'sp' in context ? context.sp : undefined;
     return raw ? parseAddress(String(raw)) ?? undefined : undefined;
   }, [context]);
   const [followSeq, setFollowSeq] = useState(0);

@@ -184,12 +184,6 @@ fn apply_debugger_hiding(
     let session_id = Some(session.state.lock().unwrap().id.clone());
     match session.hide_peb(pid, opts) {
         Ok(report) => {
-            if report.wow64_skipped {
-                let msg = "Hide from PEB skipped: target is a 32-bit (WOW64) process";
-                crate::ui_logger::log_warn(handle, msg, session_id);
-                crate::ui_logger::toast_info(handle, msg);
-                return;
-            }
             if !report.applied.is_empty() {
                 let msg = format!("Hidden debugger from PEB: {}", report.applied.join(", "));
                 crate::ui_logger::log_info(handle, &msg, session_id.clone());
@@ -444,6 +438,17 @@ pub fn run_debug_session(
                     if keep_going {
                         return Ok(true);
                     }
+                }
+            }
+
+            // Record the target's architecture as soon as it exists: launch,
+            // attach and JIT all announce the process with ProcessCreated. A
+            // WOW64 target reports X86 here, which every pointer-width and
+            // disassembly decision downstream keys on.
+            if matches!(event, joybug_core::protocol_io::DebugEvent::ProcessCreated { .. }) {
+                match session.get_process_architecture(event.pid()) {
+                    Ok(arch) => session.state.lock().unwrap().arch = Some(arch),
+                    Err(e) => warn!("Failed to query process architecture: {}", e),
                 }
             }
 

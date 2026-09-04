@@ -80,6 +80,11 @@ export interface DebugSession {
   current_event: DebugEventInfo | null;
   /** Thread the user switched to while paused (null = event thread). */
   selected_thread_id?: number | null;
+  /** Target instruction-set architecture once a process exists ("X86" for a
+   *  WOW64 target); null before launch/attach/open. */
+  arch?: "X64" | "Arm64" | "X86" | null;
+  /** Target pointer width in bytes: 4 for WOW64, else 8 (also 8 while unknown). */
+  pointer_size?: number;
   created_at: string;
   disassembly_window_open: boolean;
   registers_window_open: boolean;

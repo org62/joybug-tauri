@@ -47,9 +47,23 @@ interface SerializableArm64ThreadContext {
   fpcr: string; fpsr: string;
 }
 
+/** A 32-bit x86 (WOW64) thread: 8-hex-digit values, XMM0-7, segment selectors. */
+interface SerializableX86ThreadContext {
+  arch: "X86";
+  eax: string; ebx: string; ecx: string; edx: string;
+  esi: string; edi: string; ebp: string; esp: string;
+  eip: string; eflags: string;
+  cs: string; ds: string; es: string; fs: string; gs: string; ss: string;
+  xmm0: string; xmm1: string; xmm2: string; xmm3: string;
+  xmm4: string; xmm5: string; xmm6: string; xmm7: string;
+  dr0: string; dr1: string; dr2: string; dr3: string;
+  dr6: string; dr7: string;
+}
+
 export type SerializableThreadContext =
   | Serializablex64ThreadContext
-  | SerializableArm64ThreadContext;
+  | SerializableArm64ThreadContext
+  | SerializableX86ThreadContext;
 
 /** How to render the 128-bit XMM registers. */
 export type XmmFormat = "hex" | "f32" | "f64";
@@ -144,6 +158,28 @@ export const X64_DEBUG_REGISTERS: RegisterDef[] = [
   { name: "DR7", field: "dr7", showDereference: false },
 ];
 
+export const X86_REGISTERS: RegisterDef[] = [
+  { name: "EAX", field: "eax" }, { name: "EBX", field: "ebx" },
+  { name: "ECX", field: "ecx" }, { name: "EDX", field: "edx" },
+  { name: "ESI", field: "esi" }, { name: "EDI", field: "edi" },
+  { name: "EBP", field: "ebp" }, { name: "ESP", field: "esp" },
+  { name: "EIP", field: "eip" },
+  { name: "EFL", field: "eflags", showDereference: false },
+];
+
+/** Segment selectors of a 32-bit thread (informational; not pointers). */
+export const X86_SEGMENT_REGISTERS: RegisterDef[] = [
+  { name: "CS", field: "cs", showDereference: false }, { name: "DS", field: "ds", showDereference: false },
+  { name: "ES", field: "es", showDereference: false }, { name: "FS", field: "fs", showDereference: false },
+  { name: "GS", field: "gs", showDereference: false }, { name: "SS", field: "ss", showDereference: false },
+];
+
+export const X86_XMM_REGISTERS: RegisterDef[] = Array.from({ length: 8 }, (_, i) => ({
+  name: `XMM${i}`,
+  field: `xmm${i}`,
+  showDereference: false,
+}));
+
 export const ARM64_REGISTERS: RegisterDef[] = [
   { name: "X0", field: "x0" }, { name: "X1", field: "x1" },
   { name: "X2", field: "x2" }, { name: "X3", field: "x3" },
@@ -164,6 +200,18 @@ export const ARM64_REGISTERS: RegisterDef[] = [
   { name: "SP", field: "sp" }, { name: "PC", field: "pc" },
   { name: "CPSR", field: "cpsr", showDereference: false },
 ];
+
+/** General-purpose register table per context architecture. */
+const REGISTER_DEFS: Record<SerializableThreadContext["arch"], RegisterDef[]> = {
+  X64: X64_REGISTERS,
+  Arm64: ARM64_REGISTERS,
+  X86: X86_REGISTERS,
+};
+
+/** Register table for a context's architecture (general-purpose set). */
+export function registerDefsFor(arch: SerializableThreadContext["arch"]): RegisterDef[] {
+  return REGISTER_DEFS[arch] ?? [];
+}
 
 /** ARM64 NEON/SIMD vector registers V0-V31 (128-bit each), the ARM analogue of
  *  x64's XMM. Rendered under the "NEON" toggle. */
@@ -334,8 +382,12 @@ export function RegisterView({
     );
   }
 
-  if (context.arch === "X64") {
+  // x86 family: x64 and 32-bit (WOW64) share the layout — GPRs, an XMM
+  // section (16 or 8 registers) and the DR0-DR7 bank; x86 adds its segment
+  // selectors below the GPRs.
+  if (context.arch === "X64" || context.arch === "X86") {
     const registers = context as unknown as Record<string, string>;
+    const is32 = context.arch === "X86";
     return (
       <DockPanel>
         <PanelToolbar>
@@ -355,16 +407,23 @@ export function RegisterView({
           >
             DR
           </Button>
+          {is32 && <span className="ml-auto text-xs text-muted-foreground" title="32-bit (WOW64) thread">x86</span>}
         </PanelToolbar>
         <PanelBody>
           {/* w-0 min-w-full: zero the intrinsic max-content width so long
               deref chains can't widen the panel (same idiom as GroupedItemList) */}
           <div className="p-1 flex flex-col w-0 min-w-full">
-            {renderRegisterRows(registers, X64_REGISTERS, getDeref, isChanged, "w-8", onRegisterEdit)}
+            {renderRegisterRows(registers, is32 ? X86_REGISTERS : X64_REGISTERS, getDeref, isChanged, "w-8", onRegisterEdit)}
+            {is32 && (
+              <>
+                <SectionLabel>Segments</SectionLabel>
+                {renderRegisterRows(registers, X86_SEGMENT_REGISTERS, getDeref, isChanged, "w-8")}
+              </>
+            )}
             {showXmm && (
               <VectorRegisterSection
                 label="XMM"
-                defs={X64_XMM_REGISTERS}
+                defs={is32 ? X86_XMM_REGISTERS : X64_XMM_REGISTERS}
                 registers={registers}
                 format={xmmFormat}
                 onFormatChange={onXmmFormatChange}

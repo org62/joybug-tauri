@@ -33,7 +33,7 @@ export interface ImageFileHeader {
   Characteristics: number;
 }
 
-export interface ImageOptionalHeader64 {
+export interface ImageOptionalHeader {
   Magic: number;
   MajorLinkerVersion: number;
   MinorLinkerVersion: number;
@@ -42,6 +42,9 @@ export interface ImageOptionalHeader64 {
   SizeOfUninitializedData: number;
   AddressOfEntryPoint: number;
   BaseOfCode: number;
+  /** PE32 only; absent (null) in PE32+ where ImageBase widens into this slot. */
+  BaseOfData?: number | null;
+  /** Widened to 64 bits for both formats; PE32 values fit in 32. */
   ImageBase: number;
   SectionAlignment: number;
   FileAlignment: number;
@@ -66,10 +69,10 @@ export interface ImageOptionalHeader64 {
   DataDirectory: ImageDataDirectory[];
 }
 
-export interface NtHeaders64 {
+export interface NtHeaders {
   Signature: number;
   FileHeader: ImageFileHeader;
-  OptionalHeader: ImageOptionalHeader64;
+  OptionalHeader: ImageOptionalHeader;
 }
 
 export interface ImageSectionHeader {
@@ -121,7 +124,7 @@ export interface ExportInfo {
 }
 
 export interface ModuleExtraInfo {
-  nt_headers: NtHeaders64;
+  nt_headers: NtHeaders;
   sections: ImageSectionHeader[];
   imports: ImportDescriptorInfo[];
   exports: ExportInfo | null;

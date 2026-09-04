@@ -209,8 +209,17 @@ pub(crate) fn process_symbol_search(
     debug!("📤 Processing symbol search request: pid={}, pattern='{}', limit={}", pid, pattern, limit);
 
     match session.find_symbols(pattern, limit as usize) {
-        Ok(resolved_symbols) => {
+        Ok(mut resolved_symbols) => {
             debug!("📥 Received {} symbols from find_symbols", resolved_symbols.len());
+
+            // A WOW64 process maps both ntdlls (and other same-named pairs);
+            // `ntdll!X` then resolves in both. Put the 32-bit address space
+            // first so "first match" callers (breakpoints, goto) get the one
+            // the target can actually execute.
+            let arch = session.state.lock().unwrap().target_arch();
+            if arch == joybug_core::interfaces::Architecture::X86 {
+                resolved_symbols.sort_by_key(|s| s.va > arch.max_user_address());
+            }
 
             let symbols: Vec<SymbolData> = resolved_symbols.iter().map(SymbolData::from_resolved).collect();
 

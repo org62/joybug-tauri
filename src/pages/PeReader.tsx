@@ -27,7 +27,7 @@ import { ModuleExtraInfo } from "@/hooks/useModuleInfo";
 import { PeScanFn, PeStringScanResult } from "@/hooks/usePeStringScan";
 import { SymbolResolver } from "@/lib/hexUtils";
 import { PeMapping, AddrMode, AddrTriple, buildMapping, formatOffset, formatVa, rvaToVa, tripleFromInput, tripleFromVa } from "@/lib/peAddress";
-import { applyFieldEdit } from "@/lib/peDecode";
+import { applyFieldEdit, archLabel } from "@/lib/peDecode";
 import { memoryNavigation, disassemblyNavigation } from "@/lib/navigationStore";
 import { NavHistoryStore, appNavHistory } from "@/lib/navHistory";
 import { useNavHistoryDock } from "@/hooks/useNavHistoryDock";
@@ -270,7 +270,7 @@ export default function PeReader() {
 
   // Drag-drop a PE file onto the page to open it. Extension filter is a UX
   // nicety for obvious non-PE files; the backend stays the authority for
-  // malformed/32-bit files via loadPath's error handling.
+  // malformed files via loadPath's error handling.
   const handleFileDrop = (paths: string[]) => {
     if (busy) return;
     const dropped = pickDroppedFile(paths, {
@@ -491,11 +491,16 @@ export default function PeReader() {
             </Button>
           )}
           {path && (
-            <AddrModeSelect value={mode} onChange={setMode} className="w-32" />
+            <AddrModeSelect value={mode} onChange={setMode} className="w-32" data-testid="pe-addr-mode" />
           )}
           <div className="ml-2 flex-1 min-w-0 text-sm font-mono truncate text-muted-foreground" title={path ?? undefined}>
             {path ? moduleBasename(path) : "No PE file open"}
             {dirty && <span className="ml-1 text-syn-state">●</span>}
+            {summary && (
+              <span data-testid="pe-arch-badge" className="ml-2 text-xs rounded border px-1 text-muted-foreground" title="Machine · optional-header format">
+                {archLabel(summary.info.nt_headers.FileHeader.Machine, summary.info.nt_headers.OptionalHeader.Magic)}
+              </span>
+            )}
             {summary?.symbols_loaded && <span className="ml-2 text-xs text-muted-foreground">{summary.symbol_count} symbols</span>}
           </div>
           <DockWindowsMenu dockingRef={dockingRef} tabs={PE_TABS} />

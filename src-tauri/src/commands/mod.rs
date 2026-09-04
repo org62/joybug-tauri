@@ -348,21 +348,9 @@ pub(crate) fn with_oob_scan_client<R>(
     with_pooled_client(session_arc, session_id, &pool.scan, false, f)
 }
 
-/// Get target architecture from session state (context or host default).
+/// Target architecture of a session (see [`SessionStateUI::target_arch`]).
 pub(crate) fn get_session_arch(
     session_state: &Arc<Mutex<SessionStateUI>>,
 ) -> joybug_core::interfaces::Architecture {
-    let state = session_state.lock().unwrap();
-    match &state.current_context {
-        Some(crate::state::SerializableThreadContext::X64(_)) => joybug_core::interfaces::Architecture::X64,
-        Some(crate::state::SerializableThreadContext::Arm64(_)) => joybug_core::interfaces::Architecture::Arm64,
-        None => {
-            #[cfg(target_arch = "x86_64")]
-            { joybug_core::interfaces::Architecture::X64 }
-            #[cfg(target_arch = "aarch64")]
-            { joybug_core::interfaces::Architecture::Arm64 }
-            #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-            { joybug_core::interfaces::Architecture::X64 }
-        }
-    }
+    session_state.lock().unwrap().target_arch()
 }

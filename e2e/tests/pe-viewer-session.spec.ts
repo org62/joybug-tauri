@@ -12,23 +12,7 @@ import {
   restoreDefaultSettings,
 } from "../helpers/wait-helpers";
 import { ASM_PANEL, ASM_ROW } from "../helpers/selectors";
-import type { Page } from "@playwright/test";
-
-/** A structure-tree leaf row, located by its label. */
-function leaf(page: Page, label: string) {
-  return page.locator(`[data-testid="pe-leaf"][data-label="${label}"]`).first();
-}
-
-/** The address link of a structure-tree leaf row. */
-function leafLink(page: Page, label: string) {
-  return leaf(page, label).locator("button").first();
-}
-
-/** Choose an option in one of the panel's selects. */
-async function pick(page: Page, testId: string, option: string | RegExp) {
-  await page.getByTestId(testId).click();
-  await page.getByRole("option", { name: option, exact: typeof option === "string" }).click();
-}
+import { leaf, leafLink, pick } from "../helpers/pe-helpers";
 
 test.describe("PE Viewer (session)", () => {
   test("shows the structure tree for a live module and links into disassembly", async ({

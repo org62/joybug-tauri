@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import { SerializableThreadContext, RegisterDef, X64_REGISTERS, X64_DEBUG_REGISTERS, ARM64_REGISTERS } from '@/components/RegisterView';
+import { SerializableThreadContext, X64_DEBUG_REGISTERS, registerDefsFor } from '@/components/RegisterView';
 import { DereferenceEntry, DereferenceResultPayload } from '@/lib/hexUtils';
 import { isProcessAvailable } from '@/lib/sessionHelpers';
 import { SessionStatus } from '@/contexts/SessionContext';
@@ -26,19 +26,17 @@ export function useRegisterDereference(
   // Extract pointer-register values as addresses. The register defs'
   // showDereference flag encodes which registers hold pointers.
   const getRegisterAddresses = useCallback((ctx: SerializableThreadContext, includeDr: boolean): Map<string, string> => {
-    let defs: RegisterDef[] = [];
-    if (ctx.arch === 'X64') {
-      defs = includeDr ? [...X64_REGISTERS, ...X64_DEBUG_REGISTERS] : X64_REGISTERS;
-    } else if (ctx.arch === 'Arm64') {
-      defs = ARM64_REGISTERS;
-    }
+    // The DR bank exists on both x86-family register files, not on ARM64.
+    const gprs = registerDefsFor(ctx.arch);
+    const defs = includeDr && ctx.arch !== 'Arm64' ? [...gprs, ...X64_DEBUG_REGISTERS] : gprs;
 
     const registers = ctx as unknown as Record<string, string>;
     const addresses = new Map<string, string>();
     for (const { name, field, showDereference } of defs) {
       if (showDereference === false) continue;
       const value = registers[field];
-      if (value && value !== '0x0000000000000000') {
+      // Skip null pointers whatever the register width (16 or 8 hex digits).
+      if (value && !/^0x0+$/i.test(value)) {
         addresses.set(name, value);
       }
     }

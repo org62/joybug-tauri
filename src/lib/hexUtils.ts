@@ -231,10 +231,36 @@ export const VIEW_MODE_CONFIGS: Record<ViewMode, ViewModeConfig> = {
 };
 
 /**
- * Format an address as a hex string
+ * Format an address as a hex string. `digits` is the target's address width:
+ * 16 for a 64-bit process, 8 for a 32-bit (WOW64) one — pass
+ * `pointerSize * 2`. Lookup keys (dereference/annotation maps) keep the
+ * 16-digit form regardless; only display goes through the width.
  */
-export function formatAddress(address: bigint): string {
-  return '0x' + address.toString(16).padStart(16, '0').toUpperCase();
+export function formatAddress(address: bigint, digits = 16): string {
+  return '0x' + address.toString(16).padStart(digits, '0').toUpperCase();
+}
+
+/** Pointer-mode config for a 4-byte address space (WOW64 targets): the
+ *  `dword` unit rendered as a `0x`-prefixed address. */
+const POINTER32_CONFIG: ViewModeConfig = {
+  ...VIEW_MODE_CONFIGS.dword,
+  formatValue: (bytes, littleEndian) => '0x' + VIEW_MODE_CONFIGS.dword.formatValue(bytes, littleEndian),
+  parseValue: (str) => VIEW_MODE_CONFIGS.dword.parseValue(str.replace(/^\s*0x/i, '')),
+  displayWidth: 10,
+};
+
+/**
+ * The unit config for a view mode at a given pointer width: identical to
+ * `VIEW_MODE_CONFIGS[viewMode]` except that `pointer` narrows to 4 bytes for
+ * a 32-bit target. Every consumer that sizes units must go through this.
+ */
+export function viewModeConfig(viewMode: ViewMode, pointerSize = 8): ViewModeConfig {
+  return viewMode === 'pointer' && pointerSize === 4 ? POINTER32_CONFIG : VIEW_MODE_CONFIGS[viewMode];
+}
+
+/** Integer mode with the same unit size as `pointer` at this pointer width. */
+export function pointerIntegerMode(pointerSize = 8): ViewMode {
+  return pointerSize === 4 ? 'dword' : 'qword';
 }
 
 /**
@@ -313,8 +339,8 @@ export const PREFETCH_THRESHOLD = 512;
 /**
  * Calculate the number of units per row based on view mode
  */
-export function getUnitsPerRow(viewMode: ViewMode): number {
-  const config = VIEW_MODE_CONFIGS[viewMode];
+export function getUnitsPerRow(viewMode: ViewMode, pointerSize = 8): number {
+  const config = viewModeConfig(viewMode, pointerSize);
   return Math.floor(BYTES_PER_ROW / config.bytesPerUnit);
 }
 
@@ -324,6 +350,13 @@ export function getUnitsPerRow(viewMode: ViewMode): number {
 const X64_REGISTERS = [
   'rax', 'rbx', 'rcx', 'rdx', 'rsi', 'rdi', 'rbp', 'rsp', 'rip',
   'r8', 'r9', 'r10', 'r11', 'r12', 'r13', 'r14', 'r15', 'eflags'
+];
+
+/**
+ * 32-bit x86 register names (WOW64 targets)
+ */
+const X86_REGISTERS = [
+  'eax', 'ebx', 'ecx', 'edx', 'esi', 'edi', 'ebp', 'esp', 'eip', 'eflags'
 ];
 
 /**
@@ -362,7 +395,7 @@ export interface AddressExpressionResult {
  */
 export function isRegisterName(name: string): boolean {
   const lower = name.toLowerCase();
-  return X64_REGISTERS.includes(lower) || ARM64_REGISTERS.includes(lower);
+  return X64_REGISTERS.includes(lower) || ARM64_REGISTERS.includes(lower) || X86_REGISTERS.includes(lower);
 }
 
 /**
@@ -470,13 +503,13 @@ export function formatBytesAsHex(bytes: Uint8Array): string {
  * - float: treated as dword (4 bytes hex)
  * - pointer: treated as qword (8 bytes hex)
  */
-export function formatBytesAsHexUnits(bytes: Uint8Array, viewMode: ViewMode): string {
+export function formatBytesAsHexUnits(bytes: Uint8Array, viewMode: ViewMode, pointerSize = 8): string {
   // For float/pointer, use the equivalent integer hex format
   let effectiveMode = viewMode;
   if (viewMode === 'float') {
     effectiveMode = 'dword';
   } else if (viewMode === 'pointer') {
-    effectiveMode = 'qword';
+    effectiveMode = pointerIntegerMode(pointerSize);
   }
 
   const config = VIEW_MODE_CONFIGS[effectiveMode];

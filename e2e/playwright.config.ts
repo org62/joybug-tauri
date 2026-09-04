@@ -57,6 +57,7 @@ export default defineConfig({
     "hex-symbols.spec.ts",
     "code-explorer.spec.ts",
     "watchpoint-trace.spec.ts",
+    "wow64.spec.ts",
     "updates.spec.ts",
   ],
 });

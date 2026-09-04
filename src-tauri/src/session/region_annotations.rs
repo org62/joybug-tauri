@@ -10,15 +10,56 @@ use super::types::{DebugSession, RegionAnnotation};
 use joybug_core::protocol::MemoryRegionInfo;
 use std::collections::{HashMap, HashSet};
 
-// 64-bit native structure offsets (identical on x64 and ARM64).
-// NT_TIB at the top of the TEB:
-const TEB_STACK_BASE_OFF: u64 = 0x08;
-// PEB: ProcessHeap (+0x30), NumberOfHeaps (+0xE8, u32), ProcessHeaps (+0xF0) —
-// one read from +0x30 covers all three.
-const PEB_PROCESS_HEAP_OFF: u64 = 0x30;
-const PEB_READ_LEN: usize = 0xC8;
-const PEB_NUMBER_OF_HEAPS_REL: usize = 0xE8 - 0x30;
-const PEB_PROCESS_HEAPS_REL: usize = 0xF0 - 0x30;
+/// TEB/PEB field offsets for one pointer width. The core hands an x86 (WOW64)
+/// session its 32-bit TEBs and PEB, which use the 32-bit layouts; x64 and
+/// ARM64 share the 64-bit ones.
+struct NtLayout {
+    ptr: usize,
+    /// PEB.ProcessHeap; one read from here covers NumberOfHeaps and ProcessHeaps.
+    peb_process_heap_off: u64,
+    peb_number_of_heaps_rel: usize,
+    peb_process_heaps_rel: usize,
+}
+
+const LAYOUT64: NtLayout = NtLayout {
+    ptr: 8,
+    peb_process_heap_off: 0x30,
+    peb_number_of_heaps_rel: 0xE8 - 0x30,
+    peb_process_heaps_rel: 0xF0 - 0x30,
+};
+
+const LAYOUT32: NtLayout = NtLayout {
+    ptr: 4,
+    peb_process_heap_off: 0x18,
+    peb_number_of_heaps_rel: 0x88 - 0x18,
+    peb_process_heaps_rel: 0x90 - 0x18,
+};
+
+impl NtLayout {
+    fn for_arch(arch: joybug_core::interfaces::Architecture) -> &'static NtLayout {
+        if arch == joybug_core::interfaces::Architecture::X86 { &LAYOUT32 } else { &LAYOUT64 }
+    }
+
+    /// NT_TIB.StackBase: the second pointer of the TEB (StackLimit follows it).
+    fn teb_stack_base_off(&self) -> u64 {
+        self.ptr as u64
+    }
+
+    /// Bytes to read from `peb_process_heap_off` to cover ProcessHeaps too.
+    fn peb_read_len(&self) -> usize {
+        self.peb_process_heaps_rel + self.ptr
+    }
+
+    /// The pointer-sized little-endian value at `off`.
+    fn read_ptr(&self, bytes: &[u8], off: usize) -> u64 {
+        if self.ptr == 4 {
+            u32::from_le_bytes(bytes[off..off + 4].try_into().unwrap()) as u64
+        } else {
+            u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap())
+        }
+    }
+}
+
 /// Fixed-address read-only page shared with the kernel (same VA in every process).
 const KUSER_SHARED_DATA: u64 = 0x7FFE0000;
 const MAX_ANNOTATED_THREADS: usize = 256;
@@ -80,6 +121,7 @@ pub(crate) fn annotate_regions(
     regions: &[MemoryRegionInfo],
 ) -> Vec<Vec<RegionAnnotation>> {
     let mut out: Vec<Vec<RegionAnnotation>> = vec![Vec::new(); regions.len()];
+    let layout = NtLayout::for_arch(session.state.lock().unwrap().target_arch());
 
     // Regions come back sorted by base address (VirtualQueryEx walk).
     let find_region = |addr: u64| -> Option<usize> {
@@ -189,9 +231,8 @@ pub(crate) fn annotate_regions(
     }
 
     // --- PEB + heaps ----------------------------------------------------------
-    // Offsets are the native 64-bit layouts. For WoW64 targets the native
-    // structures still exist and are annotated correctly; the 32-bit
-    // TEBs/heaps/stacks are simply not labeled.
+    // For a WOW64 target the core reports the 32-bit PEB/TEBs, which the
+    // 32-bit layout below decodes; the native 64-bit copies are not labeled.
     let peb = session.state.lock().unwrap().region_annotation_cache.peb;
     let peb = peb.or_else(|| {
         let peb = session.get_peb_address(pid).ok()?;
@@ -203,24 +244,20 @@ pub(crate) fn annotate_regions(
             out[i].push(ann("peb", "PEB", Some(peb)));
         }
 
-        if let Ok(bytes) = session.read_memory(pid, peb + PEB_PROCESS_HEAP_OFF, PEB_READ_LEN) {
-            if bytes.len() == PEB_READ_LEN {
-                let default_heap = u64::from_le_bytes(bytes[0..8].try_into().unwrap());
+        if let Ok(bytes) = session.read_memory(pid, peb + layout.peb_process_heap_off, layout.peb_read_len()) {
+            if bytes.len() == layout.peb_read_len() {
+                let default_heap = layout.read_ptr(&bytes, 0);
                 let num_heaps = u32::from_le_bytes(
-                    bytes[PEB_NUMBER_OF_HEAPS_REL..PEB_NUMBER_OF_HEAPS_REL + 4]
+                    bytes[layout.peb_number_of_heaps_rel..layout.peb_number_of_heaps_rel + 4]
                         .try_into()
                         .unwrap(),
                 )
                 .min(MAX_HEAPS);
-                let heaps_ptr = u64::from_le_bytes(
-                    bytes[PEB_PROCESS_HEAPS_REL..PEB_PROCESS_HEAPS_REL + 8]
-                        .try_into()
-                        .unwrap(),
-                );
+                let heaps_ptr = layout.read_ptr(&bytes, layout.peb_process_heaps_rel);
                 if num_heaps > 0 && heaps_ptr != 0 {
-                    if let Ok(arr) = session.read_memory(pid, heaps_ptr, num_heaps as usize * 8) {
-                        for (idx, chunk) in arr.chunks_exact(8).enumerate() {
-                            let heap = u64::from_le_bytes(chunk.try_into().unwrap());
+                    if let Ok(arr) = session.read_memory(pid, heaps_ptr, num_heaps as usize * layout.ptr) {
+                        for (idx, chunk) in arr.chunks_exact(layout.ptr).enumerate() {
+                            let heap = layout.read_ptr(chunk, 0);
                             let label = if heap == default_heap {
                                 format!("Heap #{} (default)", idx)
                             } else {
@@ -252,13 +289,14 @@ pub(crate) fn annotate_regions(
                     let Ok(teb) = session.get_teb_address(pid, t.tid) else {
                         continue;
                     };
-                    // NT_TIB: StackBase at +0x08, StackLimit at +0x10.
-                    match session.read_memory(pid, teb + TEB_STACK_BASE_OFF, 16) {
-                        Ok(bytes) if bytes.len() == 16 => {
+                    // NT_TIB: StackBase then StackLimit, pointer-sized.
+                    let want = layout.ptr * 2;
+                    match session.read_memory(pid, teb + layout.teb_stack_base_off(), want) {
+                        Ok(bytes) if bytes.len() == want => {
                             let info = CachedThreadInfo {
                                 teb,
-                                stack_base: u64::from_le_bytes(bytes[0..8].try_into().unwrap()),
-                                stack_limit: u64::from_le_bytes(bytes[8..16].try_into().unwrap()),
+                                stack_base: layout.read_ptr(&bytes, 0),
+                                stack_limit: layout.read_ptr(&bytes, layout.ptr),
                             };
                             fetched.push((t.tid, info));
                             info

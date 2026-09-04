@@ -4,8 +4,14 @@ use tracing::{debug, error};
 use super::helpers::{find_module_for_address, get_modules_snapshot};
 use super::types::{CallStackData, DebugSession};
 
-/// Converts raw stack frames into the serializable CallStackData format
-pub(crate) fn convert_frames_to_callstack(frames: &[joybug_core::interfaces::CallFrame], modules: &[joybug_core::protocol_io::ModuleInfo]) -> Vec<CallStackData> {
+/// Converts raw stack frames into the serializable CallStackData format.
+/// Addresses render at the target's pointer width (8 hex digits for WOW64).
+pub(crate) fn convert_frames_to_callstack(
+    frames: &[joybug_core::interfaces::CallFrame],
+    modules: &[joybug_core::protocol_io::ModuleInfo],
+    pointer_size: usize,
+) -> Vec<CallStackData> {
+    let w = pointer_size * 2;
     frames.iter().enumerate().map(|(i, frame)| {
         let symbol_info = if let Some(ref sym) = frame.symbol {
             Some(format!("{}!{}+0x{:x}", sym.module_name, sym.symbol_name, sym.offset))
@@ -16,9 +22,9 @@ pub(crate) fn convert_frames_to_callstack(frames: &[joybug_core::interfaces::Cal
         };
         CallStackData {
             frame_number: i,
-            instruction_pointer: format!("0x{:016x}", frame.instruction_pointer),
-            stack_pointer: format!("0x{:016x}", frame.stack_pointer),
-            frame_pointer: format!("0x{:016x}", frame.frame_pointer),
+            instruction_pointer: format!("0x{:0w$x}", frame.instruction_pointer, w = w),
+            stack_pointer: format!("0x{:0w$x}", frame.stack_pointer, w = w),
+            frame_pointer: format!("0x{:0w$x}", frame.frame_pointer, w = w),
             symbol_info,
         }
     }).collect()
@@ -31,7 +37,10 @@ pub(crate) fn process_callstack_request(
     event: &joybug_core::protocol_io::DebugEvent,
 ) {
     let pid = event.pid();
-    let tid = session.state.lock().unwrap().active_tid(event);
+    let (tid, pointer_size) = {
+        let state = session.state.lock().unwrap();
+        (state.active_tid(event), state.target_arch().pointer_size())
+    };
     debug!("📤 Processing callstack request: pid={}, tid={}", pid, tid);
 
     let modules = get_modules_snapshot(session);
@@ -39,7 +48,7 @@ pub(crate) fn process_callstack_request(
         Ok(frames) => {
             debug!("📥 Received {} frames from get_call_stack", frames.len());
 
-            let call_stack = convert_frames_to_callstack(&frames, &modules);
+            let call_stack = convert_frames_to_callstack(&frames, &modules, pointer_size);
 
             if let Some(ref handle) = app_handle_clone {
                 let session_id = {
@@ -103,12 +112,13 @@ pub(crate) fn process_thread_callstack_request(
 ) {
     debug!("📤 Processing thread callstack request: pid={}, tid={}", pid, tid);
 
+    let pointer_size = session.state.lock().unwrap().target_arch().pointer_size();
     let modules = get_modules_snapshot(session);
     match session.get_call_stack(pid, tid) {
         Ok(frames) => {
             debug!("📥 Received {} frames from get_call_stack for tid={}", frames.len(), tid);
 
-            let call_stack = convert_frames_to_callstack(&frames, &modules);
+            let call_stack = convert_frames_to_callstack(&frames, &modules, pointer_size);
 
             if let Some(ref handle) = app_handle_clone {
                 let session_id = {

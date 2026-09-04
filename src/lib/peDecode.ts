@@ -77,9 +77,28 @@ export const SUBSYSTEM_VALUES: EnumValue[] = [
 ];
 
 export const MAGIC_VALUES: EnumValue[] = [
-  { value: 0x10b, label: "PE32" },
+  { value: 0x10b, label: "PE32 (32-bit)" },
   { value: 0x20b, label: "PE32+ (64-bit)" },
 ];
+
+const MAGIC_PE32 = 0x10b;
+
+/** Whether an optional header is the 32-bit (PE32) layout. */
+export function isPe32(oh: { Magic: number }): boolean {
+  return oh.Magic === MAGIC_PE32;
+}
+
+/** Hex digits of a pointer-sized header field (ImageBase, SizeOfStack*, ...). */
+export function ptrHexWidth(oh: { Magic: number }): number {
+  return isPe32(oh) ? 8 : 16;
+}
+
+/** Short "x86 · PE32" style badge text for a file's machine + format. */
+export function archLabel(machine: number, magic: number): string {
+  const m = MACHINE_VALUES.find((v) => v.value === machine)?.label ?? `machine 0x${machine.toString(16)}`;
+  const short = m.replace(/\s*\(.*\)$/, "");
+  return `${short} · ${magic === MAGIC_PE32 ? "PE32" : "PE32+"}`;
+}
 
 // The 16 IMAGE_DIRECTORY_ENTRY_* names, indexed by data-directory slot.
 export const DATA_DIRECTORY_NAMES = [

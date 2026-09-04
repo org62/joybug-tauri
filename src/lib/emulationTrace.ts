@@ -37,7 +37,7 @@ export interface RowTrace {
 }
 
 function pcKeyOf(registers: Record<string, string>): string {
-  return "rip" in registers ? "rip" : "pc" in registers ? "pc" : Object.keys(registers)[0] || "rip";
+  return "rip" in registers ? "rip" : "eip" in registers ? "eip" : "pc" in registers ? "pc" : Object.keys(registers)[0] || "rip";
 }
 
 /**

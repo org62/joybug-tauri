@@ -21,7 +21,8 @@ import { useNavigationChannel } from "@/hooks/useNavigationChannel";
 import { memoryNavigation } from "@/lib/navigationStore";
 import {
   ViewMode,
-  VIEW_MODE_CONFIGS,
+  viewModeConfig,
+  pointerIntegerMode,
   formatAddress,
   formatSignedOffset,
   byteToAscii,
@@ -75,6 +76,9 @@ interface HexViewProps {
   symbolSource?: HexSymbolSource;
   /** Host-known labels (bookmarks) merged into the symbol rows. */
   extraLabels?: HexExtraLabel[];
+  /** Target pointer width in bytes: 4 for a WOW64 process. Sizes `pointer`
+   *  mode units, the dereference stride and the default address width. */
+  pointerSize?: number;
 }
 
 const VIEWMODE_VALUE_TYPE: Record<ViewMode, string> = {
@@ -93,8 +97,12 @@ const MAX_WHEEL_REVEAL = (DEFAULT_CHUNK_SIZE / BYTES_PER_ROW) * ROW_HEIGHT;
 // payload, so an embedded view can't swallow a "Go to Memory" meant for a Memory tab.
 const CLAIM_NOTHING = () => false;
 
-export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}, resolveSymbol, initialAddress, initialViewMode, symbolsRefreshKey, onSetHardwareBreakpoint, onAddBookmark, onFindAccesses, onShowInMemoryRegions, dataSource, addressFormatter, translateGotoInput, followAddress, followKey, navScope, symbolSource, extraLabels }: HexViewProps) {
-  const fmtAddr = addressFormatter ?? formatAddress;
+export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}, resolveSymbol, initialAddress, initialViewMode, symbolsRefreshKey, onSetHardwareBreakpoint, onAddBookmark, onFindAccesses, onShowInMemoryRegions, dataSource, addressFormatter, translateGotoInput, followAddress, followKey, navScope, symbolSource, extraLabels, pointerSize = 8 }: HexViewProps) {
+  // Stable identity: feeds the gutterLabel useCallback below.
+  const fmtAddr = useMemo(
+    () => addressFormatter ?? ((a: bigint) => formatAddress(a, pointerSize * 2)),
+    [addressFormatter, pointerSize],
+  );
   const {
     baseAddress,
     memoryData,
@@ -297,7 +305,7 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
 
     // Navigation keys
     const currentOffset = selectionStart ?? 0;
-    const config = VIEW_MODE_CONFIGS[viewMode];
+    const config = viewModeConfig(viewMode, pointerSize);
     let newOffset = currentOffset;
     let isNavigation = true;
 
@@ -401,7 +409,7 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
   };
 
   // Calculate rows
-  const config = VIEW_MODE_CONFIGS[viewMode];
+  const config = viewModeConfig(viewMode, pointerSize);
   // For pointer mode: 1 pointer per row (8 bytes), otherwise use standard 16 bytes per row
   const bytesPerRow = viewMode === 'pointer' ? config.bytesPerUnit : BYTES_PER_ROW;
   const unitsPerRow = viewMode === 'pointer' ? 1 : Math.floor(BYTES_PER_ROW / config.bytesPerUnit);
@@ -933,7 +941,7 @@ export function HexView({ sessionId, memoryViewId, sessionStatus, registers = {}
                 icon={<Bookmark />}
                 onClick={() => {
                   const address = baseAddress + BigInt(selectionStart);
-                  onAddBookmark(`0x${address.toString(16)}`, VIEWMODE_VALUE_TYPE[viewMode]);
+                  onAddBookmark(`0x${address.toString(16)}`, VIEWMODE_VALUE_TYPE[viewMode === 'pointer' ? pointerIntegerMode(pointerSize) : viewMode]);
                 }}
               >
                 Add to Bookmarks

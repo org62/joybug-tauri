@@ -34,6 +34,10 @@ const HOST_IS_ARM64 = /arm/i.test(process.env.PROCESSOR_IDENTIFIER || "");
 // (its .asm is x64 MASM and its test only checks source rendering, which
 // tolerates emulation); see buildHelloAsm.
 const C_HOST = HOST_IS_ARM64 ? "arm64" : "x64";
+// The WOW64 fixture is deliberately the *other* case: a 32-bit x86 image that
+// the 64-bit debugger runs through the WOW64 layer (wow64cpu on x64, xtajit on
+// ARM64) using the 32-bit register file. Same on both hosts.
+const C_WOW64 = "x86";
 
 /** Find the tool directory (cl.exe / ml64.exe / link.exe) for a Host<h>/<t> pair. */
 function findToolDir(hostArch, targetArch) {
@@ -117,22 +121,26 @@ function main() {
   mkdirSync(BIN, { recursive: true });
 
   // C fixtures build for the host arch so the debugger drives a native target.
-  const compileC = (name) => {
+  // `outName` lets one source build twice (hello_c → hello_c32 for WOW64).
+  const compileC = (name, arch = C_HOST, outName = name) => {
     const src = path.join(SRC, `${name}.c`);
-    const exe = path.join(BIN, `${name}.exe`);
-    const pdb = path.join(BIN, `${name}.pdb`);
-    const stamp = path.join(BIN, `${name}.arch`);
-    if (archStale([exe, pdb], [src], stamp, C_HOST)) {
-      console.log(`[fixtures] compiling ${name}.exe (${C_HOST})`);
-      runTool(C_HOST, "cl.exe", ["/nologo", "/Od", "/Zi", `/Fe:${exe}`, `/Fd:${pdb}`, `/Fo:${BIN}\\`, src, "/link", "/DEBUG"]);
-      writeFileSync(stamp, C_HOST);
+    const exe = path.join(BIN, `${outName}.exe`);
+    const pdb = path.join(BIN, `${outName}.pdb`);
+    const obj = path.join(BIN, `${outName}.obj`);
+    const stamp = path.join(BIN, `${outName}.arch`);
+    if (archStale([exe, pdb], [src], stamp, arch)) {
+      console.log(`[fixtures] compiling ${outName}.exe (${arch})`);
+      runTool(arch, "cl.exe", ["/nologo", "/Od", "/Zi", `/Fe:${exe}`, `/Fd:${pdb}`, `/Fo:${obj}`, src, "/link", "/DEBUG"]);
+      writeFileSync(stamp, arch);
     } else {
-      console.log(`[fixtures] ${name}.exe up to date (${C_HOST})`);
+      console.log(`[fixtures] ${outName}.exe up to date (${arch})`);
     }
   };
 
   compileC("hello_c");
   compileC("watch_c");
+  // 32-bit build of the same program for the WOW64 spec.
+  compileC("hello_c", C_WOW64, "hello_c32");
 
   // --- hello_asm.exe (x64 only) ---
   // The .asm is x64 MASM (ml64). On an ARM64 host this builds an x64 image that

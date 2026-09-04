@@ -64,7 +64,7 @@ export const OpenPeDialog: React.FC<OpenPeDialogProps> = ({ open, onOpenChange, 
           </div>
           <div className="space-y-1">
             <Label className="text-xs">Load base (optional)</Label>
-            <Input value={base} onChange={(e) => setBase(e.target.value)} placeholder="default: file ImageBase (e.g. 0x140000000)" className="font-mono text-xs" />
+            <Input value={base} onChange={(e) => setBase(e.target.value)} placeholder="default: file ImageBase (e.g. 0x140000000, 0x400000 for 32-bit)" className="font-mono text-xs" />
           </div>
           <div className="space-y-1">
             <Label className="text-xs">PDB (optional)</Label>

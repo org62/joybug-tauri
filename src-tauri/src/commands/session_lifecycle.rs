@@ -426,18 +426,21 @@ pub fn start_debug_session(
             // non-invasively — one temp connection for both — so modules, threads,
             // symbols, disassembly, PE info and call stacks are available without
             // attaching a debugger.
-            let pid = {
+            let (pid, arch) = {
                 let mut client = connect_temp_client(&server_url)?;
                 let pid = resolve_open_pid(&mut client, stored_pid, &launch_command)?;
                 client
                     .open_process(pid)
                     .map_err(|e| Error::ConnectionFailed(format!("Failed to open process {}: {}", pid, e)))?;
-                pid
+                // X86 for a WOW64 target; there is no debug event to learn it from.
+                let arch = client.get_process_architecture(pid).ok();
+                (pid, arch)
             };
             {
                 let mut state = session_state.lock().unwrap();
                 state.attach_pid = Some(pid);
                 state.open_pid = Some(pid);
+                state.arch = arch;
                 state.status = SessionStatusUI::Open;
             }
             emit_session_event(&session_state, &app_handle);

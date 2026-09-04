@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { useSessionContext } from '@/contexts/SessionContext';
-import { RegisterView, SerializableThreadContext, XmmFormat, X64_REGISTERS, ARM64_REGISTERS } from '@/components/RegisterView';
+import { RegisterView, SerializableThreadContext, XmmFormat, X64_REGISTERS, ARM64_REGISTERS, X86_REGISTERS, registerDefsFor } from '@/components/RegisterView';
 import { RegisterEditDialog } from '@/components/RegisterEditDialog';
 import { useRegisterDereference } from '@/hooks/useRegisterDereference';
 import { useLocalStorageState } from '@/hooks/useLocalStorageState';
@@ -24,8 +24,6 @@ function computeChangedRegisters(
   }
   return changed;
 }
-
-const REGISTERS_32BIT = new Set(['eflags', 'cpsr']);
 
 interface EditingRegister {
   name: string;
@@ -83,7 +81,7 @@ export const ContextRegisterView = () => {
   // Build RegisterContext from thread context, deriving fields from RegisterDef arrays
   const registers: RegisterContext = useMemo(() => {
     if (!context) return {};
-    const defs = context.arch === 'X64' ? X64_REGISTERS : context.arch === 'Arm64' ? ARM64_REGISTERS : [];
+    const defs = registerDefsFor(context.arch);
     const ctx = context as unknown as Record<string, string>;
     return Object.fromEntries(defs.map(d => [d.field, ctx[d.field]]));
   }, [context]);
@@ -93,10 +91,12 @@ export const ContextRegisterView = () => {
   // Open dialog on double-click
   const handleRequestEdit = useCallback((field: string, currentValue: string) => {
     // Look up display name from register defs (handles FP/LR aliases on ARM64)
-    const allDefs = [...X64_REGISTERS, ...ARM64_REGISTERS];
+    const allDefs = [...X64_REGISTERS, ...ARM64_REGISTERS, ...X86_REGISTERS];
     const def = allDefs.find(d => d.field === field);
     const name = def?.name ?? field.toUpperCase();
-    const hexWidth = REGISTERS_32BIT.has(field) ? 8 : 16;
+    // The backend zero-pads every value to its register width (8 hex digits
+    // for 32-bit registers — eflags, cpsr, the whole x86 file — else 16).
+    const hexWidth = currentValue.replace(/^0x/i, '').length || 16;
     setEditingRegister({ name, field, value: currentValue, hexWidth });
     setDialogOpen(true);
   }, []);

@@ -48,7 +48,8 @@ export function SettingsDebuggerHiding({ searchQuery }: SettingsDebuggerHidingPr
       <p className="text-xs text-muted-foreground px-2 mb-2">
         Patches the target's PEB on process start so anti-debug checks (IsDebuggerPresent,
         NtGlobalFlag, heap flags, startup info, OS build number) see a clean value.
-        64-bit native targets only; WOW64 is skipped automatically.
+        Applies to x64, ARM64 and 32-bit (WOW64) targets; a WOW64 process has both
+        its PEBs patched.
       </p>
       <div>
         {parentVisible && (

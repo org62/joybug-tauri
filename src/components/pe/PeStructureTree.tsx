@@ -14,7 +14,7 @@ import {
   DLL_CHARACTERISTICS_FLAGS, SECTION_CHARACTERISTICS_FLAGS, FILE_CHARACTERISTICS_FLAGS,
   MACHINE_VALUES, SUBSYSTEM_VALUES, MAGIC_VALUES, DATA_DIRECTORY_NAMES,
   EnumValue, FlagBit, decodeFlags, decodeSectionName, flattenImports, formatTimestamp,
-  getExportForwardTarget, getExportRva, hex, hexBig, visibleImportRows,
+  getExportForwardTarget, getExportRva, hex, hexBig, ptrHexWidth, visibleImportRows,
 } from "@/lib/peDecode";
 
 /** Narrowest width the tree lays out at; below it the hosting PanelBody
@@ -135,8 +135,10 @@ const LeafRow: React.FC<{
 
 type NumFormat = "hex" | "hexbig" | "dec";
 
-const fmtNum = (v: number, format: NumFormat): string =>
-  format === "dec" ? String(v) : format === "hexbig" ? hexBig(v) : hex(v);
+// `width` sizes "hexbig" fields to the image's pointer width (8 digits for
+// PE32, 16 for PE32+) so a 32-bit ImageBase doesn't render with 8 leading zeros.
+const fmtNum = (v: number, format: NumFormat, width?: number): string =>
+  format === "dec" ? String(v) : format === "hexbig" ? hexBig(v, width) : hex(v);
 
 // Parse a hex (0x…) or decimal integer; null if not a valid non-negative number.
 const parseNum = (text: string): number | null => {
@@ -186,12 +188,12 @@ const EditableLeaf: React.FC<{
 // A numeric header field: shows the formatted value, double-click to edit inline.
 const NumLeaf: React.FC<{
   label: string; depth: number; field: string; value: number; format: NumFormat;
-  display?: React.ReactNode; onSetField?: SetField;
-}> = ({ label, depth, field, value, format, display, onSetField }) => (
+  width?: number; display?: React.ReactNode; onSetField?: SetField;
+}> = ({ label, depth, field, value, format, width, display, onSetField }) => (
   <EditableLeaf
     label={label} depth={depth} field={field}
-    display={display ?? fmtNum(value, format)}
-    initialText={fmtNum(value, format)}
+    display={display ?? fmtNum(value, format, width)}
+    initialText={fmtNum(value, format, width)}
     inputClassName="w-40 font-mono"
     onCommit={onSetField && ((text) => {
       const n = parseNum(text);
@@ -309,6 +311,7 @@ const PeStructureTreeImpl: React.FC<PeStructureTreeProps> = ({
   const dos = info.dos_header;
   const fh = info.nt_headers.FileHeader;
   const oh = info.nt_headers.OptionalHeader;
+  const ptrWidth = ptrHexWidth(oh);
 
   return (
     <TreeNavContext.Provider value={nav}>
@@ -349,7 +352,10 @@ const PeStructureTreeImpl: React.FC<PeStructureTreeProps> = ({
           <NumLeaf label="SizeOfUninitializedData" depth={2} field="opt.SizeOfUninitializedData" value={oh.SizeOfUninitializedData} format="hex" onSetField={onSetField} />
           <LeafRow label="AddressOfEntryPoint" depth={2} field="opt.AddressOfEntryPoint"><Addr rva={oh.AddressOfEntryPoint} /></LeafRow>
           <LeafRow label="BaseOfCode" depth={2} field="opt.BaseOfCode"><Addr rva={oh.BaseOfCode} /></LeafRow>
-          <NumLeaf label="ImageBase" depth={2} field="opt.ImageBase" value={oh.ImageBase} format="hexbig" onSetField={onSetField} />
+          {oh.BaseOfData != null && (
+            <LeafRow label="BaseOfData" depth={2} field="opt.BaseOfData"><Addr rva={oh.BaseOfData} /></LeafRow>
+          )}
+          <NumLeaf label="ImageBase" depth={2} field="opt.ImageBase" value={oh.ImageBase} format="hexbig" width={ptrWidth} onSetField={onSetField} />
           <NumLeaf label="SectionAlignment" depth={2} field="opt.SectionAlignment" value={oh.SectionAlignment} format="hex" onSetField={onSetField} />
           <NumLeaf label="FileAlignment" depth={2} field="opt.FileAlignment" value={oh.FileAlignment} format="hex" onSetField={onSetField} />
           <VersionLeaf label="OSVersion" depth={2} majorField="opt.MajorOperatingSystemVersion" minorField="opt.MinorOperatingSystemVersion" major={oh.MajorOperatingSystemVersion} minor={oh.MinorOperatingSystemVersion} onSetField={onSetField} />
@@ -360,10 +366,10 @@ const PeStructureTreeImpl: React.FC<PeStructureTreeProps> = ({
           <NumLeaf label="CheckSum" depth={2} field="opt.CheckSum" value={oh.CheckSum} format="hex" onSetField={onSetField} />
           <EnumLeaf label="Subsystem" depth={2} field="opt.Subsystem" value={oh.Subsystem} values={SUBSYSTEM_VALUES} onSetField={onSetField} />
           <FlagsEditor id="opt.dllchars" label="DllCharacteristics" depth={2} value={oh.DllCharacteristics} flags={DLL_CHARACTERISTICS_FLAGS} editableField="opt.DllCharacteristics" onSetField={onSetField} />
-          <NumLeaf label="SizeOfStackReserve" depth={2} field="opt.SizeOfStackReserve" value={oh.SizeOfStackReserve} format="hexbig" onSetField={onSetField} />
-          <NumLeaf label="SizeOfStackCommit" depth={2} field="opt.SizeOfStackCommit" value={oh.SizeOfStackCommit} format="hexbig" onSetField={onSetField} />
-          <NumLeaf label="SizeOfHeapReserve" depth={2} field="opt.SizeOfHeapReserve" value={oh.SizeOfHeapReserve} format="hexbig" onSetField={onSetField} />
-          <NumLeaf label="SizeOfHeapCommit" depth={2} field="opt.SizeOfHeapCommit" value={oh.SizeOfHeapCommit} format="hexbig" onSetField={onSetField} />
+          <NumLeaf label="SizeOfStackReserve" depth={2} field="opt.SizeOfStackReserve" value={oh.SizeOfStackReserve} format="hexbig" width={ptrWidth} onSetField={onSetField} />
+          <NumLeaf label="SizeOfStackCommit" depth={2} field="opt.SizeOfStackCommit" value={oh.SizeOfStackCommit} format="hexbig" width={ptrWidth} onSetField={onSetField} />
+          <NumLeaf label="SizeOfHeapReserve" depth={2} field="opt.SizeOfHeapReserve" value={oh.SizeOfHeapReserve} format="hexbig" width={ptrWidth} onSetField={onSetField} />
+          <NumLeaf label="SizeOfHeapCommit" depth={2} field="opt.SizeOfHeapCommit" value={oh.SizeOfHeapCommit} format="hexbig" width={ptrWidth} onSetField={onSetField} />
           <NumLeaf label="NumberOfRvaAndSizes" depth={2} field="opt.NumberOfRvaAndSizes" value={oh.NumberOfRvaAndSizes} format="dec" onSetField={onSetField} />
 
           {/* Data Directories */}
@@ -462,6 +468,7 @@ const ImportsGroup: React.FC<GroupState & { info: ModuleExtraInfo }> =
       <VirtualGroup id="imports" label="Imports" count={entryCount} items={visibleRows} scrollRef={scrollRef} renderRow={(row) =>
         row.kind === "dll" ? (
           <div
+            data-testid="pe-import-dll"
             className="flex items-center gap-1 text-xs font-medium bg-muted/30 hover:bg-muted/50 px-1 cursor-pointer select-none"
             style={{ height: ROW_H }}
             onClick={() => toggleDll(row.dllIndex)}
@@ -471,7 +478,7 @@ const ImportsGroup: React.FC<GroupState & { info: ModuleExtraInfo }> =
             <span className="text-muted-foreground font-normal">({row.count})</span>
           </div>
         ) : (
-          <div className="flex items-center gap-2 text-xs pl-3" style={{ height: ROW_H }}>
+          <div data-testid="pe-import-row" className="flex items-center gap-2 text-xs pl-3" style={{ height: ROW_H }}>
             {row.rva ? <Addr rva={row.rva} /> : <span className="text-muted-foreground">—</span>}
             <TruncatedSymbol text={row.text} className="flex-1" />
           </div>

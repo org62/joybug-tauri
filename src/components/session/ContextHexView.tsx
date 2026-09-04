@@ -3,7 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { useSessionContext, Symbol } from '@/contexts/SessionContext';
 import { HexView } from '@/components/HexView';
 import { ViewMode } from '@/lib/hexUtils';
-import { contextToRegisters } from '@/lib/sessionHelpers';
+import { contextToRegisters, pointerSizeOf } from '@/lib/sessionHelpers';
 import { useSymbolResolver } from '@/hooks/useSymbolResolver';
 import { HexExtraLabel, HexSymbolSource } from '@/hooks/useHexSymbols';
 
@@ -29,6 +29,8 @@ export const ContextHexView = ({ memoryViewId, initialAddress, initialViewMode, 
 
   // Extract registers from thread context
   const registers = useMemo(() => contextToRegisters(context), [context]);
+  // 4 for a WOW64 target: pointer mode shows 32-bit slots, addresses 8 digits.
+  const pointerSize = pointerSizeOf(sessionData?.session);
 
   const resolveSymbolFn = useSymbolResolver();
 
@@ -78,6 +80,7 @@ export const ContextHexView = ({ memoryViewId, initialAddress, initialViewMode, 
       symbolsRefreshKey={sessionData.symbolsRefreshKey}
       initialAddress={initialAddress}
       initialViewMode={initialViewMode}
+      pointerSize={pointerSize}
       followAddress={followAddress}
       followKey={followKey}
       navScope={navScope}

@@ -4,6 +4,96 @@ use tracing::{debug, error, info};
 use super::runner::emit_session_event;
 use super::types::DebugSession;
 
+/// Writes `value` into the register named `name` of a raw thread context.
+/// Returns `false` when the name is not a register of that register file.
+/// Dispatch is per register file (a WOW64 thread on any host is x86), not
+/// per host architecture.
+fn write_register(ctx: &mut joybug_core::protocol::ThreadContext, name: &str, value: u64) -> bool {
+    match ctx {
+        joybug_core::protocol::ThreadContext::Wow64RawContext(c) => {
+            let v32 = value as u32;
+            match name {
+                "eax" => c.Eax = v32,
+                "ebx" => c.Ebx = v32,
+                "ecx" => c.Ecx = v32,
+                "edx" => c.Edx = v32,
+                "esi" => c.Esi = v32,
+                "edi" => c.Edi = v32,
+                "ebp" => c.Ebp = v32,
+                "esp" => c.Esp = v32,
+                "eip" => c.Eip = v32,
+                "eflags" => c.EFlags = v32,
+                _ => return false,
+            }
+        }
+        #[cfg(target_arch = "x86_64")]
+        joybug_core::protocol::ThreadContext::Win32RawContext(c) => match name {
+            "rax" => c.Rax = value,
+            "rbx" => c.Rbx = value,
+            "rcx" => c.Rcx = value,
+            "rdx" => c.Rdx = value,
+            "rsi" => c.Rsi = value,
+            "rdi" => c.Rdi = value,
+            "rbp" => c.Rbp = value,
+            "rsp" => c.Rsp = value,
+            "rip" => c.Rip = value,
+            "r8" => c.R8 = value,
+            "r9" => c.R9 = value,
+            "r10" => c.R10 = value,
+            "r11" => c.R11 = value,
+            "r12" => c.R12 = value,
+            "r13" => c.R13 = value,
+            "r14" => c.R14 = value,
+            "r15" => c.R15 = value,
+            "eflags" => c.EFlags = value as u32,
+            _ => return false,
+        },
+        #[cfg(target_arch = "aarch64")]
+        joybug_core::protocol::ThreadContext::Win32RawContext(c) => unsafe {
+            match name {
+                "x0" => c.Anonymous.X[0] = value,
+                "x1" => c.Anonymous.X[1] = value,
+                "x2" => c.Anonymous.X[2] = value,
+                "x3" => c.Anonymous.X[3] = value,
+                "x4" => c.Anonymous.X[4] = value,
+                "x5" => c.Anonymous.X[5] = value,
+                "x6" => c.Anonymous.X[6] = value,
+                "x7" => c.Anonymous.X[7] = value,
+                "x8" => c.Anonymous.X[8] = value,
+                "x9" => c.Anonymous.X[9] = value,
+                "x10" => c.Anonymous.X[10] = value,
+                "x11" => c.Anonymous.X[11] = value,
+                "x12" => c.Anonymous.X[12] = value,
+                "x13" => c.Anonymous.X[13] = value,
+                "x14" => c.Anonymous.X[14] = value,
+                "x15" => c.Anonymous.X[15] = value,
+                "x16" => c.Anonymous.X[16] = value,
+                "x17" => c.Anonymous.X[17] = value,
+                "x18" => c.Anonymous.X[18] = value,
+                "x19" => c.Anonymous.X[19] = value,
+                "x20" => c.Anonymous.X[20] = value,
+                "x21" => c.Anonymous.X[21] = value,
+                "x22" => c.Anonymous.X[22] = value,
+                "x23" => c.Anonymous.X[23] = value,
+                "x24" => c.Anonymous.X[24] = value,
+                "x25" => c.Anonymous.X[25] = value,
+                "x26" => c.Anonymous.X[26] = value,
+                "x27" => c.Anonymous.X[27] = value,
+                "x28" => c.Anonymous.X[28] = value,
+                "x29" => c.Anonymous.Anonymous.Fp = value,
+                "x30" => c.Anonymous.Anonymous.Lr = value,
+                "sp" => c.Sp = value,
+                "pc" => c.Pc = value,
+                "cpsr" => c.Cpsr = value as u32,
+                _ => return false,
+            }
+        },
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+        joybug_core::protocol::ThreadContext::Win32RawContext(_) => return false,
+    }
+    true
+}
+
 /// Processes a set register request: modifies one register in the thread context, writes it back,
 /// then re-reads and broadcasts the updated state.
 pub(crate) fn process_set_register(
@@ -19,7 +109,7 @@ pub(crate) fn process_set_register(
 
     // 1. Get current raw thread context
     let mut ctx = match session.get_thread_context(pid, tid) {
-        Ok(joybug_core::protocol::ThreadContext::Win32RawContext(c)) => c,
+        Ok(c) => c,
         Err(e) => {
             error!("Failed to get thread context for set register: {}", e);
             if let Some(ref handle) = app_handle_clone {
@@ -29,90 +119,17 @@ pub(crate) fn process_set_register(
         }
     };
 
-    // 2. Match register name and set value
-    #[cfg(target_arch = "x86_64")]
-    {
-        match register_name {
-            "rax" => ctx.Rax = value,
-            "rbx" => ctx.Rbx = value,
-            "rcx" => ctx.Rcx = value,
-            "rdx" => ctx.Rdx = value,
-            "rsi" => ctx.Rsi = value,
-            "rdi" => ctx.Rdi = value,
-            "rbp" => ctx.Rbp = value,
-            "rsp" => ctx.Rsp = value,
-            "rip" => ctx.Rip = value,
-            "r8" => ctx.R8 = value,
-            "r9" => ctx.R9 = value,
-            "r10" => ctx.R10 = value,
-            "r11" => ctx.R11 = value,
-            "r12" => ctx.R12 = value,
-            "r13" => ctx.R13 = value,
-            "r14" => ctx.R14 = value,
-            "r15" => ctx.R15 = value,
-            "eflags" => ctx.EFlags = value as u32,
-            _ => {
-                error!("Unknown x64 register: {}", register_name);
-                if let Some(ref handle) = app_handle_clone {
-                    crate::ui_logger::toast_error(handle, &format!("Unknown register: {}", register_name));
-                }
-                return;
-            }
+    // 2. Set the register
+    if !write_register(&mut ctx, register_name, value) {
+        error!("Unknown register: {}", register_name);
+        if let Some(ref handle) = app_handle_clone {
+            crate::ui_logger::toast_error(handle, &format!("Unknown register: {}", register_name));
         }
-    }
-
-    #[cfg(target_arch = "aarch64")]
-    {
-        unsafe {
-            match register_name {
-                "x0" => ctx.Anonymous.X[0] = value,
-                "x1" => ctx.Anonymous.X[1] = value,
-                "x2" => ctx.Anonymous.X[2] = value,
-                "x3" => ctx.Anonymous.X[3] = value,
-                "x4" => ctx.Anonymous.X[4] = value,
-                "x5" => ctx.Anonymous.X[5] = value,
-                "x6" => ctx.Anonymous.X[6] = value,
-                "x7" => ctx.Anonymous.X[7] = value,
-                "x8" => ctx.Anonymous.X[8] = value,
-                "x9" => ctx.Anonymous.X[9] = value,
-                "x10" => ctx.Anonymous.X[10] = value,
-                "x11" => ctx.Anonymous.X[11] = value,
-                "x12" => ctx.Anonymous.X[12] = value,
-                "x13" => ctx.Anonymous.X[13] = value,
-                "x14" => ctx.Anonymous.X[14] = value,
-                "x15" => ctx.Anonymous.X[15] = value,
-                "x16" => ctx.Anonymous.X[16] = value,
-                "x17" => ctx.Anonymous.X[17] = value,
-                "x18" => ctx.Anonymous.X[18] = value,
-                "x19" => ctx.Anonymous.X[19] = value,
-                "x20" => ctx.Anonymous.X[20] = value,
-                "x21" => ctx.Anonymous.X[21] = value,
-                "x22" => ctx.Anonymous.X[22] = value,
-                "x23" => ctx.Anonymous.X[23] = value,
-                "x24" => ctx.Anonymous.X[24] = value,
-                "x25" => ctx.Anonymous.X[25] = value,
-                "x26" => ctx.Anonymous.X[26] = value,
-                "x27" => ctx.Anonymous.X[27] = value,
-                "x28" => ctx.Anonymous.X[28] = value,
-                "x29" => ctx.Anonymous.Anonymous.Fp = value,
-                "x30" => ctx.Anonymous.Anonymous.Lr = value,
-                "sp" => ctx.Sp = value,
-                "pc" => ctx.Pc = value,
-                "cpsr" => ctx.Cpsr = value as u32,
-                _ => {
-                    error!("Unknown ARM64 register: {}", register_name);
-                    if let Some(ref handle) = app_handle_clone {
-                        crate::ui_logger::toast_error(handle, &format!("Unknown register: {}", register_name));
-                    }
-                    return;
-                }
-            }
-        }
+        return;
     }
 
     // 3. Write modified context back
-    let write_ctx = joybug_core::protocol::ThreadContext::Win32RawContext(ctx);
-    if let Err(e) = session.set_thread_context(pid, tid, write_ctx) {
+    if let Err(e) = session.set_thread_context(pid, tid, ctx) {
         error!("Failed to set thread context: {}", e);
         if let Some(ref handle) = app_handle_clone {
             crate::ui_logger::toast_error(handle, &format!("Failed to set register: {}", e));
