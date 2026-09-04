@@ -115,15 +115,43 @@ async function globalSetup(): Promise<void> {
 
   process.env.TAURI_PID = String(tauri.pid);
 
+  // Keep the tail of the app's output: when it never opens the CDP port the
+  // bare timeout says nothing, and a crash without a Rust panic (an access
+  // violation, a failed DLL load) prints no ERROR line to forward.
+  const outputTail: string[] = [];
+  const appExit: { value: { code: number | null; signal: NodeJS.Signals | null } | null } = { value: null };
+  const keepTail = (data: Buffer) => {
+    for (const line of data.toString().split(/\r?\n/)) {
+      if (!line.trim()) continue;
+      outputTail.push(line);
+      if (outputTail.length > 40) outputTail.shift();
+    }
+  };
+  tauri.stdout?.on("data", keepTail);
   tauri.stderr?.on("data", (data) => {
+    keepTail(data);
     const msg = data.toString();
     if (msg.includes("ERROR") || msg.includes("panic")) {
       console.error("[tauri]", msg.trim());
     }
   });
+  tauri.on("exit", (code, signal) => {
+    appExit.value = { code, signal };
+  });
 
   console.log("Waiting for CDP endpoint...");
-  await waitForUrl(CDP_VERSION_URL, 30_000);
+  try {
+    await waitForUrl(CDP_VERSION_URL, 30_000);
+  } catch (e) {
+    const exit = appExit.value;
+    const state = exit
+      ? `exited before opening the port (code ${exit.code}, signal ${exit.signal})`
+      : `still running (pid ${tauri.pid}) but the port never opened — another process may hold ` +
+        `port ${CDP_PORT}, or WebView2 attached to a stale instance sharing its user-data folder`;
+    console.error(`[tauri] ${state}`);
+    console.error(outputTail.length ? `[tauri] last output:\n${outputTail.join("\n")}` : "[tauri] no output captured");
+    throw e;
+  }
   console.log("CDP endpoint ready.");
 
   // Wait for the app to actually mount before handing over to the tests. On a

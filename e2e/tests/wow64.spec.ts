@@ -20,6 +20,9 @@ import {
 } from "../helpers/wait-helpers";
 import { HEX_ADDRESS, hexPanelFor } from "../helpers/selectors";
 
+/** The 32-bit ntdll: SysWOW64 on an x64 host, the CHPE build in SyChpe32 on ARM64. */
+const NTDLL32_RE = /\\(syswow64|sychpe32)\\ntdll\.dll$/i;
+
 /**
  * A 32-bit (WOW64) target end to end. The fixture is the 32-bit build of
  * hello_c; the debugger is the same 64-bit binary as everywhere else, so
@@ -48,10 +51,11 @@ test.describe("WOW64 (32-bit) target", () => {
       expect(contextSp(ctx)).toMatch(/^0x[0-9a-f]{8}$/);
       await expect(page.getByTestId("session-arch")).toHaveText("x86 (WOW64)");
 
-      // Both ntdlls are mapped; the initial break is the SysWOW64 one's, not
-      // the 64-bit loader's.
+      // Both ntdlls are mapped; the initial break is the 32-bit one's, not
+      // the 64-bit loader's. An x64 host maps it from SysWOW64; an ARM64 host's
+      // x86 emulation layer maps the CHPE build from SyChpe32 instead.
       const mods = (await invoke(page, "get_session_modules", { sessionId })) as Array<{ path: string; base_address: string; size: number }>;
-      const ntdll32 = mods.find((m) => /\\syswow64\\ntdll\.dll$/i.test(m.path));
+      const ntdll32 = mods.find((m) => NTDLL32_RE.test(m.path));
       expect(ntdll32, `modules: ${mods.map((m) => m.path).join(", ")}`).toBeTruthy();
       expect(mods.some((m) => /\\system32\\ntdll\.dll$/i.test(m.path))).toBe(true);
       const ntdll32Base = Number(BigInt(ntdll32!.base_address));
@@ -76,7 +80,7 @@ test.describe("WOW64 (32-bit) target", () => {
       // --- Symbols resolve into the 32-bit ntdll -----------------------------
       // The same `ntdll.dll` basename is mapped twice; a 32-bit session must
       // hand out the SysWOW64 image's addresses (all below 4 GB).
-      await waitForModuleSymbols(page, sessionId, "syswow64\\ntdll", { accept: ["loaded", "exports_only"], minSymbolCount: 1, timeout: 60_000 });
+      await waitForModuleSymbols(page, sessionId, ntdll32!.path, { accept: ["loaded", "exports_only"], minSymbolCount: 1, timeout: 60_000 });
       const ntdllSyms = (await invoke(page, "get_symbols_in_range", {
         sessionId,
         start: ntdll32!.base_address,

@@ -327,7 +327,15 @@ export function AssemblyView({ sessionId, isPaused, canLoad, address, registers,
         (r) => r.kind === 'insn' && r.insn.address.toUpperCase() === key
       );
       if (index >= 0) {
-        virtualizerRef.current?.scrollToIndex(index, { align: 'center' });
+        // Center against the live viewport height, not the virtualizer's cached
+        // rect: that rect is measured once at mount and then only refreshed by
+        // its ResizeObserver, so a centering that runs before the observer has
+        // caught up with the pane's real size (a remount into a dock layout, a
+        // slow frame under load) would "center" against a zero or stale height
+        // and land the row at the top instead. Rows are fixed-height, so the
+        // row's offset is its index times the row height.
+        const offset = index * ASSEMBLY_ROW_HEIGHT - (el.clientHeight - ASSEMBLY_ROW_HEIGHT) / 2;
+        virtualizerRef.current?.scrollToOffset(Math.max(0, offset), { align: 'start' });
       }
     };
     applyOverFrames(apply);
