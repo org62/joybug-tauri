@@ -60,6 +60,7 @@ pub fn provision(
         etw: EtwCaptureSpec {
             ops: settings.etw.capture.ops.clone(),
             callstacks: settings.etw.callstacks,
+            ..Default::default()
         },
         symbol_offline: symbol_cfg.offline,
         launch_command: launch_command.to_string(),

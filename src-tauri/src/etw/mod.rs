@@ -51,9 +51,10 @@ fn control_path(session_id: &str) -> Result<PathBuf, String> {
 }
 
 /// The staged host tracer exe path, or an error if this build has no guest bins.
-/// The executable that hosts the ETW collector: this one. `guest_mode` dispatches
-/// into the collector when it sees the tracer's flags, so host tracing re-launches
-/// the app rather than a separate binary — nothing to stage or keep in step.
+/// The executable that hosts the ETW collector: this one. `main` dispatches
+/// through `joybug_core::guest_roles` into the collector when it sees the
+/// tracer's flags, so host tracing re-launches the app rather than a separate
+/// binary — nothing to stage or keep in step.
 fn tracer_exe() -> Result<PathBuf, String> {
     std::env::current_exe().map_err(|e| format!("locate the running exe: {e}"))
 }
@@ -66,7 +67,7 @@ fn host_tracer_config(session_id: &str, etw: &EtwConfig) -> Result<HostTracerCon
         tracer_exe: tracer_exe()?,
         out_path: host_events_path(session_id)?,
         session_name: format!("etw-{session_id}"),
-        capture: EtwCaptureSpec { ops: etw.capture.ops.clone(), callstacks: etw.callstacks },
+        capture: EtwCaptureSpec { ops: etw.capture.ops.clone(), callstacks: etw.callstacks, ..Default::default() },
     })
 }
 

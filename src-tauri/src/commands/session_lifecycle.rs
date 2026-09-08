@@ -612,7 +612,7 @@ fn provision_sandbox_and_start(
             thread::spawn(move || {
                 // Blocks for the target's whole lifetime. ExistingLogin so the
                 // target is visible on the desktop the viewer shows.
-                crate::sandbox::exec_blocking(
+                let _ = crate::sandbox::exec_blocking(
                     &sandbox_id,
                     &tracer_cmd,
                     crate::sandbox::RunAs::ExistingLogin,

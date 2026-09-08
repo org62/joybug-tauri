@@ -7,7 +7,6 @@ mod data_dir;
 mod error;
 mod etw;
 mod events;
-pub mod guest_mode;
 mod jit;
 mod patch_store;
 mod symbol_store;

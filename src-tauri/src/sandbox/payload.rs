@@ -1,13 +1,14 @@
 //! Staging the guest binary for a Windows Sandbox session.
 //!
 //! There is only one: **this exe**. It already links joybug-core and the ETW
-//! collector, and [`crate::guest_mode`] turns it into whichever the guest needs
-//! based on the flags it is launched with — so staging is a file copy, not an
-//! extraction, and nothing has to be embedded, built separately, or kept in
-//! version step with the app.
+//! collector, and `joybug_core::guest_roles` turns it into whichever the guest
+//! needs based on the flags it is launched with — so staging is a file copy,
+//! not an extraction, and nothing has to be embedded, built separately, or kept
+//! in version step with the app.
 //!
-//! The copy goes into a content-addressed folder under the data dir, which is
-//! then shared read-only into the guest along with the VC runtime it needs.
+//! The copy goes into a content-addressed folder under the data dir. Core's
+//! `provision` snapshots that folder per session (adding the VC runtime the exe
+//! needs) and shares the snapshot read-only into the guest.
 
 use std::path::PathBuf;
 
@@ -15,9 +16,9 @@ use std::path::PathBuf;
 /// in-guest command lines against this name (see `ProvisionConfig::guest_exe`).
 pub const GUEST_EXE: &str = "joybug.exe";
 
-/// Stage the guest binary and the VC runtime into a content-addressed folder
-/// under the data dir, returning its path. Idempotent: staging is skipped when
-/// the folder already holds them.
+/// Stage the guest binary into a content-addressed folder under the data dir,
+/// returning its path. Idempotent: staging is skipped when the folder already
+/// holds it.
 pub fn stage() -> Result<PathBuf, String> {
     let exe = std::env::current_exe().map_err(|e| format!("locate the running exe: {e}"))?;
 
@@ -41,7 +42,6 @@ pub fn stage() -> Result<PathBuf, String> {
             .map_err(|e| format!("finalize {GUEST_EXE}: {e}"))?;
     }
 
-    stage_vc_runtime(&dir);
     Ok(dir)
 }
 
@@ -57,24 +57,4 @@ fn exe_key(exe: &std::path::Path) -> Result<String, String> {
         .map(|d| d.as_secs())
         .unwrap_or(0);
     Ok(format!("{:x}-{:x}", meta.len(), mtime))
-}
-
-/// Copy the VC runtime DLLs the exe needs into `dir` (the bare sandbox image has
-/// no VC++ redistributable). Host arch == guest arch, so the host's own System32
-/// copies are correct. Best-effort: a missing DLL is logged, not fatal (the
-/// failure would otherwise surface as a guest 0xC0000135).
-fn stage_vc_runtime(dir: &std::path::Path) {
-    let sys32 = std::env::var("SystemRoot")
-        .map(|r| PathBuf::from(r).join("System32"))
-        .unwrap_or_else(|_| PathBuf::from(r"C:\Windows\System32"));
-    for dll in ["vcruntime140.dll", "vcruntime140_1.dll", "msvcp140.dll"] {
-        let dst = dir.join(dll);
-        if dst.exists() {
-            continue;
-        }
-        let src = sys32.join(dll);
-        if let Err(e) = std::fs::copy(&src, &dst) {
-            tracing::warn!("could not stage {} into guest-bin: {e}", dll);
-        }
-    }
 }
