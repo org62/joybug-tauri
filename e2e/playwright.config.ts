@@ -19,6 +19,7 @@ export default defineConfig({
     "routing.spec.ts",
     "pe-reader.spec.ts",
     "pe-viewer-session.spec.ts",
+    "pe-static-analysis.spec.ts",
     "drag-drop.spec.ts",
     "keyboard-shortcuts.spec.ts",
     "windows-menu.spec.ts",

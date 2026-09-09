@@ -4,6 +4,7 @@ pub(crate) mod callstack;
 mod dispatch;
 pub(crate) mod disassembly;
 mod emulation;
+pub(crate) use emulation::{instruction_info, EmulationOutcome};
 pub(crate) mod helpers;
 pub(crate) mod image_cache;
 pub(crate) mod image_patches;

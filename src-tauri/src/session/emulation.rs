@@ -1,3 +1,7 @@
+use std::collections::HashSet;
+
+use joybug_core::interfaces::Instruction;
+use joybug_core::protocol_io::{EmulateResult, EmulationMode};
 use tauri::{AppHandle, Emitter};
 use tracing::{debug, error};
 
@@ -18,7 +22,89 @@ fn extract_pcs_from_tenet(trace_text: &str) -> Vec<u64> {
         .collect()
 }
 
-/// Disassembles a set of unique addresses (1 instruction each) and returns instruction info
+/// What one emulation run produced, before it is shaped for the frontend —
+/// the common ground between the session path (a wire response) and the PE
+/// viewer's process-less path (a core `EmulationResult`).
+pub(crate) struct EmulationOutcome {
+    pub final_pc: Option<u64>,
+    pub instructions_executed: usize,
+    pub stop_reason: String,
+    pub time_us: u64,
+    pub pages_loaded: Option<usize>,
+    pub basic_blocks: Vec<u64>,
+    /// Tenet trace text (InstructionTrace mode only).
+    pub trace_text: Option<String>,
+    pub stats_text: String,
+    pub memory_snapshots: Vec<(u64, Vec<u8>)>,
+}
+
+impl EmulationOutcome {
+    /// The addresses the run touched that the footer's trace/block rows show,
+    /// deduplicated in first-seen order: every traced PC, or every basic-block
+    /// start. Empty in the other modes.
+    pub(crate) fn enrichment_addresses(&self, mode: EmulationMode) -> Vec<u64> {
+        let raw: Vec<u64> = match mode {
+            EmulationMode::InstructionTrace => self.trace_text.as_deref().map(extract_pcs_from_tenet).unwrap_or_default(),
+            EmulationMode::BasicBlock => self.basic_blocks.clone(),
+            _ => return Vec::new(),
+        };
+        let mut seen = HashSet::new();
+        raw.into_iter().filter(|a| seen.insert(*a)).collect()
+    }
+
+    /// The `emulation-result` payload: addresses as hex strings, snapshots as
+    /// entries, the trace timing mirrored when there is a trace.
+    pub(crate) fn into_payload(
+        self,
+        session_id: String,
+        request_id: Option<String>,
+        mode: EmulationMode,
+        instruction_info: Vec<EmulationInstructionInfo>,
+    ) -> EmulationResultPayload {
+        EmulationResultPayload {
+            session_id,
+            request_id,
+            mode: format!("{:?}", mode),
+            final_pc: self.final_pc.map(|pc| format!("0x{:X}", pc)),
+            instructions_executed: self.instructions_executed,
+            stop_reason: self.stop_reason,
+            emulation_time_us: self.time_us,
+            pages_loaded: self.pages_loaded,
+            basic_blocks: self.basic_blocks.iter().map(|a| format!("0x{:X}", a)).collect(),
+            trace_time_us: self.trace_text.as_ref().map(|_| self.time_us),
+            trace_text: self.trace_text,
+            instruction_info,
+            stats_text: self.stats_text,
+            memory_snapshots: self
+                .memory_snapshots
+                .into_iter()
+                .map(|(addr, data)| MemorySnapshotEntry { address: format!("0x{:X}", addr), data })
+                .collect(),
+        }
+    }
+}
+
+/// Per-address instruction info for the footer rows: `disassemble_one` yields
+/// the instruction at an address and its symbol label, or `None` to skip it.
+pub(crate) fn instruction_info(
+    addresses: &[u64],
+    mut disassemble_one: impl FnMut(u64) -> Option<(Instruction, Option<String>)>,
+) -> Vec<EmulationInstructionInfo> {
+    addresses
+        .iter()
+        .filter_map(|&addr| {
+            let (inst, symbol) = disassemble_one(addr)?;
+            Some(EmulationInstructionInfo {
+                address: format!("0x{:X}", inst.address),
+                symbol,
+                mnemonic: inst.mnemonic.clone(),
+                op_str: effective_op_str(&inst),
+            })
+        })
+        .collect()
+}
+
+/// Disassembles a set of unique addresses (1 instruction each) through the session.
 fn disassemble_addresses(
     session: &mut DebugSession,
     pid: u32,
@@ -26,28 +112,17 @@ fn disassemble_addresses(
     arch: joybug_core::interfaces::Architecture,
 ) -> Vec<EmulationInstructionInfo> {
     let modules = get_modules_snapshot(session);
-    let mut info = Vec::with_capacity(addresses.len());
-    for &addr in addresses {
-        if let Ok(instructions) = session.disassemble_memory(pid, addr, 1, arch) {
-            if let Some(inst) = instructions.first() {
-                let symbol = if let Some(ref sym) = inst.symbol_info {
-                    Some(format_symbol(&sym.module_name, &sym.symbol_name, sym.offset))
-                } else if let Some((mod_name, offset)) = find_module_for_address(&modules, inst.address) {
-                    Some(module_offset_label(&mod_name, offset))
-                } else {
-                    None
-                };
-                let op_str = effective_op_str(inst);
-                info.push(EmulationInstructionInfo {
-                    address: format!("0x{:X}", inst.address),
-                    symbol,
-                    mnemonic: inst.mnemonic.clone(),
-                    op_str,
-                });
-            }
-        }
-    }
-    info
+    instruction_info(addresses, |addr| {
+        let inst = session.disassemble_memory(pid, addr, 1, arch).ok()?.into_iter().next()?;
+        let symbol = if let Some(ref sym) = inst.symbol_info {
+            Some(format_symbol(&sym.module_name, &sym.symbol_name, sym.offset))
+        } else if let Some((mod_name, offset)) = find_module_for_address(&modules, inst.address) {
+            Some(module_offset_label(&mod_name, offset))
+        } else {
+            None
+        };
+        Some((inst, symbol))
+    })
 }
 
 /// Symbolize a raw hex address in a stop_reason string, trying symbol resolution then module+offset fallback.
@@ -101,7 +176,7 @@ pub(crate) fn process_emulation_request(
     app_handle_clone: &Option<AppHandle>,
     event: &joybug_core::protocol_io::DebugEvent,
     max_instructions: usize,
-    mode: joybug_core::protocol_io::EmulationMode,
+    mode: EmulationMode,
     exit_condition: Option<joybug_core::protocol_io::TraceExitCondition>,
     request_id: Option<String>,
     memory_reads: Vec<(u64, usize)>,
@@ -120,27 +195,33 @@ pub(crate) fn process_emulation_request(
             debug!("📥 Received emulation result");
 
             let arch = crate::commands::get_session_arch(&session.state);
-
-            let needs_disassembly = matches!(mode,
-                joybug_core::protocol_io::EmulationMode::BasicBlock |
-                joybug_core::protocol_io::EmulationMode::InstructionTrace
-            );
-
-            let unique_addrs: Vec<u64> = if needs_disassembly {
-                let raw_addrs: Vec<u64> = match &result {
-                    joybug_core::protocol_io::EmulateResult::Emulation(data) => {
-                        data.basic_blocks.clone()
-                    }
-                    joybug_core::protocol_io::EmulateResult::Trace(trace) => {
-                        extract_pcs_from_tenet(&trace.trace_text)
-                    }
-                };
-                let mut seen = std::collections::HashSet::new();
-                raw_addrs.into_iter().filter(|a| seen.insert(*a)).collect()
-            } else {
-                Vec::new()
+            let mut outcome = match result {
+                EmulateResult::Emulation(data) => EmulationOutcome {
+                    final_pc: Some(data.final_pc),
+                    instructions_executed: data.instructions_executed,
+                    stop_reason: data.stop_reason,
+                    time_us: data.emulation_time_us,
+                    pages_loaded: Some(data.pages_loaded),
+                    basic_blocks: data.basic_blocks,
+                    trace_text: None,
+                    stats_text: data.stats_text,
+                    memory_snapshots: data.memory_snapshots,
+                },
+                EmulateResult::Trace(trace) => EmulationOutcome {
+                    final_pc: trace.final_pc,
+                    instructions_executed: trace.instructions_executed,
+                    stop_reason: trace.stop_reason,
+                    time_us: trace.trace_time_us,
+                    pages_loaded: None,
+                    basic_blocks: Vec::new(),
+                    trace_text: Some(trace.trace_text),
+                    stats_text: trace.stats_text,
+                    memory_snapshots: Vec::new(),
+                },
             };
+            outcome.stop_reason = symbolize_stop_reason(session, pid, &outcome.stop_reason);
 
+            let unique_addrs = outcome.enrichment_addresses(mode);
             let instruction_info = if !unique_addrs.is_empty() {
                 debug!("📤 Disassembling {} unique addresses for emulation enrichment", unique_addrs.len());
                 disassemble_addresses(session, pid, &unique_addrs, arch)
@@ -149,53 +230,7 @@ pub(crate) fn process_emulation_request(
             };
 
             if let Some(ref handle) = app_handle_clone {
-                let payload = match result {
-                    joybug_core::protocol_io::EmulateResult::Emulation(data) => {
-                        let stop_reason = symbolize_stop_reason(session, pid, &data.stop_reason);
-                        let memory_snapshots = data.memory_snapshots.into_iter()
-                            .map(|(addr, bytes)| MemorySnapshotEntry {
-                                address: format!("0x{:X}", addr),
-                                data: bytes,
-                            })
-                            .collect();
-                        EmulationResultPayload {
-                            session_id,
-                            request_id,
-                            mode: format!("{:?}", mode),
-                            final_pc: Some(format!("0x{:X}", data.final_pc)),
-                            instructions_executed: data.instructions_executed,
-                            stop_reason,
-                            emulation_time_us: data.emulation_time_us,
-                            pages_loaded: Some(data.pages_loaded),
-                            basic_blocks: data.basic_blocks.iter().map(|addr| format!("0x{:X}", addr)).collect(),
-                            trace_text: None,
-                            trace_time_us: None,
-                            instruction_info,
-                            stats_text: data.stats_text,
-                            memory_snapshots,
-                        }
-                    }
-                    joybug_core::protocol_io::EmulateResult::Trace(trace) => {
-                        let stop_reason = symbolize_stop_reason(session, pid, &trace.stop_reason);
-                        EmulationResultPayload {
-                            session_id,
-                            request_id,
-                            mode: format!("{:?}", mode),
-                            final_pc: trace.final_pc.map(|pc| format!("0x{:X}", pc)),
-                            instructions_executed: trace.instructions_executed,
-                            stop_reason,
-                            emulation_time_us: trace.trace_time_us,
-                            pages_loaded: None,
-                            basic_blocks: Vec::new(),
-                            trace_text: Some(trace.trace_text),
-                            trace_time_us: Some(trace.trace_time_us),
-                            instruction_info,
-                            stats_text: trace.stats_text,
-                            memory_snapshots: Vec::new(),
-                        }
-                    }
-                };
-
+                let payload = outcome.into_payload(session_id, request_id, mode, instruction_info);
                 if let Err(e) = handle.emit("emulation-result", &payload) {
                     error!("Failed to emit emulation-result event: {}", e);
                 } else {

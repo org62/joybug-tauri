@@ -242,6 +242,8 @@ pub fn run() {
             commands::pe_string_scan,
             commands::pe_set_field,
             commands::pe_field_span,
+            commands::pe_xrefs_to,
+            commands::pe_emulate,
             commands::get_sandbox_status,
             commands::open_sandbox_view,
             commands::poll_etw_events,

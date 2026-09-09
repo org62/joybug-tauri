@@ -2,12 +2,11 @@
 //!
 //! Unlike the module-info commands (which require a live debug session and a
 //! module mapped in the target), these operate on a PE file opened directly
-//! from disk. The file bytes are held in memory (`PeFilesState`, keyed by path)
-//! so the hex view can edit them and `pe_save` can write them back.
-//!
-//! Symbol resolution runs fully in-process via joybug-core's offline
-//! `WindowsSymbolProvider` (no debug session, no dbghelp) — the PDB is loaded
-//! from an explicit path, from next to the file, or from the symbol server.
+//! from disk through joybug-core's `static_pe::PeImage`, which owns the file
+//! bytes (editable by the hex view, written back by `pe_save`), the parsed
+//! structures, optional PDB symbols, the loader-style mapped image, the xref
+//! index and process-less emulation. Images are held in `PeFilesState`, keyed
+//! by path.
 //!
 //! PE32 (x86) and PE32+ (x64, ARM64) images are both supported; the parser is
 //! the format-agnostic pelite wrap and the header-field offset table below
@@ -22,77 +21,18 @@ use tauri::State;
 use tracing::info;
 
 use crate::error::{Error, Result};
-use crate::session::types::{SerializableInstruction, SymbolData};
-use joybug_core::interfaces::{
-    Architecture, DisassemblerProvider, ModuleSymbol, SymbolConfig, SymbolInfo, SymbolProvider,
-};
+use crate::session::helpers::effective_op_str;
+use crate::session::types::{EmulationResultPayload, SerializableInstruction, SymbolData};
+use crate::session::{instruction_info, EmulationOutcome};
 use joybug_core::pe_types::ModuleExtraInfo;
-use joybug_core::protocol::{StringEncodingFilter, StringHit};
-use joybug_core::windows_platform::disassembler::CapstoneDisassembler;
-use joybug_core::windows_platform::{parse_module_extra_info_from_bytes, parse_pdb_matching_pe, WindowsSymbolProvider};
-
-use joybug_core::pe_image::{rva_to_offset_loose, SectionMap};
-
-const IMAGE_FILE_MACHINE_I386: u16 = 0x014C;
-const IMAGE_FILE_MACHINE_AMD64: u16 = 0x8664;
-const IMAGE_FILE_MACHINE_ARM64: u16 = 0xAA64;
-
-/// The instruction set to disassemble an opened PE's code with, from the
-/// image's machine field. Anything else (ARM32, Itanium, ...) has no decoder.
-fn arch_from_machine(machine: u16) -> Option<Architecture> {
-    match machine {
-        IMAGE_FILE_MACHINE_I386 => Some(Architecture::X86),
-        IMAGE_FILE_MACHINE_AMD64 => Some(Architecture::X64),
-        IMAGE_FILE_MACHINE_ARM64 => Some(Architecture::Arm64),
-        _ => None,
-    }
-}
-
-/// An opened PE file held in memory. `bytes` is the editable buffer.
-pub struct LoadedPeFile {
-    path: String,
-    bytes: Vec<u8>,
-    /// Load base for VA computation — the user-chosen base or the file's ImageBase.
-    base: u64,
-    image_size: u64,
-    sections: Vec<SectionMap>,
-    /// Symbols sorted ascending by RVA (once a PDB is loaded).
-    symbols: Option<Vec<ModuleSymbol>>,
-    /// Instruction set of this image, from its PE machine field. Disassembling
-    /// with the host's architecture instead would silently emit garbage for a
-    /// cross-architecture image.
-    arch: Architecture,
-}
-
-impl LoadedPeFile {
-    /// Translate a virtual address to a file offset via section mappings.
-    /// RVAs outside any section (e.g. the PE headers) map to themselves.
-    fn va_to_offset(&self, va: u64) -> Option<usize> {
-        let rva = va.checked_sub(self.base)? as u32;
-        Some(rva_to_offset_loose(&self.sections, rva))
-    }
-
-    /// Nearest symbol at-or-below `rva`, bounded to within the image.
-    fn resolve_rva(&self, rva: u32) -> Option<&ModuleSymbol> {
-        if rva as u64 >= self.image_size {
-            return None;
-        }
-        let syms = self.symbols.as_ref()?;
-        // syms is sorted ascending by rva; take the last entry with rva <= target.
-        let idx = syms.partition_point(|s| s.rva <= rva);
-        if idx == 0 { None } else { Some(&syms[idx - 1]) }
-    }
-
-    fn module_name(&self) -> String {
-        crate::session::helpers::module_short_name(&self.path)
-    }
-}
+use joybug_core::protocol::{EmulationMode, StringEncodingFilter, StringHit};
+use joybug_core::static_pe::{discover_symbols, nt_headers_offset, EmulateSpec, PeImage, PeSymbolLoad};
 
 // Arc so async commands can move a handle into `spawn_blocking` — the heavy
-// commands (file read/parse, PDB load, scans) must run off the async runtime:
-// they block for long stretches, and the symbol provider owns its own tokio
-// runtime, which cannot be dropped on an async worker thread.
-pub type PeFilesState = Arc<RwLock<HashMap<String, LoadedPeFile>>>;
+// commands (file read/parse, PDB load, scans, xref sweeps, emulation) must run
+// off the async runtime: they block for long stretches, and the symbol provider
+// owns its own tokio runtime, which cannot be dropped on an async worker thread.
+pub type PeFilesState = Arc<RwLock<HashMap<String, PeImage>>>;
 
 use super::run_blocking;
 
@@ -101,7 +41,7 @@ use super::run_blocking;
 fn with_file<R>(
     pe_files: &PeFilesState,
     path: &str,
-    f: impl FnOnce(&LoadedPeFile) -> Result<R>,
+    f: impl FnOnce(&PeImage) -> Result<R>,
 ) -> Result<R> {
     let files = pe_files.read().unwrap();
     let file = files
@@ -114,7 +54,7 @@ fn with_file<R>(
 fn with_file_mut<R>(
     pe_files: &PeFilesState,
     path: &str,
-    f: impl FnOnce(&mut LoadedPeFile) -> Result<R>,
+    f: impl FnOnce(&mut PeImage) -> Result<R>,
 ) -> Result<R> {
     let mut files = pe_files.write().unwrap();
     let file = files
@@ -134,91 +74,6 @@ pub struct PeFileSummary {
     pub info: ModuleExtraInfo,
     pub symbols_loaded: bool,
     pub symbol_count: usize,
-}
-
-/// Result of a symbol-load attempt.
-#[derive(Serialize)]
-pub struct PeSymbolLoad {
-    pub loaded: bool,
-    pub count: usize,
-    pub error: Option<String>,
-}
-
-/// Offset of the NT headers (the "PE\0\0" signature) via the DOS header, with
-/// both magics validated.
-fn nt_headers_offset(bytes: &[u8]) -> Option<usize> {
-    if bytes.len() < 0x40 || bytes[0] != b'M' || bytes[1] != b'Z' {
-        return None;
-    }
-    let e_lfanew = u32::from_le_bytes(bytes[0x3C..0x40].try_into().ok()?) as usize;
-    if bytes.len() < e_lfanew + 6 || &bytes[e_lfanew..e_lfanew + 4] != b"PE\0\0" {
-        return None;
-    }
-    Some(e_lfanew)
-}
-
-/// Read the PE machine field directly from raw bytes to give a clean
-/// "unsupported" message before attempting a full parse.
-fn machine_from_bytes(bytes: &[u8]) -> Option<u16> {
-    let nt = nt_headers_offset(bytes)?;
-    Some(u16::from_le_bytes(bytes[nt + 4..nt + 6].try_into().ok()?))
-}
-
-fn build_loaded(path: String, bytes: Vec<u8>, base: u64, info: &ModuleExtraInfo, arch: Architecture) -> LoadedPeFile {
-    let sections = info.sections.iter().map(SectionMap::from).collect();
-    LoadedPeFile {
-        arch,
-        path,
-        bytes,
-        base,
-        image_size: info.nt_headers.OptionalHeader.SizeOfImage as u64,
-        sections,
-        symbols: None,
-    }
-}
-
-/// Load symbols for a PE, either from an explicit PDB path (GUID/age validated)
-/// or auto-discovered next to the file / via the symbol server. `offline`
-/// disables server downloads (used on open for the fast local-only path).
-/// Returns the load status plus the parsed symbols (sorted by RVA) on success.
-fn load_symbols_impl(
-    path: &str,
-    base: u64,
-    size: usize,
-    pdb_path: Option<&str>,
-    offline: bool,
-) -> (PeSymbolLoad, Option<Vec<ModuleSymbol>>) {
-    let parsed: std::result::Result<Vec<ModuleSymbol>, String> = match pdb_path {
-        Some(pdb) => parse_pdb_matching_pe(Path::new(path), Path::new(pdb))
-            .map_err(|e| format!("{}", e))
-            .and_then(|r| {
-                r.map_err(|m| {
-                    format!(
-                        "PDB GUID/age mismatch: PE {}:{} vs PDB {}:{}",
-                        m.pe_guid, m.pe_age, m.pdb_guid, m.pdb_age
-                    )
-                })
-            }),
-        None => {
-            let cfg = SymbolConfig { symbol_path: None, offline };
-            WindowsSymbolProvider::with_config(&cfg)
-                .and_then(|mut p| p.load_symbols_for_module(path, base, Some(size)).map(|_| p))
-                .and_then(|p| p.list_symbols(path))
-                .map_err(|e| format!("{}", e))
-        }
-    };
-
-    match parsed {
-        Ok(mut syms) => {
-            syms.sort_by_key(|s| s.rva);
-            let status = PeSymbolLoad { loaded: true, count: syms.len(), error: None };
-            (status, Some(syms))
-        }
-        Err(e) => (
-            PeSymbolLoad { loaded: false, count: 0, error: Some(e) },
-            None,
-        ),
-    }
 }
 
 /// Open a PE file from disk, parse its structures, and hold its bytes in memory.
@@ -242,57 +97,23 @@ fn pe_open_impl(
     pdb_path: Option<String>,
     pe_files: &PeFilesState,
 ) -> Result<PeFileSummary> {
-    let bytes = std::fs::read(&path)
-        .map_err(|e| Error::InvalidParameter(format!("Failed to read '{}': {}", path, e)))?;
-
-    let arch = match machine_from_bytes(&bytes) {
-        Some(machine) => arch_from_machine(machine).ok_or_else(|| {
-            Error::InvalidParameter(format!(
-                "Unsupported PE machine 0x{:04X}. The PE viewer supports x86, x64 and ARM64 images.",
-                machine
-            ))
-        })?,
-        None => {
-            return Err(Error::InvalidParameter(
-                "Not a valid PE file (missing MZ/PE headers).".to_string(),
-            ));
-        }
-    };
-
-    let info = parse_module_extra_info_from_bytes(&bytes)
-        .map_err(|e| Error::InvalidParameter(format!("Failed to parse PE: {:?}", e)))?;
-
-    let base = match base {
-        Some(s) => crate::commands::parse_hex_u64(&s, "base")?,
-        None => match info.nt_headers.OptionalHeader.ImageBase {
-            // A zero ImageBase (some hand-built images) would make every VA an
-            // RVA; fall back to the linker defaults for the format.
-            0 if info.nt_headers.OptionalHeader.is_pe32() => 0x40_0000,
-            0 => 0x1_4000_0000,
-            ib => ib,
-        },
-    };
-
-    let size = bytes.len();
-    let mut loaded = build_loaded(path.clone(), bytes, base, &info, arch);
-
-    // Best-effort local symbol load (explicit PDB, or one next to the file).
-    let (status, syms) = load_symbols_impl(&path, base, size, pdb_path.as_deref(), true);
-    loaded.symbols = syms;
-
-    pe_files.write().unwrap().insert(path.clone(), loaded);
-    info!("Opened PE '{}' ({} bytes), symbols_loaded={} ({}){}",
-        path, size, status.loaded, status.count,
-        status.error.as_ref().map(|e| format!(" [{}]", e)).unwrap_or_default());
-
-    Ok(PeFileSummary {
-        path,
-        size,
-        base: format!("0x{:X}", base),
-        info,
+    let base = base.map(|s| crate::commands::parse_hex_u64(&s, "base")).transpose()?;
+    let image = PeImage::open(&path, base, pdb_path.as_deref().map(Path::new))
+        .map_err(Error::InvalidParameter)?;
+    let status = image.symbol_load().clone();
+    let summary = PeFileSummary {
+        path: path.clone(),
+        size: image.file_size(),
+        base: format!("0x{:X}", image.base()),
+        info: image.info().clone(),
         symbols_loaded: status.loaded,
         symbol_count: status.count,
-    })
+    };
+    info!("Opened PE '{}' ({} bytes), symbols_loaded={} ({}){}",
+        path, summary.size, status.loaded, status.count,
+        status.error.as_ref().map(|e| format!(" [{}]", e)).unwrap_or_default());
+    pe_files.write().unwrap().insert(path, image);
+    Ok(summary)
 }
 
 /// Load (or reload) symbols for an already-open PE, allowing a symbol-server
@@ -305,35 +126,12 @@ pub async fn pe_load_symbols(
 ) -> Result<PeSymbolLoad> {
     let pe_files = pe_files.inner().clone();
     run_blocking(move || {
-        let (base, size) = with_file(&pe_files, &path, |file| Ok((file.base, file.bytes.len())))?;
+        let (base, size) = with_file(&pe_files, &path, |file| Ok((file.base(), file.file_size())))?;
         // Symbol load may block on a network download — do it without holding the lock.
-        let (status, syms) = load_symbols_impl(&path, base, size, pdb_path.as_deref(), false);
-        if let Some(syms) = syms {
-            if let Some(file) = pe_files.write().unwrap().get_mut(&path) {
-                file.symbols = Some(syms);
-            }
-        }
-        Ok(status)
+        let parsed = discover_symbols(&path, base, size, pdb_path.as_deref().map(Path::new), false);
+        with_file_mut(&pe_files, &path, |file| Ok(file.set_symbols(parsed)))
     })
     .await
-}
-
-/// Allocation-free ASCII-case-insensitive substring match (symbol names are ASCII).
-fn contains_ignore_ascii_case(haystack: &str, needle: &str) -> bool {
-    needle.is_empty()
-        || haystack
-            .as_bytes()
-            .windows(needle.len())
-            .any(|w| w.eq_ignore_ascii_case(needle.as_bytes()))
-}
-
-/// True when every whitespace-separated token of `pattern` appears in the module
-/// name or the symbol name, in any order — so "user bar" finds "user32!foo_bar_baz".
-/// Mirrors `joybug_core`'s session-side symbol matching.
-fn matches_tokens(pattern: &str, module_name: &str, symbol_name: &str) -> bool {
-    pattern.split_whitespace().all(|t| {
-        contains_ignore_ascii_case(symbol_name, t) || contains_ignore_ascii_case(module_name, t)
-    })
 }
 
 /// Search loaded symbols for the Symbol Explorer / goto box: whitespace-separated
@@ -349,17 +147,15 @@ pub async fn pe_search_symbols(
 ) -> Result<Vec<SymbolData>> {
     let pe_files = pe_files.inner().clone();
     run_blocking(move || with_file(&pe_files, &path, |file| {
-        let Some(syms) = file.symbols.as_ref() else { return Ok(Vec::new()) };
         let module_name = file.module_name();
-        let out = syms
-            .iter()
-            .filter(|s| matches_tokens(&pattern, &module_name, &s.name))
-            .take(limit.max(1))
+        let out = file
+            .find_symbols(&pattern, limit)
+            .into_iter()
             .map(|s| SymbolData {
                 name: s.name.clone(),
-                module_name: module_name.clone(),
+                module_name: module_name.to_string(),
                 rva: s.rva,
-                va: format!("0x{:X}", file.base + s.rva as u64),
+                va: format!("0x{:X}", file.base() + s.rva as u64),
                 display_name: format!("{}!{}", module_name, s.name),
                 is_function: s.is_function,
             })
@@ -380,11 +176,12 @@ pub fn pe_read_bytes(
     pe_files: State<'_, PeFilesState>,
 ) -> Result<tauri::ipc::Response> {
     with_file(&pe_files, &path, |file| {
-        if offset >= file.bytes.len() {
+        let bytes = file.bytes();
+        if offset >= bytes.len() {
             return Ok(tauri::ipc::Response::new(Vec::new()));
         }
-        let end = offset.saturating_add(size).min(file.bytes.len());
-        Ok(tauri::ipc::Response::new(file.bytes[offset..end].to_vec()))
+        let end = offset.saturating_add(size).min(bytes.len());
+        Ok(tauri::ipc::Response::new(bytes[offset..end].to_vec()))
     })
 }
 
@@ -397,17 +194,7 @@ pub fn pe_write_bytes(
     data: Vec<u8>,
     pe_files: State<'_, PeFilesState>,
 ) -> Result<()> {
-    with_file_mut(&pe_files, &path, |file| {
-        let end = offset.saturating_add(data.len());
-        if end > file.bytes.len() {
-            return Err(Error::InvalidParameter(format!(
-                "Write out of range: offset {} + {} bytes exceeds file size {}",
-                offset, data.len(), file.bytes.len()
-            )));
-        }
-        file.bytes[offset..end].copy_from_slice(&data);
-        Ok(())
-    })
+    with_file_mut(&pe_files, &path, |file| file.write_bytes(offset, &data).map_err(Error::InvalidParameter))
 }
 
 /// Disassemble `count` instructions starting at virtual address `va`. Symbolized
@@ -422,31 +209,9 @@ pub async fn pe_disassemble(
 ) -> Result<Vec<SerializableInstruction>> {
     let pe_files = pe_files.inner().clone();
     run_blocking(move || with_file(&pe_files, &path, |file| {
-        let Some(offset) = file.va_to_offset(va) else { return Ok(Vec::new()) };
-        if offset >= file.bytes.len() {
-            return Ok(Vec::new());
-        }
-        let disassembler = CapstoneDisassembler::new()
-            .map_err(|e| Error::InvalidParameter(format!("Disassembler init failed: {:?}", e)))?;
-        let data = &file.bytes[offset..];
-
-        let instructions = if file.symbols.is_some() {
-            let module_name = file.module_name();
-            let resolver = |addr: u64| -> Option<SymbolInfo> {
-                let rva = addr.checked_sub(file.base)? as u32;
-                let sym = file.resolve_rva(rva)?;
-                Some(SymbolInfo {
-                    module_name: module_name.clone(),
-                    symbol_name: sym.name.clone(),
-                    offset: (rva - sym.rva) as u64,
-                })
-            };
-            disassembler.disassemble_with_symbols(file.arch, data, va, count, resolver)
-        } else {
-            disassembler.disassemble(file.arch, data, va, count)
-        }
-        .map_err(|e| Error::InvalidParameter(format!("Disassembly failed: {:?}", e)))?;
-
+        let instructions = file
+            .disassemble(va, count)
+            .map_err(|e| Error::InvalidParameter(format!("Disassembly failed: {:?}", e)))?;
         Ok(crate::session::disassembly::serialize_instructions(&instructions, &[], None))
     }))
     .await
@@ -464,24 +229,12 @@ pub async fn pe_disassemble_preview_batch(
 ) -> Result<Vec<Option<super::symbols::SymbolPreviewData>>> {
     let pe_files = pe_files.inner().clone();
     run_blocking(move || with_file(&pe_files, &path, |file| {
-        let disassembler = CapstoneDisassembler::new()
-            .map_err(|e| Error::InvalidParameter(format!("Disassembler init failed: {:?}", e)))?;
         let out = addresses
             .iter()
             .take(256)
             .map(|s| {
                 let va = super::parse_hex_u64(s, "address").ok()?;
-                let offset = file.va_to_offset(va)?;
-                if offset >= file.bytes.len() {
-                    return None;
-                }
-                // 16 bytes bound any single x64/ARM64 instruction.
-                let end = (offset + 16).min(file.bytes.len());
-                let instr = disassembler
-                    .disassemble(file.arch, &file.bytes[offset..end], va, 1)
-                    .ok()?
-                    .into_iter()
-                    .next()?;
+                let instr = file.disassemble(va, 1).ok()?.into_iter().next()?;
                 Some(super::symbols::SymbolPreviewData::from_instruction(&instr))
             })
             .collect();
@@ -516,16 +269,108 @@ pub async fn pe_string_scan(
     let pe_files = pe_files.inner().clone();
     run_blocking(move || with_file(&pe_files, &path, |file| {
         let enc: StringEncodingFilter = encodings.parse().unwrap_or_default();
-        let mut hits = joybug_core::string_scanner::scan_bytes(
-            &file.bytes,
-            0,
-            min_length.max(1),
-            enc,
-            &contains,
-        );
+        let mut hits = file.strings_in_file(min_length.max(1), enc, &contains);
         let capped = hits.len() > PE_STRING_SCAN_CAP;
         hits.truncate(PE_STRING_SCAN_CAP);
         Ok(PeStringScan { hits, capped })
+    }))
+    .await
+}
+
+/// One cross-reference to the queried address, with the referencing instruction.
+#[derive(Serialize)]
+pub struct PeXref {
+    pub from: String,
+    /// `call` | `jump` | `data` | `imm`.
+    pub kind: String,
+    /// "mnemonic operands" of the referencing instruction (symbolized when a
+    /// PDB is loaded).
+    pub text: String,
+    /// `module!symbol+off` containing `from`, when symbols are loaded.
+    pub symbol: Option<String>,
+}
+
+/// Every reference to `va` in the image's code sections: calls, jumps (direct
+/// targets, or `call/jmp [slot]` when `va` is an IAT slot), static memory
+/// operands and in-image immediates. The xref index is built on first use
+/// (a linear sweep of the code sections) and reused until the bytes change.
+#[tauri::command]
+pub async fn pe_xrefs_to(
+    path: String,
+    va: String,
+    pe_files: State<'_, PeFilesState>,
+) -> Result<Vec<PeXref>> {
+    let pe_files = pe_files.inner().clone();
+    run_blocking(move || with_file(&pe_files, &path, |file| {
+        let va = super::parse_hex_u64(&va, "va")?;
+        let out = file
+            .xrefs_to(va)
+            .into_iter()
+            .map(|x| {
+                let text = file
+                    .disassemble(x.from, 1)
+                    .ok()
+                    .and_then(|v| v.into_iter().next())
+                    .map(|i| format!("{} {}", i.mnemonic, effective_op_str(&i)).trim_end().to_string())
+                    .unwrap_or_default();
+                PeXref {
+                    from: format!("0x{:X}", x.from),
+                    kind: x.kind.as_str().to_string(),
+                    text,
+                    symbol: file.resolve_va(x.from).map(|s| s.format_symbol()),
+                }
+            })
+            .collect();
+        Ok(out)
+    }))
+    .await
+}
+
+/// Emulate code from the opened file with no process behind it (see
+/// `joybug_core::static_pe::emulate`): the image is mapped at its base with a
+/// synthetic stack and import stubs, and the run stops at the first import
+/// call, naming it. Returns the same payload the session emulation emits,
+/// enriched with per-address instruction info for trace/block modes, so the
+/// frontend footer renders unchanged.
+#[tauri::command]
+pub async fn pe_emulate(
+    path: String,
+    va: String,
+    max_instructions: usize,
+    mode: String,
+    request_id: Option<String>,
+    pe_files: State<'_, PeFilesState>,
+) -> Result<EmulationResultPayload> {
+    let pe_files = pe_files.inner().clone();
+    run_blocking(move || with_file(&pe_files, &path, |file| {
+        let mode: EmulationMode = mode.parse().map_err(Error::InvalidParameter)?;
+        let mut spec = EmulateSpec::at(super::parse_hex_u64(&va, "va")?);
+        spec.max_instructions = max_instructions.max(1);
+        spec.mode = mode;
+
+        let result = file
+            .emulate(&spec)
+            .map_err(|e| Error::InvalidParameter(format!("Emulation failed: {}", e)))?;
+
+        let outcome = EmulationOutcome {
+            final_pc: Some(result.final_pc),
+            instructions_executed: result.instructions_executed,
+            stop_reason: result.stop_reason.to_string(),
+            time_us: result.emulation_time_us,
+            pages_loaded: Some(result.pages_loaded),
+            basic_blocks: result.basic_blocks,
+            trace_text: (mode == EmulationMode::InstructionTrace)
+                .then(|| joybug_core::tenet_format::traces_to_tenet(&result.register_trace, &result.memory_trace)),
+            stats_text: result.stats_text,
+            memory_snapshots: result.memory_snapshots,
+        };
+        // Per-address enrichment for the footer's trace/block rows.
+        let info = instruction_info(&outcome.enrichment_addresses(mode), |addr| {
+            let inst = file.disassemble(addr, 1).ok()?.into_iter().next()?;
+            let symbol = file.resolve_va(inst.address).map(|s| s.format_symbol());
+            Some((inst, symbol))
+        });
+        Ok(outcome.into_payload(String::new(), request_id, mode, info))
     }))
     .await
 }
@@ -541,11 +386,11 @@ pub fn pe_set_field(
     pe_files: State<'_, PeFilesState>,
 ) -> Result<()> {
     with_file_mut(&pe_files, &path, |file| {
-        let (offset, byte_len) = field_offset(&file.bytes, &field)?;
+        let (offset, byte_len) = field_offset(file.bytes(), &field)?;
         if byte_len > 8 {
             return Err(Error::InvalidParameter(format!("Field '{}' is not a writable scalar", field)));
         }
-        if offset + byte_len > file.bytes.len() {
+        if offset + byte_len > file.file_size() {
             return Err(Error::InvalidParameter("Field offset out of range".into()));
         }
         // Refuse rather than silently truncate: a 64-bit value typed into a
@@ -557,8 +402,7 @@ pub fn pe_set_field(
         }
         // Little-endian write of the low `byte_len` bytes.
         let le = value.to_le_bytes();
-        file.bytes[offset..offset + byte_len].copy_from_slice(&le[..byte_len]);
-        Ok(())
+        file.write_bytes(offset, &le[..byte_len]).map_err(Error::InvalidParameter)
     })
 }
 
@@ -697,7 +541,7 @@ pub fn pe_field_span(
     field: String,
     pe_files: State<'_, PeFilesState>,
 ) -> Result<(usize, usize)> {
-    with_file(&pe_files, &path, |file| field_offset(&file.bytes, &field))
+    with_file(&pe_files, &path, |file| field_offset(file.bytes(), &field))
 }
 
 /// Write an opened PE file's in-memory buffer to disk. Saves to `save_as` when
@@ -710,8 +554,8 @@ pub async fn pe_save(
 ) -> Result<()> {
     let pe_files = pe_files.inner().clone();
     run_blocking(move || with_file(&pe_files, &path, |file| {
-        let target = save_as.as_deref().unwrap_or(&file.path);
-        std::fs::write(target, &file.bytes)
+        let target = save_as.as_deref().unwrap_or(file.path());
+        std::fs::write(target, file.bytes())
             .map_err(|e| Error::InvalidParameter(format!("Failed to write '{}': {}", target, e)))?;
         info!("Saved PE file to '{}'", target);
         Ok(())

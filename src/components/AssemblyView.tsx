@@ -9,7 +9,7 @@ import { HistoryInput } from "./ui/history-input";
 import { pushInputHistory } from "@/lib/inputHistory";
 import { Switch } from "./ui/switch";
 import { Label } from "./ui/label";
-import { Cpu, ArrowLeft, ArrowRight, RefreshCw, ChevronRight, Circle, CircleDot, Wrench, Copy, Bookmark, FileCode, HardDrive, LocateFixed, Zap, Undo2, Ellipsis } from "lucide-react";
+import { Cpu, ArrowLeft, ArrowRight, RefreshCw, ChevronRight, Circle, CircleDot, Wrench, Copy, Bookmark, FileCode, HardDrive, LocateFixed, Zap, Undo2, Ellipsis, Crosshair, Play } from "lucide-react";
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuCheckboxItem } from "@/components/ui/dropdown-menu";
 import { sourceNavigation } from "@/lib/navigationStore";
 import { cn, DATA_ROW_HEIGHT, LINK_VALUE_CLASS, PC_ROW_HIGHLIGHT_CLASS } from "@/lib/utils";
@@ -81,6 +81,11 @@ interface AssemblyViewProps {
   onNavigateToMemory?: (address: string) => void;
   /** Highlight the memory region containing an address (context-menu action). */
   onShowInMemoryRegions?: (address: string) => void;
+  /** List cross-references to an address (context-menu action; PE viewer). Also
+   * offered for the row's branch target / memory operand when it has one. */
+  onShowXrefs?: (address: string) => void;
+  /** Start process-less emulation at an address (context-menu action; PE viewer). */
+  onEmulateFrom?: (address: string) => void;
   /** Non-session disassembly source (PE file on disk). Addresses are VAs. */
   disassemble?: AsmDisassembleFn;
   /** VA to disassemble first when using a file source. */
@@ -94,7 +99,7 @@ interface AssemblyViewProps {
   navHistory: NavHistoryStore;
 }
 
-export function AssemblyView({ sessionId, isPaused, canLoad, address, registers, resolveSymbol, breakpointAddresses, emulation, onToggleBreakpoint, onToggleSingleShotBreakpoint, onSetHardwareBreakpoint, onAssemblePatch, onRestoreImageBytes, onAddBookmark, symbolsRefreshKey, onNavigateToSource, onNavigateToMemory, onShowInMemoryRegions, disassemble, initialAddress, addressFormatter, translateGotoInput, navHistory }: AssemblyViewProps) {
+export function AssemblyView({ sessionId, isPaused, canLoad, address, registers, resolveSymbol, breakpointAddresses, emulation, onToggleBreakpoint, onToggleSingleShotBreakpoint, onSetHardwareBreakpoint, onAssemblePatch, onRestoreImageBytes, onAddBookmark, symbolsRefreshKey, onNavigateToSource, onNavigateToMemory, onShowInMemoryRegions, onShowXrefs, onEmulateFrom, disassemble, initialAddress, addressFormatter, translateGotoInput, navHistory }: AssemblyViewProps) {
   const [addressInput, setAddressInput] = useState("");
   // Inline assembly input state
   const [assembleTarget, setAssembleTarget] = useState<{ address: string; defaultText: string } | null>(null);
@@ -524,6 +529,13 @@ export function AssemblyView({ sessionId, isPaused, canLoad, address, registers,
   // are dead and the empty state is the shared no-process one. (`disassemble`
   // mode is the PE-file host, which has no session and always can load.)
   const noProcess = !disassemble && canLoad === false;
+  // The right-clicked row's branch target or static memory operand, when it
+  // has one (the "Xrefs to Target" entry).
+  const contextMenuTarget = (() => {
+    if (!contextMenu || !onShowXrefs) return null;
+    const row = instructions.find((i) => i.address.toUpperCase() === contextMenu.data.address.toUpperCase());
+    return row?.jump_target ?? row?.mem_ref ?? null;
+  })();
 
   return (
     <DockPanel ref={containerRef} data-testid="assembly-panel">
@@ -916,6 +928,32 @@ export function AssemblyView({ sessionId, isPaused, canLoad, address, registers,
             >
               Go to Memory Region
             </ContextMenuItem>
+          )}
+          {onEmulateFrom && (
+            <ContextMenuItem
+              icon={<Play className="text-syn-accent" />}
+              onClick={() => onEmulateFrom(contextMenu.data.address)}
+            >
+              Emulate from Here
+            </ContextMenuItem>
+          )}
+          {onShowXrefs && (
+            <>
+              <ContextMenuItem
+                icon={<Crosshair className="text-syn-link" />}
+                onClick={() => onShowXrefs(contextMenu.data.address)}
+              >
+                Xrefs to This Address
+              </ContextMenuItem>
+              {contextMenuTarget && (
+                <ContextMenuItem
+                  icon={<Crosshair className="text-syn-link" />}
+                  onClick={() => onShowXrefs(contextMenuTarget)}
+                >
+                  Xrefs to Target {addressFormatter ? addressFormatter(BigInt(contextMenuTarget)) : contextMenuTarget}
+                </ContextMenuItem>
+              )}
+            </>
           )}
           <ContextMenuItem
             icon={<Copy className="text-muted-foreground" />}

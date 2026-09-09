@@ -39,6 +39,7 @@ The joybug-core external crate has integration tests (`external/joybug-core/test
     - `session_lifecycle.rs` — Session CRUD (create, start, stop, delete)
     - `stepping.rs` — Go, StepIn, StepOver, StepOut
     - `disassembly.rs`, `memory.rs`, `breakpoints.rs`, `emulation.rs`, `symbols.rs`, `logging.rs`, `settings.rs`, `window_state.rs` — Per-domain commands
+    - `pe_file.rs` — Offline PE viewer commands over `joybug_core::static_pe::PeImage` (open/hex/disasm/symbols/strings, plus `pe_xrefs_to` and `pe_emulate` for xrefs and process-less emulation)
     - `updates.rs` — GitHub-releases update check + first-run welcome state
   - `lib.rs` — App setup, command registration, global state
   - `state.rs` — `SessionStateUI`, serializable types

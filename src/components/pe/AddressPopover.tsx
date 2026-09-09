@@ -1,9 +1,9 @@
 import React, { useState, useRef, useCallback, useLayoutEffect } from "react";
 import { createPortal } from "react-dom";
-import { Copy, ArrowRight, Cpu } from "lucide-react";
+import { Copy, ArrowRight, Cpu, Crosshair } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { copyToClipboard } from "@/lib/clipboard";
-import { usePopoverDismiss } from "@/hooks/usePopoverDismiss";
+import { usePopoverDismiss, computeAnchoredDropdownRect, AnchoredDropdownRect } from "@/hooks/usePopoverDismiss";
 import { AddrTriple, AddrMode, ADDR_MODE_LABELS, formatAddr } from "@/lib/peAddress";
 import { LINK_VALUE_CLASS } from "@/lib/utils";
 
@@ -20,6 +20,8 @@ interface PeAddressLinkProps {
   onGoToDisasm: (triple: AddrTriple) => void;
   /** Label of the data-view button ("Hex" for a file, "Memory" for a process). */
   hexLabel?: string;
+  /** List cross-references to this address (PE viewer: the Xrefs tab). */
+  onShowXrefs?: (triple: AddrTriple) => void;
   className?: string;
 }
 
@@ -29,6 +31,8 @@ const rows = (t: AddrTriple): { label: string; text: string }[] =>
 // Grace delay so moving the pointer from the trigger into the popover (or briefly
 // off an edge) doesn't dismiss it.
 const CLOSE_DELAY_MS = 120;
+// Approximate rendered width (three action buttons), for the right-edge clamp.
+const POPOVER_WIDTH = 260;
 
 /**
  * A clickable address. Hovering opens a popover showing VA / RVA / file-offset
@@ -36,17 +40,19 @@ const CLOSE_DELAY_MS = 120;
  * directly — to the disassembly view for code, or the hex view for data.
  * Rendered into a portal and positioned next to the trigger.
  */
-export const PeAddressLink: React.FC<PeAddressLinkProps> = ({ triple, mode, isCode, onGoToHex, onGoToDisasm, hexLabel = "Hex", className }) => {
+export const PeAddressLink: React.FC<PeAddressLinkProps> = ({ triple, mode, isCode, onGoToHex, onGoToDisasm, hexLabel = "Hex", onShowXrefs, className }) => {
   const [open, setOpen] = useState(false);
-  const [pos, setPos] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const [pos, setPos] = useState<AnchoredDropdownRect | null>(null);
   const triggerRef = useRef<HTMLSpanElement>(null);
   const popRef = useRef<HTMLDivElement>(null);
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useLayoutEffect(() => {
     if (open && triggerRef.current) {
-      const r = triggerRef.current.getBoundingClientRect();
-      setPos({ x: r.left, y: r.bottom + 4 });
+      // Below the trigger, flipped above it when a row sits near the bottom of
+      // a scrolled list, and pulled left when it would run off the right edge
+      // (`minWidth` is the popover's own width, for that clamp).
+      setPos(computeAnchoredDropdownRect(triggerRef.current, { minWidth: POPOVER_WIDTH, flip: true }));
     }
   }, [open]);
 
@@ -88,7 +94,7 @@ export const PeAddressLink: React.FC<PeAddressLinkProps> = ({ triple, mode, isCo
         <div
           ref={popRef}
           className="fixed z-50 rounded-md border bg-popover text-popover-foreground shadow-md p-2 text-xs min-w-[220px]"
-          style={{ left: pos.x, top: pos.y }}
+          style={{ left: pos?.left, top: pos?.top, bottom: pos?.bottom }}
           onMouseEnter={cancelClose}
           onMouseLeave={scheduleClose}
         >
@@ -112,6 +118,11 @@ export const PeAddressLink: React.FC<PeAddressLinkProps> = ({ triple, mode, isCo
             <Button size="xs" variant="outline" onClick={() => { onGoToDisasm(triple); close(); }}>
               <Cpu className="h-3 w-3 mr-1" /> Disasm
             </Button>
+            {onShowXrefs && (
+              <Button size="xs" variant="outline" data-testid="pe-addr-xrefs" onClick={() => { onShowXrefs(triple); close(); }}>
+                <Crosshair className="h-3 w-3 mr-1" /> Xrefs
+              </Button>
+            )}
           </div>
         </div>,
         document.body,

@@ -19,7 +19,9 @@ import { AddrModeSelect } from "@/components/pe/AddrModeSelect";
 import { PeSymbolsView, PeSymbol } from "@/components/pe/PeSymbolsView";
 import { SymbolPreview } from "@/components/SymbolSearchView";
 import { PeStringsView } from "@/components/pe/PeStringsView";
+import { PeXrefsView, PeXref, PeXrefsFetchFn } from "@/components/pe/PeXrefsView";
 import { OpenPeDialog } from "@/components/pe/OpenPeDialog";
+import { useQuickEmulation, QuickEmulationResult, QuickEmulationState, EmulationRunner } from "@/hooks/useQuickEmulation";
 import { Download } from "lucide-react";
 import { HexDataSource } from "@/hooks/useHexEditor";
 import { AsmDisassembleFn, Instruction } from "@/hooks/useAssemblyView";
@@ -76,12 +78,33 @@ interface PeReaderContextValue {
   onSelectField: (...fields: string[]) => void;
   /** Unified back/forward history for this PE reader's dock (per open file). */
   navHistory: NavHistoryStore;
+  /** Address the Xrefs tab lists references to (null until one is picked). */
+  xrefTarget: bigint | null;
+  fetchXrefs: PeXrefsFetchFn;
+  /** Pick an xref target and reveal the Xrefs tab. */
+  showXrefs: (va: bigint) => void;
+}
+
+/** Process-less emulation, in its own context: the probe results land four
+ *  times per origin, and only the disassembly tab renders them — the other
+ *  tabs must not re-render on each. */
+interface PeEmuContextValue {
+  /** Where emulation starts (null until "Emulate from Here"). */
+  emuOrigin: bigint | null;
+  emulation: QuickEmulationState;
+  emulateFrom: (va: bigint) => void;
 }
 
 const PeReaderContext = createContext<PeReaderContextValue | null>(null);
+const PeEmuContext = createContext<PeEmuContextValue | null>(null);
 const usePeReader = () => {
   const ctx = useContext(PeReaderContext);
   if (!ctx) throw new Error("usePeReader must be used within PeReaderContext");
+  return ctx;
+};
+const usePeEmu = () => {
+  const ctx = useContext(PeEmuContext);
+  if (!ctx) throw new Error("usePeEmu must be used within PeEmuContext");
   return ctx;
 };
 
@@ -95,7 +118,7 @@ const NoFilePlaceholder: React.FC = () => (
 );
 
 const PeStructuresTab: React.FC = () => {
-  const { summary, mapping, mode, setField, onGoToHex, onGoToDisasm, onSelectField } = usePeReader();
+  const { summary, mapping, mode, setField, onGoToHex, onGoToDisasm, onSelectField, showXrefs } = usePeReader();
   // The tree's big groups (imports/exports/exception) virtualize inline against
   // this panel viewport, so the panel has a single scroll region.
   const viewportRef = useRef<HTMLDivElement>(null);
@@ -104,6 +127,7 @@ const PeStructuresTab: React.FC = () => {
   // here would rebuild the tree's navigation context on every render.
   const goToHex = useCallback((t: AddrTriple) => onGoToHex(t.file), [onGoToHex]);
   const goToDisasm = useCallback((t: AddrTriple) => onGoToDisasm(t.va), [onGoToDisasm]);
+  const xrefsFor = useCallback((t: AddrTriple) => showXrefs(t.va), [showXrefs]);
   if (!summary || !mapping) return <NoFilePlaceholder />;
   return (
     <DockPanel>
@@ -117,6 +141,7 @@ const PeStructuresTab: React.FC = () => {
           onGoToHex={goToHex}
           onGoToDisasm={goToDisasm}
           onSelectField={onSelectField}
+          onShowXrefs={xrefsFor}
         />
       </PanelBody>
     </DockPanel>
@@ -140,8 +165,10 @@ const PeHexTab: React.FC = () => {
 };
 
 const PeDisasmTab: React.FC = () => {
-  const { summary, disassemble, initialAddress, mapping, mode, symbolsRefreshKey, resolveSymbol, navHistory, onGoToHex } = usePeReader();
+  const { summary, disassemble, initialAddress, mapping, mode, symbolsRefreshKey, resolveSymbol, navHistory, onGoToHex, showXrefs } = usePeReader();
+  const { emuOrigin, emulation, emulateFrom } = usePeEmu();
   if (!summary || !disassemble || !mapping) return <NoFilePlaceholder />;
+  const emulating = emuOrigin !== null;
   return (
     <AssemblyView
       key={summary.path}
@@ -154,6 +181,29 @@ const PeDisasmTab: React.FC = () => {
       // Memory operands link into the hex view (VA → file offset).
       onNavigateToMemory={(addr) => onGoToHex(tripleFromVa(mapping, BigInt(addr)).file)}
       navHistory={navHistory}
+      onShowXrefs={(addr) => showXrefs(BigInt(addr))}
+      onEmulateFrom={(addr) => emulateFrom(BigInt(addr))}
+      // Process-less emulation: the chosen origin plays the role of the PC —
+      // the footer, lightning row highlighting and ghost-PC all key off it.
+      // (File mode leaves `isPaused` unset: the PC derives from `address` alone.)
+      address={emulating ? Number(emuOrigin) : undefined}
+      emulation={emulating ? emulation : undefined}
+    />
+  );
+};
+
+const PeXrefsTab: React.FC = () => {
+  const { summary, mapping, mode, xrefTarget, fetchXrefs, onGoToDisasm, onGoToHex } = usePeReader();
+  const goToHex = useCallback((va: bigint) => { if (mapping) onGoToHex(tripleFromVa(mapping, va).file); }, [mapping, onGoToHex]);
+  if (!summary || !mapping) return <NoFilePlaceholder />;
+  return (
+    <PeXrefsView
+      target={xrefTarget}
+      fetchXrefs={fetchXrefs}
+      mapping={mapping}
+      mode={mode}
+      onGoToDisasm={onGoToDisasm}
+      onGoToHex={goToHex}
     />
   );
 };
@@ -196,6 +246,7 @@ const PE_TAB_DEFS = [
   { id: "pe-structures", title: "Structures", content: <PeStructuresTab /> },
   { id: "pe-symbols", title: "Symbols", content: <PeSymbolsTab /> },
   { id: "pe-strings", title: "Strings", content: <PeStringsTab /> },
+  { id: "pe-xrefs", title: "Xrefs", content: <PeXrefsTab /> },
   { id: "pe-disassembly", title: "Disassembly", content: <PeDisasmTab /> },
   { id: "pe-hex", title: "Hex", content: <PeHexTab /> },
 ];
@@ -207,7 +258,7 @@ const PE_DOCK_CONFIG: DockingConfig = {
     dockbox: {
       mode: "horizontal",
       children: [
-        { size: 360, tabs: [{ id: "pe-structures" }, { id: "pe-symbols" }, { id: "pe-strings" }], activeId: "pe-structures" },
+        { size: 360, tabs: [{ id: "pe-structures" }, { id: "pe-symbols" }, { id: "pe-strings" }, { id: "pe-xrefs" }], activeId: "pe-structures" },
         { tabs: [{ id: "pe-disassembly" }], activeId: "pe-disassembly" },
         { tabs: [{ id: "pe-hex" }], activeId: "pe-hex" },
       ],
@@ -416,6 +467,40 @@ export default function PeReader() {
   const onGoToHex = useCallback((offset: number) => goTo("pe-hex", BigInt(offset)), [goTo]);
   const onGoToDisasm = useCallback((va: bigint) => goTo("pe-disassembly", va), [goTo]);
 
+  // Static analysis on the open file: cross-references and process-less
+  // emulation. Both are per file, so switching files drops them.
+  const [xrefTarget, setXrefTarget] = useState<bigint | null>(null);
+  const [emuOrigin, setEmuOrigin] = useState<bigint | null>(null);
+  useEffect(() => {
+    setXrefTarget(null);
+    setEmuOrigin(null);
+  }, [path]);
+
+  const fetchXrefs = useCallback<PeXrefsFetchFn>((va) => {
+    if (!path) return Promise.resolve([]);
+    return invoke<PeXref[]>("pe_xrefs_to", { path, va: `0x${va.toString(16)}` });
+  }, [path]);
+  const showXrefs = useCallback((va: bigint) => {
+    setXrefTarget(va);
+    dockingRef.current?.showTab("pe-xrefs");
+  }, []);
+
+  // The emulation footer's probes run through `pe_emulate` against the origin
+  // instead of a session; results come back directly, not as events.
+  const emulationRunner = useMemo<EmulationRunner | undefined>(() => {
+    if (!path || emuOrigin === null) return undefined;
+    const va = `0x${emuOrigin.toString(16)}`;
+    return (mode, maxInstructions, requestId) =>
+      invoke<QuickEmulationResult>("pe_emulate", { path, va, maxInstructions, mode, requestId });
+  }, [path, emuOrigin]);
+  const emulation = useQuickEmulation(
+    path ? `pe:${path}` : undefined,
+    emuOrigin !== null,
+    emuOrigin !== null ? Number(emuOrigin) : undefined,
+    true,
+    { runner: emulationRunner, idleHint: "Right-click an instruction and choose “Emulate from Here”" },
+  );
+
   // Select a header field's raw bytes in the hex view. The backend owns the
   // field layout tables; multiple fields (e.g. a Major/Minor version pair)
   // merge into one contiguous selection.
@@ -464,7 +549,14 @@ export default function PeReader() {
     onGoToDisasm,
     onSelectField,
     navHistory,
-  }), [summary, mapping, mode, hexDataSource, disassemble, symbolsRefreshKey, setField, searchSymbols, fetchSymbolPreviews, resolveSymbol, stringScan, onGoToHex, onGoToDisasm, onSelectField, navHistory]);
+    xrefTarget,
+    fetchXrefs,
+    showXrefs,
+  }), [summary, mapping, mode, hexDataSource, disassemble, symbolsRefreshKey, setField, searchSymbols, fetchSymbolPreviews, resolveSymbol, stringScan, onGoToHex, onGoToDisasm, onSelectField, navHistory, xrefTarget, fetchXrefs, showXrefs]);
+  const emuValue: PeEmuContextValue = useMemo(
+    () => ({ emuOrigin, emulation, emulateFrom: setEmuOrigin }),
+    [emuOrigin, emulation],
+  );
 
   return (
     <Page scroll={false} container={false}>
@@ -509,7 +601,9 @@ export default function PeReader() {
         {/* Docked views */}
         <div className="relative flex-1 min-h-0">
           <PeReaderContext.Provider value={ctxValue}>
-            <DockingLayout ref={dockingRef} {...PE_DOCK_CONFIG} onTabSwitch={onTabSwitch} className="absolute inset-0" />
+            <PeEmuContext.Provider value={emuValue}>
+              <DockingLayout ref={dockingRef} {...PE_DOCK_CONFIG} onTabSwitch={onTabSwitch} className="absolute inset-0" />
+            </PeEmuContext.Provider>
           </PeReaderContext.Provider>
         </div>
       </div>

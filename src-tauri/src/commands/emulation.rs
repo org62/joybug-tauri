@@ -14,14 +14,7 @@ pub fn request_emulation(
     memory_reads: Option<Vec<(u64, usize)>>,
     session_states: State<'_, SessionStatesMap>,
 ) -> Result<()> {
-    let emulation_mode = match mode.as_str() {
-        "Basic" => joybug_core::protocol_io::EmulationMode::Basic,
-        "InstructionTrace" => joybug_core::protocol_io::EmulationMode::InstructionTrace,
-        "BasicBlock" => joybug_core::protocol_io::EmulationMode::BasicBlock,
-        "ModuleTransition" => joybug_core::protocol_io::EmulationMode::ModuleTransition,
-        "Syscall" => joybug_core::protocol_io::EmulationMode::Syscall,
-        _ => return Err(Error::InvalidParameter(format!("Unknown emulation mode: {}", mode))),
-    };
+    let emulation_mode: joybug_core::protocol_io::EmulationMode = mode.parse().map_err(Error::InvalidParameter)?;
 
     let exit_condition = exit_address.map(joybug_core::protocol_io::TraceExitCondition::ReachAddress);
 

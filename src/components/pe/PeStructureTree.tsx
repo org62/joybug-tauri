@@ -38,6 +38,8 @@ export interface PeStructureTreeProps {
   onSetField?: (field: string, value: number) => void;
   /** Select the raw bytes of the given header fields in the hex view. */
   onSelectField?: (...fields: string[]) => void;
+  /** Offer "Xrefs" in every address popover (PE viewer: the Xrefs tab). */
+  onShowXrefs?: (triple: AddrTriple) => void;
 }
 
 // Clicking a field label selects that field's bytes in the hex view; context
@@ -53,6 +55,7 @@ interface TreeNav {
   hexLabel?: string;
   onGoToHex: (triple: AddrTriple) => void;
   onGoToDisasm: (triple: AddrTriple) => void;
+  onShowXrefs?: (triple: AddrTriple) => void;
 }
 const TreeNavContext = createContext<TreeNav | null>(null);
 
@@ -69,6 +72,7 @@ const Addr: React.FC<{ rva: number }> = ({ rva }) => {
       hexLabel={nav.hexLabel}
       onGoToHex={nav.onGoToHex}
       onGoToDisasm={nav.onGoToDisasm}
+      onShowXrefs={nav.onShowXrefs}
     />
   );
 };
@@ -293,11 +297,11 @@ const FlagsEditor: React.FC<{
 // ---- Main tree ----
 
 const PeStructureTreeImpl: React.FC<PeStructureTreeProps> = ({
-  info, mapping, mode, scrollRef, onGoToHex, onGoToDisasm, hexLabel, onSetField, onSelectField,
+  info, mapping, mode, scrollRef, onGoToHex, onGoToDisasm, hexLabel, onSetField, onSelectField, onShowXrefs,
 }) => {
   const nav = useMemo<TreeNav>(
-    () => ({ mapping, mode, hexLabel, onGoToHex, onGoToDisasm }),
-    [mapping, mode, hexLabel, onGoToHex, onGoToDisasm],
+    () => ({ mapping, mode, hexLabel, onGoToHex, onGoToDisasm, onShowXrefs }),
+    [mapping, mode, hexLabel, onGoToHex, onGoToDisasm, onShowXrefs],
   );
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set(["nt", "opt", "sections"]));
   const toggle = useCallback((id: string) =>

@@ -55,6 +55,17 @@ function parseSummaryRow(result: QuickEmulationResult | null, kind: "syscall" | 
     return { label: moduleMatch[1], muted: false, finalPc };
   }
 
+  // Process-less (PE file) emulation: leaving the image means calling an
+  // import — "ImportCall(kernel32!WriteFile@0x4a554f)" — or returning past
+  // the routine's entry frame.
+  const importMatch = reason.match(/^ImportCall\((.+)@(0x[0-9A-Fa-f]+)\)$/);
+  if (importMatch) {
+    return { label: importMatch[1], muted: false, finalPc: importMatch[2] };
+  }
+  if (reason === "ReturnedToCaller") {
+    return { label: "Returned to caller", muted: true, finalPc: null };
+  }
+
   return { label: reason, muted: false, finalPc };
 }
 
@@ -85,6 +96,7 @@ function VirtualizedTraceLines({
   traceLines,
   hasAnyData,
   isLoading,
+  idleHint,
   onRowEnter,
   onRowMove,
   onRowLeave,
@@ -93,6 +105,8 @@ function VirtualizedTraceLines({
   traceLines: TraceStep[];
   hasAnyData: boolean;
   isLoading: boolean;
+  /** Shown while nothing has run yet (a file host has no "pause" to wait for). */
+  idleHint?: string;
   /** `position` is the row's index in `traceLines` (not the trace step). */
   onRowEnter: (e: React.MouseEvent, position: number) => void;
   onRowMove: (e: React.MouseEvent) => void;
@@ -107,7 +121,7 @@ function VirtualizedTraceLines({
     body = (
       <ScrollArea className="flex-1 min-h-0">
         <div className="px-3 py-2 text-muted-foreground text-center">
-          Pause the debugger to see quick emulation results
+          {idleHint ?? "Pause the debugger to see quick emulation results"}
         </div>
       </ScrollArea>
     );
@@ -468,6 +482,7 @@ export const EmulationQuickView = memo(function EmulationQuickView({ emulation, 
               traceLines={traceLines}
               hasAnyData={!!traceResult}
               isLoading={isLoading}
+              idleHint={emulation.idleHint}
               onRowEnter={tooltip.show}
               onRowMove={tooltip.move}
               onRowLeave={tooltip.leave}

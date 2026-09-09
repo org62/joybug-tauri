@@ -43,6 +43,17 @@ export function backendTraceMode(mode: TraceMode): "InstructionTrace" | "BasicBl
   return mode === "BasicBlock" ? "BasicBlock" : "InstructionTrace";
 }
 
+/** Runs one probe and resolves with its result. Hosts without a debug session
+ *  (the PE viewer's process-less emulation) supply one; session hosts leave it
+ *  unset and results arrive as `emulation-result` events instead. */
+export type EmulationRunner = (mode: string, maxInstructions: number, requestId: string) => Promise<QuickEmulationResult>;
+
+export interface QuickEmulationOptions {
+  runner?: EmulationRunner;
+  /** Footer text while nothing has run yet. */
+  idleHint?: string;
+}
+
 /** The three optional Quick Emulation probes, each switchable on its own. */
 export type EmulationToggle = "module" | "syscall" | "instructions";
 export type EmulationToggles = Record<EmulationToggle, boolean>;
@@ -69,6 +80,8 @@ export interface QuickEmulationState {
   setMaxInstructions: (value: number) => void;
   isLoading: boolean;
   toggleTraceMode: () => void;
+  /** Footer text while nothing has run yet (file hosts have no pause to wait for). */
+  idleHint?: string;
 }
 
 // Emulation fires only after the view settles at a location — long enough
@@ -98,7 +111,13 @@ export function useQuickEmulation(
   // server-side work reached over a slow TCP link — auto-firing it stalled every
   // step by ~8s. Manual toggles still fire once, user-initiated.
   autoEmulate: boolean = true,
+  options: QuickEmulationOptions = {},
 ): QuickEmulationState {
+  const { runner, idleHint } = options;
+  // The runner may change identity with its origin (the PE viewer rebuilds it
+  // per "Emulate from here"); probes always call the latest one.
+  const runnerRef = useRef(runner);
+  runnerRef.current = runner;
   const [syscallResult, setSyscallResult] = useState<QuickEmulationResult | null>(null);
   const [moduleResult, setModuleResult] = useState<QuickEmulationResult | null>(null);
   const [traceResult, setTraceResult] = useState<QuickEmulationResult | null>(null);
@@ -126,6 +145,31 @@ export function useQuickEmulation(
   const traceModeRef = useRef(traceMode);
   traceModeRef.current = traceMode;
 
+  // Route one result to its probe's slot. Shared by the event listener
+  // (session hosts) and the runner path (file hosts).
+  const handleResult = useCallback((payload: QuickEmulationResult) => {
+    const rid = payload.request_id;
+    if (!rid?.startsWith("quick-")) return;
+
+    // Extract timestamp from request_id to ignore stale results
+    const parts = rid.split("-");
+    const ts = parts[parts.length - 1];
+    if (ts !== currentTsRef.current) return;
+
+    if (rid.startsWith("quick-lightning-")) {
+      setLightningResult(payload);
+    } else if (rid.startsWith("quick-syscall-")) {
+      if (togglesRef.current.syscall) setSyscallResult(payload);
+    } else if (rid.startsWith("quick-module-")) {
+      if (togglesRef.current.module) setModuleResult(payload);
+    } else if (rid.startsWith("quick-trace-")) {
+      if (togglesRef.current.instructions) setTraceResult(payload);
+    }
+
+    // The spinner is mostly UX: clear it on each arrival.
+    setIsLoading(false);
+  }, []);
+
   // Fire a set of probes under one timestamp. Results of older timestamps are
   // dropped, so a partial re-fire (a toggle flipped on) must reuse the current
   // timestamp or it would orphan the in-flight probes.
@@ -136,14 +180,22 @@ export function useQuickEmulation(
     currentTsRef.current = ts;
     setIsLoading(true);
 
-    const send = (probe: Probe, mode: string, maxInstructions: number) =>
-      invoke("request_emulation", {
+    const send = (probe: Probe, mode: string, maxInstructions: number) => {
+      const requestId = `quick-${probe}-${ts}`;
+      const run = runnerRef.current;
+      if (run) {
+        return run(mode, maxInstructions, requestId)
+          .then(handleResult)
+          .catch(() => setIsLoading(false));
+      }
+      return invoke("request_emulation", {
         sessionId,
         maxInstructions,
         mode,
         exitAddress: null,
-        requestId: `quick-${probe}-${ts}`,
+        requestId,
       }).catch(() => {});
+    };
 
     for (const probe of probes) {
       switch (probe) {
@@ -153,7 +205,7 @@ export function useQuickEmulation(
         case "trace": send(probe, backendTraceMode(traceModeRef.current), maxInstructionsRef.current); break;
       }
     }
-  }, [sessionId]);
+  }, [sessionId, handleResult]);
 
   const enabledProbes = useCallback((): Probe[] => {
     const t = togglesRef.current;
@@ -174,27 +226,10 @@ export function useQuickEmulation(
   // Listen for emulation-result events filtered by quick- prefix
   useEffect(() => {
     const unlistenResult = listen<QuickEmulationResult>("emulation-result", (event) => {
-      const rid = event.payload.request_id;
-      if (!rid?.startsWith("quick-")) return;
+      // Session results only: a file host gets its results from its runner.
+      if (runnerRef.current) return;
       if (sessionId && event.payload.session_id !== sessionId) return;
-
-      // Extract timestamp from request_id to ignore stale results
-      const parts = rid.split("-");
-      const ts = parts[parts.length - 1];
-      if (ts !== currentTsRef.current) return;
-
-      if (rid.startsWith("quick-lightning-")) {
-        setLightningResult(event.payload);
-      } else if (rid.startsWith("quick-syscall-")) {
-        if (togglesRef.current.syscall) setSyscallResult(event.payload);
-      } else if (rid.startsWith("quick-module-")) {
-        if (togglesRef.current.module) setModuleResult(event.payload);
-      } else if (rid.startsWith("quick-trace-")) {
-        if (togglesRef.current.instructions) setTraceResult(event.payload);
-      }
-
-      // The spinner is mostly UX: clear it on each arrival.
-      setIsLoading(false);
+      handleResult(event.payload);
     });
 
     const unlistenError = listen<{ session_id: string; error: string }>("emulation-error", () => {
@@ -205,7 +240,7 @@ export function useQuickEmulation(
       unlistenResult.then(f => f());
       unlistenError.then(f => f());
     };
-  }, [sessionId]);
+  }, [sessionId, handleResult]);
 
   // Clear state when session ends or resumes (not paused anymore)
   useEffect(() => {
@@ -302,5 +337,6 @@ export function useQuickEmulation(
     setMaxInstructions,
     isLoading,
     toggleTraceMode,
-  }), [syscallResult, moduleResult, traceResult, lightning, toggles, setToggle, lightningEnabled, setLightningEnabled, traceMode, maxInstructions, setMaxInstructions, isLoading, toggleTraceMode]);
+    idleHint,
+  }), [syscallResult, moduleResult, traceResult, lightning, toggles, setToggle, lightningEnabled, setLightningEnabled, traceMode, maxInstructions, setMaxInstructions, isLoading, toggleTraceMode, idleHint]);
 }
