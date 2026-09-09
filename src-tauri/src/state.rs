@@ -414,6 +414,50 @@ impl SerializableThreadContext {
     }
 }
 
+/// Everything the UI shows about one exception event: the decoded
+/// `EXCEPTION_RECORD` (code name, access kind and referenced address for an
+/// access violation / in-page error), both addresses symbolized, the
+/// callstack captured at the event, and the one-line `message` used for the
+/// log entry and the toast. Built by `session::exceptions::describe_exception`
+/// on the debug-loop thread and carried on both `LogEntry` and
+/// `DebugEventInfo`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExceptionDetail {
+    pub code: u32,
+    /// Symbolic name (`EXCEPTION_ACCESS_VIOLATION`) when the code is known.
+    pub name: Option<String>,
+    pub first_chance: bool,
+    /// Faulting address as `0x…` at the target's pointer width. Addresses are
+    /// strings, not numbers: a u64 above 2^53 (e.g. a read of -1) would lose
+    /// precision in JSON.
+    pub address: String,
+    /// `module!symbol+0x..` or `module+0x..` for the faulting address.
+    pub address_symbol: Option<String>,
+    /// `read` / `write` / `execute` — only for access violations and in-page errors.
+    pub access: Option<String>,
+    pub referenced_address: Option<String>,
+    pub referenced_symbol: Option<String>,
+    /// In-page error only: the NTSTATUS that caused the fault.
+    pub nt_status: Option<u32>,
+    /// Raw `ExceptionInformation`, each as `0x…`.
+    pub parameters: Vec<String>,
+    pub callstack: Vec<crate::session::types::CallStackData>,
+    /// `write to 0xDEAD0000 (mod!sym+0x10)` for a memory fault. Composed on
+    /// this side so the log line and the UI never spell the verbs differently.
+    pub access_clause: Option<String>,
+    /// The one-line log/toast text. Server-side only — the frontend already
+    /// has it as `LogEntry.message` / `DebugEventInfo.details`.
+    #[serde(skip)]
+    pub message: String,
+}
+
+/// Stack walks cached for the duration of a pause, keyed by `(pid, tid)`, so
+/// the exception capture, the Stack panel and Threads-panel hovers share one
+/// `GetCallStack` round-trip per thread. A map rather than a single slot
+/// because hovering thread A → B → A must not re-walk A.
+/// See `session::callstack::cached_or_walk_call_stack`.
+pub type CallStackCache = HashMap<(u32, u32), Vec<crate::session::types::CallStackData>>;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DebugEventInfo {
     pub event_type: String,
@@ -427,6 +471,9 @@ pub struct DebugEventInfo {
     pub context: Option<SerializableThreadContext>,
     pub exception_code: Option<u32>,
     pub exception_first_chance: Option<bool>,
+    /// Decoded exception record + callstack for `Exception` events.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exception: Option<ExceptionDetail>,
 }
 
 // Session state - the single source of truth for each session
@@ -526,6 +573,12 @@ pub struct SessionStateUI {
 
     // Exception handling
     pub pass_exception_on_continue: bool,
+    /// Decoded record of the current `Exception` event (set in `on_event`,
+    /// cleared on every new event). Attached to `current_event` in
+    /// `to_debug_session`.
+    pub exception_detail: Option<ExceptionDetail>,
+    /// Per-pause callstack cache; see `CallStackCache`.
+    pub callstack_cache: CallStackCache,
 
     /// In-progress source-line step. When set, the debug loop keeps single-stepping
     /// (auto-continuing without pausing the UI) until the PC leaves the starting
@@ -628,6 +681,8 @@ impl SessionStateUI {
             symbol_overrides: Vec::new(),
             bookmarks: Vec::new(),
             pass_exception_on_continue: false,
+            exception_detail: None,
+            callstack_cache: CallStackCache::new(),
             source_step: None,
             original_images: HashMap::new(),
             region_annotation_cache: Default::default(),
@@ -653,6 +708,8 @@ impl SessionStateUI {
         self.effective_working_directory = None;
 
         self.pass_exception_on_continue = false;
+        self.exception_detail = None;
+        self.callstack_cache.clear();
         self.source_step = None;
 
         // Original-image cache is per-run (load bases change with ASLR).
@@ -737,6 +794,12 @@ impl SessionStateUI {
             current_event: self.current_event.as_ref().map(|event| {
                 let mut info = crate::events::debug_event_to_info(event);
                 info.context = self.current_context.clone();
+                if matches!(event, joybug_core::protocol_io::DebugEvent::Exception { .. }) {
+                    if let Some(detail) = &self.exception_detail {
+                        info.details = detail.message.clone();
+                        info.exception = Some(detail.clone());
+                    }
+                }
 
                 // On a thread switch the event's own address (e.g. the
                 // breakpoint that fired) belongs to the event thread, so the
@@ -788,6 +851,9 @@ pub struct LogEntry {
     pub level: String,
     pub message: String,
     pub session_id: Option<String>,
+    /// Structured record for exception log lines (unfoldable in the Logs page).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exception: Option<ExceptionDetail>,
 }
 
 impl LogEntry {
@@ -799,6 +865,7 @@ impl LogEntry {
             level: level.to_string(),
             message: message.to_string(),
             session_id,
+            exception: None,
         }
     }
 }

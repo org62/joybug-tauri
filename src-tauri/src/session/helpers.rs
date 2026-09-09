@@ -113,6 +113,23 @@ pub(crate) fn find_module_for_address(modules: &[joybug_core::protocol_io::Modul
     None
 }
 
+/// `module!symbol+0x..` when the server has a symbol for `address`, else
+/// `module+0x..` when it lies in one of `modules`, else `None`. The resolve
+/// blocks on a pending symbol load like every other paused-path resolve
+/// (the callstack walk does the same per frame). Callers pass a module
+/// snapshot they already hold so a batch of addresses clones the list once.
+pub(crate) fn symbolize_address(
+    session: &mut DebugSession,
+    pid: u32,
+    address: u64,
+    modules: &[joybug_core::protocol_io::ModuleInfo],
+) -> Option<String> {
+    if let Ok((Some(module), Some(sym), Some(offset))) = session.resolve_address_to_symbol(pid, address) {
+        return Some(format_symbol(&extract_module_name(&module), &sym.name, offset));
+    }
+    find_module_for_address(modules, address).map(|(m, off)| module_offset_label(&m, off))
+}
+
 /// Formats bytes as space-separated uppercase hex ("48 8B 05").
 pub(crate) fn hex_join(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{:02X}", b)).collect::<Vec<_>>().join(" ")
@@ -273,6 +290,7 @@ pub(crate) fn finalize_process_exit(state: &mut SessionStateUI) {
     state.threads.clear();
     state.original_images.clear();
     state.region_annotation_cache = Default::default();
+    state.callstack_cache.clear();
     state.status = SessionStatusUI::Stopped;
     info!("Process exited, session stopped.");
 }

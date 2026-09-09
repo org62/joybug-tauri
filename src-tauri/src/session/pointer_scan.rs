@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use tauri::{AppHandle, Emitter};
 use tracing::{debug, error, info};
 
-use super::helpers::{emit_scan_error, extract_module_name, find_module_for_address, format_symbol, get_modules_snapshot};
+use super::helpers::{emit_scan_error, get_modules_snapshot, symbolize_address};
 use super::types::*;
 
 /// Processes a pointer scan start request. Uses all cores (thread_count = None).
@@ -96,13 +96,7 @@ pub(crate) fn process_pointer_scan_get_results(
             for p in &paths {
                 let base_addr = p.module_base.wrapping_add(p.base_offset);
                 if !sym_cache.contains_key(&base_addr) {
-                    let sym = match session.resolve_address_to_symbol(pid, base_addr) {
-                        Ok((Some(m), Some(s), Some(off))) => {
-                            Some(format_symbol(&extract_module_name(&m), &s.name, off))
-                        }
-                        _ => find_module_for_address(&modules, base_addr)
-                            .map(|(name, off)| format!("{}+0x{:X}", name, off)),
-                    };
+                    let sym = symbolize_address(session, pid, base_addr, &modules);
                     sym_cache.insert(base_addr, sym);
                 }
                 entries.push(PointerPathEntry {

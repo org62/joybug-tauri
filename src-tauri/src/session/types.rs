@@ -110,6 +110,25 @@ impl UICommand {
                 | UICommand::StepIntoLine
         )
     }
+
+    /// Commands whose handler can move the target's registers or memory while
+    /// paused, so the per-pause callstack cache must be dropped after them.
+    /// Keep in sync when adding a variant that writes to the target —
+    /// `dispatch::handle_ui_commands` derives cache invalidation from this.
+    pub(crate) fn mutates_target(&self) -> bool {
+        matches!(
+            self,
+            UICommand::SetRegister { .. }
+                | UICommand::WriteMemory { .. }
+                | UICommand::AssemblePatch { .. }
+                | UICommand::UndoPatch { .. }
+                | UICommand::UndoPatches { .. }
+                | UICommand::EnablePatch { .. }
+                | UICommand::EnablePatchGroup { .. }
+                | UICommand::RestoreImageBytes { .. }
+                | UICommand::SetBookmarkValue { .. }
+        )
+    }
 }
 
 /// Event payload for successful memory read (may be partial)
@@ -310,7 +329,7 @@ pub struct ImagePatchesResult {
     pub capped: bool,
 }
 
-#[derive(serde::Serialize, Clone, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub struct CallStackData {
     pub frame_number: usize,
     pub instruction_pointer: String,

@@ -13,7 +13,10 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { DockWindowsMenu, DockWindowsMenuGroup } from '@/components/DockWindowsMenu';
 import { SESSION_TAB_DEFS, SESSION_TAB_CATEGORIES } from '@/lib/sessionTabs';
-import { DebugEventInfo, DebugSession, SessionStatus } from '@/contexts/SessionContext';
+import { DebugEventInfo, DebugSession, ExceptionDetail, SessionContext, SessionStatus } from '@/contexts/SessionContext';
+import { useHoverPopup } from '@/hooks/useHoverPopup';
+import { ExceptionHoverPopup } from '@/components/ExceptionDetailBlock';
+import { shortHex } from '@/lib/hexUtils';
 import { sessionDisplayName } from '@/lib/sessionHelpers';
 import { useKeybindingContext } from '@/contexts/KeybindingContext';
 
@@ -67,25 +70,55 @@ const ArchBadge: React.FC<{ session: DebugSession }> = ({ session }) => {
 };
 
 const ExceptionBadge: React.FC<{ event: DebugEventInfo | null }> = ({ event }) => {
+  // The header renders inside the session's context provider; frame clicks in
+  // the popup navigate the disassembly through the same callback the panels use.
+  const navigate = React.useContext(SessionContext)?.onNavigateToDisassembly;
+  const popup = useHoverPopup<ExceptionDetail>(300);
   if (event?.event_type !== "Exception" || event.exception_code == null) return null;
   const code = event.exception_code;
-  const name = exceptionName(code);
   const secondChance = event.exception_first_chance === false;
+  const detail = event.exception ?? null;
+  // The backend's record names the code; `exceptionName` is only the fallback
+  // for an event that reaches the badge without one.
+  const name = detail?.name ?? exceptionName(code);
   // A single-step exception reaching us is always program-raised — the
   // debugger's own steps surface as StepComplete, never as an Exception.
   // Spell that out so the user isn't misled into thinking they stepped.
   const isProgramSingleStep = code === EXCEPTION_SINGLE_STEP;
+  // Access violations name the access and the referenced address right on the
+  // badge ("write 0xDEAD0000"); everything else in the hover popup.
+  const memory = detail?.access && detail.referenced_address
+    ? ` · ${detail.access} ${shortHex(detail.referenced_address)}`
+    : "";
   const label = isProgramSingleStep
     ? `${name} · raised by program`
-    : `${name}${secondChance ? " · second-chance" : ""}`;
+    : `${name}${memory}${secondChance ? " · second-chance" : ""}`;
   const title = isProgramSingleStep
     ? "The debuggee raised this single-step exception itself — this is NOT a debugger step. Use Go ▸ Pass Exception to deliver it to the program's own handler, or Go ▸ Handle Exception to swallow it."
     : `${name} (${formatExceptionCode(code)}) — ${secondChance ? "second" : "first"}-chance`;
   return (
-    <Badge variant="destructive" size="xs" title={title}>
-      <AlertTriangle className="h-3 w-3 mr-1" />
-      {label}
-    </Badge>
+    <>
+      <Badge
+        variant="destructive"
+        size="xs"
+        data-testid="session-exception"
+        // The popup carries the full record when the backend produced one;
+        // the native title stays only for events without it.
+        title={detail ? undefined : title}
+        onMouseEnter={detail ? (e) => popup.show(e, detail) : undefined}
+        onMouseMove={detail ? popup.move : undefined}
+        onMouseLeave={detail ? popup.leave : undefined}
+      >
+        <AlertTriangle className="h-3 w-3 mr-1" />
+        {label}
+      </Badge>
+      <ExceptionHoverPopup
+        popup={popup}
+        testId="session-exception-popup"
+        onClickAddress={navigate}
+        header={isProgramSingleStep ? title : undefined}
+      />
+    </>
   );
 };
 

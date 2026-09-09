@@ -1,5 +1,9 @@
 // Symbolic names for common Windows exception / NTSTATUS codes, so the UI can
 // show "EXCEPTION_SINGLE_STEP" instead of a bare 0x80000004.
+//
+// The backend ships the name on `ExceptionDetail.name` (see
+// `session/exceptions.rs`, which owns the authoritative table); this one is the
+// fallback for an event that reaches the UI without a decoded record.
 
 export const EXCEPTION_SINGLE_STEP = 0x80000004;
 

@@ -68,6 +68,20 @@ pub fn log_error<R: tauri::Runtime>(
     log(app, LogLevel::Error, message, session_id);
 }
 
+/// Log an exception event with its structured record attached, so the Logs
+/// page can unfold the callstack and the decoded exception fields.
+pub fn log_exception<R: tauri::Runtime>(
+    app: &impl Manager<R>,
+    detail: &crate::state::ExceptionDetail,
+    session_id: Option<String>,
+) {
+    let state = app.state::<LogsState>();
+    let mut logs = state.lock().unwrap();
+    let mut entry = LogEntry::new(LogLevel::Info.as_str(), &detail.message, session_id);
+    entry.exception = Some(detail.clone());
+    logs.push(entry);
+}
+
 #[allow(dead_code)]
 pub fn toast_info(app: &tauri::AppHandle, message: &str) {
     if let Err(e) = app.emit("show-toast", message) {

@@ -5,6 +5,7 @@ import type { PatchState } from "@/hooks/usePatches";
 import type { BookmarkState } from "@/hooks/useBookmarks";
 import type { WatchpointTraceState } from "@/hooks/useWatchpointTrace";
 import type { SandboxLaunchConfig, EtwConfig } from "@/lib/sandbox";
+import type { CallStackFrame } from "@/components/CallStackFrameList";
 
 // Re-export for convenience in other components
 export { type SerializableThreadContext } from "@/components/RegisterView";
@@ -94,6 +95,30 @@ export interface DebugSession {
   bookmarks: ResolvedBookmark[];
 }
 
+/** Decoded exception record + callstack, built by the backend for every
+ *  `Exception` event (see `session/exceptions.rs`). Addresses are `0x…`
+ *  strings at the target's pointer width. */
+export interface ExceptionDetail {
+  code: number;
+  /** Symbolic name (EXCEPTION_ACCESS_VIOLATION) when the code is known. */
+  name: string | null;
+  first_chance: boolean;
+  address: string;
+  /** `module!symbol+0x..` or `module+0x..` for the faulting address. */
+  address_symbol: string | null;
+  /** "read" | "write" | "execute" — access violations / in-page errors only. */
+  access: string | null;
+  referenced_address: string | null;
+  referenced_symbol: string | null;
+  /** In-page error only: the NTSTATUS behind the fault. */
+  nt_status: number | null;
+  parameters: string[];
+  callstack: CallStackFrame[];
+  /** `write to 0xDEAD0000 (mod!sym+0x10)` for a memory fault, composed by the
+   *  backend so the log line and the UI never word it differently. */
+  access_clause: string | null;
+}
+
 export interface DebugEventInfo {
   event_type: string;
   process_id: number;
@@ -106,6 +131,8 @@ export interface DebugEventInfo {
   context?: SerializableThreadContext;
   exception_code?: number;
   exception_first_chance?: boolean;
+  /** Present on `Exception` events. */
+  exception?: ExceptionDetail;
 }
 
 export interface Module {

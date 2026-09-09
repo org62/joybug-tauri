@@ -310,19 +310,15 @@ pub fn run_debug_session(
                 return Ok(joybug_core::protocol_io::ExceptionAction::PassToApplication);
             }
 
-            // Check per-code exception rules from settings
+            // Check per-code exception rules from settings. Only "pass" changes
+            // the continue status; "stop" and "handled" both mean handled here
+            // (on_event decides whether to pause via `exception_should_stop`).
             if let Some(ref handle) = app_handle_for_exception {
                 let settings = handle.state::<SettingsState>().inner().lock().unwrap().clone();
-                for rule in &settings.exception_rules {
-                    if rule.code == code {
-                        let action_str = if first_chance { &rule.first_chance } else { &rule.second_chance };
-                        return Ok(match action_str.as_str() {
-                            "pass" => joybug_core::protocol_io::ExceptionAction::PassToApplication,
-                            "handled" => joybug_core::protocol_io::ExceptionAction::HandledByDebugger,
-                            _ => joybug_core::protocol_io::ExceptionAction::HandledByDebugger, // "stop" → handled (on_event controls pausing)
-                        });
-                    }
-                }
+                return Ok(match super::exceptions::exception_rule_action(&settings, code, first_chance) {
+                    "pass" => joybug_core::protocol_io::ExceptionAction::PassToApplication,
+                    _ => joybug_core::protocol_io::ExceptionAction::HandledByDebugger,
+                });
             }
 
             // Default: handled by debugger (on_event controls whether we pause)
@@ -331,6 +327,14 @@ pub fn run_debug_session(
         .on_event(move |session, event| {
             debug!("📥 Received debug event from server: {}", event);
             info!("Debug event: {}", event);
+
+            // A new event means the target ran: whatever stack walk and
+            // exception record the previous pause produced are stale.
+            {
+                let mut state = session.state.lock().unwrap();
+                state.callstack_cache.clear();
+                state.exception_detail = None;
+            }
 
             // JIT launch: release WER at the attach break (or whatever first
             // pauses), not at ProcessCreated. Signalling earlier lets the
@@ -393,11 +397,29 @@ pub fn run_debug_session(
                     return Ok(true);
                 }
             };
-            crate::ui_logger::log_debug(
-                handle,
-                &format!("Received debug event: {}", event),
-                Some(session.state.lock().unwrap().id.clone()),
-            );
+            // Exceptions get a decoded record (code name, symbolized fault and
+            // referenced addresses, read/write, callstack) instead of the raw
+            // tuple; the stack walk it performs primes the per-pause cache the
+            // Stack panel reads from, so nothing is queried twice. Symbolizing
+            // and walking is worth it only for an exception that will pause —
+            // the same rule lookup `should_pause` makes below decides.
+            let exception_detail = match event {
+                joybug_core::protocol_io::DebugEvent::Exception { code, first_chance, .. } => {
+                    let settings = handle.state::<SettingsState>().inner().lock().unwrap().clone();
+                    let will_pause = super::exceptions::exception_should_stop(&settings, *code, *first_chance);
+                    super::exceptions::describe_exception(session, event, will_pause)
+                }
+                _ => None,
+            };
+            let session_id = session.state.lock().unwrap().id.clone();
+            match &exception_detail {
+                Some(detail) => crate::ui_logger::log_exception(handle, detail, Some(session_id)),
+                None => crate::ui_logger::log_debug(
+                    handle,
+                    &format!("Received debug event: {}", event),
+                    Some(session_id),
+                ),
+            }
             // Toast for events here; Output/DllLoaded/DllUnloaded are toasted separately
             // below / above (with richer messages). The frontend dispatcher coalesces any
             // bursts (e.g. thousands of thread-creates) into a single summary toast.
@@ -416,10 +438,15 @@ pub fn run_debug_session(
                         super::breakpoints::breakpoint_hit_message(session, *address)
                             .unwrap_or_else(|| format!("{}", event))
                     }
-                    _ => format!("{}", event),
+                    _ => match &exception_detail {
+                        Some(detail) => detail.message.clone(),
+                        None => format!("{}", event),
+                    },
                 };
                 crate::ui_logger::toast_info(handle, &msg);
             }
+            // Moved in only now that the log entry and the toast have read it.
+            session.state.lock().unwrap().exception_detail = exception_detail;
 
             // A single-shot breakpoint is auto-removed server-side on its one hit; drop
             // its UI row too so the list stays in sync (whether we pause or continue).
@@ -524,18 +551,7 @@ pub fn run_debug_session(
                     // it flows through the normal per-code exception-rule path below
                     // (default: pause), letting the user choose Go (Pass Exception).
                     joybug_core::protocol_io::DebugEvent::Exception { code, first_chance, .. } => {
-                        // Check per-code exception rules
-                        let mut found = false;
-                        let mut should_stop = true;
-                        for rule in &settings.exception_rules {
-                            if rule.code == *code {
-                                found = true;
-                                let action_str = if *first_chance { &rule.first_chance } else { &rule.second_chance };
-                                should_stop = action_str == "stop";
-                                break;
-                            }
-                        }
-                        if found { should_stop } else { true }
+                        super::exceptions::exception_should_stop(&settings, *code, *first_chance)
                     }
                     joybug_core::protocol_io::DebugEvent::Unknown { .. } => false,
                     _ => true,

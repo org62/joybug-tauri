@@ -25,6 +25,7 @@ export default defineConfig({
     "windows-menu.spec.ts",
     "patches.spec.ts",
     "process-exit-break.spec.ts",
+    "exception-log.spec.ts",
     "image-patch.spec.ts",
     "symbol-persist.spec.ts",
     "bookmarks.spec.ts",

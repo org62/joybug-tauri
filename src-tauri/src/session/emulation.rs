@@ -5,7 +5,10 @@ use joybug_core::protocol_io::{EmulateResult, EmulationMode};
 use tauri::{AppHandle, Emitter};
 use tracing::{debug, error};
 
-use super::helpers::{effective_op_str, find_module_for_address, format_symbol, get_modules_snapshot, module_offset_label};
+use super::helpers::{
+    effective_op_str, find_module_for_address, format_symbol, get_modules_snapshot, module_offset_label,
+    symbolize_address,
+};
 use super::types::{DebugSession, EmulationInstructionInfo, EmulationResultPayload, MemorySnapshotEntry};
 
 /// Extracts PC addresses from Tenet trace text (first key=value on each line is always the PC)
@@ -137,18 +140,9 @@ fn symbolize_address_in_stop_reason(
     let hex_str = &stop_reason[after_prefix..end];
     let addr = u64::from_str_radix(&hex_str[2..], 16).ok()?;
 
-    if let Ok((_module, sym, offset)) = session.resolve_address_to_symbol(pid, addr) {
-        if let (Some(m), Some(s), Some(o)) = (_module, sym, offset) {
-            let symbol = format_symbol(&m, &s.name, o);
-            return Some(format!("{}{}{}", &stop_reason[..after_prefix], symbol, &stop_reason[end..]));
-        }
-    }
     let modules = get_modules_snapshot(session);
-    if let Some((mod_name, mod_offset)) = find_module_for_address(&modules, addr) {
-        let label = module_offset_label(&mod_name, mod_offset);
-        return Some(format!("{}{}{}", &stop_reason[..after_prefix], label, &stop_reason[end..]));
-    }
-    None
+    let label = symbolize_address(session, pid, addr, &modules)?;
+    Some(format!("{}{}{}", &stop_reason[..after_prefix], label, &stop_reason[end..]))
 }
 
 /// Symbolize addresses in stop_reason strings like "Syscall(0x7FFC...)" or "ModuleTransition(mod1->mod2@0x7FFC...)"

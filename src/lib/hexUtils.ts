@@ -1,3 +1,9 @@
+/** `0x00000000DEAD0000` → `0xDEAD0000`: drop the leading zero padding for
+ *  compact chrome (badge labels, inline chains). */
+export function shortHex(hex: string): string {
+  return hex.replace(/^0x0+(?=[0-9a-fA-F])/, "0x");
+}
+
 /**
  * Hex editor utility functions and view mode configurations
  */
@@ -74,7 +80,7 @@ export function formatDereferenceChain(chain: DereferenceValue[], maxItems: numb
 
     switch (value.type) {
       case 'Pointer':
-        const addr = value.address.replace(/^0x0+/, '0x');
+        const addr = shortHex(value.address);
         if (value.symbol) {
           // Show address with symbol in brackets
           items.push(addr + ' (' + value.symbol + ')');

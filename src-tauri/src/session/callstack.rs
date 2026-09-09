@@ -30,6 +30,40 @@ pub(crate) fn convert_frames_to_callstack(
     }).collect()
 }
 
+/// The callstack of `tid`, walked at most once per pause. The first caller on
+/// a pause (the exception capture, the Stack panel or a Threads-panel hover)
+/// pays for the `GetCallStack` round-trip and fills `callstack_cache`; later
+/// callers for the same thread reuse it. The cache is dropped on every new
+/// debug event, on process exit, and after any command that mutates the target
+/// while paused (register/memory writes, patches) — see `dispatch.rs`.
+pub(crate) fn cached_or_walk_call_stack(
+    session: &mut DebugSession,
+    pid: u32,
+    tid: u32,
+) -> std::result::Result<Vec<CallStackData>, String> {
+    let (cached, pointer_size) = {
+        let state = session.state.lock().unwrap();
+        (state.callstack_cache.get(&(pid, tid)).cloned(), state.target_arch().pointer_size())
+    };
+    if let Some(frames) = cached {
+        debug!("📥 Serving {} cached frames for pid={}, tid={}", frames.len(), pid, tid);
+        return Ok(frames);
+    }
+
+    let modules = get_modules_snapshot(session);
+    let frames = session.get_call_stack(pid, tid).map_err(|e| e.to_string())?;
+    debug!("📥 Received {} frames from get_call_stack", frames.len());
+    let call_stack = convert_frames_to_callstack(&frames, &modules, pointer_size);
+    session.state.lock().unwrap().callstack_cache.insert((pid, tid), call_stack.clone());
+    Ok(call_stack)
+}
+
+/// Drop the per-pause callstack cache. Called whenever the stack may have
+/// changed: a new debug event, process exit, or a paused-state mutation.
+pub(crate) fn invalidate_callstack_cache(session: &DebugSession) {
+    session.state.lock().unwrap().callstack_cache.clear();
+}
+
 /// Processes a callstack request and emits results to the frontend
 pub(crate) fn process_callstack_request(
     session: &mut DebugSession,
@@ -37,19 +71,11 @@ pub(crate) fn process_callstack_request(
     event: &joybug_core::protocol_io::DebugEvent,
 ) {
     let pid = event.pid();
-    let (tid, pointer_size) = {
-        let state = session.state.lock().unwrap();
-        (state.active_tid(event), state.target_arch().pointer_size())
-    };
+    let tid = session.state.lock().unwrap().active_tid(event);
     debug!("📤 Processing callstack request: pid={}, tid={}", pid, tid);
 
-    let modules = get_modules_snapshot(session);
-    match session.get_call_stack(pid, tid) {
-        Ok(frames) => {
-            debug!("📥 Received {} frames from get_call_stack", frames.len());
-
-            let call_stack = convert_frames_to_callstack(&frames, &modules, pointer_size);
-
+    match cached_or_walk_call_stack(session, pid, tid) {
+        Ok(call_stack) => {
             if let Some(ref handle) = app_handle_clone {
                 let session_id = {
                     let state = session.state.lock().unwrap();
@@ -112,14 +138,8 @@ pub(crate) fn process_thread_callstack_request(
 ) {
     debug!("📤 Processing thread callstack request: pid={}, tid={}", pid, tid);
 
-    let pointer_size = session.state.lock().unwrap().target_arch().pointer_size();
-    let modules = get_modules_snapshot(session);
-    match session.get_call_stack(pid, tid) {
-        Ok(frames) => {
-            debug!("📥 Received {} frames from get_call_stack for tid={}", frames.len(), tid);
-
-            let call_stack = convert_frames_to_callstack(&frames, &modules, pointer_size);
-
+    match cached_or_walk_call_stack(session, pid, tid) {
+        Ok(call_stack) => {
             if let Some(ref handle) = app_handle_clone {
                 let session_id = {
                     let state = session.state.lock().unwrap();

@@ -166,7 +166,16 @@ pub(crate) fn handle_ui_commands(
         for command in batch {
             info!("Processing UI command: {:?}", command);
 
-            match process_command(command, session, app_handle_clone, event) {
+            // A command that moves the target's registers or memory invalidates
+            // the per-pause callstack cache. A resume needs no handling here:
+            // it returns immediately and `runner.rs` clears the cache when the
+            // next debug event arrives, before any reader can run.
+            let mutates_target = command.mutates_target();
+            let result = process_command(command, session, app_handle_clone, event);
+            if mutates_target {
+                invalidate_callstack_cache(session);
+            }
+            match result {
                 CommandResult::Continue => {}
                 CommandResult::ResumeExecution => return Ok(true),
                 CommandResult::StopSession => return Ok(false),

@@ -16,7 +16,7 @@ export interface ModuleData {
 
 /** Absolute path to a built source-debugging fixture exe (see e2e/fixtures/build.mjs).
  *  `hello_c32` is the 32-bit (WOW64) build of hello_c. */
-export function fixtureExe(name: "hello_c" | "hello_asm" | "watch_c" | "hello_c32"): string {
+export function fixtureExe(name: "hello_c" | "hello_asm" | "watch_c" | "crash_c" | "hello_c32"): string {
   return path.resolve(__dirname, "..", "fixtures", "bin", `${name}.exe`);
 }
 

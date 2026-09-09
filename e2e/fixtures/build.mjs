@@ -139,6 +139,7 @@ function main() {
 
   compileC("hello_c");
   compileC("watch_c");
+  compileC("crash_c");
   // 32-bit build of the same program for the WOW64 spec.
   compileC("hello_c", C_WOW64, "hello_c32");
 
