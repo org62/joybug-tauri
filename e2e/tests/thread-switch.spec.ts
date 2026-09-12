@@ -32,6 +32,12 @@ test.describe("Threads panel: active thread", () => {
       const session = await invoke(page, "get_debug_session", { sessionId });
       const eventTid: number = session.current_event.thread_id;
       expect(session.selected_thread_id ?? null).toBeNull();
+      // Break-in runs on a thread the debugger injected, so the process's
+      // initial thread is a different one — which is what makes this the place
+      // to prove the "main" badge tracks identity, not the current context.
+      const mainTid: number = session.main_thread_id;
+      expect(mainTid, "backend recorded the initial thread").toBeTruthy();
+      expect(mainTid).not.toBe(eventTid);
 
       await goToWindow(page, "Threads");
       const activeRow = page.locator('[data-testid="thread-row"][data-active="true"]');
@@ -41,6 +47,15 @@ test.describe("Threads panel: active thread", () => {
       await expect(activeRow).toHaveAttribute("data-tid", String(eventTid));
       await expect(activeRow.getByText("current")).toBeVisible();
       await expect(activeRow.getByText("event")).toHaveCount(0);
+
+      // ...and "main" sits on the initial thread instead, never on the break-in
+      // thread that currently holds the context. Exact text match: the start
+      // symbol of that very row reads `hello_c!mainCRTStartup`.
+      const mainRow = page.locator('[data-testid="thread-row"][data-main="true"]');
+      await expect(mainRow).toHaveCount(1);
+      await expect(mainRow).toHaveAttribute("data-tid", String(mainTid));
+      await expect(mainRow.getByText("main", { exact: true })).toBeVisible();
+      await expect(activeRow).not.toHaveAttribute("data-main", "true");
 
       // Pick another thread (the main thread, parked in Sleep).
       const threads: Array<{ id: number }> = await invoke(page, "get_session_threads", { sessionId });

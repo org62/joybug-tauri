@@ -1,6 +1,6 @@
 import { Page } from "@playwright/test";
 import { test, expect, navigateTo } from "../helpers/test-fixtures";
-import { cleanupSession, invoke, goToWindow } from "../helpers/session-helpers";
+import { cleanupSession, invoke, goToWindow, rowAddress } from "../helpers/session-helpers";
 import { spawnTarget, isAlive, killQuietly } from "../helpers/process-helpers";
 import {
   installEventCapture,
@@ -116,9 +116,6 @@ async function findPaddingByte(
   }
   throw new Error("no alignment padding found in the target's executable sections");
 }
-
-/** Backend hex formatting for an image-patch row address ("0x7FF8ABCD1234"). */
-const rowAddress = (address: bigint) => `0x${address.toString(16).toUpperCase()}`;
 
 test.describe("Non-invasive mode", () => {
   test("open a process non-invasively: reaches Open, never attaches, enumerates modules/threads", async ({

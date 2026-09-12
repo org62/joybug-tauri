@@ -4,6 +4,7 @@ import {
   cleanupSession,
   goToWindow,
   invoke,
+  type BreakpointData,
 } from "../helpers/session-helpers";
 import {
   waitForPaused,
@@ -14,13 +15,6 @@ import {
 interface SymbolStatus {
   module_path: string;
   status: string;
-}
-
-interface Breakpoint {
-  address: number;
-  group: string | null;
-  symbol: string | null;
-  bp_kind: string;
 }
 
 // A narrow ntdll term that resolves to a small, stable set of function symbols,
@@ -95,7 +89,7 @@ test.describe("Symbol mass breakpoints", () => {
       await expect(async () => {
         const session = (await invoke(page, "get_debug_session", {
           sessionId,
-        })) as { breakpoints: Breakpoint[] };
+        })) as { breakpoints: BreakpointData[] };
         const grouped = session.breakpoints.filter((b) => b.group === SEARCH_TERM);
         // Each selected symbol becomes a grouped breakpoint; dedup can only collapse
         // symbols that share an address, so the count never exceeds the selection.

@@ -98,6 +98,13 @@ pub struct DebugSettings {
     pub keybindings: KeybindingSettings,
     #[serde(default)]
     pub exception_rules: Vec<ExceptionRule>,
+    /// Symbolize the faulting/referenced addresses and walk the callstack for
+    /// *every* exception, not just the ones that pause the UI. Off makes a
+    /// non-stopping exception cheap again (the decoded one-liner only, no
+    /// `GetCallStack` round-trip) for runs that raise them in a tight loop —
+    /// C++ EH throws, guard-page tracing, program single-stepping set to "pass".
+    #[serde(default = "default_true")]
+    pub capture_exception_context: bool,
     #[serde(default)]
     pub debugger_hiding: DebuggerHidingSettings,
     /// Number of threads to use for memory scanning. `0` = all CPU cores.
@@ -153,6 +160,7 @@ impl Default for DebugSettings {
             break_on_system_tls_callbacks: false,
             keybindings: KeybindingSettings::default(),
             exception_rules: Vec::new(),
+            capture_exception_context: true,
             debugger_hiding: DebuggerHidingSettings::default(),
             scan_thread_count: 0, // 0 = all cores
             symbol_path: String::new(),
@@ -208,3 +216,31 @@ pub fn save_settings_to_disk(settings: &DebugSettings) -> std::io::Result<()> {
 }
 
 
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The E2E helpers (and any settings.json written before the field existed)
+    /// post only the `stop_on_*` toggles. Exception-context capture has to come
+    /// back on from such a payload, not `false`.
+    #[test]
+    fn capture_exception_context_defaults_on_when_absent() {
+        const PARTIAL: &str = r#"{
+            "stop_on_thread_create": false,
+            "stop_on_thread_exit": false,
+            "stop_on_dll_load": false,
+            "stop_on_dll_unload": false,
+            "stop_on_initial_breakpoint": true,
+            "stop_on_process_create": false,
+            "stop_on_process_exit": false
+        }"#;
+        let settings: DebugSettings = serde_json::from_str(PARTIAL).expect("partial settings deserialize");
+        assert!(settings.capture_exception_context);
+        assert!(DebugSettings::default().capture_exception_context);
+
+        let explicit = PARTIAL.replacen("{", "{ \"capture_exception_context\": false,", 1);
+        let off: DebugSettings = serde_json::from_str(&explicit).expect("explicit off deserializes");
+        assert!(!off.capture_exception_context);
+    }
+}

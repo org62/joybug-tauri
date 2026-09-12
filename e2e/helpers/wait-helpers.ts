@@ -1,6 +1,6 @@
 import { Page, expect } from "@playwright/test";
 import { invoke } from "./session-helpers";
-import { ASM_ROW_ONLY } from "./selectors";
+import { ASM_PANEL, ASM_ROW_ONLY } from "./selectors";
 
 /**
  * Wait until the backend reports the session in the given status, polling
@@ -139,12 +139,14 @@ export async function waitForDisassemblyLoaded(
  * all other events (DLL loads, thread creates, process create, etc.).
  *
  * `overrides` flips specific keys on top of the minimal set — e.g.
- * `{ stop_on_process_exit: true }` for a test that needs the exit break —
- * without a test hand-repeating the whole payload and drifting from this helper.
+ * `{ stop_on_process_exit: true }` for a test that needs the exit break, or
+ * `{ exception_rules: [...] }` for one that needs a per-code rule — without a
+ * test hand-repeating the whole payload and drifting from this helper. Every
+ * field the payload omits falls back to its serde default on the Rust side.
  */
 export async function configureMinimalStopSettings(
   page: Page,
-  overrides: Record<string, boolean> = {},
+  overrides: Record<string, unknown> = {},
 ): Promise<void> {
   try {
     await page.evaluate(async (overrides) => {
@@ -337,4 +339,19 @@ export async function waitForModuleSymbols(
     );
     expect(usable).toBe(true);
   }).toPass({ timeout, intervals: [250, 500] });
+}
+
+/**
+ * Turn on the disassembly view's image-patch lens. It is opt-in (off by default
+ * so ordinary stepping doesn't pay the per-instruction on-disk-image diff), and
+ * a test asserting patched rows must enable it or the view's own re-decodes
+ * clear the highlight. Idempotent.
+ */
+export async function enableImagePatchLens(page: Page): Promise<void> {
+  await page.locator(ASM_PANEL).getByTestId("asm-more-menu").click();
+  const toggle = page.getByTestId("asm-image-patches-toggle");
+  if ((await toggle.getAttribute("data-state")) === "unchecked") {
+    await toggle.click();
+  }
+  await page.keyboard.press("Escape");
 }

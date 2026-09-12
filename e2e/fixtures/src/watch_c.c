@@ -2,8 +2,8 @@
 // A volatile global is read and written in a tight loop that runs AFTER the
 // process's initial debugger pause, so a watchpoint armed at that pause reliably
 // collects the accessing instructions. Built with `cl /Od /Zi` for a full PDB so
-// the test can resolve `g_watch_target` by symbol. The long Sleep keeps the
-// process alive while Playwright polls the collected accessors.
+// the test can resolve `g_watch_target` by symbol. The trailing sleep keeps
+// the process alive while Playwright polls the collected accessors -- see main().
 #include <windows.h>
 #include <stdio.h>
 
@@ -24,7 +24,9 @@ int main(void)
     access_loop();
     printf("watch_c_marker g=%u\n", g_watch_target);
     fflush(stdout);
-    // Stay alive so the debugger UI can poll collected accessors.
-    Sleep(600000);
+    // Stay alive so the debugger UI can poll collected accessors: double
+    // watchpoint-trace's worst-case polling budget after the resume, short
+    // enough that a stray fixture or a manual Go doesn't look like a hang.
+    Sleep(90000);
     return 0;
 }

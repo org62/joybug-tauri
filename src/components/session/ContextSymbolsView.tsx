@@ -2,7 +2,7 @@ import { useCallback, useMemo, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { useSessionContext, Symbol, hasUsableSymbols } from '@/contexts/SessionContext';
 import { useContextMenu } from '@/hooks/useContextMenu';
-import { invokeToggleBreakpoint, invokeSetBreakpoints, reportSessionError } from '@/lib/sessionHelpers';
+import { invokeToggleBreakpoint, reportSessionError } from '@/lib/sessionHelpers';
 import { Button } from '@/components/ui/button';
 import { ContextMenu, ContextMenuItem } from '@/components/ui/context-menu';
 import {
@@ -72,18 +72,16 @@ export const ContextSymbolsView = () => {
     });
   }, [sessionId]);
 
+  const addBreakpoints = sessionData.breakpointState.addBreakpoints;
   const applyBreakpoints = useCallback(async (bulk: PendingBulk) => {
-    if (!sessionId || bulk.symbols.length === 0) return;
-    try {
-      // Group by the search term so the breakpoints can be enabled/removed as a unit;
-      // fall back to a generic name if the term is empty (unlikely — search needs 2+ chars).
-      const group = bulk.term || 'Symbols';
-      await invokeSetBreakpoints(sessionId, bulk.symbols.map((s) => s.va), group, bulk.singleShot);
+    if (bulk.symbols.length === 0) return;
+    // Group by the search term so the breakpoints can be enabled/removed as a unit;
+    // fall back to a generic name if the term is empty (unlikely — search needs 2+ chars).
+    const group = bulk.term || 'Symbols';
+    if (await addBreakpoints(bulk.symbols.map((s) => s.va), group, bulk.singleShot)) {
       bulk.clear();
-    } catch (e) {
-      reportSessionError('set breakpoints', e, sessionId);
     }
-  }, [sessionId]);
+  }, [addBreakpoints]);
 
   const setBreakpointsForSymbols = useCallback((symbols: Symbol[], term: string, clear: () => void, singleShot: boolean) => {
     if (!sessionId || symbols.length === 0) return;

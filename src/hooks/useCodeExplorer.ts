@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { formatTauriError } from '@/lib/sessionHelpers';
 import { useLiveRefresh } from '@/hooks/useLiveRefresh';
+import { customEntryLines } from '@/lib/inputLists';
 
 /// One armed function, returned by `start_code_coverage`. Hit counts arrive
 /// separately via polling and are joined by `address` in the view.
@@ -33,16 +34,6 @@ export const TARGET_SOURCES: { key: keyof TargetSources; label: string; hint: st
   { key: 'symbols', label: 'Symbols', hint: 'Module symbols: those the PDB marks as functions, plus those that pass a code-sanity check. Widest coverage, but that second group is a heuristic and can place a breakpoint on data.' },
   { key: 'list', label: 'List', hint: 'Your own addresses or symbol names, armed exactly as given — the code-sanity check is not applied to them.' },
 ];
-
-/// The lines of a custom list that actually become targets. Mirrors the
-/// backend's parsing (blank lines and `#`/`;` comments are skipped) so the count
-/// the UI shows is the count that gets armed.
-export function customEntryLines(text: string): string[] {
-  return text
-    .split('\n')
-    .map((line) => line.trim())
-    .filter((line) => line && !line.startsWith('#') && !line.startsWith(';'));
-}
 
 /// Server-side names of the enabled enumeration tiers. Empty means nothing is
 /// enumerated, leaving the custom list (if enabled) to supply every target.

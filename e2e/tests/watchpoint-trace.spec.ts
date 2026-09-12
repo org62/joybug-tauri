@@ -9,7 +9,7 @@ import {
   waitForStatus,
   setArmedBreakpoint,
 } from "../helpers/wait-helpers";
-import { installEventCapture, getCapturedEvents, waitForCapturedEvent } from "../helpers/event-helpers";
+import { installEventCapture, resolveSymbolVa, waitForCapturedEvent } from "../helpers/event-helpers";
 
 interface WatchpointAccessRow {
   accessor: string;
@@ -36,21 +36,7 @@ test.describe("Access Trace (hardware watchpoint)", () => {
       await waitForPaused(page, sessionId);
       await installEventCapture(page, ["symbols-updated", "breakpoints-updated"]);
 
-      // Resolve a symbol's VA, polling the symbol search until the exe's PDB has
-      // finished loading in the background.
-      const resolveVa = async (pattern: string): Promise<string> => {
-        let va = "";
-        await expect(async () => {
-          await invoke(page, "search_session_symbols", { sessionId, pattern, limit: 20 });
-          const events = await getCapturedEvents(page, "symbols-updated");
-          const hit = events
-            .flatMap((e: any) => e.symbols ?? [])
-            .find((s: any) => typeof s.name === "string" && s.name.includes(pattern) && s.va);
-          expect(hit, `${pattern} symbol should resolve`).toBeTruthy();
-          va = hit.va;
-        }).toPass({ timeout: 20_000, intervals: [250, 500, 1000] });
-        return va;
-      };
+      const resolveVa = (pattern: string) => resolveSymbolVa(page, sessionId, pattern, { timeout: 20_000 });
 
       // Arm the watchpoint at a normal code breakpoint INSIDE the process (as the
       // jlua test does), not at the very early initial system breakpoint — debug

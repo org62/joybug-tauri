@@ -113,8 +113,9 @@ pub(crate) fn find_module_for_address(modules: &[joybug_core::protocol_io::Modul
     None
 }
 
-/// `module!symbol+0x..` when the server has a symbol for `address`, else
-/// `module+0x..` when it lies in one of `modules`, else `None`. The resolve
+/// `module!symbol+0x..` when the server has a symbol for `address`, else the
+/// PE pseudo-symbol (`module.EntryPoint+0x..`) when an anchor speaks for it,
+/// else `module+0x..` when it lies in one of `modules`, else `None`. The resolve
 /// blocks on a pending symbol load like every other paused-path resolve
 /// (the callstack walk does the same per frame). Callers pass a module
 /// snapshot they already hold so a batch of addresses clones the list once.
@@ -126,6 +127,9 @@ pub(crate) fn symbolize_address(
 ) -> Option<String> {
     if let Ok((Some(module), Some(sym), Some(offset))) = session.resolve_address_to_symbol(pid, address) {
         return Some(format_symbol(&extract_module_name(&module), &sym.name, offset));
+    }
+    if let Some(pseudo) = super::pe_anchors::resolve_pseudo_symbol(session, pid, address) {
+        return Some(pseudo);
     }
     find_module_for_address(modules, address).map(|(m, off)| module_offset_label(&m, off))
 }
@@ -240,7 +244,7 @@ pub(crate) fn update_session_from_event(state: &mut SessionStateUI, event: &joyb
                 info!("Added thread: {} at 0x{:X}", tid, start_address);
             }
         }
-        joybug_core::protocol_io::DebugEvent::ProcessCreated { pid, tid, image_file_name, base_of_image, size_of_image, .. } => {
+        joybug_core::protocol_io::DebugEvent::ProcessCreated { pid, tid, image_file_name, base_of_image, size_of_image, start_address } => {
             let module_name = image_file_name.clone().unwrap_or_else(|| "main.exe".to_string());
             let module = joybug_core::protocol_io::ModuleInfo {
                 name: module_name.clone(),
@@ -252,15 +256,24 @@ pub(crate) fn update_session_from_event(state: &mut SessionStateUI, event: &joyb
                 info!("Added main executable module: {} at 0x{:X}", module_name, base_of_image);
             }
 
+            // The OS may report no start address for the initial thread; the
+            // image base is the honest fallback the Threads panel can show.
             let thread = joybug_core::protocol_io::ThreadInfo {
                 tid: *tid,
-                start_address: *base_of_image,
+                start_address: if *start_address != 0 { *start_address } else { *base_of_image },
                 ..Default::default()
             };
             if !state.threads.iter().any(|t| t.tid == thread.tid) {
+                info!("Added initial thread: {} for process {} at 0x{:X}", tid, pid, thread.start_address);
                 state.threads.push(thread);
-                info!("Added initial thread: {} for process {} at 0x{:X}", tid, pid, base_of_image);
             }
+            // The thread Windows names here is the one that runs the image entry
+            // point — the "main" thread the Threads panel badges. On an attach
+            // it is whichever thread the kernel replays first, which is the head
+            // of the process's thread list and so still the original one unless
+            // it has already exited. First one wins, so a second process
+            // announcing itself can't relabel the thread this session started on.
+            state.main_tid.get_or_insert(*tid);
         }
         joybug_core::protocol_io::DebugEvent::ThreadExited { tid, .. } => {
             state.threads.retain(|t| t.tid != *tid);

@@ -10,27 +10,15 @@ import {
   waitForDisassemblyLoaded,
   configureMinimalStopSettings,
   restoreDefaultSettings,
+  enableImagePatchLens,
 } from "../helpers/wait-helpers";
 import {
   installEventCapture,
-  clearCapturedEvents,
-  waitForCapturedEvent,
+  disassembleFunction,
+  FN_DISASM_EVENT,
 } from "../helpers/event-helpers";
-import { ASM_PANEL, ASM_ROW } from "../helpers/selectors";
+import { ASM_ROW } from "../helpers/selectors";
 import type { Page } from "@playwright/test";
-
-const FN_DISASM = "function-disassembly-updated";
-const DEFAULT_MAX = 200;
-
-interface EmittedInstruction {
-  address: string;
-  bytes: string;
-  mnemonic: string;
-  op_str: string;
-  is_patched?: boolean;
-  original_bytes?: string;
-  original_disasm?: string;
-}
 
 /** Current RIP as a number, from session state. */
 async function getRip(page: Page, sessionId: string): Promise<number> {
@@ -38,22 +26,6 @@ async function getRip(page: Page, sessionId: string): Promise<number> {
   const addr = s?.current_event?.address;
   if (addr == null) throw new Error("No current address (not paused?)");
   return addr;
-}
-
-/** Request a function disassembly at `address` and return the fresh instruction list. */
-async function disassembleFunction(
-  page: Page,
-  sessionId: string,
-  address: number,
-): Promise<EmittedInstruction[]> {
-  await clearCapturedEvents(page, FN_DISASM);
-  await invoke(page, "request_function_disassembly", { sessionId, address, maxInstructions: DEFAULT_MAX, compareImage: true });
-  const payload = await waitForCapturedEvent(
-    page,
-    FN_DISASM,
-    (p) => p.session_id === sessionId && Array.isArray(p.instructions) && p.instructions.length > 0,
-  );
-  return payload.instructions as EmittedInstruction[];
 }
 
 test.describe("Image patch detection", () => {
@@ -66,19 +38,8 @@ test.describe("Image patch detection", () => {
       const sessionId = await createAndStartSession(page, "Image Patch");
       await waitForPaused(page, sessionId);
       await waitForDisassemblyLoaded(page);
-      await installEventCapture(page, [FN_DISASM]);
-
-      // Image-patch highlighting is an opt-in lens (off by default so ordinary
-      // stepping doesn't pay the per-instruction on-disk-image diff). This test
-      // exercises it, so turn it on in the view — otherwise the view's own
-      // re-decodes would clear the highlight this test asserts.
-      await page.locator(ASM_PANEL).getByTestId("asm-more-menu").click();
-      const imageToggle = page.getByTestId("asm-image-patches-toggle");
-      if ((await imageToggle.getAttribute("data-state")) === "unchecked") {
-        await imageToggle.click();
-      } else {
-        await page.keyboard.press("Escape");
-      }
+      await installEventCapture(page, [FN_DISASM_EVENT]);
+      await enableImagePatchLens(page);
 
       const rip = await getRip(page, sessionId);
       const ripHex = `0X${rip.toString(16).toUpperCase()}`;
@@ -168,7 +129,7 @@ test.describe("Image patch detection", () => {
       const sessionId = await createAndStartSession(page, "Image Patch Window");
       await waitForPaused(page, sessionId);
       await waitForDisassemblyLoaded(page);
-      await installEventCapture(page, [FN_DISASM]);
+      await installEventCapture(page, [FN_DISASM_EVENT]);
 
       // Same setup as above: flip one byte of a non-PC instruction so the
       // in-memory code diverges from the on-disk image.

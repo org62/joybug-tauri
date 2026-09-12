@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { RawBreakpoint } from '@/contexts/SessionContext';
-import { invokeToggleBreakpoint, reportSessionError } from '@/lib/sessionHelpers';
+import { invokeToggleBreakpoint, invokeSetBreakpoints, reportSessionError } from '@/lib/sessionHelpers';
 
 export type { RawBreakpoint } from '@/contexts/SessionContext';
 
@@ -96,6 +96,20 @@ export function useBreakpoints(sessionId?: string, canUseMemoryOps?: boolean, se
     }
   }, [sessionId]);
 
+  /// Set a software breakpoint at each address in one call, all tagged with
+  /// `group`. Addresses that already have a breakpoint are skipped backend-side.
+  /// Resolves `false` when the backend rejected the batch (already reported).
+  const addBreakpoints = useCallback(async (addresses: string[], group?: string, singleShot?: boolean): Promise<boolean> => {
+    if (!sessionId || addresses.length === 0) return false;
+    try {
+      await invokeSetBreakpoints(sessionId, addresses, group, singleShot);
+      return true;
+    } catch (e) {
+      reportSessionError('set breakpoints', e, sessionId);
+      return false;
+    }
+  }, [sessionId]);
+
   const removeBreakpoint = useCallback(async (breakpointId: string) => {
     if (!sessionId) return;
     try {
@@ -153,13 +167,14 @@ export function useBreakpoints(sessionId?: string, canUseMemoryOps?: boolean, se
   return useMemo(() => ({
     breakpoints,
     toggleBreakpoint,
+    addBreakpoints,
     removeBreakpoint,
     removeBreakpoints,
     enableBreakpoint,
     enableBreakpointGroup,
     updateBreakpoint,
     setHardwareBreakpoint,
-  }), [breakpoints, toggleBreakpoint, removeBreakpoint, removeBreakpoints, enableBreakpoint, enableBreakpointGroup, updateBreakpoint, setHardwareBreakpoint]);
+  }), [breakpoints, toggleBreakpoint, addBreakpoints, removeBreakpoint, removeBreakpoints, enableBreakpoint, enableBreakpointGroup, updateBreakpoint, setHardwareBreakpoint]);
 }
 
 export type BreakpointState = ReturnType<typeof useBreakpoints>;

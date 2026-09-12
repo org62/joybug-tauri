@@ -6,7 +6,6 @@
 ; One instruction per line means a source-line step is exactly one machine step,
 ; which is a useful sanity check for line stepping.
 
-EXTERN Sleep:PROC
 EXTERN ExitProcess:PROC
 
 .code
@@ -22,11 +21,12 @@ loop_top:
     ret
 asm_loop ENDP
 
+; No keep-alive sleep: the only spec that runs this fixture breaks inside
+; asm_loop and stays paused there, so main never gets past the call below.
+; A sleep here would only mean a stray Go looks like a hung debugger.
 main PROC
     sub     rsp, 28h          ; shadow space + 16-byte alignment for calls
     call    asm_loop
-    mov     ecx, 600000       ; dwMilliseconds
-    call    Sleep
     xor     ecx, ecx
     call    ExitProcess
     add     rsp, 28h

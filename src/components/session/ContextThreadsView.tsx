@@ -61,6 +61,10 @@ export const ContextThreadsView = ({ onNavigateToDisassembly, onNavigateToMemory
   const currentEvent = sessionData?.session?.current_event;
   const eventTid = isPaused ? currentEvent?.thread_id ?? null : null;
   const activeTid = isPaused ? sessionData?.session?.selected_thread_id ?? eventTid : null;
+  // Identity, not state: the thread that ran the image entry point, badged
+  // whatever the session is doing. Absent for a non-invasive Open session,
+  // which never sees the ProcessCreated the backend reads it from.
+  const mainTid = sessionData?.session?.main_thread_id ?? null;
 
   // Pulled out so callbacks depend on this stable function rather than on the
   // whole context object, whose identity changes on every session update.
@@ -505,6 +509,7 @@ export const ContextThreadsView = ({ onNavigateToDisassembly, onNavigateToMemory
             const isFunction = symInfo?.is_function ?? true;
             const tebAddress = threadTebs.get(thread.id);
             const isActive = thread.id === activeTid;
+            const isMain = thread.id === mainTid;
             // Marked only when the user switched away from it.
             const isEventThread = thread.id === eventTid && eventTid !== activeTid;
             const isSelected = selected.has(thread.id);
@@ -517,6 +522,7 @@ export const ContextThreadsView = ({ onNavigateToDisassembly, onNavigateToMemory
                 data-testid="thread-row"
                 data-tid={thread.id}
                 data-active={isActive ? 'true' : undefined}
+                data-main={isMain ? 'true' : undefined}
                 data-status={status}
                 data-selected={isSelected ? 'true' : undefined}
                 onContextMenu={(e) => {
@@ -540,6 +546,11 @@ export const ContextThreadsView = ({ onNavigateToDisassembly, onNavigateToMemory
                       onClick={(e) => { e.stopPropagation(); toggleSelect(thread.id, e.shiftKey); }}
                     />
                     <h3 className="font-medium text-sm whitespace-nowrap">Thread {thread.id}</h3>
+                    {isMain && (
+                      <Badge variant="outline" size="xs" className="bg-muted text-muted-foreground border-border">
+                        main
+                      </Badge>
+                    )}
                     {isActive && (
                       <Badge variant="outline" size="xs" className="bg-primary/15 text-primary border-primary/30">
                         current

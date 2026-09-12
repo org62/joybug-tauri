@@ -14,9 +14,28 @@ export interface ModuleData {
   path: string;
 }
 
+/** Breakpoint row as serialized inside `get_debug_session` (`BreakpointInfo`). */
+export interface BreakpointData {
+  id: string;
+  address: number;
+  module_name: string;
+  group: string | null;
+  symbol: string | null;
+  bp_kind: string;
+  single_shot: boolean;
+}
+
+/** The `{:#X}` form the backend emits for addresses — what disassembly rows
+ *  carry as `data-address` and event payloads use. */
+export const rowAddress = (address: number | bigint): string =>
+  `0x${address.toString(16).toUpperCase()}`;
+
 /** Absolute path to a built source-debugging fixture exe (see e2e/fixtures/build.mjs).
- *  `hello_c32` is the 32-bit (WOW64) build of hello_c. */
-export function fixtureExe(name: "hello_c" | "hello_asm" | "watch_c" | "crash_c" | "hello_c32"): string {
+ *  `hello_c32` is the 32-bit (WOW64) build of hello_c; `overlap_asm` carries
+ *  hand-encoded overlapping code. */
+export function fixtureExe(
+  name: "hello_c" | "hello_asm" | "overlap_asm" | "watch_c" | "crash_c" | "hello_c32",
+): string {
   return path.resolve(__dirname, "..", "fixtures", "bin", `${name}.exe`);
 }
 

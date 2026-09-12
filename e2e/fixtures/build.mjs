@@ -143,25 +143,34 @@ function main() {
   // 32-bit build of the same program for the WOW64 spec.
   compileC("hello_c", C_WOW64, "hello_c32");
 
-  // --- hello_asm.exe (x64 only) ---
-  // The .asm is x64 MASM (ml64). On an ARM64 host this builds an x64 image that
-  // runs emulated; its test only asserts the source view renders, which does not
-  // exercise the breakpoint/step path that emulation breaks. Keeping it x64
-  // avoids maintaining a parallel armasm64 source.
-  const aSrc = path.join(SRC, "hello_asm.asm");
-  const aObj = path.join(BIN, "hello_asm.obj");
-  const aExe = path.join(BIN, "hello_asm.exe");
-  const aPdb = path.join(BIN, "hello_asm.pdb");
-  if (isStale([aExe, aPdb], [aSrc])) {
-    console.log("[fixtures] assembling hello_asm.exe (x64)");
-    runTool("x64", "ml64.exe", ["/nologo", "/Zi", "/c", `/Fo${aObj}`, aSrc]);
+  // --- MASM fixtures (x64 only) ---
+  // The .asm sources are x64 MASM (ml64). On an ARM64 host these build x64
+  // images that run emulated; their tests either only assert the source view
+  // renders (hello_asm) or never run/step the target at all (overlap_asm), so
+  // neither exercises the breakpoint/step path that emulation breaks. Keeping
+  // them x64 avoids maintaining a parallel armasm64 source. Being arch-pinned,
+  // they need no `.arch` stamp — plain mtime staleness is enough.
+  const assemble = (name) => {
+    const src = path.join(SRC, `${name}.asm`);
+    const obj = path.join(BIN, `${name}.obj`);
+    const exe = path.join(BIN, `${name}.exe`);
+    const pdb = path.join(BIN, `${name}.pdb`);
+    if (!isStale([exe, pdb], [src])) {
+      console.log(`[fixtures] ${name}.exe up to date`);
+      return;
+    }
+    console.log(`[fixtures] assembling ${name}.exe (x64)`);
+    runTool("x64", "ml64.exe", ["/nologo", "/Zi", "/c", `/Fo${obj}`, src]);
     runTool("x64", "link.exe", [
       "/nologo", "/DEBUG", "/SUBSYSTEM:CONSOLE", "/ENTRY:main",
-      `/PDB:${aPdb}`, `/OUT:${aExe}`, aObj, "kernel32.lib",
+      `/PDB:${pdb}`, `/OUT:${exe}`, obj, "kernel32.lib",
     ]);
-  } else {
-    console.log("[fixtures] hello_asm.exe up to date");
-  }
+  };
+
+  assemble("hello_asm");
+  // Overlapping code (an instruction hidden in another's immediate) for the
+  // mid-instruction disassembly spec.
+  assemble("overlap_asm");
 
   console.log("[fixtures] done:", readdirSync(BIN).filter((f) => f.endsWith(".exe")).join(", "));
 }

@@ -78,4 +78,39 @@ test.describe("Exception log", () => {
       await navigateTo(page, "/");
     }
   });
+
+  /**
+   * The same access violation, but the user's rule passes the first chance to
+   * the program. crash_c has no handler, so it comes straight back as a
+   * second-chance exception and stops there — which is also the proof the first
+   * chance never paused. The first-chance log row must still carry the
+   * symbolized fault address and a walked callstack: an exception nobody stops
+   * on is exactly the one whose log entry has to stand on its own.
+   */
+  test("a passed first-chance exception is symbolized and carries a callstack", async ({ tauriPage: page }) => {
+    await configureMinimalStopSettings(page, {
+      exception_rules: [{ code: 0xc0000005, first_chance: "pass", second_chance: "stop" }],
+    });
+    const sessionId = await createAndStartSession(page, "Passed Exception", `${fixtureExe("crash_c")} passexc`);
+    try {
+      await waitForPaused(page, sessionId); // initial breakpoint
+      await goAndWaitForPause(page, sessionId); // straight past the first chance to the second
+
+      await expect(page.getByTestId("session-exception")).toContainText("second-chance", { timeout: 5_000 });
+
+      await navigateTo(page, "/logs");
+      const firstChance = page
+        .locator('[data-testid="log-row"]', { hasText: "EXCEPTION_ACCESS_VIOLATION" })
+        .filter({ hasText: "first-chance" })
+        .first();
+      await expect(firstChance).toBeVisible({ timeout: 10_000 }); // the page polls every 2s
+      await expect(firstChance).toContainText("first-chance at crash_c!crash_here");
+      await expect(firstChance).toContainText("write to");
+      await expect(firstChance.getByTestId("log-exception-toggle")).toContainText(/stack \([1-9]\d*\)/);
+    } finally {
+      await cleanupSession(page, sessionId);
+      // Leave /logs so the next spec doesn't inherit its 2s get_logs poll.
+      await navigateTo(page, "/");
+    }
+  });
 });

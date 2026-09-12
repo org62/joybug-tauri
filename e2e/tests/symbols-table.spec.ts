@@ -115,6 +115,20 @@ test.describe("Symbols table", () => {
       // --- Column resize ------------------------------------------------------
       const widthsKey = "symbolsView.columnWidths";
       const grip = header.locator(".cursor-col-resize").first();
+      // A narrow window (a 1200px remote-desktop screen at 150% DPI gives a
+      // ~800px viewport) leaves the default left column a few pixels short of
+      // the header's fixed columns, and the overflow-hidden header clips the
+      // grip. The header follows the list's horizontal scroll by design, so do
+      // what a user would and scroll the list right until the grip is in view.
+      await page.evaluate(() => {
+        const header = document.querySelector('[data-testid="symbols-header"]')!;
+        const grip = header.querySelector(".cursor-col-resize")!;
+        const wrapper = header.parentElement!;
+        const overflow = grip.getBoundingClientRect().right - wrapper.getBoundingClientRect().right;
+        if (overflow <= -8) return;
+        const viewport = wrapper.parentElement!.querySelector("[data-radix-scroll-area-viewport]")!;
+        viewport.scrollLeft += overflow + 16;
+      });
       let box = await grip.boundingBox();
       // The grip is a 4px strip at the column's right edge — assert it is really
       // the hit target before dragging, so a layout problem fails here with an
@@ -122,12 +136,18 @@ test.describe("Symbols table", () => {
       await expect(async () => {
         box = await grip.boundingBox();
         expect(box).not.toBeNull();
-        const onTop = await page.evaluate(
-          ([x, y]: [number, number]) =>
-            document.elementFromPoint(x, y)?.classList.contains("cursor-col-resize") ?? false,
+        const hit = await page.evaluate(
+          ([x, y]: [number, number]) => {
+            const el = document.elementFromPoint(x, y);
+            return {
+              onTop: el?.classList.contains("cursor-col-resize") ?? false,
+              under: el ? `${el.tagName.toLowerCase()}.${el.className.toString().slice(0, 80)}` : null,
+              viewport: `${window.innerWidth}x${window.innerHeight}`,
+            };
+          },
           [box!.x + box!.width / 2, box!.y + box!.height / 2] as [number, number],
         );
-        expect(onTop).toBe(true);
+        expect(hit.onTop, `grip at ${JSON.stringify(box)} covered by ${hit.under} (viewport ${hit.viewport})`).toBe(true);
       }).toPass({ timeout: 10_000, intervals: [50, 100] });
 
       await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2);

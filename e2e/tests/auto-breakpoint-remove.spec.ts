@@ -3,6 +3,7 @@ import {
   createAndStartSession,
   cleanupSession,
   invoke,
+  type BreakpointData,
 } from "../helpers/session-helpers";
 import {
   waitForPaused,
@@ -12,16 +13,9 @@ import {
   restoreDefaultSettings,
 } from "../helpers/wait-helpers";
 
-interface Breakpoint {
-  id: string;
-  address: number;
-  group: string | null;
-  single_shot: boolean;
-}
-
 interface Session {
   status: string;
-  breakpoints: Breakpoint[];
+  breakpoints: BreakpointData[];
   current_event?: { event_type?: string; address?: number };
 }
 
@@ -59,7 +53,7 @@ test.describe("Auto breakpoint removal", () => {
 
       // Entry-point rows are planted as modules load; the first pause is either
       // the initial breakpoint or one of these breakpoints firing.
-      let autoBps: Breakpoint[] = [];
+      let autoBps: BreakpointData[] = [];
       await expect(async () => {
         const session = (await invoke(page, "get_debug_session", {
           sessionId,

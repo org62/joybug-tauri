@@ -205,6 +205,7 @@ pub fn debug_event_to_info(event: &joybug_core::protocol_io::DebugEvent) -> Debu
             image_file_name,
             base_of_image,
             size_of_image,
+            ..
         } => DebugEventInfo {
             event_type: "ProcessCreated".to_string(),
             process_id: *pid,

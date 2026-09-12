@@ -1139,9 +1139,10 @@ const InstructionRow = memo(function InstructionRow({ instruction, isPC, isGhost
       data-testid="asm-row"
       data-address={instruction.address}
       data-highlight={highlight}
+      data-patched={isPatched ? "" : undefined}
       data-invalid={is_invalid ? "" : undefined}
       className={cn(
-        "flex items-center font-mono text-data hover:bg-muted/30 px-2 cursor-default",
+        "relative flex items-center font-mono text-data hover:bg-muted/30 px-2 cursor-default",
         highlight && ROW_HIGHLIGHT_BG[highlight]
       )}
       // lineHeight is pinned to the row height rather than left to the font's own
@@ -1156,6 +1157,16 @@ const InstructionRow = memo(function InstructionRow({ instruction, isPC, isGhost
       onMouseLeave={rowTrace ? onTraceLeave : undefined}
       onContextMenu={(e) => onContextMenu(e, instruction.address, instruction.mnemonic, instruction.op_str, isPatched)}
     >
+      {/* Patch marker. Deliberately NOT part of the highlight ladder: that
+          ladder yields one background tint, and `selected`/`pc` outrank
+          `patched` — so the row you just patched, or just navigated to, would
+          show no trace of it. An absolutely-positioned edge bar composes with
+          every row state and costs no layout (no column realignment in the
+          header or LabelRow). */}
+      {isPatched && (
+        <span aria-hidden className="absolute inset-y-0 left-0 w-[2px] bg-syn-patched" />
+      )}
+
       {/* PC indicator */}
       <span className="w-4 shrink-0 text-syn-state">
         {isPC && <ChevronRight className="h-3 w-3" />}
@@ -1175,7 +1186,11 @@ const InstructionRow = memo(function InstructionRow({ instruction, isPC, isGhost
 
       {/* Bytes column (conditional) */}
       {showBytes && (
-        <span className="shrink-0 mr-1.5 text-gray-500 truncate" style={{ width: columnWidths.bytes }} title={instruction.bytes}>
+        <span
+          className={cn("shrink-0 mr-1.5 truncate", isPatched ? "text-syn-patched" : "text-gray-500")}
+          style={{ width: columnWidths.bytes }}
+          title={instruction.bytes}
+        >
           {instruction.bytes}
         </span>
       )}

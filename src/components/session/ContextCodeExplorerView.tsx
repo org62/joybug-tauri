@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSessionContext, type Module } from '@/contexts/SessionContext';
-import { useCodeExplorer, CoverageFn, TARGET_SOURCES, customEntryLines } from '@/hooks/useCodeExplorer';
+import { useCodeExplorer, CoverageFn, TARGET_SOURCES } from '@/hooks/useCodeExplorer';
+import { customEntryLines } from '@/lib/inputLists';
 import { useContextMenu } from '@/hooks/useContextMenu';
 import { useColumnWidths } from '@/hooks/useColumnWidths';
 import { usePanelFocus } from '@/hooks/usePanelFocus';

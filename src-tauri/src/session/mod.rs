@@ -15,6 +15,7 @@ pub(crate) mod pointer_scan;
 pub(crate) mod region_annotations;
 pub(crate) mod string_scan;
 pub(crate) mod patches;
+pub(crate) mod pe_anchors;
 mod registers;
 pub(crate) mod threads;
 mod runner;

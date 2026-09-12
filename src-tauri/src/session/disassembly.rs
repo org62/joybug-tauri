@@ -95,10 +95,18 @@ fn disasm_original_at(
 /// populated only for instructions sitting exactly at a symbol (offset 0) —
 /// the frontend renders those as label rows above the instruction; the first
 /// column always shows the raw address.
+///
+/// `anchors` are the pseudo-symbols from `pe_anchors`, used only where the
+/// symbols came back empty: a module's entry point and TLS callbacks are named
+/// by its PE headers even when nothing names them in the symbols, and that is
+/// the case where an unlabelled row is least useful. Only an anchor starting
+/// exactly here gets a label row — a row mid-function is not a label — and an
+/// address a PDB does name keeps its real symbol.
 pub(crate) fn serialize_instructions(
     instructions: &[joybug_core::interfaces::Instruction],
     patched_ranges: &[(u64, u64)],
     image_diff: Option<&ImageDiff>,
+    anchors: &[super::pe_anchors::Anchor],
 ) -> Vec<SerializableInstruction> {
     instructions
         .iter()
@@ -106,11 +114,19 @@ pub(crate) fn serialize_instructions(
             // All names starting exactly at this address (e.g. NtClose/ZwClose
             // aliases) — every decode path populates this (the trait default
             // seeds it from `symbol_info` at exact symbol starts).
-            let symbols: Vec<String> = inst
+            let mut symbols: Vec<String> = inst
                 .symbols_at_address
                 .iter()
                 .map(|s| s.format_symbol())
                 .collect();
+            if symbols.is_empty() {
+                symbols.extend(
+                    anchors
+                        .iter()
+                        .filter(|a| a.start == inst.address)
+                        .map(|a| a.label.clone()),
+                );
+            }
 
             let op_str = effective_op_str(inst);
 
@@ -176,11 +192,12 @@ pub(crate) fn process_disassembly_request(
     debug!("📤 Processing disassembly request: pid={}, address=0x{:X}, count={}", pid, address, count);
     let patched_ranges = applied_patch_ranges(&session.state.lock().unwrap());
     let image_diff = compare_image.then(|| build_image_diff_context(&session.state, arch, address)).flatten();
+    let anchors = super::pe_anchors::anchors_for_address(session, pid, address);
     match session.disassemble_memory(pid, address, count as usize, arch) {
         Ok(instructions) => {
             debug!("📥 Received {} instructions from disassemble_memory", instructions.len());
 
-            let serializable_instructions = serialize_instructions(&instructions, &patched_ranges, image_diff.as_ref());
+            let serializable_instructions = serialize_instructions(&instructions, &patched_ranges, image_diff.as_ref(), &anchors);
 
             if let Some(ref handle) = app_handle_clone {
                 let session_id = {
@@ -272,10 +289,11 @@ pub(crate) fn process_disassembly_backward_request(
         (applied_patch_ranges(&state), state.id.clone())
     };
     let image_diff = compare_image.then(|| build_image_diff_context(&session.state, arch, target)).flatten();
+    let anchors = super::pe_anchors::anchors_for_address(session, pid, target);
 
     match session.disassemble_backward(pid, target, count as usize, arch) {
         Ok(instructions) => {
-            let serializable_instructions = serialize_instructions(&instructions, &patched_ranges, image_diff.as_ref());
+            let serializable_instructions = serialize_instructions(&instructions, &patched_ranges, image_diff.as_ref(), &anchors);
             if let Some(ref handle) = app_handle_clone {
                 let result = DisassemblyBackwardResult { session_id, target, instructions: serializable_instructions };
                 if let Err(e) = handle.emit("disassembly-backward-updated", &result) {
@@ -309,11 +327,12 @@ pub(crate) fn process_function_disassembly_request(
 
     let patched_ranges = applied_patch_ranges(&session.state.lock().unwrap());
     let image_diff = compare_image.then(|| build_image_diff_context(&session.state, arch, address)).flatten();
+    let anchors = super::pe_anchors::anchors_for_address(session, pid, address);
     match session.disassemble_function(pid, address, max_instructions as usize, arch) {
         Ok((instructions, function_start, function_end, function_name)) => {
             debug!("📥 Received {} instructions from disassemble_function", instructions.len());
 
-            let serializable_instructions = serialize_instructions(&instructions, &patched_ranges, image_diff.as_ref());
+            let serializable_instructions = serialize_instructions(&instructions, &patched_ranges, image_diff.as_ref(), &anchors);
 
             if let Some(ref handle) = app_handle_clone {
                 let session_id = {

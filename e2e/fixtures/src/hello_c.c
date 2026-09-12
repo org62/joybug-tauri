@@ -1,8 +1,8 @@
 // E2E fixture for source-level debugging.
 // Built with `cl /Od /Zi` so the PDB carries full line tables and an MD5/SHA
 // source checksum. Distinctive strings ("compute", "hello_c_marker") let the
-// tests assert the source text shows up in the UI. The long Sleep keeps the
-// process alive while Playwright drives the debugger.
+// tests assert the source text shows up in the UI. The trailing sleep keeps
+// the process alive while Playwright drives the debugger -- see main().
 #include <windows.h>
 #include <stdio.h>
 
@@ -32,7 +32,10 @@ int main(void)
     int value = hello_c_marker(41);
     printf("main computed value=%d\n", value);
     fflush(stdout);
-    // Stay alive so the debugger UI can be driven against a live process.
-    Sleep(600000);
+    // Stay alive so the debugger UI can be driven against a live process
+    // (thread-control and thread-switch resume this target and break back into
+    // it seconds later). Long enough for any spec's resume window, short
+    // enough that a stray fixture or a manual Go doesn't look like a hang.
+    Sleep(60000);
     return value & 0xff;
 }

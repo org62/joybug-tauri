@@ -1,24 +1,29 @@
 use tauri::{AppHandle, Emitter};
 use tracing::{debug, error};
 
-use super::helpers::{find_module_for_address, get_modules_snapshot};
+use super::helpers::{find_module_for_address, format_symbol, get_modules_snapshot, module_offset_label};
 use super::types::{CallStackData, DebugSession};
 
 /// Converts raw stack frames into the serializable CallStackData format.
 /// Addresses render at the target's pointer width (8 hex digits for WOW64).
+///
+/// `pseudo` names a frame the server could not symbolize — a PE pseudo-symbol
+/// (`hello_c.EntryPoint+0x2b`) beats the bare `hello_c+0x2331` this would
+/// otherwise fall back to. It is asked only where the real symbol is missing,
+/// so a resolved frame is never relabelled.
 pub(crate) fn convert_frames_to_callstack(
     frames: &[joybug_core::interfaces::CallFrame],
     modules: &[joybug_core::protocol_io::ModuleInfo],
     pointer_size: usize,
+    mut pseudo: impl FnMut(u64) -> Option<String>,
 ) -> Vec<CallStackData> {
     let w = pointer_size * 2;
     frames.iter().enumerate().map(|(i, frame)| {
-        let symbol_info = if let Some(ref sym) = frame.symbol {
-            Some(format!("{}!{}+0x{:x}", sym.module_name, sym.symbol_name, sym.offset))
-        } else if let Some((mod_name, offset)) = find_module_for_address(modules, frame.instruction_pointer) {
-            Some(format!("{}+0x{:x}", mod_name, offset))
-        } else {
-            None
+        let ip = frame.instruction_pointer;
+        let symbol_info = match &frame.symbol {
+            Some(sym) => Some(format_symbol(&sym.module_name, &sym.symbol_name, sym.offset)),
+            None => pseudo(ip)
+                .or_else(|| find_module_for_address(modules, ip).map(|(m, off)| module_offset_label(&m, off))),
         };
         CallStackData {
             frame_number: i,
@@ -53,7 +58,11 @@ pub(crate) fn cached_or_walk_call_stack(
     let modules = get_modules_snapshot(session);
     let frames = session.get_call_stack(pid, tid).map_err(|e| e.to_string())?;
     debug!("📥 Received {} frames from get_call_stack", frames.len());
-    let call_stack = convert_frames_to_callstack(&frames, &modules, pointer_size);
+    // The anchor cache means a module's headers are read once per run however
+    // deep the stack.
+    let call_stack = convert_frames_to_callstack(&frames, &modules, pointer_size, |ip| {
+        super::pe_anchors::resolve_pseudo_symbol(session, pid, ip)
+    });
     session.state.lock().unwrap().callstack_cache.insert((pid, tid), call_stack.clone());
     Ok(call_stack)
 }

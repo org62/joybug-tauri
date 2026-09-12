@@ -3,13 +3,14 @@ import { Button } from "./ui/button";
 import { InlineEditInput } from "./ui/inline-edit-input";
 import { ResizableHeaderCell } from "./ui/resizable-header-cell";
 import { Badge } from "./ui/badge";
-import { Trash2, Plus } from "lucide-react";
+import { Trash2, Plus, ListPlus } from "lucide-react";
 import { cn, LINK_VALUE_CLASS } from "@/lib/utils";
 import { Breakpoint } from "@/hooks/useBreakpoints";
 import { useContextMenu } from "@/hooks/useContextMenu";
 import { useColumnWidths } from "@/hooks/useColumnWidths";
 import { RegisterContext, SymbolResolver } from "@/lib/hexUtils";
 import { AddressExpressionInput } from "@/components/AddressExpressionInput";
+import { BreakpointListDialog } from "@/components/BreakpointListDialog";
 import { GroupedItemList } from "./GroupedItemList";
 import { DockPanel, PanelToolbar } from "./ui/panel";
 import { ContextMenu, ContextMenuItem, ContextMenuSeparator } from "./ui/context-menu";
@@ -24,6 +25,8 @@ const FIXED_COLS_PX = 24 + 32 + 16 + 152;
 interface BreakpointsViewProps {
   breakpoints: Breakpoint[];
   onToggleBreakpoint: (address: string) => void;
+  /** Batch set from a pasted list; omit to hide the list affordance. */
+  onAddBreakpoints?: (addresses: string[], group?: string, singleShot?: boolean) => Promise<boolean>;
   onRemoveBreakpoint: (id: string) => void;
   onRemoveBreakpoints: (ids: string[]) => void;
   onEnableBreakpoint: (id: string, enabled: boolean) => void;
@@ -70,6 +73,7 @@ function BreakpointDot({ enabled, isActive, kind, onClick }: { enabled: boolean;
 export function BreakpointsView({
   breakpoints,
   onToggleBreakpoint,
+  onAddBreakpoints,
   onRemoveBreakpoint,
   onRemoveBreakpoints,
   onEnableBreakpoint,
@@ -91,6 +95,7 @@ export function BreakpointsView({
   // Inline edit state for the name column
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
+  const [listOpen, setListOpen] = useState(false);
 
   const handleAddBreakpoint = useCallback((address: bigint) => {
     onToggleBreakpoint(`0x${address.toString(16)}`);
@@ -288,6 +293,19 @@ export function BreakpointsView({
               historyKey="bp-address"
               disabled={!canUseMemoryOps}
             />
+            {onAddBreakpoints && (
+              <Button
+                variant="outline"
+                size="icon-xs"
+                className="shrink-0"
+                title="Add breakpoints from a list"
+                disabled={!canUseMemoryOps}
+                onClick={() => setListOpen(true)}
+                data-testid="breakpoints-add-list"
+              >
+                <ListPlus />
+              </Button>
+            )}
             {!canUseMemoryOps && (
               <Badge
                 size="xs"
@@ -361,6 +379,16 @@ export function BreakpointsView({
           </ContextMenu>
         );
       })()}
+
+      {onAddBreakpoints && (
+        <BreakpointListDialog
+          open={listOpen}
+          onClose={() => setListOpen(false)}
+          onApply={onAddBreakpoints}
+          registers={registers}
+          resolveSymbol={resolveSymbol}
+        />
+      )}
     </DockPanel>
   );
 }

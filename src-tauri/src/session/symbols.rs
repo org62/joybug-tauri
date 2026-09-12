@@ -286,10 +286,7 @@ pub(crate) fn process_resolve_thread_symbols(
     event: &joybug_core::protocol_io::DebugEvent,
 ) {
     let pid = event.pid();
-    let threads: Vec<joybug_core::protocol_io::ThreadInfo> = {
-        let state = session.state.lock().unwrap();
-        state.threads.clone()
-    };
+    let threads: Vec<joybug_core::protocol_io::ThreadInfo> = session.state.lock().unwrap().threads.clone();
 
     // Non-blocking batch resolve, one round-trip for all threads: an address
     // in a module whose PDB is still parsing comes back `None` (shown as a raw
@@ -317,7 +314,12 @@ pub(crate) fn process_resolve_thread_symbols(
                 let display = crate::session::helpers::format_symbol(&short_module, &sym.name, offset);
                 (Some(display), sym.is_function)
             }
-            None => (None, true),
+            // A process's first thread starts at the image entry point, so this
+            // is the row the PE pseudo-symbol names most often.
+            None => (
+                crate::session::pe_anchors::resolve_pseudo_symbol(session, pid, thread.start_address),
+                true,
+            ),
         };
         entries.push(ThreadSymbolEntry {
             tid: thread.tid,

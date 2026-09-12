@@ -212,7 +212,10 @@ pub async fn pe_disassemble(
         let instructions = file
             .disassemble(va, count)
             .map_err(|e| Error::InvalidParameter(format!("Disassembly failed: {:?}", e)))?;
-        Ok(crate::session::disassembly::serialize_instructions(&instructions, &[], None))
+        // No round trip needed here: the opened image already holds the parsed
+        // headers the entry-point / TLS-callback labels come from.
+        let anchors = crate::session::pe_anchors::anchors_from_info(file.module_name(), file.base(), file.info());
+        Ok(crate::session::disassembly::serialize_instructions(&instructions, &[], None, &anchors))
     }))
     .await
 }

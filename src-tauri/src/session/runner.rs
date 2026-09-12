@@ -400,14 +400,13 @@ pub fn run_debug_session(
             // Exceptions get a decoded record (code name, symbolized fault and
             // referenced addresses, read/write, callstack) instead of the raw
             // tuple; the stack walk it performs primes the per-pause cache the
-            // Stack panel reads from, so nothing is queried twice. Symbolizing
-            // and walking is worth it only for an exception that will pause —
-            // the same rule lookup `should_pause` makes below decides.
+            // Stack panel reads from, so nothing is queried twice. Captured for
+            // every exception, pausing or not — `capture_exception_context`
+            // (see `settings.rs`) is the opt-out for exception storms.
             let exception_detail = match event {
-                joybug_core::protocol_io::DebugEvent::Exception { code, first_chance, .. } => {
-                    let settings = handle.state::<SettingsState>().inner().lock().unwrap().clone();
-                    let will_pause = super::exceptions::exception_should_stop(&settings, *code, *first_chance);
-                    super::exceptions::describe_exception(session, event, will_pause)
+                joybug_core::protocol_io::DebugEvent::Exception { .. } => {
+                    let capture = handle.state::<SettingsState>().inner().lock().unwrap().capture_exception_context;
+                    super::exceptions::describe_exception(session, event, capture)
                 }
                 _ => None,
             };

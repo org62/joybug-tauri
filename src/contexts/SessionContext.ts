@@ -81,6 +81,9 @@ export interface DebugSession {
   current_event: DebugEventInfo | null;
   /** Thread the user switched to while paused (null = event thread). */
   selected_thread_id?: number | null;
+  /** The process's initial thread — the one that runs the image entry point.
+   *  Recorded from ProcessCreated, so null for a non-invasive Open session. */
+  main_thread_id?: number | null;
   /** Target instruction-set architecture once a process exists ("X86" for a
    *  WOW64 target); null before launch/attach/open. */
   arch?: "X64" | "Arm64" | "X86" | null;

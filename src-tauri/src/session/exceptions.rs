@@ -82,10 +82,9 @@ fn access_kind(param: u64) -> &'static str {
 /// capture the callstack (through the per-pause cache). Non-exception events
 /// return `None`.
 ///
-/// `capture` is the pause decision: an exception the user's rules auto-continue
-/// (C++ EH throws, guard-page traffic) can arrive thousands of times per run, so
-/// it gets the decoded one-liner without the symbol resolves and the stack walk
-/// that only a stopped UI can show.
+/// `capture` is the `capture_exception_context` setting (see `settings.rs`):
+/// off, the record is the decoded one-liner only — no symbol resolves and no
+/// stack walk.
 pub(crate) fn describe_exception(
     session: &mut DebugSession,
     event: &joybug_core::protocol_io::DebugEvent,

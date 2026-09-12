@@ -1,5 +1,6 @@
 import { expect } from "@playwright/test";
 import type { Page } from "@playwright/test";
+import { invoke } from "./session-helpers";
 
 /**
  * Capture Tauri events into per-event buckets on the window, using the same
@@ -47,4 +48,69 @@ export async function waitForCapturedEvent(
     expect(match).toBeTruthy();
   }).toPass({ timeout, intervals: [50, 100, 200] });
   return match;
+}
+
+/** An instruction as carried by the `*-disassembly-updated` events. */
+export interface EmittedInstruction {
+  address: string;
+  bytes: string;
+  mnemonic: string;
+  op_str: string;
+  is_patched?: boolean;
+  original_bytes?: string;
+  original_disasm?: string;
+}
+
+export const FN_DISASM_EVENT = "function-disassembly-updated";
+
+/**
+ * Request a function disassembly anchored at `address` (image-diffed) and
+ * return that response's instructions. Requires `installEventCapture` for
+ * `FN_DISASM_EVENT`. The address echo is part of the predicate: the view issues
+ * its own requests concurrently and they share the bucket.
+ */
+export async function disassembleFunction(
+  page: Page,
+  sessionId: string,
+  address: number,
+  maxInstructions = 200,
+): Promise<EmittedInstruction[]> {
+  await clearCapturedEvents(page, FN_DISASM_EVENT);
+  await invoke(page, "request_function_disassembly", { sessionId, address, maxInstructions, compareImage: true });
+  const payload = await waitForCapturedEvent(
+    page,
+    FN_DISASM_EVENT,
+    (p) =>
+      p.session_id === sessionId &&
+      p.address === address &&
+      Array.isArray(p.instructions) &&
+      p.instructions.length > 0,
+  );
+  return payload.instructions as EmittedInstruction[];
+}
+
+/**
+ * A symbol's VA via the session symbol search, polled until the module's PDB
+ * has finished loading. Requires `installEventCapture` for `symbols-updated`.
+ * `exact` matches the whole name; otherwise any name containing `pattern`
+ * counts (incremental linking also publishes `@ILT+N(fn)` thunks, so use
+ * `exact` when the address itself matters).
+ */
+export async function resolveSymbolVa(
+  page: Page,
+  sessionId: string,
+  pattern: string,
+  { exact = false, timeout = 30_000 } = {},
+): Promise<string> {
+  let va = "";
+  await expect(async () => {
+    await invoke(page, "search_session_symbols", { sessionId, pattern, limit: 20 });
+    const events = await getCapturedEvents(page, "symbols-updated");
+    const hit = events
+      .flatMap((e: { symbols?: { name?: string; va?: string }[] }) => e.symbols ?? [])
+      .find((s) => typeof s.name === "string" && (exact ? s.name === pattern : s.name.includes(pattern)) && s.va);
+    expect(hit, `${pattern} should resolve`).toBeTruthy();
+    va = hit!.va!;
+  }).toPass({ timeout, intervals: [50, 100, 250] });
+  return va;
 }
