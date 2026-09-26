@@ -55,7 +55,7 @@
 
 - **Launch, attach by PID, or open non-invasively** — a non-invasive session uses only `OpenProcess`: no `DebugActiveProcess`, so the usual debugger checks come up clean and detaching can't kill the target. Browse memory, modules, strings, and scans — then **promote it to a full attach in place** when you want breakpoints. Restart the target, or detach and leave it running.
 - **Most panels keep working while the target runs.** An out-of-band connection pool means memory reads, module lists, symbol status, bookmark values, scans, and coverage all update live — you don't have to break in first.
-- **Anti-anti-debug** — PEB hiding (`BeingDebugged`, `NtGlobalFlag`, heap flags, StartupInfo, OS build number) is a settings toggle.
+- **PEB normalization** — a settings toggle restores the PEB fields Windows leaves in their "debugger attached" state (`BeingDebugged`, process-heap flags) so the target runs like a normally launched process. Not evasion: it removes the debug-heap's per-allocation slowdown, and stops code that reads `IsDebuggerPresent` (crash reporters, exception handlers that fire an `int3` on detection) from taking its debugger-only path — so a bug reproduces as it would with no debugger attached.
 - **Remote debugging by design** — point a session at a debug server on another machine and every panel behaves exactly as it does locally. A local session takes the same path over loopback, so there is no separate "remote mode" to fall behind the rest of the app.
 
 ### Sandboxed detonation & tracing
@@ -167,7 +167,6 @@ Very little here is a new idea. Joybug mostly gathers workflows that already exi
 - **[Cheat Engine](https://cheatengine.org)** — the source of the whole scanning workflow: iterative first/next scans with unknown-initial-value, multi-level pointer scanning, value freezing, and "find out what accesses this address." Memory Scanner, Pointer Scan, Bookmarks, and Access Trace are all descendants.
 - **[WinDbg](https://learn.microsoft.com/windows-hardware/drivers/debugger/)** — the default keybinding preset, and the model for symbol-server handling and type/struct inspection.
 - **[Lighthouse](https://github.com/gaasedelen/lighthouse)** and **[Tenet](https://github.com/gaasedelen/tenet)** — the coverage-visualization idea behind Code Explorer, and the trace format Joybug's emulator exports.
-- **[ScyllaHide](https://github.com/x64dbg/ScyllaHide)** — the anti-anti-debug technique set behind the PEB-hiding toggle.
 
 And the engines doing the actual heavy lifting: **[Capstone](https://www.capstone-engine.org)** (disassembly), **[Keystone](https://www.keystone-engine.org)** (assembly), and **[Unicorn](https://www.unicorn-engine.org)** (emulation).
 

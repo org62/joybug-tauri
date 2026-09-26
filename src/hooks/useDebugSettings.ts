@@ -7,13 +7,10 @@ export interface ExceptionRule {
   second_chance: string; // "stop" | "pass" | "handled"
 }
 
-export interface DebuggerHidingSettings {
-  hide_from_peb: boolean;
+export interface PebNormalizeSettings {
+  enabled: boolean;
   being_debugged: boolean;
   heap_flags: boolean;
-  nt_global_flag: boolean;
-  startup_info: boolean;
-  os_build_number: boolean;
 }
 
 export interface DebugSettings {
@@ -31,7 +28,7 @@ export interface DebugSettings {
   break_on_system_tls_callbacks: boolean;
   exception_rules: ExceptionRule[];
   capture_exception_context: boolean; // symbolize + walk the stack for every exception, not just stopping ones
-  debugger_hiding: DebuggerHidingSettings;
+  peb_normalize: PebNormalizeSettings;
   scan_thread_count: number; // 0 = all CPU cores
   symbol_path: string; // _NT_SYMBOL_PATH syntax; empty = env var / Microsoft symbol server
   symbol_offline: boolean; // never download symbols
@@ -69,13 +66,10 @@ export const EVENT_ITEMS: EventSettingItem[] = [
   { key: "capture_exception_context", id: "event.exceptionContext", label: "Capture callstack & symbols for non-stopping exceptions", keywords: ["event", "exception", "callstack", "stack", "symbol", "symbolize", "pass", "handled", "log"] },
 ];
 
-const DEFAULT_HIDING: DebuggerHidingSettings = {
-  hide_from_peb: false,
+const DEFAULT_PEB_NORMALIZE: PebNormalizeSettings = {
+  enabled: false,
   being_debugged: true,
   heap_flags: true,
-  nt_global_flag: true,
-  startup_info: true,
-  os_build_number: true,
 };
 
 const DEFAULTS: DebugSettings = {
@@ -93,7 +87,7 @@ const DEFAULTS: DebugSettings = {
   break_on_system_tls_callbacks: false,
   exception_rules: [],
   capture_exception_context: true,
-  debugger_hiding: DEFAULT_HIDING,
+  peb_normalize: DEFAULT_PEB_NORMALIZE,
   scan_thread_count: 0,
   symbol_path: "",
   symbol_offline: false,
@@ -141,10 +135,10 @@ export function useDebugSettings() {
   const updateExceptionRules = useCallback((rules: ExceptionRule[]) =>
     update(prev => ({ ...prev, exception_rules: rules })), [update]);
 
-  const toggleHiding = useCallback((key: keyof DebuggerHidingSettings) =>
+  const togglePebNormalize = useCallback((key: keyof PebNormalizeSettings) =>
     update(prev => {
-      const hiding = { ...(prev.debugger_hiding ?? DEFAULT_HIDING), [key]: !(prev.debugger_hiding ?? DEFAULT_HIDING)[key] };
-      return { ...prev, debugger_hiding: hiding };
+      const pebNormalize = { ...(prev.peb_normalize ?? DEFAULT_PEB_NORMALIZE), [key]: !(prev.peb_normalize ?? DEFAULT_PEB_NORMALIZE)[key] };
+      return { ...prev, peb_normalize: pebNormalize };
     }), [update]);
 
   const setScanThreadCount = useCallback((count: number) => {
@@ -168,5 +162,5 @@ export function useDebugSettings() {
   const setSandboxEtwPreset = useCallback((preset: string) =>
     update(prev => ({ ...prev, sandbox_etw_preset: preset })), [update]);
 
-  return { settings, toggle, updateExceptionRules, toggleHiding, setScanThreadCount, setSymbolPath, setLightningInstructions, setSandboxMemoryMb, setSandboxEtwPreset };
+  return { settings, toggle, updateExceptionRules, togglePebNormalize, setScanThreadCount, setSymbolPath, setLightningInstructions, setSandboxMemoryMb, setSandboxEtwPreset };
 }

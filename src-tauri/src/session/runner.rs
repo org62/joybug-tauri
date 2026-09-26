@@ -148,13 +148,13 @@ fn get_unloaded_module_name(
     }
 }
 
-/// If the "Hide from PEB" setting is enabled, ask joybug-core to overwrite the
-/// configured PEB fields in the target. Called on the initial breakpoint:
-/// by then ntdll has finished loader/heap initialization, so the values we
-/// write (NtGlobalFlag, heap flags, etc.) won't be overwritten afterwards.
+/// If the "PEB Normalization" setting is enabled, ask joybug-core to restore the
+/// configured PEB fields in the target to their non-debugged state. Called on the
+/// initial breakpoint: by then ntdll has finished loader/heap initialization, so
+/// the values we write (heap flags, etc.) won't be overwritten afterwards.
 /// Patching earlier (at ProcessCreated) is too soon — ntdll hasn't set those
 /// fields yet and runs after us, clobbering the patch.
-fn apply_debugger_hiding(
+fn apply_peb_normalize(
     session: &mut DebugSession,
     pid: u32,
     handle: &AppHandle,
@@ -164,39 +164,36 @@ fn apply_debugger_hiding(
         .inner()
         .lock()
         .unwrap()
-        .debugger_hiding
+        .peb_normalize
         .clone();
-    if !cfg.hide_from_peb {
+    if !cfg.enabled {
         return;
     }
 
-    let opts = joybug_core::anti_anti_debug::PebHideOptions {
-        being_debugged:  cfg.being_debugged,
-        heap_flags:      cfg.heap_flags,
-        nt_global_flag:  cfg.nt_global_flag,
-        startup_info:    cfg.startup_info,
-        os_build_number: cfg.os_build_number,
+    let opts = joybug_core::peb_normalize::PebNormalizeOptions {
+        being_debugged: cfg.being_debugged,
+        heap_flags:     cfg.heap_flags,
     };
     if !opts.any() {
         return;
     }
 
     let session_id = Some(session.state.lock().unwrap().id.clone());
-    match session.hide_peb(pid, opts) {
+    match session.normalize_peb(pid, opts) {
         Ok(report) => {
             if !report.applied.is_empty() {
-                let msg = format!("Hidden debugger from PEB: {}", report.applied.join(", "));
+                let msg = format!("Normalized PEB: {}", report.applied.join(", "));
                 crate::ui_logger::log_info(handle, &msg, session_id.clone());
                 crate::ui_logger::toast_info(handle, &msg);
             }
-            for (technique, err) in &report.failures {
-                let msg = format!("Hide from PEB: {} failed: {}", technique, err);
+            for (field, err) in &report.failures {
+                let msg = format!("PEB normalization: {} failed: {}", field, err);
                 crate::ui_logger::log_warn(handle, &msg, session_id.clone());
                 crate::ui_logger::toast_error(handle, &msg);
             }
         }
         Err(e) => {
-            let msg = format!("Hide from PEB failed: {}", e);
+            let msg = format!("PEB normalization failed: {}", e);
             error!("{}", msg);
             crate::ui_logger::log_warn(handle, &msg, session_id);
             crate::ui_logger::toast_error(handle, &msg);
@@ -478,11 +475,11 @@ pub fn run_debug_session(
                 }
             }
 
-            // Apply "Hide from PEB" at the initial breakpoint, before the target's
+            // Apply "PEB Normalization" at the initial breakpoint, before the target's
             // main() runs. This happens regardless of whether the initial breakpoint
-            // is configured to pause, so anti-debug checks always see clean values.
+            // is configured to pause, so the target always sees non-debugged values.
             if matches!(event, joybug_core::protocol_io::DebugEvent::InitialBreakpoint { .. }) {
-                apply_debugger_hiding(session, event.pid(), handle);
+                apply_peb_normalize(session, event.pid(), handle);
             }
 
             // Special handling for OutputDebugString

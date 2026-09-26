@@ -38,34 +38,26 @@ fn default_lightning_instructions() -> usize { 100 }
 fn default_sandbox_memory_mb() -> u32 { 4096 }
 fn default_sandbox_etw_preset() -> String { "all".to_string() }
 
-/// "Debugger Hiding" — anti-anti-debug toggles applied on process start.
-/// `hide_from_peb` is the parent switch; the five child flags pick which
-/// individual PEB techniques run when the parent is enabled.
+/// "PEB Normalization" — toggles applied on process start that restore PEB
+/// fields Windows leaves in their "debugger attached" state, so the target runs
+/// like a normally launched process. `enabled` is the parent switch; the child
+/// flags pick which individual PEB fields are restored when the parent is on.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DebuggerHidingSettings {
+pub struct PebNormalizeSettings {
     #[serde(default)]
-    pub hide_from_peb: bool,
+    pub enabled: bool,
     #[serde(default = "default_true")]
     pub being_debugged: bool,
     #[serde(default = "default_true")]
     pub heap_flags: bool,
-    #[serde(default = "default_true")]
-    pub nt_global_flag: bool,
-    #[serde(default = "default_true")]
-    pub startup_info: bool,
-    #[serde(default = "default_true")]
-    pub os_build_number: bool,
 }
 
-impl Default for DebuggerHidingSettings {
+impl Default for PebNormalizeSettings {
     fn default() -> Self {
         Self {
-            hide_from_peb: false,
+            enabled: false,
             being_debugged: true,
             heap_flags: true,
-            nt_global_flag: true,
-            startup_info: true,
-            os_build_number: true,
         }
     }
 }
@@ -106,7 +98,7 @@ pub struct DebugSettings {
     #[serde(default = "default_true")]
     pub capture_exception_context: bool,
     #[serde(default)]
-    pub debugger_hiding: DebuggerHidingSettings,
+    pub peb_normalize: PebNormalizeSettings,
     /// Number of threads to use for memory scanning. `0` = all CPU cores.
     #[serde(default)]
     pub scan_thread_count: usize,
@@ -161,7 +153,7 @@ impl Default for DebugSettings {
             keybindings: KeybindingSettings::default(),
             exception_rules: Vec::new(),
             capture_exception_context: true,
-            debugger_hiding: DebuggerHidingSettings::default(),
+            peb_normalize: PebNormalizeSettings::default(),
             scan_thread_count: 0, // 0 = all cores
             symbol_path: String::new(),
             symbol_offline: false,

@@ -8,7 +8,7 @@ import { Search } from "lucide-react";
 import { SettingsGeneral } from "@/components/settings/SettingsGeneral";
 import { SettingsKeybindings } from "@/components/settings/SettingsKeybindings";
 import { SettingsEvents } from "@/components/settings/SettingsEvents";
-import { SettingsDebuggerHiding } from "@/components/settings/SettingsDebuggerHiding";
+import { SettingsPebNormalize } from "@/components/settings/SettingsPebNormalize";
 import { SettingsSymbols } from "@/components/settings/SettingsSymbols";
 import { SettingsSandbox } from "@/components/settings/SettingsSandbox";
 
@@ -62,7 +62,7 @@ export default function Settings() {
               <TabsTrigger value="general">General</TabsTrigger>
               <TabsTrigger value="keybindings">Keyboard Shortcuts</TabsTrigger>
               <TabsTrigger value="events">Events and Exceptions</TabsTrigger>
-              <TabsTrigger value="hiding">Debugger Hiding</TabsTrigger>
+              <TabsTrigger value="peb-normalize">PEB Normalization</TabsTrigger>
               <TabsTrigger value="sandbox">Sandbox</TabsTrigger>
             </TabsList>
 
@@ -73,7 +73,7 @@ export default function Settings() {
                   <SettingsGeneral searchQuery={searchQuery} />
                   <SettingsSymbols searchQuery={searchQuery} />
                   <SettingsEvents searchQuery={searchQuery} />
-                  <SettingsDebuggerHiding searchQuery={searchQuery} />
+                  <SettingsPebNormalize searchQuery={searchQuery} />
                   <SettingsSandbox searchQuery={searchQuery} />
                   <SettingsKeybindings searchQuery={searchQuery} embedded />
                 </div>
@@ -104,11 +104,11 @@ export default function Settings() {
               </ScrollArea>
             </TabsContent>
 
-            {/* Debugger Hiding only */}
-            <TabsContent value="hiding" className="mt-4 min-h-0 flex-1">
+            {/* PEB Normalization only */}
+            <TabsContent value="peb-normalize" className="mt-4 min-h-0 flex-1">
               <ScrollArea className="h-full">
                 <div className={SECTION_GRID} style={SECTION_GRID_COLS}>
-                  <SettingsDebuggerHiding searchQuery={searchQuery} />
+                  <SettingsPebNormalize searchQuery={searchQuery} />
                 </div>
               </ScrollArea>
             </TabsContent>
