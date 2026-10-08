@@ -9,6 +9,8 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { moduleBasename } from "@/lib/sessionHelpers";
+import { imageTerms } from "@/lib/imageTerms";
+import { usePlatform } from "@/hooks/usePlatform";
 
 export interface FileDropChoiceDialogProps {
   /** The dropped executable awaiting a choice; null keeps the dialog closed. */
@@ -24,6 +26,7 @@ export interface FileDropChoiceDialogProps {
  * guessing. Non-launchable PE files skip this and go straight to the viewer.
  */
 export function FileDropChoiceDialog({ path, onClose, onDebug, onInspect }: FileDropChoiceDialogProps) {
+  const { viewer } = imageTerms(usePlatform().os);
   return (
     <Dialog open={path !== null} onOpenChange={(open) => { if (!open) onClose(); }}>
       <DialogContent className="sm:max-w-md" data-testid="file-drop-choice">
@@ -55,7 +58,7 @@ export function FileDropChoiceDialog({ path, onClose, onDebug, onInspect }: File
           >
             <FileSearch className="size-5 shrink-0 text-muted-foreground" />
             <span className="flex flex-col gap-0.5">
-              <span className="font-medium">PE Viewer</span>
+              <span className="font-medium">{viewer}</span>
               <span className="text-xs font-normal text-muted-foreground">
                 Inspect headers, symbols and disassembly without running it
               </span>

@@ -1,4 +1,7 @@
-import type { Page } from "@playwright/test";
+import type { Page } from "../helpers/test-fixtures";
+import { IS_WINDOWS } from "../helpers/launch-commands";
+import { fixtureExe } from "../helpers/session-helpers";
+import { waitForModuleSymbols } from "../helpers/wait-helpers";
 import { test, expect } from "../helpers/test-fixtures";
 import { createAndStartSession, cleanupSession, invoke, goToWindow } from "../helpers/session-helpers";
 import {
@@ -41,6 +44,7 @@ async function waitForTypeResolved(
   page: Page,
   sessionId: string,
   name: string,
+  minMembers = 10,
 ): Promise<TypeLayout> {
   let layout: TypeLayout | null = null;
   await expect(async () => {
@@ -49,7 +53,7 @@ async function waitForTypeResolved(
       name,
       moduleBase: null,
     })) as TypeLayout | null;
-    expect(layout?.members?.length ?? 0).toBeGreaterThan(10);
+    expect(layout?.members?.length ?? 0).toBeGreaterThanOrEqual(minMembers);
   }).toPass({ timeout: 90_000, intervals: [500, 1000] });
   return layout!;
 }
@@ -58,6 +62,7 @@ test.describe("Type System", () => {
   test("reads PDB struct layouts from ntdll and overlays live values", async ({
     tauriPage: page,
   }) => {
+    test.skip(!IS_WINDOWS, "ntdll's PDB types");
     // Cold ntdll PDB download can be slow.
     test.setTimeout(120_000);
     await configureMinimalStopSettings(page);
@@ -166,6 +171,7 @@ test.describe("Type System", () => {
   test("per-thread TEB link overlays _TEB on that thread's TEB base", async ({
     tauriPage: page,
   }) => {
+    test.skip(!IS_WINDOWS, "a Linux thread has no TEB");
     // Cold ntdll PDB download can be slow (needed for _TEB resolution).
     test.setTimeout(120_000);
     await configureMinimalStopSettings(page);
@@ -267,6 +273,59 @@ test.describe("Type System", () => {
       await cleanupSession(page, sessionId);
     } finally {
       if (savedId) await invoke(page, "delete_custom_type", { id: savedId }).catch(() => {});
+      await restoreDefaultSettings(page);
+    }
+  });
+
+  test("reads struct layouts from the target's own debug info (PDB / DWARF)", async ({
+    tauriPage: page,
+  }) => {
+    await configureMinimalStopSettings(page);
+    const sessionId = await createAndStartSession(page, "Own Types", `${fixtureExe("hello_c")} types`);
+    try {
+      await waitForPaused(page, sessionId);
+      await waitForModuleSymbols(page, sessionId, "hello_c", { minSymbolCount: 1, timeout: 20_000 });
+
+      // `struct Shape` from hello_c.c: a nested struct, two bitfields, an
+      // enum, a pointer and an array — every member kind the layout model has.
+      const shape = await waitForTypeResolved(page, sessionId, "Shape", 6);
+      expect(shape.kind).toBe("struct");
+      const member = (name: string) => {
+        const m = shape.members.find((m) => m.name === name);
+        expect(m, `member ${name}`).toBeTruthy();
+        return m!;
+      };
+      const origin = member("origin");
+      expect(origin.offset).toBe(0);
+      expect(origin.type_ref.class.kind).toBe("udt");
+      expect(origin.type_ref.name).toBe("Point");
+      expect(origin.type_ref.size).toBe(8);
+      expect(member("flags").bit_length).toBe(3);
+      expect(member("filled").bit_length).toBe(1);
+      expect(member("color").type_ref.class.kind).toBe("enum");
+      expect(member("name").type_ref.class.kind).toBe("pointer");
+      expect(member("name").type_ref.size).toBe(8);
+      const scale = member("scale");
+      expect(scale.type_ref.class.kind).toBe("array");
+      expect(scale.type_ref.size).toBe(32);
+      expect(shape.size).toBeGreaterThanOrEqual(scale.offset + 32);
+      expect(shape.members.some((m) => /^t#\d+/.test(m.type_ref.name))).toBeFalsy();
+
+      // The enum resolves with its values; the union's members all sit at 0.
+      const word = (await invoke(page, "get_session_type", { sessionId, name: "Word", moduleBase: null })) as TypeLayout;
+      expect(word.kind).toBe("union");
+      expect(word.members.every((m) => m.offset === 0)).toBeTruthy();
+
+      // The browse list surfaces the program's own types.
+      const listed = (await invoke(page, "list_session_types", {
+        sessionId,
+        moduleBase: null,
+        filter: "Point",
+        maxResults: 50,
+      })) as { name: string }[];
+      expect(listed.some((t) => t.name === "Point")).toBeTruthy();
+    } finally {
+      await cleanupSession(page, sessionId);
       await restoreDefaultSettings(page);
     }
   });

@@ -18,7 +18,8 @@ import {
   waitForCapturedEvent,
 } from "../helpers/event-helpers";
 import { PC_ROW } from "../helpers/selectors";
-import type { Page } from "@playwright/test";
+import type { Page } from "../helpers/test-fixtures";
+import { IS_WINDOWS, SYSTEM_MODULE, SYSTEM_MODULE_FILE } from "../helpers/launch-commands";
 
 interface RegionAnnotation {
   kind: string;
@@ -75,17 +76,25 @@ test.describe("Memory Regions", () => {
         expect(Array.isArray(r.annotations)).toBe(true);
       }
 
-      // ntdll is loaded by the initial breakpoint; its MEM_IMAGE regions must be
-      // labeled with the module name and include a .text section badge.
-      const ntdllRegions = regions.filter((r) =>
-        r.annotations.some((a) => a.kind === "module" && /ntdll\.dll/i.test(a.label)),
+      // The system module is loaded by the initial breakpoint; its MEM_IMAGE
+      // regions must be labeled with the module name and include a .text
+      // section badge (PE section headers / ELF section headers).
+      const systemRegions = regions.filter((r) =>
+        r.annotations.some((a) => a.kind === "module" && SYSTEM_MODULE_FILE.test(a.label)),
       );
-      expect(ntdllRegions.length).toBeGreaterThan(0);
+      expect(systemRegions.length).toBeGreaterThan(0);
       expect(
-        ntdllRegions.some((r) =>
+        systemRegions.some((r) =>
           r.annotations.some((a) => a.kind === "section" && a.label === ".text"),
         ),
       ).toBe(true);
+
+      // The NT process structures (PEB, TEBs, heaps, stacks) have no Linux
+      // counterpart — the remaining checks are Windows-only.
+      if (!IS_WINDOWS) {
+        await cleanupSession(page, sessionId);
+        return;
+      }
 
       // Process-structure annotations all appear at least once.
       const all = regions.flatMap((r) => r.annotations);
@@ -120,7 +129,7 @@ test.describe("Memory Regions", () => {
       await waitForPaused(page, sessionId);
 
       const regions = await fetchRegions(page, sessionId);
-      const base = await moduleBase(page, sessionId, "ntdll");
+      const base = await moduleBase(page, sessionId, SYSTEM_MODULE);
       expect(base).toBeTruthy();
       const target = BigInt(base!) + 0x1000n;
       const expected = containingRegion(regions, target);
@@ -160,6 +169,11 @@ test.describe("Memory Regions", () => {
       await expect(panel.getByRole("combobox").nth(1)).toHaveText(/All Types/);
 
       // Badge click: a TEB badge opens the Types view at that TEB's address.
+      // (NT only — a Linux process has no TEB.)
+      if (!IS_WINDOWS) {
+        await cleanupSession(page, sessionId);
+        return;
+      }
       const tebRegion = regions.find((r) =>
         r.annotations.some((a) => a.kind === "teb" && a.address),
       )!;
@@ -196,6 +210,7 @@ test.describe("Memory Regions", () => {
   test("a guard-page region opens in the memory view and stays armed", async ({
     tauriPage: page,
   }) => {
+    test.skip(!IS_WINDOWS, "PAGE_GUARD is an NT stack-growth mechanism");
     test.setTimeout(60_000);
     await configureMinimalStopSettings(page);
 

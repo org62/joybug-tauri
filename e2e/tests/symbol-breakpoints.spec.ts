@@ -11,15 +11,16 @@ import {
   configureMinimalStopSettings,
   restoreDefaultSettings,
 } from "../helpers/wait-helpers";
+import { echoCmd, SYMBOL_MODULE, SYMBOL_SEARCH } from "../helpers/launch-commands";
 
 interface SymbolStatus {
   module_path: string;
   status: string;
 }
 
-// A narrow ntdll term that resolves to a small, stable set of function symbols,
+// A narrow term that resolves to a small, stable set of function symbols,
 // keeping the mass-apply well under the confirm threshold.
-const SEARCH_TERM = "RtlInitUnicodeString";
+const SEARCH_TERM = SYMBOL_SEARCH.narrow;
 
 test.describe("Symbol mass breakpoints", () => {
   test("select all symbols and mass-apply an auto-grouped breakpoint set", async ({
@@ -36,17 +37,17 @@ test.describe("Symbol mass breakpoints", () => {
       const sessionId = await createAndStartSession(
         page,
         "Symbol Mass BP",
-        `cmd.exe /c echo mass_bp_${Date.now()}`,
+        echoCmd(`mass_bp_${Date.now()}`),
       );
       await waitForPaused(page, sessionId);
 
-      // ntdll symbols load in the background — the search needs them to resolve hits.
+      // The module's symbols load in the background — the search needs them to resolve hits.
       await expect(async () => {
         const statuses = (await invoke(page, "get_session_symbol_status", {
           sessionId,
         })) as SymbolStatus[];
         const ntdll = statuses.find((s) =>
-          s.module_path.toLowerCase().includes("ntdll"),
+          s.module_path.toLowerCase().includes(SYMBOL_MODULE),
         );
         expect(ntdll?.status).toBe("loaded");
       }).toPass({ timeout: 60_000, intervals: [250, 500] });

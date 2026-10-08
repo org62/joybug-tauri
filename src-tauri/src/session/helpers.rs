@@ -181,12 +181,19 @@ pub(crate) fn module_key_at_base(state: &SessionStateUI, module_base: u64) -> Op
         .map(|m| module_short_name(&m.name).to_lowercase())
 }
 
-/// True when a module's full path lives under the Windows system directories
-/// (`\Windows\System32\` or `\Windows\SysWOW64\`) — used to split settings-driven
-/// auto breakpoints into "user" vs "system" module scopes.
+/// True when a module's full path lives under the OS's system directories
+/// (Windows: `\Windows\System32\` or `\Windows\SysWOW64\`; Linux: `/lib`,
+/// `/lib64`, `/usr/lib`, `/usr/lib64`, `/usr/local/lib` and the vdso) — used to
+/// split settings-driven auto breakpoints into "user" vs "system" module scopes.
 pub(crate) fn is_system_module_path(full_path: &str) -> bool {
-    let p = full_path.to_ascii_lowercase().replace('/', "\\");
-    p.contains(r"\windows\system32\") || p.contains(r"\windows\syswow64\")
+    if cfg!(windows) {
+        let p = full_path.to_ascii_lowercase().replace('/', "\\");
+        return p.contains(r"\windows\system32\") || p.contains(r"\windows\syswow64\");
+    }
+    full_path == "[vdso]"
+        || ["/lib/", "/lib64/", "/usr/lib/", "/usr/lib64/", "/usr/local/lib/"]
+            .iter()
+            .any(|prefix| full_path.starts_with(prefix))
 }
 
 /// Finds a module by a user-supplied identifier: case-insensitive full path or

@@ -54,8 +54,22 @@ export default defineConfig(async () => ({
         }
       : undefined,
     watch: {
-      // 3. tell vite to ignore watching `src-tauri`
-      ignored: ["**/src-tauri/**"],
+      // 3. tell vite to ignore watching `src-tauri` — and everything else that
+      // is not frontend source. Tailwind's content scanner registers every
+      // file it scans with Vite's watcher, and a change to a file outside the
+      // module graph is answered with a *full page reload*: editing a spec, a
+      // doc or a core source while the E2E suite runs against this server
+      // reloaded the page mid-test (lost clicks, "execution context was
+      // destroyed"). Only `src/` and `index.html` carry class names anyway.
+      ignored: [
+        "**/src-tauri/**",
+        "**/external/**",
+        "**/e2e/**",
+        "**/test-results/**",
+        "**/e2e/results/**",
+        "**/*.md",
+        "**/.claude/**",
+      ],
     },
   },
 }));

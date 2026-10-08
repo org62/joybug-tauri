@@ -24,10 +24,7 @@ custom-protocol = ["tauri/custom-protocol"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-# `devtools` is auto-enabled in debug builds but not release; enable it
-# explicitly so the WebView2 CDP endpoint (used by the e2e tests) is available
-# in the release binary too.
-tauri = { version = "2", features = ["devtools"] }
+tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 tauri-plugin-opener = "2"
 tauri-plugin-window-state = "2"
@@ -51,7 +48,9 @@ md-5 = "0.10"
 sha1 = "0.10"
 sha2 = "0.10"
 # Windows JIT (AeDebug) registration: registry read/write, elevated relaunch,
-# and signalling WER's event handle after a postmortem attach.
+# and signalling WER's event handle after a postmortem attach. Windows-only:
+# `jit.rs` is the sole user and is gated the same way.
+[target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = [
     "Win32_Foundation",
     "Win32_Security",

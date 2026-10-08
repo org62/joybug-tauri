@@ -4,12 +4,11 @@
 // collects the accessing instructions. Built with `cl /Od /Zi` for a full PDB so
 // the test can resolve `g_watch_target` by symbol. The trailing sleep keeps
 // the process alive while Playwright polls the collected accessors -- see main().
-#include <windows.h>
-#include <stdio.h>
+#include "portable.h"
 
 volatile unsigned int g_watch_target = 0;
 
-__declspec(noinline) void access_loop(void)
+NOINLINE void access_loop(void)
 {
     for (unsigned int i = 0; i < 64; i++)
     {
@@ -27,6 +26,6 @@ int main(void)
     // Stay alive so the debugger UI can poll collected accessors: double
     // watchpoint-trace's worst-case polling budget after the resume, short
     // enough that a stray fixture or a manual Go doesn't look like a hang.
-    Sleep(90000);
+    sleep_ms(90000);
     return 0;
 }

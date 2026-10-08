@@ -18,7 +18,7 @@ import {
   FN_DISASM_EVENT,
 } from "../helpers/event-helpers";
 import { ASM_ROW } from "../helpers/selectors";
-import type { Page } from "@playwright/test";
+import type { Page } from "../helpers/test-fixtures";
 
 /** Current RIP as a number, from session state. */
 async function getRip(page: Page, sessionId: string): Promise<number> {

@@ -26,13 +26,14 @@ use crate::session::types::{EmulationResultPayload, SerializableInstruction, Sym
 use crate::session::{instruction_info, EmulationOutcome};
 use joybug_core::pe_types::ModuleExtraInfo;
 use joybug_core::protocol::{EmulationMode, StringEncodingFilter, StringHit};
-use joybug_core::static_pe::{discover_symbols, nt_headers_offset, EmulateSpec, PeImage, PeSymbolLoad};
+use joybug_core::static_image::{EmulateSpec, StaticFile, SymbolLoad as PeSymbolLoad};
+use joybug_core::static_pe::{discover_symbols, nt_headers_offset};
 
 // Arc so async commands can move a handle into `spawn_blocking` — the heavy
 // commands (file read/parse, PDB load, scans, xref sweeps, emulation) must run
 // off the async runtime: they block for long stretches, and the symbol provider
 // owns its own tokio runtime, which cannot be dropped on an async worker thread.
-pub type PeFilesState = Arc<RwLock<HashMap<String, PeImage>>>;
+pub type PeFilesState = Arc<RwLock<HashMap<String, StaticFile>>>;
 
 use super::run_blocking;
 
@@ -41,7 +42,7 @@ use super::run_blocking;
 fn with_file<R>(
     pe_files: &PeFilesState,
     path: &str,
-    f: impl FnOnce(&PeImage) -> Result<R>,
+    f: impl FnOnce(&StaticFile) -> Result<R>,
 ) -> Result<R> {
     let files = pe_files.read().unwrap();
     let file = files
@@ -54,7 +55,7 @@ fn with_file<R>(
 fn with_file_mut<R>(
     pe_files: &PeFilesState,
     path: &str,
-    f: impl FnOnce(&mut PeImage) -> Result<R>,
+    f: impl FnOnce(&mut StaticFile) -> Result<R>,
 ) -> Result<R> {
     let mut files = pe_files.write().unwrap();
     let file = files
@@ -68,6 +69,8 @@ fn with_file_mut<R>(
 #[derive(Serialize)]
 pub struct PeFileSummary {
     pub path: String,
+    /// `"pe"` or `"elf"`.
+    pub format: &'static str,
     pub size: usize,
     /// Load base as a hex string (JS bigint-safe).
     pub base: String,
@@ -98,11 +101,12 @@ fn pe_open_impl(
     pe_files: &PeFilesState,
 ) -> Result<PeFileSummary> {
     let base = base.map(|s| crate::commands::parse_hex_u64(&s, "base")).transpose()?;
-    let image = PeImage::open(&path, base, pdb_path.as_deref().map(Path::new))
+    let image = StaticFile::open(&path, base, pdb_path.as_deref().map(Path::new))
         .map_err(Error::InvalidParameter)?;
     let status = image.symbol_load().clone();
     let summary = PeFileSummary {
         path: path.clone(),
+        format: image.format(),
         size: image.file_size(),
         base: format!("0x{:X}", image.base()),
         info: image.info().clone(),
@@ -126,7 +130,11 @@ pub async fn pe_load_symbols(
 ) -> Result<PeSymbolLoad> {
     let pe_files = pe_files.inner().clone();
     run_blocking(move || {
-        let (base, size) = with_file(&pe_files, &path, |file| Ok((file.base(), file.file_size())))?;
+        let (is_pe, base, size) = with_file(&pe_files, &path, |file| Ok((file.as_pe().is_some(), file.base(), file.file_size())))?;
+        if !is_pe {
+            // An ELF's symbols are its own or a separate debug file: no network, no wait.
+            return with_file_mut(&pe_files, &path, |file| Ok(file.load_symbols(pdb_path.as_deref().map(Path::new), false)));
+        }
         // Symbol load may block on a network download — do it without holding the lock.
         let parsed = discover_symbols(&path, base, size, pdb_path.as_deref().map(Path::new), false);
         with_file_mut(&pe_files, &path, |file| Ok(file.set_symbols(parsed)))
@@ -389,6 +397,9 @@ pub fn pe_set_field(
     pe_files: State<'_, PeFilesState>,
 ) -> Result<()> {
     with_file_mut(&pe_files, &path, |file| {
+        if file.as_pe().is_none() {
+            return Err(Error::InvalidParameter("Header fields can only be edited in a PE file".into()));
+        }
         let (offset, byte_len) = field_offset(file.bytes(), &field)?;
         if byte_len > 8 {
             return Err(Error::InvalidParameter(format!("Field '{}' is not a writable scalar", field)));

@@ -1,4 +1,4 @@
-import type { Locator } from "@playwright/test";
+import type { Locator } from "../helpers/test-fixtures";
 import { test, expect } from "../helpers/test-fixtures";
 import { ASM_PANEL, ASM_ROW, PC_ROW } from "../helpers/selectors";
 import { openPe } from "../helpers/pe-helpers";

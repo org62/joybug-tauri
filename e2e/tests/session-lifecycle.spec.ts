@@ -9,10 +9,12 @@ import {
 import {
   waitForPaused,
   waitForStopped,
+  waitForPauseOn,
   configureMinimalStopSettings,
   restoreDefaultSettings,
   continueSession,
 } from "../helpers/wait-helpers";
+import { echoCmd, exitEnvCmd, SYSTEM_DIR } from "../helpers/launch-commands";
 
 test.describe("Session Lifecycle", () => {
   test("shows empty state when no sessions exist", async ({
@@ -69,7 +71,7 @@ test.describe("Session Lifecycle", () => {
       const sessionId = await createAndStartSession(page, "Complete Test");
       await waitForPaused(page, sessionId);
 
-      // Continue — cmd.exe should run and exit
+      // Continue — the echo target should run and exit
       await continueSession(page, sessionId);
       await waitForStopped(page, sessionId);
 
@@ -86,11 +88,11 @@ test.describe("Session Lifecycle", () => {
     await navigateTo(page, "/debugger");
 
     await page.getByRole("button", { name: /Create Process/i }).first().click();
-    await page.getByLabel("Launch Command").fill("cmd.exe /c echo WorkingDir Test");
+    await page.getByLabel("Launch Command").fill(echoCmd("WorkingDir Test"));
     // Working directory lives inside its own collapsed fold; target the input by
     // id (its aria-label matches the fold button's).
     await page.getByRole("button", { name: "Working directory" }).click();
-    await page.locator("#workingDirectory").fill("C:\\Windows");
+    await page.locator("#workingDirectory").fill(SYSTEM_DIR);
     await page
       .getByRole("button", { name: "Create Session", exact: true })
       .click();
@@ -100,11 +102,11 @@ test.describe("Session Lifecycle", () => {
     let session: any;
     await expect(async () => {
       const sessions = await invoke(page, "get_debug_sessions");
-      session = sessions.find((s: any) => s.working_directory === "C:\\Windows");
+      session = sessions.find((s: any) => s.working_directory === SYSTEM_DIR);
       expect(session).toBeTruthy();
     }).toPass({ timeout: 5_000 });
 
-    expect(session?.working_directory).toBe("C:\\Windows");
+    expect(session?.working_directory).toBe(SYSTEM_DIR);
     // No env vars entered → backend stores "inherit" (null), not an empty list.
     expect(session?.environment).toBeNull();
 
@@ -135,8 +137,8 @@ test.describe("Session Lifecycle", () => {
   test("environment variables reach the launched process", async ({
     tauriPage: page,
   }) => {
-    // cmd.exe exits with %JOYBUG_E2E_EXIT%, which only exists if our block was
-    // applied — and cmd.exe is only found at all because the rest of the
+    // The shell exits with $JOYBUG_E2E_EXIT, which only exists if our block
+    // was applied — and the shell is only found at all because the rest of the
     // environment (PATH/SystemRoot) is still inherited, so this also proves
     // the merge is additive. The exit code is read off the ProcessExited break.
     await configureMinimalStopSettings(page, { stop_on_process_exit: true });
@@ -146,20 +148,16 @@ test.describe("Session Lifecycle", () => {
       sessionId = await createAndStartSession(
         page,
         "EnvVars Launch",
-        'cmd.exe /c "exit /b %JOYBUG_E2E_EXIT%"',
+        exitEnvCmd("JOYBUG_E2E_EXIT"),
         { environment: "JOYBUG_E2E_EXIT=42" },
       );
 
       await waitForPaused(page, sessionId);
       await continueSession(page, sessionId);
-      let exited: any;
-      await expect(async () => {
-        exited = await invoke(page, "get_debug_session", { sessionId });
-        expect(exited?.current_event?.event_type).toBe("ProcessExited");
-      }).toPass({ timeout: 30_000, intervals: [50, 100] });
+      const exited = await waitForPauseOn(page, sessionId, "ProcessExited");
 
-      // 42 = 0x2A; without the variable cmd.exe would exit 0.
-      expect(exited.current_event.details).toContain("0x2A");
+      // 42 = 0x2A; without the variable the shell would exit 0.
+      expect(exited.details).toContain("0x2A");
 
       await continueSession(page, sessionId);
       await waitForStopped(page, sessionId);

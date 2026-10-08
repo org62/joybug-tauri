@@ -362,6 +362,16 @@ pub fn start_debug_session(
     }
 
     if let Some(settings) = sandbox_settings {
+        // Windows Sandbox is a Windows feature. The UI greys the mode out off
+        // Windows (`get_sandbox_status`), so this is only reachable through a
+        // session record created elsewhere; fail it plainly.
+        #[cfg(not(windows))]
+        {
+            let _ = (settings, &working_directory);
+            return Err(Error::InvalidParameter(
+                "Windows Sandbox mode is only available on Windows".to_string(),
+            ));
+        }
         // Booting a Windows Sandbox takes 15-30s (boot + networking + in-guest
         // server start). start_debug_session is a *synchronous* Tauri command, so
         // it runs on the main thread — provisioning inline froze the entire UI
@@ -370,30 +380,33 @@ pub fn start_debug_session(
         // hand the whole provision + start to a background thread, and return
         // immediately. That thread emits the real terminal status (Paused via the
         // debug loop, Running for run-only, or Error) when it finishes.
+        #[cfg(windows)]
         {
-            let mut state = session_state.lock().unwrap();
-            state.status = SessionStatusUI::Provisioning;
-        }
-        emit_session_event(&session_state, &app_handle);
-        crate::ui_logger::toast_info(
-            &app_handle,
-            "Provisioning Windows Sandbox — this can take 15–30s…",
-        );
-
-        let session_state = session_state.clone();
-        let app_handle = app_handle.clone();
-        thread::spawn(move || {
-            provision_sandbox_and_start(
-                session_state,
-                session_id,
-                settings,
-                launch_command,
-                working_directory,
-                symbol_cfg,
-                app_handle,
+            {
+                let mut state = session_state.lock().unwrap();
+                state.status = SessionStatusUI::Provisioning;
+            }
+            emit_session_event(&session_state, &app_handle);
+            crate::ui_logger::toast_info(
+                &app_handle,
+                "Provisioning Windows Sandbox — this can take 15–30s…",
             );
-        });
-        return Ok(());
+
+            let session_state = session_state.clone();
+            let app_handle = app_handle.clone();
+            thread::spawn(move || {
+                provision_sandbox_and_start(
+                    session_state,
+                    session_id,
+                    settings,
+                    launch_command,
+                    working_directory,
+                    symbol_cfg,
+                    app_handle,
+                );
+            });
+            return Ok(());
+        }
     } else if is_local_run {
         info!("Starting embedded server for local run session: {}", session_id);
         let server_handle = LocalServer::start_with_config(symbol_cfg)
@@ -524,6 +537,7 @@ fn spawn_debug_loop(
 /// (debug mode) or mark the session Running (run-only). Runs on a background
 /// thread spawned by `start_debug_session` so booting the VM (15-30s) never
 /// blocks the UI thread. The session is already in the interim Running state.
+#[cfg(windows)]
 #[allow(clippy::too_many_arguments)]
 fn provision_sandbox_and_start(
     session_state: Arc<Mutex<SessionStateUI>>,

@@ -6,8 +6,18 @@ import { toastError, toastInfo } from '@/lib/logger';
  * Extensions that are worth handing to the PE parser. A UX nicety for obvious
  * non-PE files only — the backend stays the authority on what actually parses.
  */
-export const PE_FILE_PATTERN = /\.(exe|dll|sys|efi|ocx|cpl|scr)$/i;
-export const PE_FILE_REJECT_MESSAGE = 'Not a PE file (.exe, .dll, .sys, ...)';
+export const PE_FILE_EXTENSIONS = ["exe", "dll", "sys", "efi", "ocx", "cpl", "scr"];
+/** ELF files by the extensions they usually carry. */
+export const ELF_FILE_EXTENSIONS = ["so", "elf", "o", "ko", "axf"];
+/** Anything the offline image viewer opens: PE or ELF (a versioned soname
+ *  like `libc.so.6` included). On Unix an executable has no extension, so
+ *  callers there accept any file and let the backend's magic check decide
+ *  (see `imageDropPattern`). */
+export const IMAGE_FILE_PATTERN = new RegExp(
+  `\\.(${[...PE_FILE_EXTENSIONS, ...ELF_FILE_EXTENSIONS].join("|")}|so(\\.\\d+)+)$`,
+  "i",
+);
+export const PE_FILE_REJECT_MESSAGE = 'Not a PE or ELF file (.exe, .dll, .sys, .so, ...)';
 
 /**
  * Reduce a native drop to the single path a consumer accepts: takes the first

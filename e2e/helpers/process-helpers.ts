@@ -1,15 +1,16 @@
 import { spawn, ChildProcess } from "child_process";
+import { IS_WINDOWS, fixtureExe } from "./launch-commands";
 
 /**
  * Spawn a long-lived target process to attach to or open non-invasively.
- * `ping` loops for ~999 seconds without needing stdin, so it stays alive for
- * the whole test.
+ * Windows: `ping` loops for ~999 seconds without needing stdin. Linux: the
+ * `sleeper_c` fixture, which also allows a non-ancestor to ptrace it (Yama).
+ * Its image name is `ATTACH_TARGET_IMAGE`.
  */
 export function spawnTarget(): ChildProcess {
-  return spawn("ping", ["127.0.0.1", "-n", "999"], {
-    stdio: "ignore",
-    windowsHide: true,
-  });
+  return IS_WINDOWS
+    ? spawn("ping", ["127.0.0.1", "-n", "999"], { stdio: "ignore", windowsHide: true })
+    : spawn(fixtureExe("sleeper_c"), [], { stdio: "ignore" });
 }
 
 /** True if a PID is still running (signal 0 is a liveness probe, not a kill). */

@@ -12,12 +12,13 @@ import {
   DropdownMenuSeparator,
 } from '@/components/ui/dropdown-menu';
 import { DockWindowsMenu, DockWindowsMenuGroup } from '@/components/DockWindowsMenu';
-import { SESSION_TAB_DEFS, SESSION_TAB_CATEGORIES } from '@/lib/sessionTabs';
+import { visibleSessionTabs, tabTitle, SESSION_TAB_CATEGORIES } from '@/lib/sessionTabs';
+import { usePlatform } from '@/hooks/usePlatform';
 import { DebugEventInfo, DebugSession, ExceptionDetail, SessionContext, SessionStatus } from '@/contexts/SessionContext';
 import { useHoverPopup } from '@/hooks/useHoverPopup';
 import { ExceptionHoverPopup } from '@/components/ExceptionDetailBlock';
 import { shortHex } from '@/lib/hexUtils';
-import { sessionDisplayName } from '@/lib/sessionHelpers';
+import { sessionDisplayName, dumpMenuLabels } from '@/lib/sessionHelpers';
 import { useKeybindingContext } from '@/contexts/KeybindingContext';
 
 export interface SessionHeaderProps {
@@ -160,13 +161,15 @@ export const SessionHeader: React.FC<SessionHeaderProps> = ({
   // One submenu per category — twenty windows are too many to scan flat.
   // "Add Memory Window" lives inside the Memory submenu, next to the tabs it
   // creates, rather than at the top level.
+  const platform = usePlatform();
+  const dumpLabels = dumpMenuLabels(platform.os);
   const windowGroups: DockWindowsMenuGroup[] = SESSION_TAB_CATEGORIES.map((category) => ({
     label: category,
-    tabs: SESSION_TAB_DEFS
+    tabs: visibleSessionTabs(platform.features)
       .filter((d) => d.category === category)
       .map((d) => ({
         id: d.id,
-        label: d.title,
+        label: tabTitle(d, platform.os),
         shortcut: d.action ? getKeybinding(d.action) : undefined,
       })),
     children: category === "Memory" && addNewMemoryTab && (
@@ -374,25 +377,27 @@ export const SessionHeader: React.FC<SessionHeaderProps> = ({
                     <span className="flex-1">Detach (leave running)</span>
                     <DropdownMenuShortcut>{getKeybinding("debug.detach")}</DropdownMenuShortcut>
                   </DropdownMenuItem>
+                  {platform.features.minidump && (<>
                   <DropdownMenuSeparator />
                   <DropdownMenuItem
                     onSelect={() => handleCreateDump(true)}
                     disabled={!canDump}
-                    title="Write a full-memory minidump (.dmp) of the paused target"
+                    title={dumpLabels.fullTitle}
                   >
                     <HardDriveDownload className="h-4 w-4" />
-                    <span className="flex-1">Create Full Memory Dump…</span>
+                    <span className="flex-1">{dumpLabels.full}</span>
                     <DropdownMenuShortcut>{getKeybinding("debug.dumpFull")}</DropdownMenuShortcut>
                   </DropdownMenuItem>
                   <DropdownMenuItem
                     onSelect={() => handleCreateDump(false)}
                     disabled={!canDump}
-                    title="Write a small minidump (.dmp) of the paused target: stacks, modules, thread info and the memory they reference"
+                    title={dumpLabels.miniTitle}
                   >
                     <FileDown className="h-4 w-4" />
-                    <span className="flex-1">Create Minidump…</span>
+                    <span className="flex-1">{dumpLabels.mini}</span>
                     <DropdownMenuShortcut>{getKeybinding("debug.dumpMini")}</DropdownMenuShortcut>
                   </DropdownMenuItem>
+                  </>)}
                 </DropdownMenuContent>
               </DropdownMenu>
             )}

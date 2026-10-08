@@ -17,6 +17,7 @@ import {
   HEX_SYMBOL_ROW,
   HEX_SYMBOLS_TOGGLE,
 } from "../helpers/selectors";
+import { SYMBOL_MODULE, SYSTEM_SYMBOL, SYSTEM_SYMBOL_NAME } from "../helpers/launch-commands";
 
 /** One rendered gutter or symbol row, as `readSequence` reports it. */
 interface SeqRow {
@@ -48,11 +49,12 @@ test.describe("Hex symbol rows", () => {
     try {
       await waitForPaused(page, sessionId);
 
-      // `ntdll!NtClose` in the goto box resolves through the symbol search,
-      // which needs ntdll's symbols usable (its exports already carry NtClose).
-      await waitForModuleSymbols(page, sessionId, "ntdll", { accept: ["loaded", "exports_only"] });
+      // `ntdll!NtClose` (`libc!getppid`) in the goto box resolves through the
+      // symbol search, which needs the module's symbols usable (ntdll's exports
+      // already carry NtClose).
+      await waitForModuleSymbols(page, sessionId, SYMBOL_MODULE, { accept: ["loaded", "exports_only"] });
 
-      const hex = await openMemoryHexPanel(page, "ntdll!NtClose");
+      const hex = await openMemoryHexPanel(page, SYSTEM_SYMBOL);
       const gutter = hex.locator(HEX_ADDRESS);
       const toggle = hex.locator(HEX_SYMBOLS_TOGGLE);
       const symbolRows = hex.locator(HEX_SYMBOL_ROW);
@@ -64,7 +66,7 @@ test.describe("Hex symbol rows", () => {
       // --- On: NtClose gets a row, data rows are untouched ----------------------
       await toggle.click();
       await expect(toggle).toHaveAttribute("aria-pressed", "true");
-      const ntCloseRow = hex.locator(HEX_SYMBOL_ROW, { hasText: /NtClose/ }).first();
+      const ntCloseRow = hex.locator(HEX_SYMBOL_ROW, { hasText: SYSTEM_SYMBOL_NAME }).first();
       await expect(ntCloseRow).toBeVisible({ timeout: 15_000 });
 
       // Walk every rendered gutter/symbol row of THIS panel, in DOM order, in
@@ -145,7 +147,7 @@ test.describe("Hex symbol rows", () => {
         return placement;
       };
 
-      const { rowAddr } = await expectSettledLayout(/NtClose/);
+      const { rowAddr } = await expectSettledLayout(SYSTEM_SYMBOL_NAME);
       // Symbol rows never impersonate the byte grid (other specs find the
       // first byte cell by this class).
       expect(await ntCloseRow.locator(".cursor-pointer").count()).toBe(0);

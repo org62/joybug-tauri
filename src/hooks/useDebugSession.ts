@@ -4,8 +4,9 @@ import { listen } from '@tauri-apps/api/event';
 import { save as saveFileDialog } from '@tauri-apps/plugin-dialog';
 import { toast } from 'sonner';
 import { DebugSession, Module, ModuleSymbolStatus, PdbLoadResult, Thread, Symbol, hasUsableSymbols } from '@/contexts/SessionContext';
-import { isProcessAvailable, isPausedSession, isTargetLive, canStopSession, formatTauriError, sessionDisplayName } from '@/lib/sessionHelpers';
+import { isProcessAvailable, isPausedSession, isTargetLive, canStopSession, formatTauriError, sessionDisplayName, dumpMenuLabels } from '@/lib/sessionHelpers';
 import { useDisplayStatus } from '@/hooks/useDisplayStatus';
+import { usePlatform } from '@/hooks/usePlatform';
 
 // The 1s live poll returns fresh arrays every tick even when nothing changed;
 // keeping the previous reference when contents match stops every context
@@ -25,6 +26,7 @@ function sameSymbolStatuses(a: ModuleSymbolStatus[], b: ModuleSymbolStatus[]): b
 }
 
 export function useDebugSession(sessionId: string | undefined) {
+  const platform = usePlatform();
   const [session, setSession] = useState<DebugSession | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [busyAction, setBusyAction] = useState<
@@ -513,9 +515,11 @@ export function useDebugSession(sessionId: string | undefined) {
     const suffix = fullMemory ? "-full" : "";
     let path: string | null;
     try {
+      // A minidump on Windows, an ELF core file everywhere else.
+      const dump = dumpMenuLabels(platform.os);
       path = await saveFileDialog({
-        defaultPath: `${stem}${suffix}.dmp`,
-        filters: [{ name: "Minidump", extensions: ["dmp"] }, { name: "All Files", extensions: ["*"] }],
+        defaultPath: `${stem}${suffix}.${dump.extension}`,
+        filters: [{ name: dump.filterName, extensions: [dump.extension] }, { name: "All Files", extensions: ["*"] }],
       });
     } catch (error) {
       toast.error(`Failed to open save dialog: ${formatTauriError(error)}`);
@@ -526,11 +530,11 @@ export function useDebugSession(sessionId: string | undefined) {
     try {
       await invoke("write_minidump", { sessionId, path, fullMemory });
     } catch (error) {
-      toast.error(`Failed to create minidump: ${formatTauriError(error)}`);
+      toast.error(`Failed to create dump: ${formatTauriError(error)}`);
     } finally {
       setBusyAction(null);
     }
-  }, [sessionId, session, canDump]);
+  }, [sessionId, session, canDump, platform.os]);
 
   // Promote a non-invasive Open session to a full attached debug session.
   const handleAttach = useCallback(async () => {

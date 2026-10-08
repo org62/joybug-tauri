@@ -4,6 +4,7 @@ import { FolderOpen } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { PE_FILE_EXTENSIONS, ELF_FILE_EXTENSIONS } from "@/hooks/useFileDrop";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
 } from "@/components/ui/dialog";
@@ -29,7 +30,8 @@ export const OpenPeDialog: React.FC<OpenPeDialogProps> = ({ open, onOpenChange, 
     const sel = await openFileDialog({
       multiple: false, directory: false,
       filters: [
-        { name: "PE files", extensions: ["exe", "dll", "sys", "efi", "ocx", "cpl", "scr"] },
+        { name: "PE files", extensions: PE_FILE_EXTENSIONS },
+        { name: "ELF files", extensions: ELF_FILE_EXTENSIONS },
         { name: "All Files", extensions: ["*"] },
       ],
     });

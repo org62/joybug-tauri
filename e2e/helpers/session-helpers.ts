@@ -1,10 +1,7 @@
-import { Page, expect } from "@playwright/test";
-import path from "path";
-import { fileURLToPath } from "url";
+import { expect, type Page } from "./test-fixtures";
 import { navigateTo } from "./test-fixtures";
 import { HEX_ADDRESS, hexPanelFor } from "./selectors";
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+import { echoCmd } from "./launch-commands";
 
 /** Module entry as returned by the `get_session_modules` command. */
 export interface ModuleData {
@@ -30,14 +27,7 @@ export interface BreakpointData {
 export const rowAddress = (address: number | bigint): string =>
   `0x${address.toString(16).toUpperCase()}`;
 
-/** Absolute path to a built source-debugging fixture exe (see e2e/fixtures/build.mjs).
- *  `hello_c32` is the 32-bit (WOW64) build of hello_c; `overlap_asm` carries
- *  hand-encoded overlapping code. */
-export function fixtureExe(
-  name: "hello_c" | "hello_asm" | "overlap_asm" | "watch_c" | "crash_c" | "hello_c32",
-): string {
-  return path.resolve(__dirname, "..", "fixtures", "bin", `${name}.exe`);
-}
+export { fixtureExe } from "./launch-commands";
 
 /** Invoke a Tauri command from the page context. */
 export async function invoke(
@@ -138,8 +128,33 @@ async function fillOptionalSessionFields(page: Page, opts: CreateSessionOptions)
 }
 
 /**
+ * Open the "Create Process" dialog from the Debugger page. The header button
+ * is a Radix DialogTrigger: it *toggles*, so it is only clicked once no dialog
+ * is left (a previous step's dialog may still be closing). The click is
+ * confirmed by the dialog appearing and retried otherwise — a click can be
+ * lost to a dev-server page reload (see `server.watch.ignored` in
+ * vite.config.ts for the one known cause), which this reports when it happens.
+ */
+async function openCreateProcessDialog(page: Page): Promise<void> {
+  await expect(page.getByRole("dialog")).toHaveCount(0, { timeout: 5_000 });
+  const dialog = page.getByRole("dialog").filter({ hasText: /Create Process/ });
+  let attempts = 0;
+  await expect(async () => {
+    attempts++;
+    // Header trigger; .first() avoids the empty-state button that shares the
+    // label when no sessions exist.
+    await page.getByRole("button", { name: /Create Process/i }).first().click();
+    await expect(dialog).toBeVisible({ timeout: 2_000 });
+  }).toPass({ timeout: 10_000, intervals: [100] });
+  if (attempts > 1) {
+    console.log(`[e2e] the Create Process dialog needed ${attempts} clicks to open (page reloaded?)`);
+  }
+}
+
+/**
  * Create and start a debug session via the UI dialog.
- * Uses `cmd.exe /c "echo hello world"` as the debug target.
+ * Uses `echoCmd("e2e_test")` (cmd.exe on Windows, the echo_c fixture on
+ * Linux) as the debug target.
  *
  * NOTE: this deliberately drives the real dialog rather than invoking the
  * backend create/start commands directly. A backend fast-path was tried and
@@ -161,14 +176,11 @@ async function fillOptionalSessionFields(page: Page, opts: CreateSessionOptions)
 export async function createAndStartSession(
   page: Page,
   name = "E2E Test Session",
-  launchCommand = "cmd.exe /c echo e2e_test",
+  launchCommand = echoCmd("e2e_test"),
   opts: CreateSessionOptions = {},
 ): Promise<string> {
   await navigateTo(page, "/debugger");
-
-  // Click "Create Process" button (header trigger; .first() avoids the
-  // empty-state button that shares the label when no sessions exist)
-  await page.getByRole("button", { name: /Create Process/i }).first().click();
+  await openCreateProcessDialog(page);
 
   // Use a unique launch command to avoid loading persisted breakpoints
   // from previous manual debugging sessions. (Session naming was removed from
@@ -184,7 +196,7 @@ export async function createAndStartSession(
   await page.waitForURL(/\/session\//, { timeout: 10_000 });
 
   // Extract session ID from URL
-  const url = page.url();
+  const url = await page.url();
   const match = url.match(/\/session\/(.+)$/);
   if (!match) {
     throw new Error(`Expected URL to contain /session/:id, got: ${url}`);
@@ -206,12 +218,11 @@ export async function createSession(
     ((await invoke(page, "get_debug_sessions")) as Array<{ id: string }>).map((s) => s.id),
   );
 
-  // Click "Create Process" button (header trigger)
-  await page.getByRole("button", { name: /Create Process/i }).first().click();
+  await openCreateProcessDialog(page);
 
   // Naming was removed from the dialog; a unique launch command keeps the new
   // session identifiable and avoids loading persisted breakpoints.
-  await page.getByLabel("Launch Command").fill(`cmd.exe /c echo ${name}`);
+  await page.getByLabel("Launch Command").fill(echoCmd(name));
 
   await fillOptionalSessionFields(page, opts);
 
@@ -226,6 +237,11 @@ export async function createSession(
     expect(created, "a new session should appear").toBeTruthy();
     id = created!.id;
   }).toPass({ timeout: 5_000 });
+  // The backend lists the session before the dialog's own create promise
+  // resolves and closes it. Leave the page settled: the next step (or the
+  // next test, which never reloads the page) must not find the dialog still
+  // closing — its trigger would then toggle it shut instead of open.
+  await expect(page.getByRole("dialog")).toHaveCount(0, { timeout: 5_000 });
 
   return id!;
 }
@@ -304,7 +320,14 @@ export async function clickWindowsMenuItem(page: Page, group: string, item: stri
     // this ambiguous with the dock's own Windows menu.
     await page.getByRole("main").getByRole("button", { name: "Windows" }).click({ timeout: 2_000 });
     await page.getByRole("menuitem", { name: group }).click({ timeout: 2_000 });
-    await page.getByRole("menuitemcheckbox", { name: item }).click({ timeout: 2_000 });
+    // The submenu item is selected from the keyboard: Radix closes a submenu
+    // when the pointer jumps straight from the trigger into it (its grace-area
+    // check sees a departure, not an arrival) — a WebDriver pointer move is
+    // exactly that jump — so a mouse click never reaches the item here.
+    const entry = page.getByRole("menuitemcheckbox", { name: item });
+    await entry.waitFor({ state: "visible", timeout: 2_000 });
+    await entry.focus();
+    await page.keyboard.press("Enter");
   }).toPass({ timeout: 20_000, intervals: [100, 250, 500] });
   // Checkbox items keep the menu open for multi-toggling; dismiss it.
   await page.keyboard.press("Escape");

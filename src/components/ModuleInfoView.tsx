@@ -15,6 +15,8 @@ import { moduleBasename } from '@/lib/sessionHelpers';
 import { PeStructureTree, PE_TREE_MIN_WIDTH } from '@/components/pe/PeStructureTree';
 import { AddrModeSelect } from '@/components/pe/AddrModeSelect';
 import { AddrMode, AddrTriple, buildMapping, formatAddr } from '@/lib/peAddress';
+import { imageTerms } from '@/lib/imageTerms';
+import { usePlatform } from '@/hooks/usePlatform';
 
 interface ModuleInfoViewProps {
   modules: Module[];
@@ -28,8 +30,8 @@ interface ModuleInfoViewProps {
 }
 
 /**
- * PE Viewer for a module of the live process: the same structure tree as the
- * standalone PE viewer, read-only, mapped at the module's actual load base so
+ * Image viewer for a module of the live process: the same structure tree as
+ * the standalone PE/ELF viewer, read-only, mapped at the module's actual load base so
  * every address links into the session's Memory / Disassembly tabs.
  */
 export const ModuleInfoView: React.FC<ModuleInfoViewProps> = ({
@@ -47,6 +49,7 @@ export const ModuleInfoView: React.FC<ModuleInfoViewProps> = ({
     [modules, selectedModuleBase]
   );
   const [mode, setMode] = useState<AddrMode>('va');
+  const terms = imageTerms(usePlatform().os);
 
   // The tree's big groups (imports/exports/exception) virtualize inline
   // against this panel viewport, so the panel has a single scroll region.
@@ -106,7 +109,7 @@ export const ModuleInfoView: React.FC<ModuleInfoViewProps> = ({
           <EmptyState
             icon={<FileSearch className="h-12 w-12 mx-auto mb-4 opacity-50" />}
             title="No module selected"
-            subtitle="Select a module to view PE information"
+            subtitle={`Select a module to view its ${terms.format} headers`}
           />
         )}
 

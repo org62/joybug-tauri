@@ -18,7 +18,9 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use joybug_core::etw::{EtwCaptureSpec, HostTracer, HostTracerConfig};
+use joybug_core::etw::{EtwCaptureSpec, HostTracerConfig};
+/// Re-exported so `state::HostTracersMap` names it via `crate::etw` on every OS.
+pub use joybug_core::etw::HostTracer;
 use tracing::info;
 
 use crate::state::{EtwConfig, SessionStateUI, SessionStatusUI};

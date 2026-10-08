@@ -23,6 +23,7 @@ pub struct SandboxAvailability {
 /// guest binaries embedded?" concern: the guest runs a copy of this very exe
 /// (see [`super::payload`]), so if the app is running at all, the binary it
 /// needs exists.
+#[cfg(windows)]
 pub fn status() -> SandboxAvailability {
     let core = joybug_core::sandbox::status();
     SandboxAvailability {
@@ -30,5 +31,17 @@ pub fn status() -> SandboxAvailability {
         build: core.build,
         wsb_present: core.wsb_present,
         reason: core.reason,
+    }
+}
+
+/// Windows Sandbox is a Windows feature; everywhere else the mode is simply
+/// unavailable, with the reason the UI shows next to the disabled option.
+#[cfg(not(windows))]
+pub fn status() -> SandboxAvailability {
+    SandboxAvailability {
+        supported: false,
+        build: 0,
+        wsb_present: false,
+        reason: Some("Windows Sandbox is only available on Windows".to_string()),
     }
 }

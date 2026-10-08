@@ -14,6 +14,7 @@ import {
   configureMinimalStopSettings,
   restoreDefaultSettings,
 } from "../helpers/wait-helpers";
+import { echoCmd, SYSTEM_SYMBOL } from "../helpers/launch-commands";
 
 const GROUP = "pasted-e2e";
 
@@ -38,7 +39,7 @@ test.describe("Breakpoints from a pasted list", () => {
     const sessionId = await createAndStartSession(
       page,
       "BP List",
-      `cmd.exe /c echo bp_list_${Date.now()}`,
+      echoCmd(`bp_list_${Date.now()}`),
     );
     try {
       await waitForPaused(page, sessionId);
@@ -58,7 +59,7 @@ test.describe("Breakpoints from a pasted list", () => {
           "# a comment is ignored",
           "",
           pcHex,
-          "ntdll!NtClose",
+          SYSTEM_SYMBOL,
           `${pcReg}+0x20`,
           pcHex, // duplicate of line 3 — collapsed, not an error
           "not_a_real_symbol_e2e",

@@ -55,14 +55,14 @@ export const EVENT_ITEMS: EventSettingItem[] = [
   { key: "stop_on_process_exit", id: "event.processExit", label: "Process Exit", keywords: ["event", "process", "exit", "terminate", "exception"] },
   { key: "stop_on_thread_create", id: "event.threadCreate", label: "Thread Create", keywords: ["event", "thread", "create", "exception"] },
   { key: "stop_on_thread_exit", id: "event.threadExit", label: "Thread Exit", keywords: ["event", "thread", "exit", "exception"] },
-  { key: "stop_on_dll_load", id: "event.dllLoad", label: "DLL Load", keywords: ["event", "dll", "module", "load", "exception"] },
-  { key: "stop_on_dll_unload", id: "event.dllUnload", label: "DLL Unload", keywords: ["event", "dll", "module", "unload", "exception"] },
+  { key: "stop_on_dll_load", id: "event.dllLoad", label: "Module Load", keywords: ["event", "dll", "so", "library", "module", "load", "exception"] },
+  { key: "stop_on_dll_unload", id: "event.dllUnload", label: "Module Unload", keywords: ["event", "dll", "so", "library", "module", "unload", "exception"] },
   { key: "stop_on_initial_breakpoint", id: "event.initialBreakpoint", label: "Initial Breakpoint", keywords: ["event", "breakpoint", "initial", "launch", "attach", "exception"] },
   { key: "stop_on_debug_output", id: "event.debugOutput", label: "Debug Output (OutputDebugString)", keywords: ["event", "output", "debug", "string", "print"] },
   { key: "break_on_user_module_entry", id: "event.moduleEntryUser", label: "Module Entry (user modules)", keywords: ["event", "module", "entry", "point", "dllmain", "oep", "break", "breakpoint", "user", "single-shot"] },
-  { key: "break_on_system_module_entry", id: "event.moduleEntrySystem", label: "Module Entry (system32)", keywords: ["event", "module", "entry", "point", "dllmain", "oep", "break", "breakpoint", "system", "system32", "syswow64", "single-shot"] },
+  { key: "break_on_system_module_entry", id: "event.moduleEntrySystem", label: "Module Entry (system modules)", keywords: ["event", "module", "entry", "point", "dllmain", "oep", "break", "breakpoint", "system", "system32", "syswow64", "single-shot"] },
   { key: "break_on_user_tls_callbacks", id: "event.tlsCallbacksUser", label: "TLS Callbacks (user modules)", keywords: ["event", "tls", "callback", "break", "breakpoint", "user", "single-shot"] },
-  { key: "break_on_system_tls_callbacks", id: "event.tlsCallbacksSystem", label: "TLS Callbacks (system32)", keywords: ["event", "tls", "callback", "break", "breakpoint", "system", "system32", "syswow64", "single-shot"] },
+  { key: "break_on_system_tls_callbacks", id: "event.tlsCallbacksSystem", label: "TLS Callbacks (system modules)", keywords: ["event", "tls", "callback", "break", "breakpoint", "system", "system32", "syswow64", "single-shot"] },
   { key: "capture_exception_context", id: "event.exceptionContext", label: "Capture callstack & symbols for non-stopping exceptions", keywords: ["event", "exception", "callstack", "stack", "symbol", "symbolize", "pass", "handled", "log"] },
 ];
 

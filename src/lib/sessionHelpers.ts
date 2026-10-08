@@ -228,3 +228,33 @@ export function createSymbolResolver(
     }
   };
 }
+
+/**
+ * Menu / palette wording for the two dump commands, plus the save dialog's
+ * filter name and file extension. The backend writes a dbghelp minidump on
+ * Windows and an ELF core file elsewhere; the commands, their keybindings and
+ * the "mini vs full" choice are the same.
+ */
+export function dumpMenuLabels(os: string): {
+  full: string; fullTitle: string; mini: string; miniTitle: string;
+  filterName: string; extension: string;
+} {
+  if (os === "windows") {
+    return {
+      filterName: "Minidump",
+      extension: "dmp",
+      full: "Create Full Memory Dump…",
+      fullTitle: "Write a full-memory minidump (.dmp) of the paused target",
+      mini: "Create Minidump…",
+      miniTitle: "Write a small minidump (.dmp) of the paused target: stacks, modules, thread info and the memory they reference",
+    };
+  }
+  return {
+    filterName: "Core file",
+    extension: "core",
+    full: "Create Full Core Dump…",
+    fullTitle: "Write a core file of the paused target with every readable mapping, code included",
+    mini: "Create Core Dump…",
+    miniTitle: "Write a core file of the paused target: registers, stacks, heap and data. Code is read back from the binaries on disk",
+  };
+}

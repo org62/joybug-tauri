@@ -862,7 +862,7 @@ pub type SandboxHandlesMap = Mutex<HashMap<String, crate::sandbox::SandboxHandle
 /// prompting UAC again. Same lifecycle as `SandboxHandlesMap` except it is NOT
 /// torn down on a plain stop (a restart is a stop+start and must keep the
 /// tracer) — only on delete and app exit.
-pub type HostTracersMap = Mutex<HashMap<String, joybug_core::etw::HostTracer>>;
+pub type HostTracersMap = Mutex<HashMap<String, crate::etw::HostTracer>>;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LogEntry {

@@ -8,11 +8,11 @@
 // the program has no handler, so continuing "handled" re-runs the faulting
 // store and passing it through kills the process on the second chance. Either
 // way `main` never resumes, so there is nothing for it to do.
-#include <windows.h>   // UINT_PTR
+#include "portable.h"
 
-__declspec(noinline) void crash_here(void)
+NOINLINE void crash_here(void)
 {
-    volatile int *bad = (volatile int *)(UINT_PTR)0xDEAD0000;
+    volatile int *bad = (volatile int *)(uptr_t)0xDEAD0000;
     *bad = 42; /* write access violation */
 }
 

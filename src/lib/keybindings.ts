@@ -91,7 +91,7 @@ export const ACTION_REGISTRY: Record<ActionId, ActionMeta> = {
   "panel.pointerScan":   { label: "Go to Pointer Scan",   category: "Panels", description: "Open and focus the Pointer Scan panel",   scope: "session" },
   "panel.strings":       { label: "Go to Strings",        category: "Panels", description: "Open and focus the Strings panel",        scope: "session" },
   "panel.codeExplorer":  { label: "Go to Code Explorer",  category: "Panels", description: "Open and focus the Code Explorer panel",  scope: "session" },
-  "panel.peViewer":      { label: "Go to PE Viewer",      category: "Panels", description: "Open and focus the PE Viewer panel",      scope: "session" },
+  "panel.peViewer":      { label: "Go to Image Viewer",   category: "Panels", description: "Open and focus the PE / ELF image viewer panel",      scope: "session" },
   "panel.closeTab":      { label: "Close Active Tab",      category: "Panels", description: "Close the currently focused dock tab",     scope: "session" },
 
   "palette.open":    { label: "Command Palette",  category: "Navigation", description: "Open the command palette",                 scope: "global" },

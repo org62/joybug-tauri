@@ -1,14 +1,12 @@
 // Mouse back/forward button navigation registry.
 //
-// The mouse side buttons (XButton1/XButton2) trigger WebView2's native browser
-// back/forward, which react-router turns into a page navigation. main.tsx intercepts
-// these at the pre-React level (DOM preventDefault alone doesn't stop WebView2). This
-// registry lets a mounted view (e.g. the docked session) claim a back/forward press to
-// navigate its own tab history instead. If the handler returns true, main.tsx blocks the
-// native navigation; if false (or no handler registered), the native page nav proceeds.
+// The mouse side buttons (XButton1/XButton2) reach the page as mousedown with
+// button 3/4; main.tsx intercepts them before React and hands the press to the
+// registered handler (App, which drives the app-wide navigation history). The
+// browser's own history never moves — main.tsx keeps it at a single entry.
 
 type Dir = 'back' | 'forward';
-type Handler = (dir: Dir) => boolean; // returns true if it consumed the press
+type Handler = (dir: Dir) => void;
 
 let handler: Handler | null = null;
 
@@ -19,6 +17,6 @@ export function setMouseNavHandler(h: Handler): () => void {
   };
 }
 
-export function runMouseNav(dir: Dir): boolean {
-  return handler ? handler(dir) : false;
+export function runMouseNav(dir: Dir): void {
+  handler?.(dir);
 }

@@ -6,6 +6,7 @@ import {
   configureMinimalStopSettings,
   restoreDefaultSettings,
 } from "../helpers/wait-helpers";
+import { SYMBOL_MODULE } from "../helpers/launch-commands";
 
 interface SymbolStatus {
   module_path: string;
@@ -64,11 +65,12 @@ test.describe("Restart & symbol unload", () => {
       const getStatuses = async (): Promise<SymbolStatus[]> =>
         await invoke(page, "get_session_symbol_status", { sessionId });
 
-      // Wait for ntdll symbols to load (from cache or the symbol server).
+      // Wait for the system module's symbols to load (from cache or the
+      // symbol server on Windows; from the ELF on Linux).
       let ntdllBase = "";
       await expect(async () => {
         const ntdll = (await getStatuses()).find((s) =>
-          s.module_path.toLowerCase().includes("ntdll"),
+          s.module_path.toLowerCase().includes(SYMBOL_MODULE),
         );
         expect(ntdll?.status).toBe("loaded");
         expect(ntdll!.symbol_count ?? 0).toBeGreaterThan(0);

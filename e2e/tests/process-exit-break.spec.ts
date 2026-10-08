@@ -8,10 +8,12 @@ import {
 import {
   waitForPaused,
   waitForStopped,
+  waitForPauseOn,
   configureMinimalStopSettings,
   restoreDefaultSettings,
   continueSession,
 } from "../helpers/wait-helpers";
+import { exitCmd, SYSTEM_MODULE } from "../helpers/launch-commands";
 
 /**
  * "Stop on process exit" must produce a *real* break, not a cosmetic one.
@@ -34,26 +36,22 @@ test.describe("Break on process exit", () => {
       sessionId = await createAndStartSession(
         page,
         "Process Exit Break",
-        'cmd.exe /c "exit /b 42"',
+        exitCmd(42),
       );
       await waitForPaused(page, sessionId);
 
       // Run to completion — this must land on a pause, not end the session.
       await continueSession(page, sessionId);
-      await expect(async () => {
-        const s = await invoke(page, "get_debug_session", { sessionId });
-        expect(s?.status).toBe("Paused");
-        expect(s?.current_event?.event_type).toBe("ProcessExited");
-      }).toPass({ timeout: 30_000, intervals: [100, 250] });
+      await waitForPauseOn(page, sessionId, "ProcessExited");
 
       const s = await invoke(page, "get_debug_session", { sessionId });
 
-      // The exit code is surfaced (cmd.exe exited with 42 = 0x2A).
+      // The exit code is surfaced (the target exited with 42 = 0x2A).
       expect(s.current_event.details).toContain("0x2A");
 
       // A real break: registers resolved off the exiting thread. The PC lives
       // under a different name per debuggee arch (rip / pc), so read it through
-      // the helper — cmd.exe is native on both x64 and ARM64 runners.
+      // the helper — the shell is native on both x64 and ARM64 runners.
       const pc = contextPc(s.current_event.context);
       expect(pc).toBeTruthy();
       expect(BigInt(pc!)).toBeGreaterThan(0n);
@@ -63,7 +61,7 @@ test.describe("Break on process exit", () => {
       expect(modules.length).toBeGreaterThan(0);
       expect(
         modules.some((m: { name: string }) =>
-          m.name.toLowerCase().includes("ntdll"),
+          m.name.toLowerCase().includes(SYSTEM_MODULE),
         ),
       ).toBe(true);
 

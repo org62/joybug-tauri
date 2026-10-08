@@ -83,7 +83,8 @@ test.describe("Exception log", () => {
    * The same access violation, but the user's rule passes the first chance to
    * the program. crash_c has no handler, so it comes straight back as a
    * second-chance exception and stops there — which is also the proof the first
-   * chance never paused. The first-chance log row must still carry the
+   * chance never paused. (Linux has no kernel second chance: the backend gives
+   * one before it delivers a signal nobody handles.) The first-chance log row must still carry the
    * symbolized fault address and a walked callstack: an exception nobody stops
    * on is exactly the one whose log entry has to stand on its own.
    */

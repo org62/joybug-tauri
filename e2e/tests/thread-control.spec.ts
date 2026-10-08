@@ -1,5 +1,5 @@
 import { test, expect } from "../helpers/test-fixtures";
-import type { Page } from "@playwright/test";
+import type { Page } from "../helpers/test-fixtures";
 import {
   createAndStartSession,
   cleanupSession,
@@ -46,14 +46,16 @@ test.describe("Threads panel: suspend / resume / kill", () => {
     const sessionId = await createAndStartSession(page, "Thread Control", fixtureExe("hello_c"));
     try {
       await waitForPaused(page, sessionId);
-      // Let main park in its long Sleep, then break in so there is a second
-      // (injected) thread and the main thread is a safe target.
+      // Let the target start its parked worker thread, then break in. The
+      // thread the break-in lands on (an injected one on Windows, main on
+      // Linux) stays untouched; the other, parked in a long sleep, is the one
+      // suspended, resumed and killed here.
       await breakIntoRunningTarget(page, sessionId);
 
       const session = await invoke(page, "get_debug_session", { sessionId });
       const eventTid: number = session.current_event.thread_id;
       const threads: ThreadRow[] = await invoke(page, "get_session_threads", { sessionId });
-      const main = threads.find((t) => t.id !== eventTid);
+      const main = threads.find((t) => t.id !== eventTid && t.suspend_count === 0);
       expect(main, "target has a second thread after break-in").toBeTruthy();
       const mainTid = main!.id;
       expect(main!.suspend_count).toBe(0);

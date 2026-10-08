@@ -226,6 +226,12 @@ pub(crate) fn annotate_regions(
         }
     }
 
+    // KUSER_SHARED_DATA / PEB / TEB are NT process structures; a Linux
+    // target has none of them (its `get_peb_address` is unimplemented and
+    // `get_teb_address` returns the TLS base, which is not a TEB).
+    if !cfg!(windows) {
+        return out;
+    }
     if let Some(i) = find_region(KUSER_SHARED_DATA) {
         out[i].push(ann("kuser", "KUSER_SHARED_DATA", Some(KUSER_SHARED_DATA)));
     }

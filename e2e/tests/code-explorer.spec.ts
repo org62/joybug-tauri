@@ -1,7 +1,8 @@
 import { test, expect } from "../helpers/test-fixtures";
 import { createAndStartSession, cleanupSession, invoke, goToWindow, type ModuleData } from "../helpers/session-helpers";
 import { waitForPaused, goAndWaitForPause } from "../helpers/wait-helpers";
-import type { Page } from "@playwright/test";
+import type { Page } from "../helpers/test-fixtures";
+import { COVERAGE_MODULE } from "../helpers/launch-commands";
 
 interface CoverageFn {
   address: string;
@@ -46,17 +47,18 @@ interface CoverageHit {
   thread_ids: number[];
 }
 
-/** Continue until ntdll is loaded (only cmd.exe is present at the first pause)
- *  and return it. ntdll's loader code runs during startup, so arming coverage on
- *  it reliably produces hits on subsequent continues. */
+/** Continue until the coverage module (ntdll / libc) is loaded — only the
+ *  executable is present at the first pause — and return it. Its startup code
+ *  runs right after, so arming coverage on it reliably produces hits on
+ *  subsequent continues. */
 async function continueUntilNtdll(page: Page, sessionId: string): Promise<ModuleData> {
-  for (let i = 0; i < 8; i++) {
+  for (let i = 0; i < 12; i++) {
     const modules = (await invoke(page, "get_session_modules", { sessionId })) as ModuleData[];
-    const ntdll = modules.find((m) => m.name.toLowerCase().includes("ntdll.dll"));
+    const ntdll = modules.find((m) => m.name.toLowerCase().includes(COVERAGE_MODULE));
     if (ntdll) return ntdll;
     await goAndWaitForPause(page, sessionId, 20_000);
   }
-  throw new Error("ntdll.dll never appeared in the module list");
+  throw new Error(`${COVERAGE_MODULE} never appeared in the module list`);
 }
 
 test.describe("Code Explorer", () => {
@@ -102,10 +104,11 @@ test.describe("Code Explorer", () => {
       expect(addrNum).toBeGreaterThanOrEqual(base);
       expect(addrNum).toBeLessThan(base + ntdll.size);
 
-      // Targets are the union of .pdata and symbols. ntdll always has an
-      // exception directory, so .pdata-sourced rows must be present even when no
-      // PDB is available — that union is what makes coverage work on binaries
-      // whose PDB marks nothing as a function.
+      // Targets are the union of the unwind table (.pdata / .eh_frame, reported
+      // as "pdata") and symbols. ntdll always has an exception directory and
+      // libc an .eh_frame, so unwind-sourced rows must be present even when no
+      // debug symbols are available — that union is what makes coverage work
+      // on binaries whose PDB marks nothing as a function.
       for (const f of functions) {
         expect(["pdata", "symbol", "validated"]).toContain(f.source);
       }
@@ -123,7 +126,7 @@ test.describe("Code Explorer", () => {
         hits = (await invoke(page, "get_code_coverage", { sessionId })) as CoverageHit[];
       }
 
-      expect(hits.length, "some ntdll functions should have been hit").toBeGreaterThan(0);
+      expect(hits.length, `some ${COVERAGE_MODULE} functions should have been hit`).toBeGreaterThan(0);
       // hitLimit=1 removes each breakpoint after its first hit, so every count is 1.
       for (const h of hits) expect(h.hit_count).toBe(1);
       // Every reported hit belongs to the armed set.

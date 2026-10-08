@@ -25,33 +25,55 @@
 //! crashes, its `WOW6432Node` mirror (the same path opened with
 //! `KEY_WOW64_32KEY`) catches 32-bit ones, which WER routes through the 32-bit
 //! view. Each view keeps its own backup file.
+//!
+//! Everything that touches the registry, UAC or WER is `cfg(windows)`; the
+//! startup-attach parsing and the public function signatures exist on every OS
+//! (the non-Windows versions report "unsupported"), so `lib.rs` and the
+//! `commands::jit_debugger` IPC surface need no gates of their own.
 
-use crate::data_dir::joybug_data_dir;
 use crate::error::{Error, Result};
 use serde::{Deserialize, Serialize};
-use std::ffi::OsStr;
-use std::os::windows::ffi::OsStrExt;
-use std::path::{Path, PathBuf};
-use std::ptr;
 use std::sync::Mutex;
+
+#[cfg(windows)]
+use crate::data_dir::joybug_data_dir;
+#[cfg(windows)]
+use std::ffi::OsStr;
+#[cfg(windows)]
+use std::os::windows::ffi::OsStrExt;
+#[cfg(windows)]
+use std::path::{Path, PathBuf};
+#[cfg(windows)]
+use std::ptr;
+#[cfg(windows)]
 use tracing::{error, info, warn};
+#[cfg(windows)]
 use windows_sys::Win32::Foundation::{
     CloseHandle, ERROR_CANCELLED, ERROR_FILE_NOT_FOUND, ERROR_SUCCESS, HANDLE, WAIT_OBJECT_0,
 };
+#[cfg(windows)]
 use windows_sys::Win32::System::Registry::{
     RegCloseKey, RegCreateKeyExW, RegDeleteValueW, RegOpenKeyExW, RegQueryValueExW, RegSetValueExW,
     HKEY, HKEY_LOCAL_MACHINE, KEY_QUERY_VALUE, KEY_SET_VALUE, KEY_WOW64_32KEY, REG_OPTION_NON_VOLATILE, REG_SZ,
 };
+#[cfg(windows)]
 use windows_sys::Win32::System::Threading::{GetExitCodeProcess, SetEvent, WaitForSingleObject, INFINITE};
+#[cfg(windows)]
 use windows_sys::Win32::UI::Shell::{
     ShellExecuteExW, SEE_MASK_NOASYNC, SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW,
 };
+#[cfg(windows)]
 use windows_sys::Win32::UI::WindowsAndMessaging::SW_HIDE;
 
+#[cfg(windows)]
 const AEDEBUG_SUBKEY: &str = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\AeDebug";
+#[cfg(windows)]
 const DEBUGGER_VALUE: &str = "Debugger";
+#[cfg(windows)]
 const AUTO_VALUE: &str = "Auto";
+#[cfg(windows)]
 const BACKUP_FILE: &str = "jit_debugger_backup.json";
+#[cfg(windows)]
 const BACKUP_FILE_WOW64: &str = "jit_debugger_backup_wow64.json";
 
 /// CLI flags handled in `lib.rs::run()` before the Tauri app is built.
@@ -79,21 +101,26 @@ pub struct StartupAttachState(pub Mutex<Option<StartupAttach>>);
 // Registry access
 // ---------------------------------------------------------------------------
 
+#[cfg(windows)]
 fn wide(s: &str) -> Vec<u16> {
     OsStr::new(s).encode_wide().chain(std::iter::once(0)).collect()
 }
 
+#[cfg(windows)]
 fn win_err(what: &str, code: u32) -> Error {
     Error::JitDebugger(format!("{what} failed (Win32 error {code})"))
 }
 
+#[cfg(windows)]
 fn last_os_code() -> u32 {
     std::io::Error::last_os_error().raw_os_error().unwrap_or(0) as u32
 }
 
 /// An open registry key, closed on drop.
+#[cfg(windows)]
 struct RegKey(HKEY);
 
+#[cfg(windows)]
 impl RegKey {
     fn open(root: HKEY, subkey: &str, access: u32) -> Result<Self> {
         let mut hkey: HKEY = ptr::null_mut();
@@ -180,6 +207,7 @@ impl RegKey {
     }
 }
 
+#[cfg(windows)]
 impl Drop for RegKey {
     fn drop(&mut self) {
         unsafe { RegCloseKey(self.0) };
@@ -192,6 +220,7 @@ impl Drop for RegKey {
 
 /// What the AeDebug key held before Joybug took it over. `None` = the value
 /// did not exist, and restore deletes it again.
+#[cfg(windows)]
 #[derive(Debug, Default, PartialEq, Serialize, Deserialize)]
 struct Backup {
     debugger: Option<String>,
@@ -199,12 +228,14 @@ struct Backup {
 }
 
 /// The AeDebug `Debugger` value that launches this exe.
+#[cfg(windows)]
 fn our_debugger_value(exe: &Path) -> String {
     format!("\"{}\" -p %ld -e %ld", exe.display())
 }
 
 /// Where the key and the backup live. Parameterised so the unit test can run
 /// against a throwaway `HKCU` key instead of the real, admin-only HKLM one.
+#[cfg(windows)]
 struct Target {
     root: HKEY,
     subkey: String,
@@ -213,6 +244,7 @@ struct Target {
     view: u32,
 }
 
+#[cfg(windows)]
 impl Target {
     /// The machine AeDebug key. `wow64` selects its `WOW6432Node` view — what
     /// a crashing 32-bit process is routed through — with its own backup file.
@@ -299,6 +331,7 @@ impl Target {
 }
 
 /// Run one elevated-child operation and turn it into a process exit code.
+#[cfg(windows)]
 fn elevated_exit(what: &str, op: impl FnOnce() -> Result<()>) -> i32 {
     match op() {
         Ok(()) => {
@@ -313,6 +346,7 @@ fn elevated_exit(what: &str, op: impl FnOnce() -> Result<()>) -> i32 {
 }
 
 /// Entry point of the elevated `--jit-register` child. Returns the process exit code.
+#[cfg(windows)]
 pub fn do_register() -> i32 {
     elevated_exit("register", || {
         let exe = crate::commands::exe_path()?;
@@ -327,6 +361,7 @@ pub fn do_register() -> i32 {
 }
 
 /// Entry point of the elevated `--jit-unregister` child. Returns the process exit code.
+#[cfg(windows)]
 pub fn do_restore() -> i32 {
     elevated_exit("restore", || {
         if let Err(e) = Target::aedebug(true).restore() {
@@ -343,6 +378,7 @@ pub fn do_restore() -> i32 {
 /// Run our own exe elevated with `flag` and wait for it. `ShellExecuteExW` with
 /// the `runas` verb is the only supported way to trigger UAC; a declined
 /// prompt comes back as `ERROR_CANCELLED`.
+#[cfg(windows)]
 pub fn run_elevated(flag: &str) -> Result<()> {
     let exe = crate::commands::exe_path()?;
     let verb = wide("runas");
@@ -401,6 +437,7 @@ pub struct JitDebuggerStatus {
     pub current: Option<String>,
 }
 
+#[cfg(windows)]
 pub fn status() -> Result<JitDebuggerStatus> {
     let current = Target::aedebug(false).current_debugger()?;
     let registered = match (&current, crate::commands::exe_path()) {
@@ -434,6 +471,7 @@ pub fn parse_startup_attach<I: IntoIterator<Item = String>>(args: I) -> Option<S
 /// debugger. The handle was duplicated into this process by WER and is only
 /// valid here, which is why the JIT launch attaches in-process. Reporting is
 /// the caller's job — it owns the session context.
+#[cfg(windows)]
 pub fn signal_wer_event(handle: u64) -> Result<()> {
     if unsafe { SetEvent(handle as HANDLE) } == 0 {
         return Err(win_err(&format!("SetEvent on the WER handle {handle:#x}"), last_os_code()));
@@ -441,7 +479,7 @@ pub fn signal_wer_event(handle: u64) -> Result<()> {
     Ok(())
 }
 
-#[cfg(test)]
+#[cfg(all(test, windows))]
 mod tests {
     use super::*;
     use windows_sys::Win32::System::Registry::{RegDeleteKeyW, HKEY_CURRENT_USER};
@@ -534,3 +572,43 @@ mod tests {
         assert_eq!(parse_startup_attach(Vec::<String>::new()), None);
     }
 }
+
+// ---------------------------------------------------------------------------
+// Non-Windows: no AeDebug, no WER
+// ---------------------------------------------------------------------------
+
+#[cfg(not(windows))]
+mod unsupported {
+    use super::{Error, JitDebuggerStatus, Result};
+
+    const MESSAGE: &str = "the JIT (postmortem) debugger is a Windows feature";
+
+    /// The elevated `--jit-register` child: nothing to register here.
+    pub fn do_register() -> i32 {
+        eprintln!("{MESSAGE}");
+        1
+    }
+
+    /// The elevated `--jit-unregister` child: nothing to restore here.
+    pub fn do_restore() -> i32 {
+        eprintln!("{MESSAGE}");
+        1
+    }
+
+    pub fn run_elevated(_flag: &str) -> Result<()> {
+        Err(Error::JitDebugger(MESSAGE.to_string()))
+    }
+
+    /// Never registered, nothing registered: the Settings toggle shows "off".
+    pub fn status() -> Result<JitDebuggerStatus> {
+        Ok(JitDebuggerStatus { registered: false, current: None })
+    }
+
+    /// There is no WER to signal; a `-p/-e` launch can't happen here either.
+    pub fn signal_wer_event(_handle: u64) -> Result<()> {
+        Ok(())
+    }
+}
+
+#[cfg(not(windows))]
+pub use unsupported::{do_register, do_restore, run_elevated, signal_wer_event, status};

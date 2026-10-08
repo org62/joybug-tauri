@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { useDebugSettings } from "@/hooks/useDebugSettings";
 import { useJitDebugger } from "@/hooks/useJitDebugger";
+import { usePlatform } from "@/hooks/usePlatform";
 import { applyZoom, getStoredZoom, ZOOM_CHANGED_EVENT, ZOOM_STEPS } from "@/lib/uiZoom";
 import { ACCENT_OPTIONS, applyAccent, getStoredAccent, type AccentId } from "@/lib/accent";
 
@@ -75,6 +76,7 @@ export function SettingsGeneral({ searchQuery }: SettingsGeneralProps) {
   const { theme, setTheme } = useTheme();
   const { settings, setScanThreadCount, setLightningInstructions, toggle } = useDebugSettings();
   const jit = useJitDebugger();
+  const { features } = usePlatform();
   const [uiScale, setUiScale] = useState(() => getStoredZoom());
   const [accent, setAccent] = useState<AccentId>(() => getStoredAccent());
 
@@ -97,7 +99,9 @@ export function SettingsGeneral({ searchQuery }: SettingsGeneralProps) {
     );
   };
 
-  const visibleItems = SETTING_ITEMS.filter(matchesSearch);
+  const visibleItems = SETTING_ITEMS
+    .filter((item) => item.key !== "jitDebugger" || features.jit)
+    .filter(matchesSearch);
   if (visibleItems.length === 0) return null;
 
   return (

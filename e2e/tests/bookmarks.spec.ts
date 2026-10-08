@@ -1,7 +1,8 @@
 import { writeFileSync } from "fs";
+import { IS_WINDOWS, dataDir } from "../helpers/launch-commands";
 import path from "path";
 import { test, expect } from "../helpers/test-fixtures";
-import { createAndStartSession, cleanupSession, invoke, goToWindow } from "../helpers/session-helpers";
+import { createAndStartSession, cleanupSession, invoke, goToWindow, contextSp } from "../helpers/session-helpers";
 import {
   waitForPaused,
   waitForStopped,
@@ -10,11 +11,9 @@ import {
   continueSession,
 } from "../helpers/wait-helpers";
 
-const BOOKMARKS_FILE = process.env.JOYBUG_E2E_DATA_DIR
-  ? path.join(process.env.JOYBUG_E2E_DATA_DIR, "bookmarks.json")
-  : path.join(process.env.LOCALAPPDATA || "", "JoybugTauri", "bookmarks.json");
+const BOOKMARKS_FILE = path.join(dataDir(), "bookmarks.json");
 
-type Page = import("@playwright/test").Page;
+type Page = import("../helpers/test-fixtures").Page;
 
 async function getBookmarks(page: Page, sessionId: string): Promise<any[]> {
   const s = await invoke(page, "get_debug_session", { sessionId });
@@ -93,15 +92,24 @@ test.describe("Bookmarks", () => {
       }).toPass({ timeout: 5_000 });
 
       // UI: changed-value highlighting. Bookmark a writable data address (the
-      // PEB), open the Bookmarks tab, then change the value — the value cell
-      // renders neutral at first (the old always-green styling is gone) and
-      // gets the shared `data-changed` marker on change.
-      const { peb } = await invoke(page, "get_session_teb_peb", { sessionId });
-      expect(peb).toBeTruthy();
+      // PEB on Windows; the stack top on Linux, which has no PEB), open the
+      // Bookmarks tab, then change the value — the value cell renders neutral
+      // at first (the old always-green styling is gone) and gets the shared
+      // `data-changed` marker on change.
+      let writable: string;
+      if (IS_WINDOWS) {
+        const { peb } = await invoke(page, "get_session_teb_peb", { sessionId });
+        expect(peb).toBeTruthy();
+        writable = peb;
+      } else {
+        const s = await invoke(page, "get_debug_session", { sessionId });
+        writable = contextSp(s.current_event.context)!;
+        expect(writable).toBeTruthy();
+      }
       await invoke(page, "add_bookmark", {
         sessionId,
         kind: "value",
-        address: peb,
+        address: writable,
         valueType: "U32",
         name: "e2e-val",
       });

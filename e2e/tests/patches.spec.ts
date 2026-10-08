@@ -11,17 +11,16 @@ import {
   continueSession,
 } from "../helpers/wait-helpers";
 import { ASM_ROW } from "../helpers/selectors";
+import { dataDir } from "../helpers/launch-commands";
 
-const PATCHES_FILE = process.env.JOYBUG_E2E_DATA_DIR
-  ? path.join(process.env.JOYBUG_E2E_DATA_DIR, "patches.json")
-  : path.join(process.env.LOCALAPPDATA || "", "JoybugTauri", "patches.json");
+const PATCHES_FILE = path.join(dataDir(), "patches.json");
 
 /**
  * Helper: invoke assemble_patch via Tauri IPC.
  * The address must be a hex string like "0x7FFE1234".
  */
 async function assemblePatch(
-  page: import("@playwright/test").Page,
+  page: import("../helpers/test-fixtures").Page,
   sessionId: string,
   address: string,
   assemblyText: string,
@@ -42,7 +41,7 @@ async function assemblePatch(
  * Helper: invoke undo_patch via Tauri IPC.
  */
 async function undoPatch(
-  page: import("@playwright/test").Page,
+  page: import("../helpers/test-fixtures").Page,
   sessionId: string,
   patchId: string,
 ): Promise<void> {
@@ -61,7 +60,7 @@ async function undoPatch(
  * Helper: invoke undo_patches (batch) via Tauri IPC.
  */
 async function undoPatches(
-  page: import("@playwright/test").Page,
+  page: import("../helpers/test-fixtures").Page,
   sessionId: string,
   patchIds: string[],
 ): Promise<void> {
@@ -80,7 +79,7 @@ async function undoPatches(
  * Helper: invoke enable_patch via Tauri IPC.
  */
 async function enablePatch(
-  page: import("@playwright/test").Page,
+  page: import("../helpers/test-fixtures").Page,
   sessionId: string,
   patchId: string,
   enabled: boolean,
@@ -101,7 +100,7 @@ async function enablePatch(
  * Helper: invoke get_patches via Tauri IPC.
  */
 async function getPatches(
-  page: import("@playwright/test").Page,
+  page: import("../helpers/test-fixtures").Page,
   sessionId: string,
 ): Promise<any[]> {
   return page.evaluate(async (id: string) => {
@@ -115,7 +114,7 @@ async function getPatches(
  * Helper: get the current instruction address (RIP) from session state.
  */
 async function getCurrentAddress(
-  page: import("@playwright/test").Page,
+  page: import("../helpers/test-fixtures").Page,
   sessionId: string,
 ): Promise<string> {
   const address = await page.evaluate(async (id: string) => {
@@ -138,7 +137,7 @@ async function getCurrentAddress(
  * Must be called while the session is still paused so UICommands can be processed.
  */
 async function cleanupAllPatches(
-  page: import("@playwright/test").Page,
+  page: import("../helpers/test-fixtures").Page,
   sessionId: string,
 ): Promise<void> {
   try {

@@ -1,6 +1,8 @@
-import { Page, expect } from "@playwright/test";
+import { expect, type Page } from "./test-fixtures";
 import { invoke } from "./session-helpers";
 import { ASM_PANEL, ASM_ROW_ONLY } from "./selectors";
+import { installEventCapture, waitForCapturedEvent } from "./event-helpers";
+import { INITIAL_BP_MODULE, IS_WINDOWS } from "./launch-commands";
 
 /**
  * Wait until the backend reports the session in the given status, polling
@@ -51,7 +53,7 @@ export async function waitForPaused(
       // UI didn't sync — the session-updated event was likely missed.
       // Force a re-mount by navigating away and back, which makes the
       // React hook re-subscribe and re-fetch the current session state.
-      const sessionPath = new URL(page.url()).pathname;
+      const sessionPath = new URL(await page.url()).pathname;
       await page.evaluate(() => {
         window.history.pushState({}, "", "/debugger");
         window.dispatchEvent(new PopStateEvent("popstate"));
@@ -89,7 +91,7 @@ export async function waitForStopped(
       ).toBeVisible({ timeout: 5_000 });
     } catch {
       // UI didn't sync — force re-mount
-      const sessionPath = new URL(page.url()).pathname;
+      const sessionPath = new URL(await page.url()).pathname;
       await page.evaluate(() => {
         window.history.pushState({}, "", "/debugger");
         window.dispatchEvent(new PopStateEvent("popstate"));
@@ -354,4 +356,76 @@ export async function enableImagePatchLens(page: Page): Promise<void> {
     await toggle.click();
   }
   await page.keyboard.press("Escape");
+}
+
+/**
+ * VA (hex string) of `module!name`, through the session's symbol search. A
+ * module's symbols load in the background after launch and the search answers
+ * from what is loaded, so this polls until the symbol resolves.
+ */
+export async function waitForSymbolVa(
+  page: Page,
+  sessionId: string,
+  module: string,
+  name: string,
+): Promise<string> {
+  const pattern = `${module}!${name}`;
+  await installEventCapture(page, ["symbols-updated"]);
+  let va: string | undefined;
+  await expect(async () => {
+    await invoke(page, "search_session_symbols", { sessionId, pattern, limit: 10 });
+    const res = await waitForCapturedEvent(
+      page,
+      "symbols-updated",
+      (p) => p.session_id === sessionId && p.pattern === pattern,
+      5_000,
+    );
+    const hit = (res.symbols as { name: string; va: string }[]).find((s) => s.name === name);
+    expect(hit, `${pattern} should resolve`).toBeTruthy();
+    va = hit!.va;
+  }).toPass({ timeout: 20_000, intervals: [100, 250] });
+  return va!;
+}
+
+/**
+ * Wait for the session to be paused on an event of `type`, and return the
+ * event.
+ */
+export async function waitForPauseOn(page: Page, sessionId: string, type: string): Promise<any> {
+  let event: any;
+  await expect(async () => {
+    const s = await invoke(page, "get_debug_session", { sessionId });
+    expect(s?.status).toBe("Paused");
+    expect(s?.current_event?.event_type).toBe(type);
+    event = s.current_event;
+  }).toPass({ timeout: 30_000, intervals: [50, 100, 250] });
+  return event;
+}
+
+/**
+ * Make sure the paused PC is inside a *called* function, so Step Out has a
+ * caller to return to. On Windows the initial breakpoint already is: ntdll's
+ * LdrpDoDebuggerBreak, reached from LdrpInitializeProcess. On Linux it is the
+ * executable's entry point, which nothing called — so run to `main` first
+ * (reached from libc's `__libc_start_call_main`). No-op on Windows.
+ */
+export async function runToNestedFunction(page: Page, sessionId: string): Promise<void> {
+  if (IS_WINDOWS) return;
+  const address = await waitForSymbolVa(page, sessionId, INITIAL_BP_MODULE, "main");
+  await setArmedBreakpoint(page, sessionId, address);
+  await continueSession(page, sessionId);
+  await waitForPaused(page, sessionId);
+}
+
+/**
+ * Make sure the paused PC is *inside* a function, not at its first
+ * instruction. Windows: already the case (the initial breakpoint is the int3
+ * inside LdrpDoDebuggerBreak). Linux: the entry point is a function head, and
+ * so is the `main` breakpoint `runToNestedFunction` runs to — step once past
+ * it. No-op on Windows.
+ */
+export async function pauseMidFunction(page: Page, sessionId: string): Promise<void> {
+  if (IS_WINDOWS) return;
+  await runToNestedFunction(page, sessionId);
+  await stepAndWaitForNewPc(page, sessionId, "step_in_debug_session");
 }

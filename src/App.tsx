@@ -19,6 +19,9 @@ import { UpdateDialog } from "@/components/UpdateDialog";
 import { useStartupDialogs } from "@/hooks/useStartupDialogs";
 import { useStartupAttach } from "@/hooks/useStartupAttach";
 import { FileDropProvider } from "@/components/FileDropProvider";
+import { PlatformContext } from "@/contexts/PlatformContext";
+import { usePlatform, usePlatformInfo } from "@/hooks/usePlatform";
+import { imageTerms } from "@/lib/imageTerms";
 import { applyZoom, getStoredZoom, nudgeZoom } from "@/lib/uiZoom";
 import { useDebugSettings, EVENT_ITEMS } from "@/hooks/useDebugSettings";
 import { useSessionRoster } from "@/hooks/useSessionRoster";
@@ -46,14 +49,13 @@ function AppContent() {
   // App-wide back/forward history (see lib/navHistory.ts). The router is one
   // of its layers: page changes are recorded as departures and restored via
   // navigate(); the mouse X-buttons and the back/forward chords drive it from
-  // here so they work on every page, not just inside a dock host. The mouse
-  // handler always consumes the press — native WebView2 page history is never
-  // the fallback (an exhausted history is a no-op, never a yank off the page).
+  // here so they work on every page, not just inside a dock host. Native page
+  // history is never the fallback (main.tsx keeps it at one entry): an
+  // exhausted history is a no-op, never a yank off the page.
   useEffect(() => appNavHistory.setRouter({ navigate: (path) => navigate(path) }), [navigate]);
   useEffect(() => setMouseNavHandler((dir) => {
     if (dir === 'back') appNavHistory.goBack();
     else appNavHistory.goForward();
-    return true;
   }), []);
   // Test hook: the E2E suite attaches to one long-lived app instance, so each
   // spec resets the app-wide history to start from a known-empty trail.
@@ -73,6 +75,7 @@ function AppContent() {
   const { resolvedTheme, setTheme } = useTheme();
   const { reverseLookup } = useKeybindingContext();
   const { toggle, registerCommands } = useCommandPaletteContext();
+  const platform = usePlatform();
   // First-run beta notice and the automatic update prompt, sequenced so they
   // never stack on top of each other.
   const { welcome, dismissWelcome, update, dismissUpdate } =
@@ -196,11 +199,11 @@ function AppContent() {
       },
       {
         id: "nav.pe",
-        label: "PE Viewer",
+        label: imageTerms(platform.os).viewer,
         group: "Navigation",
         icon: <FileSearch className="size-4" />,
         onSelect: () => navigate("/pe"),
-        keywords: ["pe", "portable executable", "exe", "dll", "headers"],
+        keywords: ["pe", "elf", "portable executable", "exe", "dll", "so", "headers", "image viewer"],
       },
       {
         id: "nav.logs",
@@ -290,7 +293,7 @@ function AppContent() {
         keywords: ["session", "open", "switch", s.name.toLowerCase()],
       })),
     ]);
-  }, [navigate, resolvedTheme, setTheme, registerCommands, debugSettings, toggleDebugSetting, sessionList]);
+  }, [navigate, resolvedTheme, setTheme, registerCommands, debugSettings, toggleDebugSetting, sessionList, platform.os]);
 
   return (
     <div className="h-screen flex flex-col overflow-hidden bg-gray-50 dark:bg-neutral-900">
@@ -332,6 +335,21 @@ function KeybindingProvider({ children }: { children: React.ReactNode }) {
   );
 }
 
+/**
+ * Resolves the host platform before any route renders, so pages gate their
+ * Windows-only surfaces (sandbox/ETW modes, Handles tab, JIT setting) on the
+ * real answer rather than flashing them and hiding them a frame later.
+ */
+function PlatformProvider({ children }: { children: React.ReactNode }) {
+  const info = usePlatformInfo();
+  if (!info) return null;
+  return (
+    <PlatformContext.Provider value={info}>
+      {children}
+    </PlatformContext.Provider>
+  );
+}
+
 function CommandPaletteProvider({ children }: { children: React.ReactNode }) {
   const commandPaletteData = useCommandPalette();
   return (
@@ -349,7 +367,9 @@ function App() {
           {/* Single tooltip provider so per-symbol tooltips (TruncatedSymbol
               in virtualized rows) don't each mount their own. */}
           <TooltipProvider delayDuration={300}>
-            <AppContent />
+            <PlatformProvider>
+              <AppContent />
+            </PlatformProvider>
           </TooltipProvider>
         </CommandPaletteProvider>
       </KeybindingProvider>

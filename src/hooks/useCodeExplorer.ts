@@ -22,7 +22,7 @@ export interface CoverageFn {
 export interface TargetSources {
   /// `.pdata` RUNTIME_FUNCTION starts.
   pdata: boolean;
-  /// Module symbols: those the PDB marks as functions, plus those that only pass
+  /// Module symbols: those the debug info marks as functions, plus those that only pass
   /// the code-sanity heuristic.
   symbols: boolean;
   /// The user's explicit list of addresses and symbol names.
@@ -30,8 +30,8 @@ export interface TargetSources {
 }
 
 export const TARGET_SOURCES: { key: keyof TargetSources; label: string; hint: string }[] = [
-  { key: 'pdata', label: 'Exception directory', hint: '.pdata RUNTIME_FUNCTION starts — the authoritative function table. No heuristics, and available even when the module has no symbols at all.' },
-  { key: 'symbols', label: 'Symbols', hint: 'Module symbols: those the PDB marks as functions, plus those that pass a code-sanity check. Widest coverage, but that second group is a heuristic and can place a breakpoint on data.' },
+  { key: 'pdata', label: 'Exception directory', hint: '.pdata RUNTIME_FUNCTION (ELF: .eh_frame FDE) starts — the authoritative function table. No heuristics, and available even when the module has no symbols at all.' },
+  { key: 'symbols', label: 'Symbols', hint: 'Module symbols: those the debug info marks as functions, plus those that pass a code-sanity check. Widest coverage, but that second group is a heuristic and can place a breakpoint on data.' },
   { key: 'list', label: 'List', hint: 'Your own addresses or symbol names, armed exactly as given — the code-sanity check is not applied to them.' },
 ];
 

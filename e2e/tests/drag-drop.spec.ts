@@ -1,4 +1,4 @@
-import { Page } from "@playwright/test";
+import type { Page } from "../helpers/test-fixtures";
 import { test, expect, navigateTo, gotoFreshPe } from "../helpers/test-fixtures";
 import { cleanupSession, invoke } from "../helpers/session-helpers";
 import {
@@ -91,7 +91,7 @@ test.describe("Drag-drop file open", () => {
 
       // The drop navigates straight into the session view.
       await page.waitForURL(/\/session\//, { timeout: 15_000 });
-      sessionId = page.url().match(/\/session\/(.+)$/)![1];
+      sessionId = (await page.url()).match(/\/session\/(.+)$/)![1];
 
       await waitForPaused(page, sessionId);
 
@@ -117,7 +117,7 @@ test.describe("Drag-drop file open", () => {
     await dropFiles(page, [NTDLL]);
 
     await expect(page.getByText(/Only \.exe files can be launched/).first()).toBeVisible({ timeout: 5_000 });
-    expect(page.url()).not.toMatch(/\/session\//);
+    expect(await page.url()).not.toMatch(/\/session\//);
     const sessions = await invoke(page, "get_debug_sessions");
     expect(sessions).toHaveLength(0);
   });
@@ -160,7 +160,7 @@ test.describe("Drag-drop file open", () => {
       await page.getByTestId("file-drop-choice-debug").click();
 
       await page.waitForURL(/\/session\//, { timeout: 15_000 });
-      sessionId = page.url().match(/\/session\/(.+)$/)![1];
+      sessionId = (await page.url()).match(/\/session\/(.+)$/)![1];
       await waitForPaused(page, sessionId);
 
       const session = await invoke(page, "get_debug_session", { sessionId });
@@ -197,7 +197,7 @@ test.describe("Drag-drop file open", () => {
 
     await expect(page.getByText(/Not a PE file/).first()).toBeVisible({ timeout: 5_000 });
     await expect(page.getByTestId("file-drop-choice")).toHaveCount(0);
-    expect(page.url()).toMatch(/\/settings/);
+    expect(await page.url()).toMatch(/\/settings/);
   });
 
   test("a page that handles drops keeps them: .exe on the PE viewer opens, no chooser", async ({

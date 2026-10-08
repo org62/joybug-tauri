@@ -1,4 +1,6 @@
+import { imageTerms } from "@/lib/imageTerms";
 import React from "react";
+import type { PlatformFeatures } from "@/contexts/PlatformContext";
 import {
   Code, Cpu, Box, Layers, ListTree, Search, HardDrive, MapPin, FileCode, FileDiff,
   ScanSearch, Puzzle, Crosshair, Bookmark as BookmarkIcon, Boxes, Type, Radar, Fingerprint, KeyRound, Activity,
@@ -23,11 +25,17 @@ export type HomePanelId =
   | "panel-right-top"
   | "panel-right-bottom";
 
+/** A tab's display title on the given platform. */
+export function tabTitle(def: Pick<SessionTabDef, "title">, os: string): string {
+  return typeof def.title === "function" ? def.title(os) : def.title;
+}
+
 export interface SessionTabDef {
   /** Dock tab id — also the layout key and the palette command suffix. */
   id: string;
-  /** Dock tab title, Windows menu label, and "Go to {title}" in the palette. */
-  title: string;
+  /** Dock tab title, Windows menu label, and "Go to {title}" in the palette.
+   *  A function when the name depends on the platform (`tabTitle`). */
+  title: string | ((os: string) => string);
   category: TabCategory;
   home: HomePanelId;
   /** Keybinding action; omitted for tabs with no chord (memory, access_trace). */
@@ -40,6 +48,9 @@ export interface SessionTabDef {
    *  than this are skipped (falling back to the widest one). Omitted = fits
    *  anywhere, so a narrow side column is fine. */
   minWidth?: number;
+  /** Platform feature this tab needs; hidden from the Windows menu and the
+   *  palette when `PlatformFeatures[requires]` is false (see usePlatform). */
+  requires?: keyof PlatformFeatures;
 }
 
 /** Width below which the wide views (hex dumps, disassembly, PE tables) become unusable. */
@@ -77,13 +88,16 @@ const TAB_DEFS = [
     keywords: ["threads"] },
   { id: "handles", title: "Handles", category: "Process", home: "panel-center", minWidth: WIDE,
     action: "panel.handles", icon: <KeyRound className="size-4" />,
-    keywords: ["handles", "windows", "hwnd", "tcp", "connections", "sockets", "privileges", "token", "objects"] },
+    keywords: ["handles", "windows", "hwnd", "tcp", "connections", "sockets", "privileges", "token", "objects",
+      "file descriptors", "fd", "pipes", "capabilities"],
+    requires: "handles" },
   { id: "modules", title: "Modules", category: "Process", home: "panel-left-top",
     action: "panel.modules", icon: <Box className="size-4" />,
     keywords: ["modules", "dll"] },
   { id: "etw_events", title: "ETW Events", category: "Process", home: "panel-center", minWidth: WIDE,
     icon: <Activity className="size-4" />,
-    keywords: ["etw", "sandbox", "trace", "events", "file", "registry", "network", "process", "detonate", "telemetry"] },
+    keywords: ["etw", "sandbox", "trace", "events", "file", "registry", "network", "process", "detonate", "telemetry"],
+    requires: "etw" },
 
   // ── Memory ──
   { id: "memory", title: "Memory", category: "Memory", home: "panel-center", minWidth: WIDE,
@@ -117,9 +131,9 @@ const TAB_DEFS = [
   { id: "types", title: "Types", category: "Symbols", home: "panel-left-top",
     action: "panel.types", icon: <Boxes className="size-4" />,
     keywords: ["types", "struct", "teb", "peb", "kuser"] },
-  { id: "peviewer", title: "PE Viewer", category: "Symbols", home: "panel-left-top", minWidth: WIDE,
+  { id: "peviewer", title: (os) => imageTerms(os).viewer, category: "Symbols", home: "panel-left-top", minWidth: WIDE,
     action: "panel.peViewer", icon: <FileCode className="size-4" />,
-    keywords: ["pe", "portable", "executable", "viewer"] },
+    keywords: ["pe", "elf", "portable", "executable", "image", "viewer"] },
 
   // ── Debug ──
   { id: "breakpoints", title: "Breakpoints", category: "Debug", home: "panel-center",
@@ -140,6 +154,11 @@ const TAB_DEFS = [
 export type SessionTabId = (typeof TAB_DEFS)[number]["id"];
 
 export const SESSION_TAB_DEFS: readonly SessionTabDef[] = TAB_DEFS;
+
+/** The tabs this platform can serve — what the Windows menu and palette list. */
+export function visibleSessionTabs(features: PlatformFeatures): SessionTabDef[] {
+  return SESSION_TAB_DEFS.filter((d) => !d.requires || features[d.requires]);
+}
 
 const SESSION_TAB_BY_ID = new Map<string, SessionTabDef>(SESSION_TAB_DEFS.map((d) => [d.id, d]));
 

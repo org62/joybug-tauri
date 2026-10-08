@@ -5,6 +5,7 @@ import {
   configureMinimalStopSettings,
   restoreDefaultSettings,
 } from "../helpers/wait-helpers";
+import { SYMBOL_MODULE } from "../helpers/launch-commands";
 
 interface SymbolStatus {
   module_path: string;
@@ -16,7 +17,7 @@ interface SymbolStatus {
 }
 
 test.describe("Symbol Status", () => {
-  test("reports per-module symbol load status; ntdll symbols finish loading", async ({
+  test("reports per-module symbol load status; the system module's symbols finish loading", async ({
     tauriPage: page,
   }) => {
     // On a cold symbol cache the ntdll PDB download can take a while.
@@ -44,12 +45,13 @@ test.describe("Symbol Status", () => {
         }
       }).toPass({ timeout: 10_000, intervals: [100, 250] });
 
-      // ntdll symbols load in the background (from cache or symbol server) and
-      // the status flips to loaded with a symbol count.
+      // The system module's symbols load in the background (from cache or the
+      // symbol server; from the ELF on Linux) and the status flips to loaded
+      // with a symbol count.
       await expect(async () => {
         const statuses = await getStatuses();
         const ntdll = statuses.find((s) =>
-          s.module_path.toLowerCase().includes("ntdll"),
+          s.module_path.toLowerCase().includes(SYMBOL_MODULE),
         );
         expect(ntdll).toBeTruthy();
         expect(ntdll!.status).toBe("loaded");

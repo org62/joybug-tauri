@@ -25,3 +25,75 @@ jobs:
       github.event_name != 'push' ||
       !startsWith(github.event.head_commit.message, 'Merge pull request ')
     uses: ./.github/workflows/_build.yml
+
+  # Hosted Linux job: core + app build and tests, then the E2E suite against
+  # the app's real WebKitGTK webview through tauri-driver (see the "E2E on
+  # Linux" section of CLAUDE.md). Debug build on purpose: the frontend comes
+  # from the Vite dev server, and a release build would double the job.
+  linux:
+    if: >-
+      github.event_name != 'push' ||
+      !startsWith(github.event.head_commit.message, 'Merge pull request ')
+    runs-on: ubuntu-24.04
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Install system packages
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends \
+          libwebkit2gtk-4.1-dev libjavascriptcoregtk-4.1-dev libsoup-3.0-dev \
+          libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev \
+          build-essential cmake pkg-config clang libclang-dev python3-dev xvfb
+        # WebKitWebDriver: `webkit2gtk-driver` up to 24.04, `webkitgtk-webdriver` from 26.04.
+        sudo apt-get install -y --no-install-recommends webkit2gtk-driver \
+          || sudo apt-get install -y --no-install-recommends webkitgtk-webdriver
+
+    - uses: dtolnay/rust-toolchain@stable
+
+    - uses: Swatinem/rust-cache@v2
+      with:
+        workspaces: |
+          src-tauri
+          external/joybug-core
+
+    - uses: actions/setup-node@v4
+      with:
+        node-version: 22
+        cache: npm
+
+    - name: Install frontend dependencies
+      run: npm ci
+
+    - name: Lint frontend
+      run: npm run lint
+
+    - name: Core tests (unit + ptrace integration)
+      run: cargo test
+      working-directory: external/joybug-core
+
+    - name: Build app (debug)
+      run: cargo build
+      working-directory: src-tauri
+
+    - name: App unit tests
+      run: cargo test --lib
+      working-directory: src-tauri
+
+    - name: Install tauri-driver
+      uses: taiki-e/cache-cargo-install-action@v2
+      with:
+        tool: tauri-driver
+
+    - name: Run E2E tests (tauri-driver, WebKitGTK)
+      run: xvfb-run -a -s "-screen 0 1920x1080x24" npm run test:e2e
+
+    - name: Upload E2E results
+      uses: actions/upload-artifact@v4
+      if: ${{ !cancelled() }}
+      with:
+        name: e2e-results-linux
+        path: e2e/results/
+        retention-days: 14

@@ -39,8 +39,16 @@ pub fn open_sandbox_view(
     sandbox_handles: State<'_, SandboxHandlesMap>,
 ) -> std::result::Result<(), String> {
     let handles = sandbox_handles.lock().unwrap();
-    match handles.get(&session_id) {
-        Some(h) => h.sandbox.connect().map_err(|e| e.to_string()),
-        None => Err("This session has no running sandbox to view.".to_string()),
+    #[cfg(windows)]
+    {
+        match handles.get(&session_id) {
+            Some(h) => h.sandbox.connect().map_err(|e| e.to_string()),
+            None => Err("This session has no running sandbox to view.".to_string()),
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (handles.get(&session_id), session_id);
+        Err("Windows Sandbox is only available on Windows.".to_string())
     }
 }

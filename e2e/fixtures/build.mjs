@@ -1,9 +1,9 @@
-// Build the source-debugging E2E fixtures with MSVC (cl.exe / ml64.exe).
+// Build the E2E debuggee fixtures.
 //
-// Locates the toolchain via vswhere, then compiles hello_c.c and hello_asm.asm
-// with debug info into e2e/fixtures/bin/. Skips a target when its outputs are
-// newer than the source (fast no-op on repeated e2e runs). Invoked from
-// e2e/global-setup.ts and via `npm run e2e:fixtures`.
+// Windows: MSVC (cl.exe / ml64.exe) located via vswhere, with PDBs. Elsewhere:
+// `cc -g` (DWARF). Outputs land in e2e/fixtures/bin/; a target is skipped when
+// its outputs are newer than the source (fast no-op on repeated e2e runs).
+// Invoked from e2e/global-setup.ts and via `npm run e2e:fixtures`.
 import { execFileSync, execSync } from "child_process";
 import { existsSync, mkdirSync, statSync, readdirSync, readFileSync, writeFileSync } from "fs";
 import path from "path";
@@ -116,7 +116,36 @@ function archStale(outputs, inputs, stampPath, wantArch) {
   return have !== wantArch;
 }
 
+/**
+ * Unix build: every C fixture with `cc`, no PIE (the breakpoint/step specs
+ * read addresses off symbols either way, but a fixed image base keeps the
+ * disassembly addresses stable between runs) and frame pointers for the
+ * call-stack specs. hello_asm/overlap_asm are MASM and have no Unix build —
+ * their specs are Windows-only.
+ */
+function mainUnix() {
+  mkdirSync(BIN, { recursive: true });
+  const cc = process.env.CC || "cc";
+  // signal_c is Unix-only (POSIX signals); the rest also build with MSVC.
+  for (const name of ["hello_c", "watch_c", "crash_c", "echo_c", "sleeper_c", "signal_c"]) {
+    const src = path.join(SRC, `${name}.c`);
+    const exe = path.join(BIN, name);
+    if (!isStale([exe], [src, path.join(SRC, "portable.h")])) {
+      console.log(`[fixtures] ${name} up to date`);
+      continue;
+    }
+    console.log(`[fixtures] compiling ${name}`);
+    execFileSync(
+      cc,
+      ["-g", "-gdwarf-5", "-O0", "-fno-omit-frame-pointer", "-no-pie", "-pthread", "-o", exe, src],
+      { stdio: "inherit" },
+    );
+  }
+  console.log("[fixtures] done:", readdirSync(BIN).filter((f) => !f.includes(".")).join(", "));
+}
+
 function main() {
+  if (process.platform !== "win32") return mainUnix();
   if (!existsSync(VSWHERE)) throw new Error(`vswhere not found at ${VSWHERE}`);
   mkdirSync(BIN, { recursive: true });
 
@@ -140,6 +169,8 @@ function main() {
   compileC("hello_c");
   compileC("watch_c");
   compileC("crash_c");
+  compileC("echo_c");
+  compileC("sleeper_c");
   // 32-bit build of the same program for the WOW64 spec.
   compileC("hello_c", C_WOW64, "hello_c32");
 

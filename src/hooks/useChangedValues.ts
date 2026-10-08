@@ -41,7 +41,10 @@ export function useChangedValues<T>(
     if (!prev) return set;
     for (const item of items) {
       const key = getKeyRef.current(item);
-      if (prev.has(key) && prev.get(key) !== getValueRef.current(item)) set.add(key);
+      // A null baseline means the value was unknown (a list seeded from the
+      // session snapshot before any live read), not that it was different.
+      const before = prev.get(key);
+      if (before != null && before !== getValueRef.current(item)) set.add(key);
     }
     return set;
   }, [items]);

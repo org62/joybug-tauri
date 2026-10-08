@@ -11,7 +11,8 @@ import {
   getPcAddress,
 } from "../helpers/wait-helpers";
 import { installEventCapture, waitForCapturedEvent } from "../helpers/event-helpers";
-import type { Page } from "@playwright/test";
+import type { Page } from "../helpers/test-fixtures";
+import { IS_WINDOWS } from "../helpers/launch-commands";
 
 /**
  * Invoke a fire-and-forget backend command and resolve with the payload of the
@@ -46,13 +47,13 @@ test.describe("Source View", () => {
     // so distinct commands keep tests from inheriting each other's breakpoints.
     const sessionId = await createAndStartSession(page, "Source C", `${fixtureExe("hello_c")} srcbp`);
     try {
-      await waitForPaused(page, sessionId); // initial breakpoint (ntdll)
+      await waitForPaused(page, sessionId); // initial breakpoint
       await waitForModuleSymbols(page, sessionId, "hello_c", { minSymbolCount: 1, timeout: 20_000 });
 
       const base = await moduleBase(page, sessionId, "hello_c");
       expect(base).toBeTruthy();
 
-      // Discover the exact compile-time path of hello_c.c from the PDB.
+      // Discover the exact compile-time path of hello_c.c from the PDB / DWARF.
       const filesPayload = await invokeAndCaptureEvent<{ files: { path: string }[] }>(page, {
         event: "source-files-listed",
         command: "list_source_files",
@@ -160,6 +161,7 @@ test.describe("Source View", () => {
   });
 
   test("shows MASM assembly source after stepping", async ({ tauriPage: page }) => {
+    test.skip(!IS_WINDOWS, "the hello_asm fixture is MASM");
     await configureMinimalStopSettings(page);
     const sessionId = await createAndStartSession(page, "Source ASM", `${fixtureExe("hello_asm")} srcasm`);
     try {

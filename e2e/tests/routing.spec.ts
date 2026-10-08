@@ -22,10 +22,13 @@ test.describe("Routing", () => {
 
   test("settings page loads", async ({ tauriPage: page }) => {
     await navigateTo(page, "/settings");
-    // Scope to main content — "Settings" also appears as a nav link in the
-    // header, which would make a bare getByText ambiguous (strict-mode).
+    // Something only the Settings page renders. The word "Settings" is not
+    // it: the header nav link and the Home page's "Settings" card both carry
+    // it, and React Router keeps the previous page on screen while the lazy
+    // Settings chunk loads — so a page that starts on Home would pass (or trip
+    // strict mode) before the route has actually changed.
     await expect(
-      page.getByRole("main").getByText("Settings"),
+      page.getByRole("main").getByRole("tab", { name: "Keyboard Shortcuts" }),
     ).toBeVisible({ timeout: 5_000 });
   });
 

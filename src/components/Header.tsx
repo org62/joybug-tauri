@@ -7,6 +7,8 @@ import { WindowControls } from "@/components/WindowControls";
 import { ActiveSessionIndicator } from "@/components/ActiveSessionIndicator";
 import { useCommandPaletteContext } from "@/contexts/CommandPaletteContext";
 import { useKeybindingContext } from "@/contexts/KeybindingContext";
+import { imageTerms } from "@/lib/imageTerms";
+import { usePlatform } from "@/hooks/usePlatform";
 
 /**
  * The app's title bar. The window is frameless (`decorations: false` in
@@ -18,16 +20,17 @@ import { useKeybindingContext } from "@/contexts/KeybindingContext";
  *  - exactly one <header> element in the app (several e2e specs assert
  *    `page.locator("header")` under Playwright strict mode);
  *  - the nav labels stay rendered and visible at every width —
- *    e2e/tests/pe-reader.spec.ts asserts the exact text "PE Viewer" is visible
- *    on "/", and the Home card's "📦 PE Viewer" doesn't satisfy exact matching.
+ *    e2e/tests/pe-reader.spec.ts asserts the exact text "PE Viewer" (the
+ *    viewer's name on Windows, `imageTerms`) is visible on "/", and the Home
+ *    card's "📦 PE Viewer" doesn't satisfy exact matching.
  *
  * Tauri v2 only starts a window drag when the mousedown target *itself* carries
  * `data-tauri-drag-region`, so interactive children need no opt-out attribute.
  */
 
-const navigationItems = [
+const navigationItems = (viewer: string) => [
   { name: "Debugger", path: "/debugger" },
-  { name: "PE Viewer", path: "/pe" },
+  { name: viewer, path: "/pe" },
   { name: "Logs", path: "/logs" },
   { name: "Settings", path: "/settings" },
   { name: "About", path: "/about" },
@@ -35,6 +38,7 @@ const navigationItems = [
 
 export default function Header() {
   const location = useLocation();
+  const { viewer } = imageTerms(usePlatform().os);
   const { resolvedTheme, setTheme } = useTheme();
   const { setOpen: setPaletteOpen } = useCommandPaletteContext();
   const { getKeybinding } = useKeybindingContext();
@@ -55,7 +59,7 @@ export default function Header() {
       </Link>
 
       <nav className="flex items-stretch">
-        {navigationItems.map((item) => {
+        {navigationItems(viewer).map((item) => {
           const active = location.pathname === item.path;
           return (
             <Link

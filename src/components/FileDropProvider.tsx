@@ -4,16 +4,17 @@ import { FileDropContext, FileDropClaim } from "@/contexts/FileDropContext";
 import {
   useFileDrop,
   pickDroppedFile,
-  PE_FILE_PATTERN,
+  IMAGE_FILE_PATTERN,
   PE_FILE_REJECT_MESSAGE,
 } from "@/hooks/useFileDrop";
 import { FileDropOverlay } from "@/components/FileDropOverlay";
 import { FileDropChoiceDialog } from "@/components/FileDropChoiceDialog";
 import { launchExecutable } from "@/lib/launchFile";
+import { usePlatform, isLaunchableFile, imageDropPattern } from "@/hooks/usePlatform";
 import { formatTauriError } from "@/lib/sessionHelpers";
 import { toastError } from "@/lib/logger";
 
-const DEFAULT_MESSAGE = "Drop a PE file to debug or inspect";
+const DEFAULT_MESSAGE = "Drop an executable to debug or inspect";
 
 /**
  * The app's single consumer of Tauri's window-global file drop.
@@ -28,6 +29,7 @@ const DEFAULT_MESSAGE = "Drop a PE file to debug or inspect";
  */
 export function FileDropProvider({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
+  const platform = usePlatform();
   // Ref for drop-time reads (always current), state for render (overlay text).
   const claimsRef = useRef<FileDropClaim[]>([]);
   const [claims, setClaims] = useState<FileDropClaim[]>([]);
@@ -64,15 +66,20 @@ export function FileDropProvider({ children }: { children: ReactNode }) {
       return;
     }
 
+    // Off Windows an executable has no extension, so any file may be an ELF
+    // program: it gets the debug-or-inspect choice (the viewer opens ELF too),
+    // and the backend's magic check refuses the rest. A shared object can only
+    // be inspected, like a DLL.
     const dropped = pickDroppedFile(paths, {
-      pattern: PE_FILE_PATTERN,
+      pattern: imageDropPattern(platform),
       rejectMessage: PE_FILE_REJECT_MESSAGE,
     });
     if (!dropped) return;
 
     if (/\.exe$/i.test(dropped)) setPendingChoice(dropped);
-    else openInPeViewer(dropped);
-  }, [openInPeViewer]);
+    else if (IMAGE_FILE_PATTERN.test(dropped)) openInPeViewer(dropped);
+    else if (isLaunchableFile(dropped, platform)) setPendingChoice(dropped);
+  }, [openInPeViewer, platform]);
 
   const { isDragOver } = useFileDrop({ onDrop: handleDrop, enabled: pendingChoice === null });
 

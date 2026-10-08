@@ -1,11 +1,12 @@
 import React, { useRef, useMemo, useEffect, useState, useLayoutEffect } from "react";
+import { usePlatform } from "@/hooks/usePlatform";
 import { useParams, useNavigate } from "react-router-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { Button } from "@/components/ui/button";
 import { SessionStatusBadge } from "@/components/session/SessionStatusBadge";
 import { disassemblyNavigation, memoryNavigation, memoryRegionsNavigation, sourceNavigation, panelFocus, peviewerModuleNavigation, typesNavigation } from "@/lib/navigationStore";
 import {
-  SESSION_TAB_DEFS, SESSION_TAB_CATEGORIES, SESSION_TAB_BY_ACTION, sessionTabDefFor,
+  SESSION_TAB_DEFS, SESSION_TAB_CATEGORIES, SESSION_TAB_BY_ACTION, tabTitle, sessionTabDefFor, visibleSessionTabs,
   type SessionTabId,
 } from "@/lib/sessionTabs";
 import { appNavHistory } from "@/lib/navHistory";
@@ -16,7 +17,7 @@ import DockingLayout, { DockingLayoutRef } from "@/components/DockingLayout";
 import { DebuggerDockingConfig } from "@/lib/dockingConfigs";
 import { TabData } from "rc-dock";
 import { SessionContext, SessionStatus } from "@/contexts/SessionContext";
-import { isProcessAvailable, isPausedSession, isTargetLive } from "@/lib/sessionHelpers";
+import { isProcessAvailable, isPausedSession, isTargetLive, dumpMenuLabels } from "@/lib/sessionHelpers";
 import { ContextAssemblyView } from "@/components/session/ContextAssemblyView";
 import { ContextSourceView } from "@/components/session/ContextSourceView";
 import { ContextRegisterView } from "@/components/session/ContextRegisterView";
@@ -57,6 +58,7 @@ import {
 
 export default function SessionDocked() {
   const { sessionId } = useParams<{ sessionId: string }>();
+  const platform = usePlatform();
   const navigate = useNavigate();
   const dockingRef = useRef<DockingLayoutRef>(null);
   const [isDockingReady, setIsDockingReady] = useState(false);
@@ -453,22 +455,22 @@ export default function SessionDocked() {
       },
       {
         id: "session.dumpFull",
-        label: "Create Full Memory Dump…",
+        label: dumpMenuLabels(platform.os).full,
         group: "Session",
         icon: <HardDriveDownload className="size-4" />,
         onSelect: () => handleCreateDump(true),
         enabled: canDump,
-        keywords: ["dump", "minidump", "dmp", "crash", "save", "full", "memory"],
+        keywords: ["dump", "minidump", "dmp", "core", "crash", "save", "full", "memory"],
         keybindingAction: "debug.dumpFull",
       },
       {
         id: "session.dumpMini",
-        label: "Create Minidump…",
+        label: dumpMenuLabels(platform.os).mini,
         group: "Session",
         icon: <FileDown className="size-4" />,
         onSelect: () => handleCreateDump(false),
         enabled: canDump,
-        keywords: ["dump", "minidump", "dmp", "crash", "save", "mini"],
+        keywords: ["dump", "minidump", "dmp", "core", "crash", "save", "mini"],
         keybindingAction: "debug.dumpMini",
       },
       // Debug stepping
@@ -526,9 +528,9 @@ export default function SessionDocked() {
       // category order so the palette's first-seen-order grouping yields the
       // right section order. Never closes a tab; the Windows menu does that.
       ...SESSION_TAB_CATEGORIES.flatMap((category) =>
-        SESSION_TAB_DEFS.filter((d) => d.category === category).map((d): PaletteCommand => ({
+        visibleSessionTabs(platform.features).filter((d) => d.category === category).map((d): PaletteCommand => ({
           id: `panel.${d.id}`,
-          label: `Go to ${d.title}`,
+          label: `Go to ${tabTitle(d, platform.os)}`,
           group: `Windows · ${d.category}`,
           icon: d.icon,
           keybindingAction: d.action,
@@ -586,7 +588,7 @@ export default function SessionDocked() {
 
     return registerCommands(commands);
   }, [
-    canStart, canStop, canPause, canStep, canDump, canUseMemoryOps, session?.current_event?.event_type,
+    canStart, canStop, canPause, canStep, canDump, canUseMemoryOps, session?.current_event?.event_type, platform.os,
     handleStart, handleStop, handleRestart, handlePause, handleCreateDump,
     handleGo, handleGoPassException, handleStepIn, handleStepOver, handleStepOut,
     handleNavigateToDisassembly, handleNavigateToMemory,
@@ -680,7 +682,7 @@ export default function SessionDocked() {
     const sessionTabContents: { [key: string]: TabData } = Object.fromEntries(
       SESSION_TAB_DEFS.map((d) => [
         d.id,
-        { id: d.id, title: d.title, content: dynamicTabContent[d.id as SessionTabId], closable: true },
+        { id: d.id, title: tabTitle(d, platform.os), content: dynamicTabContent[d.id as SessionTabId], closable: true },
       ]),
     );
 

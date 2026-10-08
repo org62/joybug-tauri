@@ -47,6 +47,7 @@ import { appNavHistory } from "@/lib/navHistory";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useDebugSettings } from "@/hooks/useDebugSettings";
 import { useSandbox } from "@/hooks/useSandbox";
+import { usePlatform, launchablePattern } from "@/hooks/usePlatform";
 import { SandboxMountsEditor } from "@/components/session/SandboxMountsEditor";
 import { EtwConfigEditor, presetToOps } from "@/components/session/EtwConfigEditor";
 import type { SandboxMount, SandboxLaunchConfig, EtwConfig } from "@/lib/sandbox";
@@ -98,13 +99,15 @@ function FoldSection({
 
 export default function Debugger() {
   const navigate = useNavigate();
+  // Host platform: launch defaults and which run modes exist here.
+  const platform = usePlatform();
   const [sessions, setSessions] = useState<DebugSession[]>([]);
   const [sessionToEdit, setSessionToEdit] = useState<DebugSession | null>(null);
   const [isSessionDialogOpen, setIsSessionDialogOpen] = useState(false);
   
   // Form state for dialog
   const [formServerUrl, setFormServerUrl] = useState("127.0.0.1:9000");
-  const [formLaunchCommand, setFormLaunchCommand] = useState("cmd.exe /c echo Hello World!");
+  const [formLaunchCommand, setFormLaunchCommand] = useState(platform.default_launch_command);
   const [formWorkingDirectory, setFormWorkingDirectory] = useState("");
   // KEY=value lines; parsed on submit (see parseEnvText).
   const [formEnvironment, setFormEnvironment] = useState("");
@@ -307,8 +310,11 @@ export default function Debugger() {
       const selected = await open({
         multiple: false,
         directory: false,
+        // Unix has no executable extension, so only "All Files" there.
         filters: [
-          { name: "Executables", extensions: ["exe", "com", "bat", "cmd"] },
+          ...(platform.exe_extensions.length
+            ? [{ name: "Executables", extensions: platform.exe_extensions }]
+            : []),
           { name: "All Files", extensions: ["*"] },
         ],
       });
@@ -349,7 +355,7 @@ export default function Debugger() {
 
   const resetSessionForm = () => {
     setFormServerUrl("127.0.0.1:9000");
-    setFormLaunchCommand("cmd.exe /c echo Hello World!");
+    setFormLaunchCommand(platform.default_launch_command);
     setFormWorkingDirectory("");
     setFormEnvironment("");
     setFormLaunchMode("local");
@@ -531,7 +537,7 @@ export default function Debugger() {
   // debug server) for it, start it, and jump into the session view.
   const handleFileDrop = async (paths: string[]) => {
     const dropped = pickDroppedFile(paths, {
-      pattern: /\.exe$/i,
+      pattern: launchablePattern(platform),
       rejectMessage: "Only .exe files can be launched — use the PE Viewer for other PE files",
     });
     if (!dropped) return;
@@ -830,7 +836,7 @@ export default function Debugger() {
                       id="launchCommand"
                       value={formLaunchCommand}
                       onChange={(e) => setFormLaunchCommand(e.target.value)}
-                      placeholder="cmd.exe /c echo Hello World!"
+                      placeholder={platform.default_launch_command}
                     />
                     <Button variant="outline" size="icon" onClick={handleBrowseExecutable} title="Browse for executable" type="button">
                       <FolderOpen className="h-4 w-4" />
@@ -843,20 +849,24 @@ export default function Debugger() {
                   <Tabs value={formLaunchMode} onValueChange={(v) => setFormLaunchMode(v as LaunchMode)}>
                     <TabsList className="w-full">
                       <TabsTrigger value="local" className="flex-1">Local</TabsTrigger>
-                      <TabsTrigger value="etw" className="flex-1" title="Run a target under ETW only (no debugger)">
-                        ETW only
-                      </TabsTrigger>
-                      <TabsTrigger
-                        value="sandbox"
-                        className="flex-1"
-                        disabled={!sandboxAvailable}
-                        title={sandboxStatus?.reason ?? undefined}
-                      >
-                        Sandbox
-                      </TabsTrigger>
+                      {platform.features.etw && (
+                        <TabsTrigger value="etw" className="flex-1" title="Run a target under ETW only (no debugger)">
+                          ETW only
+                        </TabsTrigger>
+                      )}
+                      {platform.features.sandbox && (
+                        <TabsTrigger
+                          value="sandbox"
+                          className="flex-1"
+                          disabled={!sandboxAvailable}
+                          title={sandboxStatus?.reason ?? undefined}
+                        >
+                          Sandbox
+                        </TabsTrigger>
+                      )}
                     </TabsList>
                   </Tabs>
-                  {!sandboxAvailable && sandboxStatus?.reason && (
+                  {platform.features.sandbox && !sandboxAvailable && sandboxStatus?.reason && (
                     <p className="text-xs text-muted-foreground">{sandboxStatus.reason}</p>
                   )}
                   {formLaunchMode === "local" && (
@@ -958,6 +968,7 @@ export default function Debugger() {
                     </FoldSection>
                   )}
 
+                  {platform.features.etw && (
                   <FoldSection
                     title="ETW capture"
                     icon={<Activity className="size-4 shrink-0 text-muted-foreground" />}
@@ -1015,6 +1026,7 @@ export default function Debugger() {
                       </>
                     )}
                   </FoldSection>
+                  )}
                 </div>
               </div>
               <div className="flex justify-end gap-2">

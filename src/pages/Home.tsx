@@ -3,8 +3,11 @@ import { Button } from "@/components/ui/button";
 import { Page } from "@/components/ui/page";
 import { Link } from "react-router-dom";
 import { Bug, FileSearch, ScrollText, Settings, Info } from "lucide-react";
+import { imageTerms } from "@/lib/imageTerms";
+import { usePlatform } from "@/hooks/usePlatform";
 
 export default function Home() {
+  const terms = imageTerms(usePlatform().os);
   return (
     <Page container={false}>
     <div className="container mx-auto p-6">
@@ -38,15 +41,15 @@ export default function Home() {
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <FileSearch className="size-5 text-syn-accent" />
-                PE Viewer
+                {terms.viewer}
               </CardTitle>
               <CardDescription>
-                Inspect and edit PE files without running them
+                Inspect {terms.format} files without running them
               </CardDescription>
             </CardHeader>
             <CardContent>
               <Link to="/pe">
-                <Button variant="outline" className="w-full">Open PE Viewer</Button>
+                <Button variant="outline" className="w-full">Open {terms.viewer}</Button>
               </Link>
             </CardContent>
           </Card>

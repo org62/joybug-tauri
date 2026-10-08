@@ -14,6 +14,8 @@ import {
 import { useContextMenu } from "@/hooks/useContextMenu";
 import { useColumnWidths } from "@/hooks/useColumnWidths";
 import { usePanelFocus } from "@/hooks/usePanelFocus";
+import { usePlatform } from "@/hooks/usePlatform";
+import { formatFdFlags } from "@/lib/fdFlags";
 import { cn } from "@/lib/utils";
 import type { HandleInfo, PrivilegeInfo, ProcessObjects, TcpConnectionInfo, WindowInfo } from "@/hooks/useProcessObjects";
 
@@ -224,6 +226,16 @@ const HANDLE_COLUMNS: Column<HandleInfo>[] = [
   { key: "name", label: "Name", flex: true, text: (h) => h.name, className: "font-sans" },
 ];
 
+// A Linux target: the "handles" are file descriptors. Same records, the
+// fields read as what they are there — a decimal descriptor number, the
+// open(2) flags (which include close-on-exec) and the path or socket.
+const FD_COLUMNS: Column<HandleInfo>[] = [
+  { key: "type", label: "Type", defaultWidth: 96, text: (h) => h.type_name || "?", className: "font-sans" },
+  { key: "handle", label: "FD", defaultWidth: 48, text: (h) => String(h.handle), num: (h) => h.handle },
+  { key: "access", label: "Flags", defaultWidth: 200, text: (h) => formatFdFlags(h.granted_access) },
+  { key: "name", label: "Name", flex: true, text: (h) => h.name, className: "font-sans" },
+];
+
 const TCP_COLUMNS: Column<TcpConnectionInfo>[] = [
   { key: "remote", label: "Remote address", defaultWidth: 200, text: (c) => `${c.remote_address}:${c.remote_port}` },
   { key: "local", label: "Local address", flex: true, text: (c) => `${c.local_address}:${c.local_port}` },
@@ -236,11 +248,66 @@ const PRIV_COLUMNS: Column<PrivilegeInfo>[] = [
     render: (p, text) => <span className={cn(p.state === "Disabled" && "text-muted-foreground")}>{text}</span> },
 ];
 
+// Linux capabilities: "Enabled" is the effective set, "Disabled" permitted only.
+const CAP_LABEL: Record<PrivilegeInfo["state"], string> = {
+  Disabled: "Permitted",
+  Enabled: "Effective",
+  EnabledByDefault: "Effective",
+};
+
+const CAP_COLUMNS: Column<PrivilegeInfo>[] = [
+  { key: "name", label: "Capability", flex: true, text: (p) => p.name, className: "font-sans" },
+  { key: "state", label: "State", defaultWidth: 150, text: (p) => CAP_LABEL[p.state],
+    render: (p, text) => <span className={cn(p.state === "Disabled" && "text-muted-foreground")}>{text}</span> },
+];
+
+// Everything the view words differently per OS: NT handles (hex values) vs
+// Linux file descriptors (decimal).
+interface HandleStrings {
+  /** What one entry is called: "Close handle", "Copy descriptor". */
+  noun: string;
+  value: (handle: number) => string;
+  noSessionSubtitle: string;
+  loadingTitle: string;
+  refreshTitle: string;
+  summary: (o: ProcessObjects) => string;
+  /** What code still using a closed entry fails with. */
+  closeFailure: string;
+  /** Appended to the close confirmation. */
+  closeNote: string;
+}
+
+const NT_STRINGS: HandleStrings = {
+  noun: "handle",
+  value: (handle) => hex(handle),
+  noSessionSubtitle: "Select a session to inspect its handles",
+  loadingTitle: "Enumerating handles...",
+  refreshTitle: "Re-enumerate handles, windows, connections and privileges",
+  summary: (o) => `${o.windows.length}w · ${o.handles.length}h · ${o.tcp_connections.length} TCP · ${o.privileges.length} priv`,
+  closeFailure: "an invalid-handle error",
+  closeNote: "",
+};
+
+const FD_STRINGS: HandleStrings = {
+  noun: "descriptor",
+  value: (handle) => String(handle),
+  noSessionSubtitle: "Select a session to inspect its file descriptors",
+  loadingTitle: "Listing file descriptors...",
+  refreshTitle: "Re-read file descriptors, sockets and capabilities",
+  summary: (o) => `${o.handles.length} fd · ${o.tcp_connections.length} TCP · ${o.privileges.length} cap`,
+  closeFailure: "EBADF",
+  closeNote: " The target must be paused: the close runs on one of its stopped threads.",
+};
+
 /**
  * x64dbg-style Handles window: the target's windows, kernel handles, TCP
  * connections and token privileges, each in its own filterable section.
  * Columns are compact by default (fit the panel) and drag-resizable; the
  * per-window WndProc address lives in the row's context menu.
+ *
+ * A Linux target has file descriptors, TCP sockets and capabilities instead:
+ * the same sections under those names, without the Windows one (and without
+ * a capability toggle — the kernel offers no way to raise one from outside).
  */
 export function ProcessHandlesView({
   objects, loading, canRefresh, hasSession, onRefresh,
@@ -249,16 +316,33 @@ export function ProcessHandlesView({
   const focusRef = usePanelFocus<HTMLButtonElement>("handles");
   const { contextMenu, openContextMenu, closeContextMenu } = useContextMenu<MenuTarget>();
   const [closePending, setClosePending] = useState<HandleInfo | null>(null);
+  const fds = usePlatform().os === "linux";
+  const L = fds ? FD_STRINGS : NT_STRINGS;
+  const handleLabel = (h: HandleInfo) => `${L.noun} ${L.value(h.handle)}`;
 
   const body = () => {
     if (!hasSession) {
-      return <EmptyState icon={<KeyRound className="h-12 w-12 mx-auto mb-4 opacity-50" />} title="No session" subtitle="Select a session to inspect its handles" />;
+      return <EmptyState icon={<KeyRound className="h-12 w-12 mx-auto mb-4 opacity-50" />} title="No session" subtitle={L.noSessionSubtitle} />;
     }
     if (!canRefresh) {
       return <ProcessUnavailableState icon={KeyRound} what="Handles" />;
     }
     if (!objects) {
-      return <LoadingState title="Enumerating handles..." />;
+      return <LoadingState title={L.loadingTitle} />;
+    }
+    if (fds) {
+      return (
+        <>
+          <Section id="fds" title="File Descriptors" testId="handles-handle" rows={objects.handles} columns={FD_COLUMNS}
+            rowKey={(h) => String(h.handle)} emptyText="No open file descriptors"
+            onContextMenu={(e, row) => openContextMenu(e, { kind: "handle", row })} />
+          <Section id="tcp" title="TCP Connections" testId="handles-tcp" rows={objects.tcp_connections} columns={TCP_COLUMNS}
+            rowKey={(c) => `${c.local_address}:${c.local_port}-${c.remote_address}:${c.remote_port}-${c.state}`}
+            emptyText="No TCP sockets" />
+          <Section id="capabilities" title="Capabilities" testId="handles-privilege" rows={objects.privileges} columns={CAP_COLUMNS}
+            rowKey={(p) => p.name} emptyText="No capabilities (an unprivileged process)" />
+        </>
+      );
     }
     return (
       <>
@@ -287,7 +371,7 @@ export function ProcessHandlesView({
           size="xs"
           onClick={onRefresh}
           disabled={!canRefresh || loading}
-          title={canRefresh ? "Re-enumerate handles, windows, connections and privileges" : "Start or open a process first"}
+          title={!canRefresh ? "Start or open a process first" : L.refreshTitle}
           data-testid="handles-refresh"
         >
           <RefreshCw className={cn(loading && "animate-spin")} />
@@ -295,7 +379,7 @@ export function ProcessHandlesView({
         </Button>
         {objects && (
           <span className="text-xs text-muted-foreground whitespace-nowrap truncate">
-            {objects.windows.length}w · {objects.handles.length}h · {objects.tcp_connections.length} TCP · {objects.privileges.length} priv
+            {L.summary(objects)}
           </span>
         )}
         <span className="flex-1" />
@@ -315,12 +399,12 @@ export function ProcessHandlesView({
           <ContextMenu x={contextMenu.x} y={contextMenu.y} onClose={closeContextMenu}>
             {target.kind === "handle" && (
               <>
-                <ContextMenuItem icon={<Copy />} onClick={() => navigator.clipboard.writeText(target.row.name || hex(target.row.handle))}>
-                  Copy {target.row.name ? "name" : "handle"}
+                <ContextMenuItem icon={<Copy />} onClick={() => navigator.clipboard.writeText(target.row.name || L.value(target.row.handle))}>
+                  Copy {target.row.name ? "name" : L.noun}
                 </ContextMenuItem>
                 <ContextMenuSeparator />
                 <ContextMenuItem destructive icon={<X />} onClick={() => setClosePending(target.row)}>
-                  Close handle {hex(target.row.handle)}
+                  Close {handleLabel(target.row)}
                 </ContextMenuItem>
               </>
             )}
@@ -356,11 +440,12 @@ export function ProcessHandlesView({
       <Dialog open={closePending !== null} onOpenChange={(o) => !o && setClosePending(null)}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>Close handle {closePending ? hex(closePending.handle) : ""}?</DialogTitle>
+            <DialogTitle>Close {closePending ? handleLabel(closePending) : ""}?</DialogTitle>
             <DialogDescription>
-              The {closePending?.type_name || "object"} handle{closePending?.name ? ` "${closePending.name}"` : ""} is
-              closed inside the target. Code still using it will fail with an invalid-handle error,
+              The {closePending?.type_name || "object"} {L.noun}{closePending?.name ? ` "${closePending.name}"` : ""} is
+              closed inside the target. Code still using it will fail with {L.closeFailure},
               or worse, touch whatever object later reuses the value. This cannot be undone.
+              {L.closeNote}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -370,7 +455,7 @@ export function ProcessHandlesView({
               data-testid="handles-close-confirm"
               onClick={() => { if (closePending) onCloseHandle(closePending.handle); setClosePending(null); }}
             >
-              Close handle
+              Close {L.noun}
             </Button>
           </DialogFooter>
         </DialogContent>

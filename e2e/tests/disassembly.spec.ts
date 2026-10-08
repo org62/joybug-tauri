@@ -13,13 +13,15 @@ import {
   configureMinimalStopSettings,
   restoreDefaultSettings,
   continueSession,
+  pauseMidFunction,
 } from "../helpers/wait-helpers";
 import {
   installEventCapture,
   getCapturedEvents,
 } from "../helpers/event-helpers";
 import { ASM_PANEL, ASM_ROW, PC_ROW, SELECTED_ROW, ASM_LABEL_ROW, ASM_INVALID_ROW } from "../helpers/selectors";
-import type { Locator, Page } from "@playwright/test";
+import { INITIAL_BP_MODULE } from "../helpers/launch-commands";
+import type { Locator, Page } from "../helpers/test-fixtures";
 
 /** DOM scan shared by the invalid-byte tests: locate the rendered `db` row and
  * check a valid (non-invalid) instruction row still renders strictly below it —
@@ -55,7 +57,7 @@ test.describe("Disassembly View", () => {
       await waitForPaused(page, sessionId);
 
       // Wait for disassembly to load — look for common x86-64 mnemonics
-      // At InitialBreakpoint in ntdll, we expect instructions like mov, push, sub, call, etc.
+      // At InitialBreakpoint (ntdll / the entry point), we expect instructions like mov, push, sub, call, etc.
       const mnemonics = ["mov", "push", "sub", "call", "int", "lea", "xor", "nop", "ret", "jmp", "cmp", "test"];
 
       // Wait until at least one mnemonic appears in the disassembly
@@ -71,7 +73,7 @@ test.describe("Disassembly View", () => {
     }
   });
 
-  test("shows function name containing ntdll in disassembly header", async ({
+  test("shows function name containing the initial breakpoint's module in disassembly header", async ({
     tauriPage: page,
   }) => {
     await configureMinimalStopSettings(page);
@@ -80,12 +82,13 @@ test.describe("Disassembly View", () => {
       const sessionId = await createAndStartSession(page, "Disasm Ntdll");
       await waitForPaused(page, sessionId);
 
-      // At InitialBreakpoint, RIP is in ntdll — disassembly header should mention ntdll
+      // At InitialBreakpoint, RIP is in ntdll (Windows) or the executable's
+      // entry point (Linux) — the disassembly header should name that module.
       await expect(async () => {
         const text = await page.evaluate(() =>
           document.body.innerText.toLowerCase(),
         );
-        expect(text).toContain("ntdll");
+        expect(text).toContain(INITIAL_BP_MODULE);
       }).toPass({ timeout: 15_000 });
 
       await cleanupSession(page, sessionId);
@@ -105,10 +108,11 @@ test.describe("Disassembly View", () => {
       await waitForDisassemblyLoaded(page, ASM_PANEL);
 
       // Function disassembly anchors at the function head (offset 0), so once
-      // ntdll symbols finish loading a label row must precede it.
+      // the module's symbols finish loading a label row must precede it.
+      const moduleLabel = new RegExp(`${INITIAL_BP_MODULE}!`, "i");
       await expect(async () => {
         const labels = await page.locator(ASM_LABEL_ROW).allInnerTexts();
-        expect(labels.some((t) => /ntdll!/i.test(t))).toBe(true);
+        expect(labels.some((t) => moduleLabel.test(t))).toBe(true);
       }).toPass({ timeout: 15_000, intervals: [100, 200] });
 
       // Instruction rows always lead with the raw address — never symbol+offset.
@@ -130,6 +134,8 @@ test.describe("Disassembly View", () => {
     try {
       const sessionId = await createAndStartSession(page, "Disasm Stale");
       await waitForPaused(page, sessionId);
+      // The assertion below needs the PC away from the function head.
+      await pauseMidFunction(page, sessionId);
       await waitForDisassemblyLoaded(page, ASM_PANEL);
 
       // Capture raw event deliveries so the test knows when both the replace
@@ -465,12 +471,13 @@ test.describe("Disassembly View", () => {
       await continueSession(page, sessionId);
       await waitForStopped(page, sessionId);
 
-      // Disassembly should be cleared — ntdll function name should be gone
+      // Disassembly should be cleared — the function name should be gone
+      const moduleBang = new RegExp(`${INITIAL_BP_MODULE}.*!`);
       await expect(async () => {
         const text = await page.evaluate(() =>
           document.body.innerText.toLowerCase(),
         );
-        expect(text).not.toMatch(/ntdll.*!/);
+        expect(text).not.toMatch(moduleBang);
       }).toPass({ timeout: 5_000 });
 
       // Regression: the refresh button must not be stuck spinning after stop

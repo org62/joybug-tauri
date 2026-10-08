@@ -133,6 +133,78 @@ export interface ModuleExtraInfo {
   runtime_functions?: RuntimeFunction[] | null;
   /** RVAs of the TLS callbacks (empty when the module has none). */
   tls_callbacks?: number[];
+  /** An ELF module's headers as they really are; the PE-shaped fields above
+   *  are synthesized from them (see `joybug_core::elf::info`). Absent for PE. */
+  elf?: ElfInfo | null;
+}
+
+// ---- ELF (joybug_core::pe_types::ElfInfo) ----
+
+export interface ElfHeader {
+  class: number;
+  data: number;
+  os_abi: number;
+  abi_version: number;
+  e_type: number;
+  e_machine: number;
+  e_version: number;
+  e_entry: number;
+  e_phoff: number;
+  e_shoff: number;
+  e_flags: number;
+  e_ehsize: number;
+  e_phentsize: number;
+  e_phnum: number;
+  e_shentsize: number;
+  e_shnum: number;
+  e_shstrndx: number;
+}
+
+export interface ElfProgramHeader {
+  p_type: number;
+  p_flags: number;
+  p_offset: number;
+  p_vaddr: number;
+  p_paddr: number;
+  p_filesz: number;
+  p_memsz: number;
+  p_align: number;
+}
+
+export interface ElfSectionHeader {
+  name: string;
+  sh_type: number;
+  sh_flags: number;
+  sh_addr: number;
+  sh_offset: number;
+  sh_size: number;
+  sh_link: number;
+  sh_info: number;
+  sh_addralign: number;
+  sh_entsize: number;
+}
+
+export interface ElfDynamicEntry {
+  tag: number;
+  value: number;
+  /** The `.dynstr` string for NEEDED / SONAME / RPATH / RUNPATH. */
+  string?: string | null;
+}
+
+/** Addresses are link-time VAs; `rva = va - min_vaddr`. */
+export interface ElfInfo {
+  header: ElfHeader;
+  program_headers: ElfProgramHeader[];
+  sections: ElfSectionHeader[];
+  dynamic: ElfDynamicEntry[];
+  needed: string[];
+  soname?: string | null;
+  interp?: string | null;
+  rpath?: string | null;
+  runpath?: string | null;
+  build_id?: string | null;
+  debuglink?: string | null;
+  min_vaddr: number;
 }
 
 interface ModuleExtraInfoResult {

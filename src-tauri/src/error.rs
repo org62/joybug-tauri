@@ -31,6 +31,7 @@ pub enum Error {
     /// The user declined the UAC prompt. Not a failure — the UI toasts it
     /// calmly and leaves the toggle where it was.
     #[error("Elevation was cancelled")]
+    #[cfg_attr(not(windows), allow(dead_code))] // only UAC produces it
     JitDebuggerCancelled,
 }
 

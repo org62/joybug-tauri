@@ -3,12 +3,17 @@ mod breakpoints;
 mod coverage;
 mod disassembly;
 mod emulation;
+#[cfg(windows)]
+mod etw_trace;
+#[cfg(not(windows))]
+#[path = "etw_trace_unsupported.rs"]
 mod etw_trace;
 mod jit_debugger;
 mod logging;
 mod memory;
 mod patches;
 mod pe_file;
+mod platform;
 mod process_objects;
 mod sandbox;
 mod self_update;
@@ -35,6 +40,7 @@ pub use logging::*;
 pub use memory::*;
 pub use patches::*;
 pub use pe_file::*;
+pub use platform::*;
 pub use process_objects::*;
 pub use sandbox::*;
 pub use self_update::*;

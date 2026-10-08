@@ -522,20 +522,22 @@ mod tests {
 
     #[test]
     fn sibling_keeps_the_whole_file_name() {
-        let exe = Path::new(r"C:\tools\joybug-tauri.exe");
+        // Built with `join` so the test means the same on every OS (a `C:\`
+        // literal is one opaque component on Linux).
+        let exe = Path::new("tools").join("joybug-tauri.exe");
         // `with_extension` would produce `joybug-tauri.download` and orphan the
         // cleanup matcher.
         assert_eq!(
-            staging_path(exe),
-            PathBuf::from(r"C:\tools\joybug-tauri.exe.download")
+            staging_path(&exe),
+            PathBuf::from("tools").join("joybug-tauri.exe.download")
         );
     }
 
     #[test]
     fn backup_path_is_unique_per_call() {
-        let exe = Path::new(r"C:\tools\joybug-tauri.exe");
-        let a = backup_path(exe);
-        let b = backup_path(exe);
+        let exe = Path::new("tools").join("joybug-tauri.exe");
+        let a = backup_path(&exe);
+        let b = backup_path(&exe);
         assert_ne!(
             a, b,
             "a second update must not collide with a locked backup"

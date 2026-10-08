@@ -129,6 +129,11 @@ fn is_newer(current: &str, latest: &str) -> bool {
 /// Release-artifact suffix for the running architecture, matching the names
 /// `.github/workflows/_build.yml` stages.
 fn arch_suffix() -> Option<&'static str> {
+    // Releases ship Windows exes only; offering one to a Linux build would
+    // swap the running ELF for a PE. `None` makes the check report "no asset".
+    if !cfg!(windows) {
+        return None;
+    }
     match std::env::consts::ARCH {
         "x86_64" => Some("x64"),
         "aarch64" => Some("aarch64"),

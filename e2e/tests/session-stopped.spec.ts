@@ -18,15 +18,13 @@ import {
   setArmedBreakpoint,
 } from "../helpers/wait-helpers";
 import { ASM_PANEL } from "../helpers/selectors";
+import { exitCmd, dataDir } from "../helpers/launch-commands";
 // The literal the panels render — imported so the test can't drift from the UI.
 import { NO_PROCESS_HINT } from "../../src/components/ui/empty-state";
 
-type Page = import("@playwright/test").Page;
+type Page = import("../helpers/test-fixtures").Page;
 
-const dataFile = (name: string) =>
-  process.env.JOYBUG_E2E_DATA_DIR
-    ? path.join(process.env.JOYBUG_E2E_DATA_DIR, name)
-    : path.join(process.env.LOCALAPPDATA || "", "JoybugTauri", name);
+const dataFile = (name: string) => path.join(dataDir(), name);
 
 
 async function session(page: Page, sessionId: string): Promise<any> {
@@ -52,7 +50,7 @@ test.describe("Session stopped", () => {
     await configureMinimalStopSettings(page);
     let sessionId: string | undefined;
     try {
-      sessionId = await createAndStartSession(page, "Stopped Neutral", 'cmd.exe /c "exit /b 0"');
+      sessionId = await createAndStartSession(page, "Stopped Neutral", exitCmd(0));
       await waitForPaused(page, sessionId);
       await goToWindow(page, "Disassembly");
       await waitForDisassemblyLoaded(page, ASM_PANEL);

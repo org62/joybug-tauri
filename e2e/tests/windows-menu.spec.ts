@@ -1,7 +1,8 @@
 import { test, expect } from "../helpers/test-fixtures";
 import { createAndStartSession, cleanupSession, goToWindow, clickWindowsMenuItem } from "../helpers/session-helpers";
 import { waitForPaused } from "../helpers/wait-helpers";
-import type { Page } from "@playwright/test";
+import { IMAGE_VIEWER_TITLE } from "../helpers/launch-commands";
+import type { Page } from "../helpers/test-fixtures";
 
 /** Dock tab ids currently present in the layout. */
 async function openTabIds(page: Page): Promise<string[]> {
@@ -69,15 +70,11 @@ test.describe("Windows: navigation, grouping, and reset", () => {
     // minWidth (560px). On a large monitor the default columns exceed 560 (~563px
     // at a 2560px window), so PE Viewer's home would legitimately "fit" and the
     // test would flake. Restored in `finally` so other tests keep the real size.
-    const client = await page.context().newCDPSession(page);
-    const { windowId, bounds } = await client.send("Browser.getWindowForTarget");
+    const original = await page.windowSize();
     try {
       await waitForPaused(page, sessionId);
 
-      await client.send("Browser.setWindowBounds", {
-        windowId,
-        bounds: { width: 1200, height: bounds.height, windowState: "normal" },
-      });
+      await page.setViewportSize({ width: 1200, height: original.height });
       // The left-top column (PE Viewer's home) must now be too narrow for it.
       await expect(async () => {
         const w = await page.evaluate(() => {
@@ -89,18 +86,13 @@ test.describe("Windows: navigation, grouping, and reset", () => {
 
       // PE Viewer's home is the left-top column (Modules), now far too narrow for
       // it — placement must route it to the center panel instead.
-      await goToWindow(page, "PE Viewer");
+      await goToWindow(page, IMAGE_VIEWER_TITLE);
       await expect(async () => {
         expect(await sharesPanelWith(page, "peviewer", "disassembly")).toBe(true);
       }).toPass({ timeout: 5_000 });
       expect(await sharesPanelWith(page, "peviewer", "modules")).toBe(false);
     } finally {
-      await client
-        .send("Browser.setWindowBounds", {
-          windowId,
-          bounds: { width: bounds.width, height: bounds.height, windowState: bounds.windowState ?? "normal" },
-        })
-        .catch(() => {});
+      await page.setViewportSize(original).catch(() => {});
       await cleanupSession(page, sessionId);
     }
   });

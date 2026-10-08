@@ -1,4 +1,4 @@
-import { Page } from "@playwright/test";
+import type { Page } from "../helpers/test-fixtures";
 import { test, expect, navigateTo, gotoFreshPe, APP_ORIGIN } from "../helpers/test-fixtures";
 import {
   createAndStartSession,
@@ -15,6 +15,7 @@ import {
   stepAndWaitForNewPc,
 } from "../helpers/wait-helpers";
 import { ASM_PANEL, ASM_ROW } from "../helpers/selectors";
+import { IS_WINDOWS } from "../helpers/launch-commands";
 
 // Unified back/forward navigation history: one app-wide chronological stack
 // covering page changes, dock tab switches and disassembly address
@@ -91,7 +92,7 @@ test.describe("Unified navigation history", () => {
 
       const original = await firstRowText(page);
 
-      // Navigate somewhere else within ntdll (different function).
+      // Navigate somewhere else within the module (different function).
       await gotoAddress(page, `${await pcRegister(page, sessionId)}+0x2000`);
       await expectFirstRow(page, original, { not: true });
       const jumped = await firstRowText(page);
@@ -287,9 +288,51 @@ test.describe("Unified navigation history", () => {
     }
   });
 
+  test("page navigation never grows the browser history, so a native back has nothing to traverse", async ({
+    tauriPage: page,
+  }) => {
+    // A real X-button press also triggers the browser's own history traversal
+    // (WebView2, WebKitGTK), which cannot be prevented from the DOM and used to
+    // race the app's restore: its popstate landed after the restore had pushed
+    // the target page and yanked the user back to where they pressed. main.tsx
+    // turns every router push into a replace, so the shipped app has exactly
+    // one entry and the traversal is a no-op. The harness's own page loads are
+    // entries too (Playwright starts at about:blank), so a trusted press can't
+    // be exercised here; assert the invariant instead: the entry count is the
+    // same after a page change and after the restore.
+    await configureMinimalStopSettings(page);
+
+    try {
+      const sessionId = await createAndStartSession(page, "NavHist Entries");
+      await waitForPaused(page, sessionId);
+      await waitForDisassemblyLoaded(page, ASM_PANEL);
+      await resetNavHistory(page);
+      const original = await firstRowText(page);
+      const entries = () => page.evaluate(() => window.history.length);
+      const atStart = await entries();
+
+      await runPaletteCommand(page, "Settings");
+      // The departure is recorded by App's location effect, after the page
+      // has rendered — press only once Settings is on screen.
+      await expect(page.getByPlaceholder("Search settings...")).toBeVisible();
+      expect(await entries()).toBe(atStart);
+
+      await pressMouseBack(page);
+      await expect(page).toHaveURL(new RegExp(`/session/${sessionId}`));
+      await waitForDisassemblyLoaded(page, ASM_PANEL);
+      await expectFirstRow(page, original);
+      expect(await entries()).toBe(atStart);
+
+      await cleanupSession(page, sessionId);
+    } finally {
+      await restoreDefaultSettings(page);
+    }
+  });
+
   test("PE reader: back leaves the page; a fresh history is a no-op", async ({
     tauriPage: page,
   }) => {
+    test.skip(!IS_WINDOWS, "opens a system PE file");
     const NTDLL = "C:\\Windows\\System32\\ntdll.dll";
 
     // No history at all: back must not navigate anywhere (nor get stuck).

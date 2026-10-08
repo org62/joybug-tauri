@@ -79,6 +79,13 @@ jobs:
       run: cargo test --lib --release
       working-directory: src-tauri
 
+    # tauri-driver fronts msedgedriver for the app's WebView2; the test
+    # service downloads the msedgedriver matching the installed runtime.
+    - name: Install tauri-driver
+      uses: taiki-e/cache-cargo-install-action@v2
+      with:
+        tool: tauri-driver
+
     - name: Run E2E tests
       run: npm run test:e2e
       env:
@@ -117,10 +124,10 @@ jobs:
         retention-days: ${{ inputs.retention-days }}
         if-no-files-found: error
 
-    - name: Upload Playwright report
+    - name: Upload E2E results
       uses: actions/upload-artifact@v4
       if: ${{ !cancelled() }}
       with:
-        name: playwright-report-${{ matrix.arch }}
-        path: playwright-report/
+        name: e2e-results-${{ matrix.arch }}
+        path: e2e/results/
         retention-days: 14

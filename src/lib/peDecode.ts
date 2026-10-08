@@ -94,9 +94,10 @@ export function ptrHexWidth(oh: { Magic: number }): number {
 }
 
 /** Short "x86 · PE32" style badge text for a file's machine + format. */
-export function archLabel(machine: number, magic: number): string {
+export function archLabel(machine: number, magic: number, format: "pe" | "elf" = "pe"): string {
   const m = MACHINE_VALUES.find((v) => v.value === machine)?.label ?? `machine 0x${machine.toString(16)}`;
   const short = m.replace(/\s*\(.*\)$/, "");
+  if (format === "elf") return `${short} · ELF`;
   return `${short} · ${magic === MAGIC_PE32 ? "PE32" : "PE32+"}`;
 }
 

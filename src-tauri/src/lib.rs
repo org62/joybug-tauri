@@ -5,12 +5,20 @@ mod commands;
 mod custom_types;
 mod data_dir;
 mod error;
+#[cfg(windows)]
+mod etw;
+#[cfg(not(windows))]
+#[path = "etw_unsupported.rs"]
 mod etw;
 mod events;
 mod jit;
 mod patch_store;
 mod symbol_store;
 mod ui_logger;
+#[cfg(windows)]
+mod sandbox;
+#[cfg(not(windows))]
+#[path = "sandbox_unsupported.rs"]
 mod sandbox;
 mod session;
 mod state;
@@ -245,6 +253,7 @@ pub fn run() {
             commands::pe_xrefs_to,
             commands::pe_emulate,
             commands::get_sandbox_status,
+            commands::get_platform_info,
             commands::open_sandbox_view,
             commands::poll_etw_events,
             commands::resolve_etw_stack,

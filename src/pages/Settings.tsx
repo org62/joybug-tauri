@@ -11,6 +11,7 @@ import { SettingsEvents } from "@/components/settings/SettingsEvents";
 import { SettingsPebNormalize } from "@/components/settings/SettingsPebNormalize";
 import { SettingsSymbols } from "@/components/settings/SettingsSymbols";
 import { SettingsSandbox } from "@/components/settings/SettingsSandbox";
+import { usePlatform } from "@/hooks/usePlatform";
 
 const SECTION_GRID = "grid gap-x-6 gap-y-5 items-start";
 const SECTION_GRID_COLS = { gridTemplateColumns: "repeat(auto-fill, minmax(20rem, 1fr))" };
@@ -22,6 +23,7 @@ export default function Settings() {
   const initialTab = VALID_TABS.includes(searchParams.get("tab") ?? "") ? searchParams.get("tab")! : "all";
 
   const [searchQuery, setSearchQuery] = useState("");
+  const { features } = usePlatform();
   const [tab, setTab] = useState(initialTab);
 
   // Sync tab with URL search params (e.g. navigating via command palette)
@@ -62,8 +64,8 @@ export default function Settings() {
               <TabsTrigger value="general">General</TabsTrigger>
               <TabsTrigger value="keybindings">Keyboard Shortcuts</TabsTrigger>
               <TabsTrigger value="events">Events and Exceptions</TabsTrigger>
-              <TabsTrigger value="peb-normalize">PEB Normalization</TabsTrigger>
-              <TabsTrigger value="sandbox">Sandbox</TabsTrigger>
+              {features.peb_normalize && <TabsTrigger value="peb-normalize">PEB Normalization</TabsTrigger>}
+              {features.sandbox && <TabsTrigger value="sandbox">Sandbox</TabsTrigger>}
             </TabsList>
 
             {/* All: one flat grid with every section as a grid item */}
@@ -73,8 +75,8 @@ export default function Settings() {
                   <SettingsGeneral searchQuery={searchQuery} />
                   <SettingsSymbols searchQuery={searchQuery} />
                   <SettingsEvents searchQuery={searchQuery} />
-                  <SettingsPebNormalize searchQuery={searchQuery} />
-                  <SettingsSandbox searchQuery={searchQuery} />
+                  {features.peb_normalize && <SettingsPebNormalize searchQuery={searchQuery} />}
+                  {features.sandbox && <SettingsSandbox searchQuery={searchQuery} />}
                   <SettingsKeybindings searchQuery={searchQuery} embedded />
                 </div>
               </ScrollArea>

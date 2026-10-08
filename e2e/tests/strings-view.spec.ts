@@ -10,7 +10,8 @@ import {
   clearCapturedEvents,
   waitForCapturedEvent,
 } from "../helpers/event-helpers";
-import type { Page } from "@playwright/test";
+import type { Page } from "../helpers/test-fixtures";
+import { STRINGS_MODULE, STRINGS_NEEDLE } from "../helpers/launch-commands";
 
 interface StringEntry {
   address: string;
@@ -22,7 +23,7 @@ interface StringEntry {
 
 const RESULTS_EVENT = "string-scan-results";
 
-/** Install capture for the scan events and locate the scan target (cmd.exe). */
+/** Install capture for the scan events and locate the scan target (cmd.exe / libc). */
 async function setupStringScan(page: Page, sessionId: string): Promise<{ base: number; size: number }> {
   await installEventCapture(page, [
     "string-scan-start-result",
@@ -30,8 +31,8 @@ async function setupStringScan(page: Page, sessionId: string): Promise<{ base: n
     "string-scan-error",
   ]);
   const modules = (await invoke(page, "get_session_modules", { sessionId })) as ModuleData[];
-  // cmd.exe (the default target) has plentiful embedded strings.
-  const mainModule = modules.find((m) => m.name.toLowerCase().includes("cmd.exe")) ?? modules[0];
+  // cmd.exe (the default target) / libc have plentiful embedded strings.
+  const mainModule = modules.find((m) => m.name.toLowerCase().includes(STRINGS_MODULE)) ?? modules[0];
   expect(mainModule).toBeTruthy();
   return { base: parseInt(mainModule.base_address, 16), size: mainModule.size };
 }
@@ -133,7 +134,7 @@ test.describe("Strings View", () => {
       res = await waitForCapturedEvent(page, RESULTS_EVENT, (p) =>
         (p.strings?.length ?? 0) > 1 && lengthsSorted(p.strings as StringEntry[], false),
       );
-      // The longest strings come first; cmd.exe surely has one > 5 chars.
+      // The longest strings come first; the module surely has one > 5 chars.
       expect((res.strings as StringEntry[])[0].length).toBeGreaterThan(5);
 
       // 6. UI smoke: opening the Strings window mounts its toolbar ("Min len" is
@@ -175,7 +176,7 @@ test.describe("Strings View", () => {
       await invoke(page, "request_string_scan_reset", { sessionId, resultsPath: start.results_path });
 
       // 2. Scan-time contains filter: only strings containing the needle are stored.
-      const needle = "microsoft"; // cmd.exe embeds Microsoft copyright/version strings
+      const needle = STRINGS_NEEDLE; // cmd.exe embeds Microsoft copyright/version strings; libc its own banner
       await clearCapturedEvents(page, "string-scan-start-result");
       await invoke(page, "request_string_scan_start", {
         sessionId, startAddress: base, size, minLength: 5,

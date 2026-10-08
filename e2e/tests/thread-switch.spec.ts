@@ -14,6 +14,7 @@ import {
   configureMinimalStopSettings,
   restoreDefaultSettings,
 } from "../helpers/wait-helpers";
+import { IS_WINDOWS } from "../helpers/launch-commands";
 
 test.describe("Threads panel: active thread", () => {
   test("highlights the context thread; click switches it; step snaps back", async ({
@@ -25,19 +26,21 @@ test.describe("Threads panel: active thread", () => {
     const sessionId = await createAndStartSession(page, "Thread Switch", fixtureExe("hello_c"));
     try {
       await waitForPaused(page, sessionId);
-      // The initial break has a single thread; break in on a running target so
-      // the main thread (parked in a long Sleep) is a distinct switch target.
+      // Break in on the running target: by then hello_c has started its parked
+      // worker thread, so there is a second thread to switch to. On Windows the
+      // break-in also runs on a thread the debugger injected, so the process's
+      // initial thread is a distinct one — which is what makes this the place
+      // to prove the "main" badge tracks identity, not the current context. A
+      // Linux break-in stops the main thread itself, so there the event thread
+      // *is* main and the identity half of the check does not apply.
       await breakIntoRunningTarget(page, sessionId);
 
       const session = await invoke(page, "get_debug_session", { sessionId });
       const eventTid: number = session.current_event.thread_id;
       expect(session.selected_thread_id ?? null).toBeNull();
-      // Break-in runs on a thread the debugger injected, so the process's
-      // initial thread is a different one — which is what makes this the place
-      // to prove the "main" badge tracks identity, not the current context.
       const mainTid: number = session.main_thread_id;
       expect(mainTid, "backend recorded the initial thread").toBeTruthy();
-      expect(mainTid).not.toBe(eventTid);
+      if (IS_WINDOWS) expect(mainTid).not.toBe(eventTid);
 
       await goToWindow(page, "Threads");
       const activeRow = page.locator('[data-testid="thread-row"][data-active="true"]');
@@ -48,16 +51,16 @@ test.describe("Threads panel: active thread", () => {
       await expect(activeRow.getByText("current")).toBeVisible();
       await expect(activeRow.getByText("event")).toHaveCount(0);
 
-      // ...and "main" sits on the initial thread instead, never on the break-in
-      // thread that currently holds the context. Exact text match: the start
-      // symbol of that very row reads `hello_c!mainCRTStartup`.
+      // ...and "main" sits on the initial thread — on Windows never on the
+      // break-in thread that currently holds the context. Exact text match: the
+      // start symbol of that very row reads `hello_c!mainCRTStartup`.
       const mainRow = page.locator('[data-testid="thread-row"][data-main="true"]');
       await expect(mainRow).toHaveCount(1);
       await expect(mainRow).toHaveAttribute("data-tid", String(mainTid));
       await expect(mainRow.getByText("main", { exact: true })).toBeVisible();
-      await expect(activeRow).not.toHaveAttribute("data-main", "true");
+      if (IS_WINDOWS) await expect(activeRow).not.toHaveAttribute("data-main", "true");
 
-      // Pick another thread (the main thread, parked in Sleep).
+      // Pick another thread (parked in its long sleep).
       const threads: Array<{ id: number }> = await invoke(page, "get_session_threads", { sessionId });
       const other = threads.find((t) => t.id !== eventTid);
       expect(other, "target has a second thread after break-in").toBeTruthy();

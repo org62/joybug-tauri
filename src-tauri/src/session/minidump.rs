@@ -1,6 +1,8 @@
-//! `UICommand::WriteMinidump` — write a dbghelp minidump of the paused target.
+//! `UICommand::WriteMinidump` — write a dump of the paused target: a dbghelp
+//! minidump on Windows, an ELF core file on Linux.
 //!
-//! The dump is produced by the joybug-core server (`MiniDumpWriteDump`), so
+//! The dump is produced by the joybug-core server (`MiniDumpWriteDump`, or
+//! its own core writer in `linux_platform/coredump.rs`), so
 //! `path` is interpreted on the server's machine; for local sessions that is
 //! this machine. The outcome goes to the session log and to a `minidump-result`
 //! event that the frontend toasts directly — not through `toast_info`, whose
@@ -32,9 +34,16 @@ pub(super) fn process_write_minidump(
     kind: MinidumpKind,
 ) {
     let session_id = session.state.lock().unwrap().id.clone();
+    // What the file is called where it is written: the server is this
+    // machine for every session that can reach this command.
+    let (noun, full, mini) = if cfg!(windows) {
+        ("Minidump", "full memory dump", "minidump")
+    } else {
+        ("Core dump", "full core dump", "core dump")
+    };
     let label = match kind {
-        MinidumpKind::Full => "full memory dump",
-        MinidumpKind::Mini => "minidump",
+        MinidumpKind::Full => full,
+        MinidumpKind::Mini => mini,
     };
     info!(pid, path, ?kind, "WriteMinidump command received");
     if let Some(handle) = app_handle {
@@ -43,12 +52,12 @@ pub(super) fn process_write_minidump(
 
     let result = match session.write_minidump(pid, &path, kind) {
         Ok(size) => {
-            let message = format!("Minidump written: {} ({})", path, format_bytes(size));
+            let message = format!("{} written: {} ({})", noun, path, format_bytes(size));
             info!("{}", message);
             MinidumpResult { message, error: false }
         }
         Err(e) => {
-            let message = format!("Minidump failed: {}", e);
+            let message = format!("{} failed: {}", noun, e);
             warn!("{}", message);
             MinidumpResult { message, error: true }
         }

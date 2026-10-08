@@ -607,9 +607,22 @@ pub(crate) fn process_restore_image_bytes(
     };
 
     // Read a window around the address and diff against the image to find the
-    // contiguous modified run. The window bounds the maximum restore size.
-    let window_start = address.saturating_sub(MAX_RESTORE_BYTES as u64);
-    let window_len = MAX_RESTORE_BYTES * 2 + 16;
+    // contiguous modified run. The window bounds the maximum restore size, and
+    // is clamped to the code range holding the address: the image serves bytes
+    // from one section at a time, and ELF code sections (`.init`, `.plt`,
+    // `.text`) are small enough that an unclamped window would straddle them.
+    let mut window_start = address.saturating_sub(MAX_RESTORE_BYTES as u64);
+    let mut window_end = address.saturating_add((MAX_RESTORE_BYTES + 16) as u64);
+    if let Some((lo, hi)) = image
+        .comparable_code_ranges()
+        .into_iter()
+        .map(|(s, e)| (image.base() + s as u64, image.base() + e as u64))
+        .find(|(s, e)| address >= *s && address < *e)
+    {
+        window_start = window_start.max(lo);
+        window_end = window_end.min(hi);
+    }
+    let window_len = (window_end - window_start) as usize;
     let live = match session.read_memory(pid, window_start, window_len) {
         Ok(b) => b,
         Err(e) => {

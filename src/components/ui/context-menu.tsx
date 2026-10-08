@@ -69,7 +69,9 @@ function ContextMenu({ x, y, onClose, className, children }: ContextMenuProps) {
         role="menu"
         data-slot="context-menu"
         className={cn(
-          "fixed z-50 min-w-[160px] rounded-md border bg-popover text-popover-foreground shadow-md py-1",
+          // Above popovers (z-50): a hover preview opening under a pointer that
+          // right-clicked a row must not cover the menu the click opened.
+          "fixed z-[60] min-w-[160px] rounded-md border bg-popover text-popover-foreground shadow-md py-1",
           className
         )}
         style={{ left: pos.x, top: pos.y }}

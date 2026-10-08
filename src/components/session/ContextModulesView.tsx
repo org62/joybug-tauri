@@ -19,6 +19,8 @@ import {
 import { useContextMenu } from '@/hooks/useContextMenu';
 import { moduleBasename, isProcessAvailable } from '@/lib/sessionHelpers';
 import { parseAddress } from '@/lib/hexUtils';
+import { imageTerms } from '@/lib/imageTerms';
+import { usePlatform } from '@/hooks/usePlatform';
 import { Layers, FileSymlink, RotateCcw, Loader2, Copy, Trash2 } from 'lucide-react';
 
 /** Pre-parsed quick-filter query, computed once per filter change (the list
@@ -70,6 +72,7 @@ interface PdbMismatchPrompt {
 }
 
 function SymbolStatusBadge({ status }: { status: ModuleSymbolStatus | undefined }) {
+  const terms = imageTerms(usePlatform().os);
   if (!status) return null;
   switch (status.status) {
     case 'loaded':
@@ -84,7 +87,7 @@ function SymbolStatusBadge({ status }: { status: ModuleSymbolStatus | undefined 
           variant="outline"
           size="xs"
           className="text-syn-state border-syn-state/50"
-          title={`PE exports only — ${status.error ?? 'no PDB available'}`}
+          title={`${terms.exportsOnly} — ${status.error ?? terms.noDebugFile}`}
         >
           {status.symbol_count ?? 0} exports
         </Badge>
@@ -107,6 +110,7 @@ function SymbolStatusBadge({ status }: { status: ModuleSymbolStatus | undefined 
 }
 
 export const ContextModulesView: React.FC<ContextModulesViewProps> = ({ onOpenModuleInfo }) => {
+  const terms = imageTerms(usePlatform().os);
   const sessionData = useSessionContext();
   const { contextMenu, openContextMenu, closeContextMenu } = useContextMenu<Module>();
   const [mismatchPrompt, setMismatchPrompt] = useState<PdbMismatchPrompt | null>(null);
@@ -156,7 +160,7 @@ export const ContextModulesView: React.FC<ContextModulesViewProps> = ({ onOpenMo
         setMismatchPrompt({ module, pdbPath, mismatch: result.mismatch });
       }
     } catch (error) {
-      toast.error(`Failed to load PDB: ${error}`);
+      toast.error(`Failed to load ${terms.debugFile}: ${error}`);
     }
   };
 
@@ -165,7 +169,7 @@ export const ContextModulesView: React.FC<ContextModulesViewProps> = ({ onOpenMo
       multiple: false,
       directory: false,
       filters: [
-        { name: 'PDB Files', extensions: ['pdb'] },
+        terms.debugFileFilter,
         { name: 'All Files', extensions: ['*'] },
       ],
     });
@@ -314,7 +318,7 @@ export const ContextModulesView: React.FC<ContextModulesViewProps> = ({ onOpenMo
             icon={<FileSymlink className="h-3.5 w-3.5" />}
             onClick={() => handleLoadPdbFromFile(contextMenu.data)}
           >
-            Load PDB from file…
+            Load {terms.debugFile} from file…
           </ContextMenuItem>
           {isPdbMissing(menuStatus?.status) && (
             <ContextMenuItem
@@ -346,18 +350,19 @@ export const ContextModulesView: React.FC<ContextModulesViewProps> = ({ onOpenMo
       <Dialog open={mismatchPrompt !== null} onOpenChange={(isOpen) => { if (!isOpen) setMismatchPrompt(null); }}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>PDB doesn't match the module</DialogTitle>
+            <DialogTitle>{terms.debugFile} doesn't match the module</DialogTitle>
             <DialogDescription>
-              The selected PDB was not built from this exact binary. Symbols may resolve to wrong addresses.
+              The selected {terms.debugFile} was not built from this exact binary. Symbols may resolve to wrong addresses.
             </DialogDescription>
           </DialogHeader>
           {mismatchPrompt && (
             <div className="text-sm space-y-1 font-mono">
+              {/* PE: GUID + age; ELF: build-ids (the ages are meaningless). */}
               <p className="truncate" title={mismatchPrompt.module.name}>
-                Module: {mismatchPrompt.mismatch.pe_guid} age {mismatchPrompt.mismatch.pe_age}
+                Module: {mismatchPrompt.mismatch.pe_guid}{terms.format === 'PE' && ` age ${mismatchPrompt.mismatch.pe_age}`}
               </p>
               <p className="truncate" title={mismatchPrompt.pdbPath}>
-                PDB: {mismatchPrompt.mismatch.pdb_guid} age {mismatchPrompt.mismatch.pdb_age}
+                {terms.debugFile}: {mismatchPrompt.mismatch.pdb_guid}{terms.format === 'PE' && ` age ${mismatchPrompt.mismatch.pdb_age}`}
               </p>
             </div>
           )}

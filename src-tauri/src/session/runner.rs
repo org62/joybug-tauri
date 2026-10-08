@@ -49,7 +49,7 @@ fn handle_event_breakpoints(
             reapply_for_loaded_module(session, app_handle_clone, event.pid(), name, *base_of_dll);
         }
         joybug_core::protocol_io::DebugEvent::ProcessCreated { image_file_name, base_of_image, .. } => {
-            let name = image_file_name.as_deref().unwrap_or("main.exe");
+            let name = image_file_name.as_deref().unwrap_or("<unknown>");
             reapply_for_loaded_module(session, app_handle_clone, event.pid(), name, *base_of_image);
         }
         joybug_core::protocol_io::DebugEvent::DllUnloaded { .. } => {
@@ -63,7 +63,7 @@ fn handle_event_breakpoints(
     }
 }
 
-/// Emit DLL loaded/unloaded frontend events with logging.
+/// Emit module loaded/unloaded frontend events with logging.
 fn emit_dll_events(
     handle: &AppHandle,
     session_id: &str,
@@ -93,8 +93,8 @@ fn emit_dll_events(
                 debug!("📡 Emitted dll-unloaded event for base 0x{:X}", base_of_dll);
             }
             let message = match &payload.dll_name {
-                Some(name) => format!("DLL unloaded: {} @ 0x{:X}", name, base_of_dll),
-                None => format!("DLL unloaded @ 0x{:X}", base_of_dll),
+                Some(name) => format!("Module unloaded: {} @ 0x{:X}", name, base_of_dll),
+                None => format!("Module unloaded @ 0x{:X}", base_of_dll),
             };
             crate::ui_logger::log_info(handle, &message, Some(session_id.to_string()));
             // The frontend dispatcher coalesces bursts of these into a summary toast.
@@ -125,8 +125,8 @@ fn emit_dll_events(
                 debug!("📡 Emitted dll-loaded event for base 0x{:X}", base_of_dll);
             }
             let message = match size_of_dll {
-                Some(sz) => format!("DLL loaded: {} @ 0x{:X} (size: 0x{:X})", name, base_of_dll, sz),
-                None => format!("DLL loaded: {} @ 0x{:X}", name, base_of_dll),
+                Some(sz) => format!("Module loaded: {} @ 0x{:X} (size: 0x{:X})", name, base_of_dll, sz),
+                None => format!("Module loaded: {} @ 0x{:X}", name, base_of_dll),
             };
             crate::ui_logger::log_info(handle, &message, Some(session_id.to_string()));
             // The frontend dispatcher coalesces bursts of these into a summary toast.
@@ -284,6 +284,16 @@ pub fn run_debug_session(
     let app_handle_clone = app_handle.clone();
     let app_handle_for_exception = app_handle.clone();
 
+    // POSIX signals the exception rules name (Linux targets): the server
+    // reports those and delivers every other signal unseen. Sent before the
+    // launch, then re-sent from `on_event` whenever the rules change, so an
+    // edit in Settings reaches a live session at its next event.
+    let initial_signals = app_handle
+        .as_ref()
+        .map(|handle| super::exceptions::reported_signals(&handle.state::<SettingsState>().inner().lock().unwrap()))
+        .unwrap_or_default();
+    let mut pushed_signals = initial_signals.clone();
+
     // ETW: start the tracer once, on the first ProcessCreated. A sandbox session
     // starts the in-guest tracer; a local/remote session with a host ETW config
     // starts the elevated host tracer. Mutually exclusive by construction
@@ -331,6 +341,16 @@ pub fn run_debug_session(
                 let mut state = session.state.lock().unwrap();
                 state.callstack_cache.clear();
                 state.exception_detail = None;
+            }
+
+            if let Some(ref handle) = app_handle_clone {
+                let wanted = super::exceptions::reported_signals(&handle.state::<SettingsState>().inner().lock().unwrap());
+                if wanted != pushed_signals {
+                    if let Err(e) = session.set_reported_signals(&wanted) {
+                        info!("Signal policy not applied: {}", e);
+                    }
+                    pushed_signals = wanted;
+                }
             }
 
             // JIT launch: release WER at the attach break (or whatever first
@@ -686,6 +706,12 @@ pub fn run_debug_session(
                 // Older external servers don't know the request — degrade quietly.
                 info!("Symbol deny list not applied (server too old?): {}", e);
             }
+        }
+    }
+
+    if !initial_signals.is_empty() {
+        if let Err(e) = session_builder.set_reported_signals(&initial_signals) {
+            info!("Signal policy not applied (server too old?): {}", e);
         }
     }
 

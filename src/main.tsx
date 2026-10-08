@@ -13,51 +13,26 @@ import { applyAccent, getStoredAccent } from "./lib/accent";
 // has the right --syn-accent (no accent flash on startup).
 applyAccent(getStoredAccent());
 
-// Block browser back/forward navigation triggered by mouse buttons (XButton1/XButton2)
-// when a registered view's navigation history consumes the press (runMouseNav). WebView2
-// handles these at the native level, so DOM preventDefault() alone doesn't work. We
-// register the popstate listener BEFORE React mounts so it fires before React Router's,
-// allowing stopImmediatePropagation().
-{
-  // One native back/forward navigation (and thus one popstate) follows EACH
-  // trusted X-button press, asynchronously. A one-shot flag leaks when presses
-  // come faster than their popstates (press, press, pop, pop — the second pop
-  // sails through to the router and yanks the user off the page). Count the
-  // pending blocks instead, one per armed press.
-  let pendingBlocks = 0;
-  let savedPath = '';
-  let resetTimer: ReturnType<typeof setTimeout> | undefined;
+// The app owns back/forward (lib/navHistory.ts); the browser's own history
+// must never move the page. WebView2 and WebKitGTK navigate it natively on the
+// mouse X-buttons (and Alt+Left/Right) *in addition to* delivering the DOM
+// event, and DOM preventDefault() does not stop that. Swallowing the popstate
+// afterwards races the app's own restore (which has usually already pushed the
+// target page by the time the native traversal lands, so the "repair" undid it
+// and left the user on the page they pressed back from). Instead keep the
+// browser history at exactly one entry, so there is nothing to traverse: every
+// router push becomes a replace. React Router still reports its own PUSH /
+// REPLACE action, so `useNavigationType` and the departure recording in App are
+// unaffected; only `window.history.length` stops growing.
+window.history.pushState = window.history.replaceState.bind(window.history);
 
-  const armBlock = (e: MouseEvent) => {
+// The X-buttons still arrive as mousedown (button 3/4): drive the app history.
+window.addEventListener('mousedown', (e: MouseEvent) => {
+  if (e.button === 3 || e.button === 4) {
     e.preventDefault();
-    pendingBlocks++;
-    savedPath = window.location.pathname + window.location.search + window.location.hash;
-    // Safety valve: if a press produced no native popstate (nothing to go back
-    // to), the stale count would swallow a future legit popstate. Native
-    // popstates arrive within milliseconds — after a quiet second, forget.
-    clearTimeout(resetTimer);
-    resetTimer = setTimeout(() => { pendingBlocks = 0; }, 1000);
-  };
-
-  window.addEventListener('mousedown', (e: MouseEvent) => {
-    if (e.button === 3 || e.button === 4) {
-      const dir = e.button === 3 ? 'back' : 'forward';
-      // Block the native (router) nav when the registered view's unified history consumed
-      // the press. An empty history falls through to WebView2 page navigation. Synthetic
-      // (untrusted) events never trigger native navigation, so they need no blocking —
-      // arming it anyway would swallow the next real popstate.
-      if (runMouseNav(dir) && e.isTrusted) armBlock(e);
-    }
-  }, { capture: true });
-
-  window.addEventListener('popstate', (e: PopStateEvent) => {
-    if (pendingBlocks > 0) {
-      pendingBlocks--;
-      e.stopImmediatePropagation();
-      window.history.pushState(null, '', savedPath);
-    }
-  });
-}
+    runMouseNav(e.button === 3 ? 'back' : 'forward');
+  }
+}, { capture: true });
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>

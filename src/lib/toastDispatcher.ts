@@ -38,8 +38,8 @@ let globalIndividual: number[] = [];
 
 /**
  * Derive a coarse category from a message so distinct-but-similar messages group
- * together: "OutputDebugString: foo" → "OutputDebugString", "DLL loaded: a.dll @ 0x.."
- * → "DLL loaded", "ThreadCreated(pid=..)" → "ThreadCreated".
+ * together: "OutputDebugString: foo" → "OutputDebugString", "Module loaded: a.dll @ 0x.."
+ * → "Module loaded", "ThreadCreated(pid=..)" → "ThreadCreated".
  */
 function deriveCategory(message: string): string {
   const m = message.match(/^([A-Za-z][A-Za-z ]*?)(?:[:(]| @ |$)/);

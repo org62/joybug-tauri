@@ -1,4 +1,5 @@
 import { writeFileSync, copyFileSync, readFileSync } from "fs";
+import { IS_WINDOWS, dataDir } from "../helpers/launch-commands";
 import path from "path";
 import { test, expect } from "../helpers/test-fixtures";
 import { createAndStartSession, cleanupSession, fixtureExe, invoke, moduleBase } from "../helpers/session-helpers";
@@ -7,15 +8,17 @@ import {
   configureMinimalStopSettings,
   restoreDefaultSettings,
 } from "../helpers/wait-helpers";
-import type { Page } from "@playwright/test";
+import type { Page } from "../helpers/test-fixtures";
 
-const DATA_DIR = process.env.JOYBUG_E2E_DATA_DIR || path.join(process.env.LOCALAPPDATA || "", "JoybugTauri");
+const DATA_DIR = dataDir();
 const OVERRIDES_FILE = path.join(DATA_DIR, "symbol_overrides.json");
-// A copy of hello_c's PDB at a path the loader would never auto-discover, so a
-// symbol status showing THIS path proves our manual/persisted load won — not the
-// next-to-exe auto-load.
-const PDB_COPY = path.join(DATA_DIR, "manual_sym_copy.pdb");
-const PDB_SRC = fixtureExe("hello_c").replace(/\.exe$/i, ".pdb");
+// A copy of hello_c's debug file at a path the loader would never auto-discover,
+// so a symbol status showing THIS path proves our manual/persisted load won — not
+// the next-to-exe auto-load. The PDB on Windows; on Linux the debug info lives
+// in the ELF itself, so a copy of the executable is the debug file.
+const PDB_COPY = path.join(DATA_DIR, IS_WINDOWS ? "manual_sym_copy.pdb" : "manual_sym_copy.debug");
+const PDB_SRC = IS_WINDOWS ? fixtureExe("hello_c").replace(/\.exe$/i, ".pdb") : fixtureExe("hello_c");
+const MODULE_FILE = IS_WINDOWS ? "hello_c.exe" : "hello_c";
 // Distinct arg → distinct launch_command → isolated override-store key.
 const LAUNCH = `${fixtureExe("hello_c")} sympersist`;
 
@@ -81,7 +84,7 @@ test.describe("Manual PDB persistence", () => {
         const map = JSON.parse(readFileSync(OVERRIDES_FILE, "utf-8"));
         const entries = map[LAUNCH];
         expect(Array.isArray(entries)).toBe(true);
-        const hc = entries.find((o: any) => o.module_name.toLowerCase() === "hello_c.exe");
+        const hc = entries.find((o: any) => o.module_name.toLowerCase() === MODULE_FILE);
         expect(hc).toBeTruthy();
         expect(hc.pdb_path.toLowerCase()).toContain("manual_sym_copy");
         expect(hc.force).toBe(true);

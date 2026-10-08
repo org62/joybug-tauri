@@ -18,9 +18,17 @@ use crate::state::ExceptionDetail;
 const EXCEPTION_ACCESS_VIOLATION: u32 = 0xC000_0005;
 const EXCEPTION_IN_PAGE_ERROR: u32 = 0xC000_0006;
 
-/// Symbolic name for a Windows exception code. This is the only table: the
-/// name rides on `ExceptionDetail` so the frontend never needs its own.
-fn exception_code_name(code: u32) -> Option<&'static str> {
+/// Symbolic name for an exception code: the Windows name, or the signal's
+/// (`SIGUSR1`) for a POSIX signal a Linux target reported. This is the only
+/// table: the name rides on `ExceptionDetail` so the frontend never needs its own.
+fn exception_code_name(code: u32) -> Option<String> {
+    if let Some(signo) = joybug_core::posix_signals::exception_code_signal(code) {
+        return joybug_core::posix_signals::signal_name(signo);
+    }
+    windows_exception_name(code).map(str::to_string)
+}
+
+fn windows_exception_name(code: u32) -> Option<&'static str> {
     Some(match code {
         0x8000_0001 => "EXCEPTION_GUARD_PAGE",
         0x8000_0002 => "EXCEPTION_DATATYPE_MISALIGNMENT",
@@ -43,6 +51,9 @@ fn exception_code_name(code: u32) -> Option<&'static str> {
         0xC000_0095 => "EXCEPTION_INT_OVERFLOW",
         0xC000_0096 => "EXCEPTION_PRIV_INSTRUCTION",
         0xC000_00FD => "EXCEPTION_STACK_OVERFLOW",
+        // Linux maps SIGSYS / SIGABRT onto these (see linux_platform/signals.rs).
+        0xC000_001C => "STATUS_INVALID_SYSTEM_SERVICE",
+        0xC000_0409 => "STATUS_STACK_BUFFER_OVERRUN",
         0xE06D_7363 => "EXCEPTION_MSVC_CPP",
         _ => return None,
     })
@@ -59,6 +70,22 @@ pub(crate) fn exception_rule_action(settings: &DebugSettings, code: u32, first_c
         .find(|r| r.code == code)
         .map(|rule| if first_chance { rule.first_chance.as_str() } else { rule.second_chance.as_str() })
         .unwrap_or("stop")
+}
+
+/// The POSIX signals the exception rules name, for the server to report
+/// (`SetReportedSignals`): a signal is delivered to a Linux target unseen
+/// unless a rule exists for its code, and then the rule decides like for any
+/// other exception. Sorted and de-duplicated, so two settings snapshots
+/// compare equal exactly when the server needs no update.
+pub(crate) fn reported_signals(settings: &DebugSettings) -> Vec<u32> {
+    let mut signals: Vec<u32> = settings
+        .exception_rules
+        .iter()
+        .filter_map(|rule| joybug_core::posix_signals::exception_code_signal(rule.code))
+        .collect();
+    signals.sort_unstable();
+    signals.dedup();
+    signals
 }
 
 /// Whether this exception should pause the UI; `"pass"` / `"handled"` auto-continue.
@@ -128,7 +155,7 @@ pub(crate) fn describe_exception(
 
     let mut detail = ExceptionDetail {
         code,
-        name: exception_code_name(code).map(str::to_string),
+        name: exception_code_name(code),
         first_chance,
         address: hex(address),
         address_symbol,
@@ -141,7 +168,7 @@ pub(crate) fn describe_exception(
         access_clause: None,
         message: String::new(),
     };
-    detail.access_clause = access_clause(&detail);
+    detail.access_clause = access_clause(&detail).or_else(|| signal_clause(code, parameters));
     detail.message = format_message(&detail);
     Some(detail)
 }
@@ -161,6 +188,17 @@ fn access_clause(detail: &ExceptionDetail) -> Option<String> {
         Some(sym) => format!("{} {} ({})", verb, addr, sym),
         None => format!("{} {}", verb, addr),
     })
+}
+
+/// Who sent a reported signal, e.g. `sent by pid 4242`. The Linux backend
+/// ships `[signo, si_code, sender pid]`; a signal the kernel raised itself
+/// (a timer, a dead child) has no sender.
+fn signal_clause(code: u32, parameters: &[u64]) -> Option<String> {
+    joybug_core::posix_signals::exception_code_signal(code)?;
+    match parameters.get(2).copied() {
+        Some(sender) if sender != 0 => Some(format!("sent by pid {}", sender)),
+        _ => None,
+    }
 }
 
 /// The one-line log/toast text, e.g.
@@ -222,7 +260,8 @@ mod tests {
 
     #[test]
     fn known_codes_have_names_and_unknown_do_not() {
-        assert_eq!(exception_code_name(0xC0000005), Some("EXCEPTION_ACCESS_VIOLATION"));
+        assert_eq!(exception_code_name(0xC0000005).as_deref(), Some("EXCEPTION_ACCESS_VIOLATION"));
+        assert_eq!(exception_code_name(0x4C53_000A).as_deref(), Some("SIGUSR1"));
         assert_eq!(exception_code_name(0x12345678), None);
     }
 
@@ -239,6 +278,23 @@ mod tests {
         assert!(!exception_should_stop(&settings, 0xC0000005, true));
         assert!(exception_should_stop(&settings, 0xC0000005, false));
         assert!(exception_should_stop(&settings, 0xC0000094, true));
+    }
+
+    #[test]
+    fn signal_rules_name_the_signals_to_report() {
+        let rule = |code: u32| ExceptionRule { code, first_chance: "stop".into(), second_chance: "stop".into() };
+        let mut settings = DebugSettings::default();
+        assert!(reported_signals(&settings).is_empty());
+        // SIGUSR2, an NTSTATUS (not a signal), SIGUSR1, and SIGUSR2 again.
+        settings.exception_rules = vec![rule(0x4C53_000C), rule(0xC000_0005), rule(0x4C53_000A), rule(0x4C53_000C)];
+        assert_eq!(reported_signals(&settings), vec![10, 12]);
+    }
+
+    #[test]
+    fn a_sent_signal_names_its_sender() {
+        assert_eq!(signal_clause(0x4C53_000A, &[10, 0, 4242]).as_deref(), Some("sent by pid 4242"));
+        assert_eq!(signal_clause(0x4C53_000E, &[14, 0x80, 0]), None, "a kernel-raised signal has no sender");
+        assert_eq!(signal_clause(0xC000_0005, &[1, 0, 4242]), None, "not a signal");
     }
 
     #[test]

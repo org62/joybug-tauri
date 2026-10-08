@@ -2,6 +2,7 @@ import { ChildProcess } from "child_process";
 import { test, expect, navigateTo } from "../helpers/test-fixtures";
 import { cleanupSession } from "../helpers/session-helpers";
 import { spawnTarget, isAlive, killQuietly } from "../helpers/process-helpers";
+import { ATTACH_TARGET_IMAGE } from "../helpers/launch-commands";
 import {
   waitForPaused,
   waitForStopped,
@@ -43,7 +44,7 @@ test.describe("Attach / Detach", () => {
 
       // Clicking creates + starts the attach session and navigates to it.
       await page.waitForURL(/\/session\//, { timeout: 15_000 });
-      sessionId = sessionIdFromUrl(page.url());
+      sessionId = sessionIdFromUrl(await page.url());
 
       // Attaching injects a breakpoint into the target, so it should pause.
       await waitForPaused(page, sessionId);
@@ -153,19 +154,19 @@ test.describe("Attach / Detach", () => {
 
     try {
       // Attach to the first instance.
-      sessionId = await page.evaluate(async (pid: number) => {
+      sessionId = await page.evaluate(async ({ pid, image }: { pid: number; image: string }) => {
         const invoke = (window as any).__TAURI_INTERNALS__.invoke;
         const id = await invoke("create_debug_session", {
           name: `Reattach ${pid}`,
           serverUrl: "",
-          launchCommand: "ping.exe",
+          launchCommand: image,
           workingDirectory: null,
           isLocalRun: true,
           attachPid: pid,
         });
         await invoke("start_debug_session", { sessionId: id });
         return id;
-      }, pidA);
+      }, { pid: pidA, image: ATTACH_TARGET_IMAGE });
 
       await navigateTo(page, `/session/${sessionId}`);
       await waitForPaused(page, sessionId);
@@ -192,7 +193,8 @@ test.describe("Attach / Detach", () => {
       expect(pidB).not.toBe(pidA);
 
       // Re-attach from the session list. The stored PID is dead, but there's a
-      // single "ping.exe", so it should attach to the new instance automatically.
+      // single process with the target's image name, so it should attach to
+      // the new instance automatically.
       await navigateTo(page, "/debugger");
       await page.getByTitle("Re-attach").click();
       await page.waitForURL(/\/session\//, { timeout: 15_000 });

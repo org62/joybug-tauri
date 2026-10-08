@@ -12,6 +12,7 @@ import {
   configureMinimalStopSettings,
   restoreDefaultSettings,
 } from "../helpers/wait-helpers";
+import { SYMBOL_MODULE, SYMBOL_SEARCH } from "../helpers/launch-commands";
 
 /**
  * Read the symbol names, in render order. `data-full-text` rather than the
@@ -19,7 +20,7 @@ import {
  * prefix can truncate to the same string — which would make a sort assertion
  * on the visible text meaningless.
  */
-async function names(page: import("@playwright/test").Page): Promise<string[]> {
+async function names(page: import("../helpers/test-fixtures").Page): Promise<string[]> {
   return page
     .getByTestId("symbol-name")
     .evaluateAll((nodes) =>
@@ -28,7 +29,7 @@ async function names(page: import("@playwright/test").Page): Promise<string[]> {
 }
 
 /** Read the displayed addresses, in render order. */
-async function addresses(page: import("@playwright/test").Page): Promise<bigint[]> {
+async function addresses(page: import("../helpers/test-fixtures").Page): Promise<bigint[]> {
   const texts = await page.getByTestId("symbol-address").allTextContents();
   return texts.map((t) => BigInt(t.trim()));
 }
@@ -46,8 +47,9 @@ test.describe("Symbols table", () => {
       sessionId = await createAndStartSession(page, "Symbols Table");
       await waitForPaused(page, sessionId);
 
-      // ntdll symbols load in the background — the search needs them to resolve hits.
-      await waitForModuleSymbols(page, sessionId, "ntdll");
+      // The system module's symbols load in the background — the search needs
+      // them to resolve hits.
+      await waitForModuleSymbols(page, sessionId, SYMBOL_MODULE);
 
       // Panel sizes carry over between specs (the page is never reloaded), and
       // the resize step below drags a grip that sits at the right edge of the
@@ -63,24 +65,24 @@ test.describe("Symbols table", () => {
       // --- Multi-token search -------------------------------------------------
       // Tokens are ANDed and order-independent, so the parts of the name may be
       // typed backwards.
-      await search.fill("UnicodeString RtlInit");
+      await search.fill(SYMBOL_SEARCH.twoTokens.query);
       await expect(async () => {
-        expect((await names(page)).some((n) => n.includes("RtlInitUnicodeString"))).toBe(true);
+        expect((await names(page)).some((n) => n.includes(SYMBOL_SEARCH.twoTokens.hit))).toBe(true);
       }).toPass({ timeout: 20_000, intervals: [100, 250] });
 
       // A token may match the module name instead of the symbol name.
-      await search.fill("ntdll LdrLoadDl");
+      await search.fill(SYMBOL_SEARCH.moduleToken.query);
       await expect(async () => {
-        expect((await names(page)).some((n) => n.includes("LdrLoadDll"))).toBe(true);
+        expect((await names(page)).some((n) => n.includes(SYMBOL_SEARCH.moduleToken.hit))).toBe(true);
       }).toPass({ timeout: 20_000, intervals: [100, 250] });
 
       // Every token has to match: one unmatchable token excludes everything.
-      await search.fill("LdrLoadDll zzznosuchtoken");
+      await search.fill(`${SYMBOL_SEARCH.single.hit} zzznosuchtoken`);
       await expect(page.getByText("No symbols found")).toBeVisible({ timeout: 20_000 });
 
       // --- Sorting ------------------------------------------------------------
       // A term with enough hits for the order to be meaningful.
-      await search.fill("NtCreate");
+      await search.fill(SYMBOL_SEARCH.many);
       const header = page.getByTestId("symbols-header");
       await expect(header).toBeVisible({ timeout: 20_000 });
       await expect(async () => {
@@ -169,15 +171,16 @@ test.describe("Symbols table", () => {
       expect(cellBox!.width).toBeGreaterThan(190);
 
       // The width survives a fresh search (it is read back from localStorage).
-      await search.fill("LdrLoadDl");
+      await search.fill(SYMBOL_SEARCH.single.query);
       await expect(async () => {
         const again = await page.getByTestId("symbol-address").first().boundingBox();
         expect(again!.width).toBeGreaterThan(190);
       }).toPass({ timeout: 20_000, intervals: [100, 250] });
 
       // --- Result limit + bulk guard -----------------------------------------
-      // "nt" matches ntdll by module name, so this is well past the old 1000 cap.
-      await search.fill("nt");
+      // The term matches the module name, so every one of its symbols is a
+      // hit — well past the old 1000 cap.
+      await search.fill(SYMBOL_SEARCH.bulk);
       const countText = page.getByText(/[\d,]+ found/);
       await expect(countText).toBeVisible({ timeout: 40_000 });
       await expect(async () => {
@@ -206,25 +209,25 @@ test.describe("Symbols table", () => {
       // Enter is the commit gesture: it records the term and searches without
       // waiting out the debounce.
       await page.getByRole("button", { name: "Clear" }).click();
-      await search.fill("LdrLoadDl");
+      await search.fill(SYMBOL_SEARCH.single.query);
       await search.press("Enter");
       await expect(async () => {
         const stored = await page.evaluate(() =>
           localStorage.getItem("input-history:symbol-search"),
         );
-        expect(JSON.parse(stored ?? "[]")).toEqual(["LdrLoadDl"]);
+        expect(JSON.parse(stored ?? "[]")).toEqual([SYMBOL_SEARCH.single.query]);
       }).toPass({ timeout: 10_000, intervals: [50, 100] });
 
       // ArrowUp on a cleared field recalls it and the results come back with it.
       await search.fill("");
       await search.press("ArrowUp");
-      await expect(search).toHaveValue("LdrLoadDl");
+      await expect(search).toHaveValue(SYMBOL_SEARCH.single.query);
       await expect(page.locator('[data-slot="history-dropdown"]')).toBeVisible();
       await search.press("Escape");
       await expect(page.locator('[data-slot="history-dropdown"]')).toHaveCount(0);
-      await search.fill("LdrLoadDl");
+      await search.fill(SYMBOL_SEARCH.single.query);
       await expect(async () => {
-        expect((await names(page)).some((n) => n.includes("LdrLoadDll"))).toBe(true);
+        expect((await names(page)).some((n) => n.includes(SYMBOL_SEARCH.single.hit))).toBe(true);
       }).toPass({ timeout: 20_000, intervals: [100, 250] });
     } finally {
       // The page is never reloaded between specs, so a history entry left here

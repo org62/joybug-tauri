@@ -1,4 +1,5 @@
-import { Page } from "@playwright/test";
+import type { Page } from "../helpers/test-fixtures";
+import { ATTACH_TARGET_IMAGE, IS_WINDOWS } from "../helpers/launch-commands";
 import { test, expect, navigateTo } from "../helpers/test-fixtures";
 import { cleanupSession, invoke, goToWindow, rowAddress } from "../helpers/session-helpers";
 import { spawnTarget, isAlive, killQuietly } from "../helpers/process-helpers";
@@ -22,7 +23,7 @@ async function createOpenSession(page: Page, pid: number): Promise<string> {
   const sessionId: string = await invoke(page, "create_debug_session", {
     name: `Open ${pid}`,
     serverUrl: "",
-    launchCommand: "ping.exe",
+    launchCommand: ATTACH_TARGET_IMAGE,
     workingDirectory: null,
     isLocalRun: true,
     attachPid: pid,
@@ -71,7 +72,7 @@ async function findPaddingByte(
     "get_session_modules",
     { sessionId },
   );
-  const main = modules.find((m) => m.name.toLowerCase().endsWith("ping.exe"));
+  const main = modules.find((m) => m.name.toLowerCase().endsWith(ATTACH_TARGET_IMAGE));
   expect(main, "target's own image should be enumerated").toBeTruthy();
   const base = BigInt(main!.base_address);
 
@@ -196,6 +197,7 @@ test.describe("Non-invasive mode", () => {
   test("Image Patches scans and restores without ever attaching", async ({
     tauriPage: page,
   }) => {
+    test.skip(!IS_WINDOWS, "image patches compare against the on-disk PE image");
     const target = spawnTarget();
     const pid = target.pid!;
     let sessionId: string | undefined;

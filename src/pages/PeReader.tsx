@@ -35,12 +35,15 @@ import { NavHistoryStore, appNavHistory } from "@/lib/navHistory";
 import { useNavHistoryDock } from "@/hooks/useNavHistoryDock";
 import { moduleBasename } from "@/lib/sessionHelpers";
 import { toastError, toastSuccess } from "@/lib/logger";
-import { pickDroppedFile, PE_FILE_PATTERN, PE_FILE_REJECT_MESSAGE } from "@/hooks/useFileDrop";
+import { pickDroppedFile, PE_FILE_REJECT_MESSAGE } from "@/hooks/useFileDrop";
+import { usePlatform, imageDropPattern } from "@/hooks/usePlatform";
 import { useFileDropTarget } from "@/contexts/FileDropContext";
 import { formatTauriError } from "@/lib/sessionHelpers";
 
 interface PeFileSummary {
   path: string;
+  /** "pe" or "elf" — the backend opened the file by its magic. */
+  format: "pe" | "elf";
   size: number;
   base: string;
   info: ModuleExtraInfo;
@@ -112,7 +115,7 @@ const usePeEmu = () => {
 const NoFilePlaceholder: React.FC = () => (
   <EmptyState
     icon={<FileSearch className="h-12 w-12 mx-auto mb-4 opacity-50" />}
-    title="No PE file open"
+    title="No file open"
     subtitle="Use “Open…” to load an executable or DLL"
   />
 );
@@ -313,24 +316,26 @@ export default function PeReader() {
       setDirty(false);
       setSymbolsRefreshKey(`${selected}:${result.symbol_count}`);
     } catch (err) {
-      toastError(`Failed to open PE file: ${formatTauriError(err)}`);
+      toastError(`Failed to open file: ${formatTauriError(err)}`);
     } finally {
       setBusy(false);
     }
   }, [path]);
 
-  // Drag-drop a PE file onto the page to open it. Extension filter is a UX
-  // nicety for obvious non-PE files; the backend stays the authority for
-  // malformed files via loadPath's error handling.
+  // Drag-drop a PE or ELF file onto the page to open it. The extension filter
+  // is a UX nicety for obvious non-images (and moot on Unix, where an
+  // executable has none); the backend stays the authority for malformed files
+  // via loadPath's error handling.
+  const platform = usePlatform();
   const handleFileDrop = (paths: string[]) => {
     if (busy) return;
     const dropped = pickDroppedFile(paths, {
-      pattern: PE_FILE_PATTERN,
+      pattern: imageDropPattern(platform),
       rejectMessage: PE_FILE_REJECT_MESSAGE,
     });
     if (dropped) loadPath(dropped);
   };
-  useFileDropTarget({ message: "Drop a PE file to inspect", onDrop: handleFileDrop, enabled: !openDialog });
+  useFileDropTarget({ message: "Drop a PE or ELF file to inspect", onDrop: handleFileDrop, enabled: !openDialog });
 
   // Download/parse symbols for the open file (allows a symbol-server download),
   // then re-symbolize the disassembly.
@@ -586,11 +591,11 @@ export default function PeReader() {
             <AddrModeSelect value={mode} onChange={setMode} className="w-32" data-testid="pe-addr-mode" />
           )}
           <div className="ml-2 flex-1 min-w-0 text-sm font-mono truncate text-muted-foreground" title={path ?? undefined}>
-            {path ? moduleBasename(path) : "No PE file open"}
+            {path ? moduleBasename(path) : "No file open"}
             {dirty && <span className="ml-1 text-syn-state">●</span>}
             {summary && (
               <span data-testid="pe-arch-badge" className="ml-2 text-xs rounded border px-1 text-muted-foreground" title="Machine · optional-header format">
-                {archLabel(summary.info.nt_headers.FileHeader.Machine, summary.info.nt_headers.OptionalHeader.Magic)}
+                {archLabel(summary.info.nt_headers.FileHeader.Machine, summary.info.nt_headers.OptionalHeader.Magic, summary.format)}
               </span>
             )}
             {summary?.symbols_loaded && <span className="ml-2 text-xs text-muted-foreground">{summary.symbol_count} symbols</span>}

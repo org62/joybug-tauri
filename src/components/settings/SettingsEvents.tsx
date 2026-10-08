@@ -11,6 +11,8 @@ import {
 } from "@/components/ui/select";
 import { Plus, Trash2 } from "lucide-react";
 import { useDebugSettings, EVENT_ITEMS, type EventSettingItem, type ExceptionRule } from "@/hooks/useDebugSettings";
+import { usePlatform } from "@/hooks/usePlatform";
+import { POSIX_SIGNALS, exceptionCodeSignal, signalExceptionCode } from "@/lib/exceptionNames";
 
 interface SettingsEventsProps {
   searchQuery: string;
@@ -19,6 +21,7 @@ interface SettingsEventsProps {
 /** Renders an "Events and Exceptions" category block matching the keybinding section style. */
 export function SettingsEvents({ searchQuery }: SettingsEventsProps) {
   const { settings, toggle, updateExceptionRules } = useDebugSettings();
+  const signals = usePlatform().os === "linux";
 
   const matchesSearch = useCallback((item: EventSettingItem): boolean => {
     if (!searchQuery) return true;
@@ -34,7 +37,7 @@ export function SettingsEvents({ searchQuery }: SettingsEventsProps) {
   const showExceptionRules = useMemo(() => {
     if (!searchQuery) return true;
     const q = searchQuery.toLowerCase();
-    return "exception".includes(q) || "rules".includes(q) || "pass".includes(q) || "handled".includes(q);
+    return "exception".includes(q) || "rules".includes(q) || "pass".includes(q) || "handled".includes(q) || "signals".includes(q);
   }, [searchQuery]);
 
   const visibleItems = useMemo(() => EVENT_ITEMS.filter(matchesSearch), [matchesSearch]);
@@ -95,7 +98,10 @@ export function SettingsEvents({ searchQuery }: SettingsEventsProps) {
             </Button>
           </div>
           {settings.exception_rules.length === 0 ? (
-            <p className="text-xs text-muted-foreground px-2">No exception rules configured. All exceptions will stop the debugger.</p>
+            <p className="text-xs text-muted-foreground px-2" data-testid="exception-rules-empty">
+              No exception rules configured. All exceptions will stop the debugger.
+              {signals && " Signals that are not faults (SIGUSR1, SIGINT, SIGTERM, …) reach the target unseen: add a rule for a signal to stop on it."}
+            </p>
           ) : (
             <div className="space-y-1.5">
               {settings.exception_rules.map((rule, index) => (
@@ -103,6 +109,7 @@ export function SettingsEvents({ searchQuery }: SettingsEventsProps) {
                   key={index}
                   rule={rule}
                   index={index}
+                  signals={signals}
                   onUpdate={handleUpdateRule}
                   onRemove={handleRemoveRule}
                 />
@@ -115,37 +122,63 @@ export function SettingsEvents({ searchQuery }: SettingsEventsProps) {
   );
 }
 
+/** An exception code as the code field shows it: `0xC0000005`. */
+const hexCode = (code: number) => `0x${code.toString(16).toUpperCase()}`;
+
 function ExceptionRuleRow({
   rule,
   index,
+  signals,
   onUpdate,
   onRemove,
 }: {
   rule: ExceptionRule;
   index: number;
+  /** The target OS has POSIX signals: offer them by name. */
+  signals: boolean;
   onUpdate: (index: number, field: keyof ExceptionRule, value: string | number) => void;
   onRemove: (index: number) => void;
 }) {
-  const [codeText, setCodeText] = useState(() =>
-    rule.code ? `0x${rule.code.toString(16).toUpperCase()}` : ""
-  );
+  const [codeText, setCodeText] = useState(() => (rule.code ? hexCode(rule.code) : ""));
 
   const handleCodeBlur = useCallback(() => {
     const clean = codeText.trim().replace(/^0x/i, "");
     const parsed = parseInt(clean, 16);
     if (!isNaN(parsed)) {
       onUpdate(index, "code", parsed);
-      setCodeText(`0x${parsed.toString(16).toUpperCase()}`);
+      setCodeText(hexCode(parsed));
     }
   }, [codeText, index, onUpdate]);
 
+  // A signal is a rule like any other, under the code the backend reports it
+  // as; picking one by name just fills that code in.
+  const signal = exceptionCodeSignal(rule.code);
+  const handleSignalChange = useCallback((value: string) => {
+    const code = signalExceptionCode(Number(value));
+    onUpdate(index, "code", code);
+    setCodeText(hexCode(code));
+  }, [index, onUpdate]);
+
   return (
-    <div className="rounded border border-border/50 px-2 py-1.5 space-y-2">
+    <div className="rounded border border-border/50 px-2 py-1.5 space-y-2" data-testid="exception-rule">
       <div className="flex items-center gap-1.5">
+        {signals && (
+          <Select value={signal !== null ? String(signal) : ""} onValueChange={handleSignalChange}>
+            <SelectTrigger size="xs" className="w-32 shrink-0" data-testid="exception-rule-signal">
+              <SelectValue placeholder="Signal…" />
+            </SelectTrigger>
+            <SelectContent>
+              {POSIX_SIGNALS.map((s) => (
+                <SelectItem key={s.signo} value={String(s.signo)}>{s.name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
         <Input
           inputSize="xs"
           className="font-mono flex-1"
           placeholder="0xC0000005"
+          data-testid="exception-rule-code"
           value={codeText}
           onChange={(e) => setCodeText(e.target.value)}
           onBlur={handleCodeBlur}

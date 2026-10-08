@@ -1,7 +1,7 @@
 import { test, expect, navigateTo, gotoFreshPe } from "../helpers/test-fixtures";
 import { ASM_ROW } from "../helpers/selectors";
 import { openPe, leaf, leafLink, pick } from "../helpers/pe-helpers";
-import type { Page } from "@playwright/test";
+import type { Page } from "../helpers/test-fixtures";
 
 // A dependency-free 64-bit system DLL that always exists on the test host.
 const NTDLL = "C:\\Windows\\System32\\ntdll.dll";

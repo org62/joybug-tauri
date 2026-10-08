@@ -6,9 +6,10 @@ import {
   configureMinimalStopSettings,
   restoreDefaultSettings,
   stepAndWaitForNewPc,
+  runToNestedFunction,
 } from "../helpers/wait-helpers";
 import { ASM_PANEL, ASM_ROW, PC_ROW } from "../helpers/selectors";
-import type { Page } from "@playwright/test";
+import type { Page } from "../helpers/test-fixtures";
 
 /** True when the PC row is rendered and geometrically inside the scroll viewport. */
 function pcInViewport(page: Page): Promise<boolean> {
@@ -47,10 +48,11 @@ test.describe("PC follow across steps", () => {
     try {
       const sessionId = await createAndStartSession(page, "PC Follow");
       await waitForPaused(page, sessionId);
+      await runToNestedFunction(page, sessionId);
       await waitForDisassemblyLoaded(page, ASM_PANEL);
 
-      // Step out of LdrpDoDebuggerBreak: lands mid-function on a call; the
-      // reload must scroll the new PC row into the viewport.
+      // Step out of LdrpDoDebuggerBreak (main on Linux): lands mid-function on
+      // a call; the reload must scroll the new PC row into the viewport.
       await stepAndWaitForNewPc(page, sessionId, "step_out_debug_session");
       await expect(async () => {
         expect(await pcInViewport(page)).toBe(true);
@@ -101,6 +103,7 @@ test.describe("PC follow across steps", () => {
     try {
       const sessionId = await createAndStartSession(page, "Hidden Tab PC");
       await waitForPaused(page, sessionId);
+      await runToNestedFunction(page, sessionId);
       await waitForDisassemblyLoaded(page, ASM_PANEL);
 
       // Hide Disassembly: Memory shares its dock panel, so activating it puts
