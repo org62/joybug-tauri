@@ -44,7 +44,7 @@ test.describe("Drag-drop file open", () => {
     // Full load resets the PE reader's module-level open-file cache so an earlier
     // test's leaked PE can't hide the placeholder this test opens from.
     await gotoFreshPe(page);
-    await expect(page.getByText("No PE file open").first()).toBeVisible({
+    await expect(page.getByText("No file open").first()).toBeVisible({
       timeout: 10_000,
     });
 
@@ -60,20 +60,20 @@ test.describe("Drag-drop file open", () => {
     // button, and it comes first in DOM order — an unscoped .first() would
     // quit the app and take every later test down with it.
     await page.getByRole("main").getByRole("button", { name: "Close" }).first().click();
-    await expect(page.getByText("No PE file open").first()).toBeVisible({ timeout: 5_000 });
+    await expect(page.getByText("No file open").first()).toBeVisible({ timeout: 5_000 });
   });
 
   test("dropping a non-PE file on the PE viewer shows an error", async ({
     tauriPage: page,
   }) => {
     await navigateTo(page, "/pe");
-    await expect(page.getByText(/No PE file open|ntdll\.dll/).first()).toBeVisible({
+    await expect(page.getByText(/No file open|ntdll\.dll/).first()).toBeVisible({
       timeout: 5_000,
     });
 
     await dropFiles(page, [NOT_PE]);
 
-    await expect(page.getByText(/Not a PE file/).first()).toBeVisible({ timeout: 5_000 });
+    await expect(page.getByText(/Not a PE or ELF file/).first()).toBeVisible({ timeout: 5_000 });
   });
 
   test("dropping an .exe on the Debugger creates and starts a local-run session", async ({
@@ -144,7 +144,7 @@ test.describe("Drag-drop file open", () => {
 
     // The PE viewer's open file survives navigation — leave the page empty.
     await page.getByRole("main").getByRole("button", { name: "Close" }).first().click();
-    await expect(page.getByText("No PE file open").first()).toBeVisible({ timeout: 5_000 });
+    await expect(page.getByText("No file open").first()).toBeVisible({ timeout: 5_000 });
   });
 
   test("choosing Debug in the chooser launches the dropped executable", async ({
@@ -185,7 +185,7 @@ test.describe("Drag-drop file open", () => {
     await expect(page.getByTestId("file-drop-choice")).toHaveCount(0);
 
     await page.getByRole("main").getByRole("button", { name: "Close" }).first().click();
-    await expect(page.getByText("No PE file open").first()).toBeVisible({ timeout: 5_000 });
+    await expect(page.getByText("No file open").first()).toBeVisible({ timeout: 5_000 });
   });
 
   test("dropping a non-PE file elsewhere shows an error and stays put", async ({
@@ -195,7 +195,7 @@ test.describe("Drag-drop file open", () => {
 
     await dropFiles(page, [NOT_PE]);
 
-    await expect(page.getByText(/Not a PE file/).first()).toBeVisible({ timeout: 5_000 });
+    await expect(page.getByText(/Not a PE or ELF file/).first()).toBeVisible({ timeout: 5_000 });
     await expect(page.getByTestId("file-drop-choice")).toHaveCount(0);
     expect(await page.url()).toMatch(/\/settings/);
   });
@@ -204,7 +204,7 @@ test.describe("Drag-drop file open", () => {
     tauriPage: page,
   }) => {
     await gotoFreshPe(page);
-    await expect(page.getByText("No PE file open").first()).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText("No file open").first()).toBeVisible({ timeout: 10_000 });
 
     await dropFiles(page, [CMD]);
 
@@ -212,6 +212,6 @@ test.describe("Drag-drop file open", () => {
     await expect(page.getByTestId("file-drop-choice")).toHaveCount(0);
 
     await page.getByRole("main").getByRole("button", { name: "Close" }).first().click();
-    await expect(page.getByText("No PE file open").first()).toBeVisible({ timeout: 5_000 });
+    await expect(page.getByText("No file open").first()).toBeVisible({ timeout: 5_000 });
   });
 });

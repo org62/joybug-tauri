@@ -481,7 +481,18 @@ export class Locator {
   async hover(opts: { timeout?: number } = {}): Promise<void> {
     await this.withActionable(opts.timeout ?? ACTION_TIMEOUT, false, async (el) => {
       await el.scrollIntoView({ block: "center", inline: "center" });
-      await el.moveTo();
+      // Arrive from an element that is still in the document. The node the
+      // pointer last rested on may have been unmounted since (a route change,
+      // a re-rendered list — the app is shared by the whole run): the
+      // `mouseover` then names a detached React node as where the pointer
+      // came from, React leaves the enter/leave pair to a `mouseout` that a
+      // detached node never fires, and `onMouseEnter` is lost.
+      const away = await browser.execute((e: Element) => {
+        const r = e.getBoundingClientRect();
+        const overOrigin = r.left <= 0 && r.top <= 0 && r.right >= 0 && r.bottom >= 0;
+        return overOrigin ? { x: window.innerWidth - 1, y: window.innerHeight - 1 } : { x: 0, y: 0 };
+      }, el as unknown as Element);
+      await browser.action("pointer").move({ x: away.x, y: away.y, origin: "viewport" }).move({ origin: el }).perform();
       await rememberPointer(el);
     });
   }
@@ -677,11 +688,35 @@ export class Page {
    *  for the two sites that need a true pause. */
   async waitForTimeout(ms: number): Promise<void> { await new Promise((r) => setTimeout(r, ms)); }
 
-  /** Window size as the WebDriver sees it (the outer window). */
+  /** Window size as the WebDriver sees it (the outer window). On Windows the
+   *  app window is sized through Tauri instead: msedgedriver resizes (and
+   *  repositions) only the WebView2 child inside it, which leaves a maximized
+   *  window showing a clipped webview over an unpainted black area. The
+   *  webview follows the window, so its viewport ends up at `size`. */
   async setViewportSize(size: { width: number; height: number }): Promise<void> {
-    await browser.setWindowSize(size.width, size.height);
+    if (process.platform !== "win32") {
+      await browser.setWindowSize(size.width, size.height);
+      return;
+    }
+    await browser.execute(async (width: number, height: number) => {
+      const { invoke } = (window as unknown as { __TAURI_INTERNALS__: { invoke: (cmd: string, args: unknown) => Promise<unknown> } }).__TAURI_INTERNALS__;
+      if (await invoke("plugin:window|is_maximized", { label: "main" })) {
+        await invoke("plugin:window|toggle_maximize", { label: "main" });
+      }
+      await invoke("plugin:window|set_size", { label: "main", value: { Logical: { width, height } } });
+    }, size.width, size.height);
+    await browser.waitUntil(
+      async () => {
+        const now = await this.windowSize();
+        return now.width === size.width && now.height === size.height;
+      },
+      { timeout: 5_000, interval: 50, timeoutMsg: `the app window did not reach ${size.width}x${size.height} (is the screen large enough?)` },
+    );
   }
   async windowSize(): Promise<{ width: number; height: number }> {
+    if (process.platform === "win32") {
+      return browser.execute(() => ({ width: window.innerWidth, height: window.innerHeight }));
+    }
     const r = await browser.getWindowSize();
     return { width: r.width, height: r.height };
   }

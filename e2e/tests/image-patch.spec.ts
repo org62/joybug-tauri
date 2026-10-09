@@ -89,9 +89,16 @@ test.describe("Image patch detection", () => {
       // the patch tooltip by its heading: operands render via TruncatedSymbol,
       // which mounts its own copy tooltip, so a bare getByRole("tooltip") is
       // ambiguous whenever the row's centre-point hover lands on an operand.
-      await patchedRow.hover();
+      // The view is still settling here: the disassembly requests above each
+      // echo into it, and a refresh remounts the rows (and may scroll them)
+      // under a pointer that then sits still — Radix opens a tooltip on
+      // pointer *move* only. So re-approach the row until the tooltip is up.
       const tooltip = page.getByRole("tooltip").filter({ hasText: "Original (on disk)" });
-      await expect(tooltip).toBeVisible({ timeout: 5_000 });
+      await expect(async () => {
+        await page.mouse.move(0, 0);
+        await patchedRow.hover();
+        await expect(tooltip).toBeVisible({ timeout: 1_500 });
+      }).toPass({ timeout: 15_000, intervals: [50, 100] });
       await expect(tooltip).toContainText(originalMnemonic, { timeout: 5_000 });
 
       // Restore via the context menu → "Restore Original Bytes".

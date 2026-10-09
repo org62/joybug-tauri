@@ -5,7 +5,7 @@
 //
 // The app runs in its real webview on every OS — WebKitGTK on Linux, WebView2
 // on Windows — with WebDriver as the transport (`tauri-driver` in front of
-// WebKitWebDriver / msedgedriver). One app process per spec file.
+// WebKitWebDriver / msedgedriver). One app process for the whole run.
 
 import { spawn, ChildProcess, execSync } from "child_process";
 import { existsSync, mkdirSync, rmSync } from "fs";
@@ -157,7 +157,7 @@ function killTree(pid: number): void {
 /**
  * Wait for the React app to mount (`#root` has children). On a fresh Vite dev
  * server the first page load transforms the whole module graph, which has
- * been measured at ~35s — the per-file `before` hook pays for that with its
+ * been measured at ~35s — the `before` hook pays for that with its
  * own budget so no test's clock starts on a cold page.
  */
 export async function waitForAppMount(page: Page, timeout = 30_000): Promise<void> {

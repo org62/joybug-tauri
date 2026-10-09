@@ -6,6 +6,7 @@
 // reaches the page first.
 
 import path from "path";
+import { fileURLToPath } from "url";
 import { mkdirSync, writeFileSync } from "fs";
 import { page, Page } from "./pw";
 import { afterTest, beforeTest } from "./lifecycle";
@@ -21,7 +22,7 @@ export interface TestInfo {
 type Body = (fixtures: Fixtures, info: TestInfo) => Promise<void> | void;
 type HookBody = (fixtures: Fixtures) => Promise<void> | void;
 
-const RESULTS_DIR = path.resolve(path.dirname(new URL(import.meta.url).pathname), "../results");
+const RESULTS_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../results");
 
 let current: Mocha.Context | null = null;
 let prepared = false;
@@ -93,9 +94,15 @@ test.afterEach = function (body: HookBody): void {
     await body({ tauriPage: page });
   });
 };
-/** Skip the running test when `condition` holds (or unconditionally). */
+/**
+ * Skip when `condition` holds (or unconditionally): the running test when
+ * called from a test body, every test of the enclosing `describe` when called
+ * from its callback (no test is running at collection time).
+ */
 test.skip = function (condition: boolean | string = true, _reason?: string): void {
-  if (typeof condition === "string" || condition) current?.skip();
+  if (typeof condition !== "string" && !condition) return;
+  if (current) current.skip();
+  else beforeEach(function () { this.skip(); });
 };
 /** Extend the running test's budget. */
 test.setTimeout = function (ms: number): void {

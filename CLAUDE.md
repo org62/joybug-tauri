@@ -17,7 +17,7 @@ npm run test:e2e       # E2E tests (WebdriverIO + tauri-driver on the real webvi
 
 ### E2E Tests
 
-Run `npm run test:e2e` after every major code change (new features, refactors, bug fixes that touch frontend or backend); on a host without a display, `xvfb-run -a -s "-screen 0 1920x1080x24" npm run test:e2e` (the harness sizes the window to 1600×1000, so the screen must be larger). The suite is WebdriverIO (Mocha) driving the app's **real webview** through `tauri-driver` — WebKitGTK on Linux, WebView2 on Windows — one app process per spec file; see "E2E harness" below. Keep it fast:
+Run `npm run test:e2e` after every major code change (new features, refactors, bug fixes that touch frontend or backend); on a host without a display, `xvfb-run -a -s "-screen 0 1920x1080x24" npm run test:e2e` (the harness sizes the window to 1600×1000, so the screen must be larger). The suite is WebdriverIO (Mocha) driving the app's **real webview** through `tauri-driver` — WebKitGTK on Linux, WebView2 on Windows — one app process for the whole run (a `--spec` run starts one per named file); see "E2E harness" below. Keep it fast:
 - Never add hardcoded sleeps (`waitForTimeout`). Poll for the expected state instead using `toPass()` with tight intervals.
 - Use fast polling intervals (start at 50-100ms, not 250-500ms) — backend responses are typically <50ms.
 - When waiting for state transitions, compare state snapshots (e.g. event identity) rather than trying to catch brief intermediate states like "Running".

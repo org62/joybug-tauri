@@ -1,4 +1,4 @@
-// What happens around every test: the app is launched once per spec file by
+// What happens around every test: the app is launched once per run by
 // tauri-driver, so each test starts by putting it back into a known state
 // (no sessions, default settings, empty persisted stores, default UI state,
 // an empty navigation trail) and leaves it that way.

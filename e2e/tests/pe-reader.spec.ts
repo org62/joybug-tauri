@@ -17,7 +17,7 @@ test.describe("PE Viewer", () => {
     // gotoFreshPe forces a full load so the placeholder is asserted against a
     // genuine fresh start, not a PE another test opened and left cached.
     await gotoFreshPe(page);
-    await expect(page.getByText("No PE file open").first()).toBeVisible({
+    await expect(page.getByText("No file open").first()).toBeVisible({
       timeout: 10_000,
     });
   });

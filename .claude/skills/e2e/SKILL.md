@@ -5,9 +5,9 @@ description: Build the Joybug debug binary and run the WebdriverIO + tauri-drive
 
 # Build & run the E2E tests
 
-`npm run test:e2e` is the whole command (`xvfb-run -a -s "-screen 0 1920x1080x24" npm run test:e2e` on a display-less Linux host — the harness sizes the window to 1600×1000) — but on a fresh checkout it fails for several non-obvious reasons. Work through the prerequisites first. Full suite ≈ 5 min.
+`npm run test:e2e` is the whole command (`xvfb-run -a -s "-screen 0 1920x1080x24" npm run test:e2e` on a display-less Linux host — the harness sizes the window to 1600×1000) — but on a fresh checkout it fails for several non-obvious reasons. Work through the prerequisites first. Full suite ≈ 4 min.
 
-The suite drives the app's **real webview** over WebDriver: `e2e/wdio.conf.ts` builds the fixtures, starts Vite (debug mode) and hands `@wdio/tauri-service` the binary; the service launches `tauri-driver`, which fronts the OS driver (WebKitWebDriver on Linux, msedgedriver for WebView2 on Windows) and starts **one app process per spec file**. You do NOT start anything yourself — you need the binary built and the drivers installed. Specs are written in Playwright's vocabulary (`page.getByRole`, `expect(...).toBeVisible()`, `toPass`) through the façade in `e2e/helpers/pw.ts` / `expect.ts` / `test.ts` — see "E2E harness" in CLAUDE.md.
+The suite drives the app's **real webview** over WebDriver: `e2e/wdio.conf.ts` builds the fixtures, starts Vite (debug mode) and hands `@wdio/tauri-service` the binary; the service launches `tauri-driver`, which fronts the OS driver (WebKitWebDriver on Linux, msedgedriver for WebView2 on Windows) and starts **one app process for the whole run** (all spec files are one group; a `--spec` run starts one per named file). You do NOT start anything yourself — you need the binary built and the drivers installed. Specs are written in Playwright's vocabulary (`page.getByRole`, `expect(...).toBeVisible()`, `toPass`) through the façade in `e2e/helpers/pw.ts` / `expect.ts` / `test.ts` — see "E2E harness" in CLAUDE.md.
 
 ## 1. Prerequisites (do these once per checkout)
 
@@ -68,7 +68,7 @@ The C fixtures (`hello_c.exe`, `watch_c.exe`) are the debugged **target**. joybu
 
 ## 4. Stray-process cleanup (breaks the NEXT run)
 
-The driver launches and kills one app per spec file, so leftovers are rare — but a killed run (Ctrl+C mid-suite, a crashed driver) can leave `joybug-tauri`, `tauri-driver`, the native driver or Vite behind. On Windows WebView2 keys its browser process by the shared user-data dir, so a stale `joybug-tauri.exe` makes the next session attach to it and hang. Before a run, or after a killed one:
+The driver launches one app for the run and kills it at the end, so leftovers are rare — but a killed run (Ctrl+C mid-suite, a crashed driver) can leave `joybug-tauri`, `tauri-driver`, the native driver or Vite behind. On Windows WebView2 keys its browser process by the shared user-data dir, so a stale `joybug-tauri.exe` makes the next session attach to it and hang. Before a run, or after a killed one:
 ```powershell
 taskkill /IM joybug-tauri.exe /T /F 2>$null; taskkill /IM tauri-driver.exe /F 2>$null; taskkill /IM msedgedriver.exe /F 2>$null; taskkill /IM node.exe /F 2>$null
 ```

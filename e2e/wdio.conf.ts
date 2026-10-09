@@ -1,6 +1,6 @@
 // WebdriverIO configuration: the E2E suite against the app's real webview on
 // every OS, through tauri-driver (WebKitWebDriver on Linux, msedgedriver /
-// WebView2 on Windows). One app process per spec file; Mocha; the Playwright-
+// WebView2 on Windows). One app process for the whole run; Mocha; the Playwright-
 // shaped `test`/`expect`/`Page` of e2e/helpers.
 //
 //   npm run test:e2e                      # whole suite (xvfb-run -a … on a headless host)
@@ -52,7 +52,11 @@ const TAURI_SERVICE_OPTIONS = {
 
 export const config: WebdriverIO.Config = {
   runner: "local",
-  specs: ["./tests/**/*.spec.ts"],
+  // One group: every spec file runs in the same worker against the same app.
+  // Relaunching the app (and reloading the frontend) per file cost ~2s × 52
+  // files; the per-test resets in helpers/lifecycle.ts are what isolates tests.
+  // `--spec` on the command line ungroups: each named file gets its own app.
+  specs: [["./tests/**/*.spec.ts"]],
   exclude: IS_WINDOWS ? [] : WINDOWS_ONLY_SPECS.map((f) => `./tests/${f}`),
   // One app at a time: the debug sessions it runs are host processes.
   maxInstances: 1,
@@ -93,12 +97,13 @@ export const config: WebdriverIO.Config = {
   onPrepare: async () => {
     await prepareRun();
   },
-  // Per spec file, once the app is up: a fixed window size so layout-dependent
+  // Once the app is up: a fixed window size so layout-dependent
   // steps (dock panel widths, operand links in truncated rows, context-menu
   // placement) see the same geometry on every host. The X screen must be
   // larger than this: `xvfb-run -s "-screen 0 1920x1080x24"`.
   before: async () => {
-    await browser.setWindowSize(1600, 1000);
+    const { page } = await import("./helpers/pw");
+    await page.setViewportSize({ width: 1600, height: 1000 });
   },
   onComplete: async () => {
     finishRun();
