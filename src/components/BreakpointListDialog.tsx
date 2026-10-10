@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
@@ -10,6 +10,7 @@ import {
 } from "./ui/dialog";
 import { parseAddressExpression, RegisterContext, SymbolResolver } from "@/lib/hexUtils";
 import { numberedEntryLines, type ListEntry } from "@/lib/inputLists";
+import { plural } from "@/lib/utils";
 import { toast } from "sonner";
 
 /** A line that produced no address, with the reason to show the user. */
@@ -22,8 +23,6 @@ interface ApplyReport {
   duplicates: number;
   rejected: RejectedLine[];
 }
-
-const plural = (n: number, word: string) => `${n.toLocaleString()} ${word}${n === 1 ? "" : "s"}`;
 
 /** Symbol lookups go to the backend one search at a time, so a long list is
  *  resolved a few lines at once rather than all at once (a thousand-line paste
@@ -87,6 +86,9 @@ interface BreakpointListDialogProps {
   open: boolean;
   onClose: () => void;
   onApply: (addresses: string[], group?: string, singleShot?: boolean) => Promise<boolean>;
+  /** Group the list lands in unless the user names another: a name no existing
+   *  group has, so a pasted list is one removable unit instead of loose rows. */
+  defaultGroup: string;
   registers?: RegisterContext;
   resolveSymbol?: SymbolResolver;
 }
@@ -105,6 +107,7 @@ export function BreakpointListDialog({
   open,
   onClose,
   onApply,
+  defaultGroup,
   registers,
   resolveSymbol,
 }: BreakpointListDialogProps) {
@@ -115,11 +118,15 @@ export function BreakpointListDialog({
   const [report, setReport] = useState<ApplyReport | null>(null);
 
   // Each open starts clean — a stale report from the previous run next to a
-  // fresh list would read as this list's result.
+  // fresh list would read as this list's result. The group is seeded on open
+  // only: `defaultGroup` moves on once this list's rows exist, and a re-apply
+  // after fixing the skipped lines belongs in the same group.
+  const defaultGroupRef = useRef(defaultGroup);
+  defaultGroupRef.current = defaultGroup;
   useEffect(() => {
     if (open) {
       setDraft("");
-      setGroup("");
+      setGroup(defaultGroupRef.current);
       setSingleShot(false);
       setReport(null);
     }
@@ -138,7 +145,9 @@ export function BreakpointListDialog({
         resolveSymbol,
       );
       if (addresses.length > 0) {
-        await onApply(addresses, group.trim() || undefined, singleShot);
+        // A cleared box still groups the list — loose rows can only be removed
+        // one at a time.
+        await onApply(addresses, group.trim() || defaultGroupRef.current, singleShot);
       }
       const summary = `Set ${plural(addresses.length, "breakpoint")}`;
       if (rejected.length === 0) {
@@ -183,7 +192,8 @@ export function BreakpointListDialog({
           <Input
             value={group}
             onChange={(e) => setGroup(e.target.value)}
-            placeholder="Group (optional)"
+            placeholder={`Group (${defaultGroup})`}
+            title="Group the new breakpoints are added to"
             className="flex-1"
             disabled={busy}
             data-testid="breakpoint-list-group"

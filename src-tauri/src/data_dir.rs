@@ -2,7 +2,7 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 use std::fs;
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tracing::error;
 
 /// Resolve the application data directory.
@@ -31,6 +31,27 @@ pub fn joybug_data_dir() -> PathBuf {
         return PathBuf::from(home).join(".config").join("joybug-tauri");
     }
     std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+}
+
+/// Keep the `keep` newest `*.ext` files in `dir` (by modification time) and
+/// remove the rest. Missing directory: nothing to do.
+pub fn prune_oldest(dir: &Path, ext: &str, keep: usize) {
+    let Ok(entries) = fs::read_dir(dir) else { return };
+    let mut files: Vec<(std::time::SystemTime, PathBuf)> = entries
+        .flatten()
+        .filter(|e| e.path().extension().is_some_and(|x| x == ext))
+        .filter_map(|e| Some((e.metadata().ok()?.modified().ok()?, e.path())))
+        .collect();
+    files.sort();
+    let excess = files.len().saturating_sub(keep);
+    for (_, path) in files.into_iter().take(excess) {
+        let _ = fs::remove_file(path);
+    }
+}
+
+/// `bytes` as lowercase hex, two digits per byte.
+pub fn hex_lower(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
 /// Read and parse a JSON file under the data dir. Returns `T::default()` when the
@@ -64,5 +85,29 @@ pub fn save_json<T: Serialize + ?Sized>(file_name: &str, value: &T) {
             }
         }
         Err(e) => error!("Failed to serialize {}: {}", file_name, e),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hex_pads_every_byte() {
+        assert_eq!(hex_lower(&[0x00, 0x0f, 0xff]), "000fff");
+    }
+
+    #[test]
+    fn prune_keeps_the_newest_files_of_the_extension() {
+        let dir = crate::test_util::TempDir::new("joybug-prune-test");
+        for (i, name) in ["a.idx", "b.idx", "c.idx", "keep.txt"].iter().enumerate() {
+            let path = dir.file(name, b"x");
+            let t = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000 + i as u64);
+            fs::OpenOptions::new().write(true).open(&path).unwrap().set_modified(t).unwrap();
+        }
+        prune_oldest(&dir.0, "idx", 2);
+        let mut left: Vec<String> = fs::read_dir(&dir.0).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+        left.sort();
+        assert_eq!(left, ["b.idx", "c.idx", "keep.txt"]);
     }
 }

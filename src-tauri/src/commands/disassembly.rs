@@ -13,6 +13,7 @@ pub fn request_disassembly(
     address: u64,
     count: usize,
     compare_image: bool,
+    request_id: Option<String>,
     session_states: State<'_, SessionStatesMap>,
     oob_pool: State<'_, super::OobPool>,
     app_handle: tauri::AppHandle,
@@ -25,8 +26,8 @@ pub fn request_disassembly(
     // `disassembly-updated`/`-error` events either way.
     super::paused_or_oob(
         &session_id, &session_states, &oob_pool,
-        UICommand::Disassembly { arch, address, count: count as u32, compare_image },
-        |client, pid| process_disassembly_request(client, &handle, pid, arch, address, count as u32, compare_image),
+        UICommand::Disassembly { arch, address, count: count as u32, compare_image, request_id: request_id.clone() },
+        |client, pid| process_disassembly_request(client, &handle, pid, arch, address, count as u32, compare_image, request_id.clone()),
     )
 }
 

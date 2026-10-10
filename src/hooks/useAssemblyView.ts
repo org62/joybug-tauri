@@ -13,6 +13,8 @@ import { useNavigationChannel } from '@/hooks/useNavigationChannel';
 import { useLiveRefresh } from '@/hooks/useLiveRefresh';
 import { disassemblyNavigation } from '@/lib/navigationStore';
 import { NavHistoryStore } from '@/lib/navHistory';
+import { perfAsmLoadEnd, perfAsmLoadStart, type AsmLoadReason } from "@/lib/perf";
+import { hasUsableSymbols, type SymbolStatusKind } from '@/contexts/SessionContext';
 
 // Instruction interface matching backend SerializableInstruction
 export interface Instruction {
@@ -57,6 +59,50 @@ export function buildAsmRows(insns: Instruction[]): AsmRow[] {
     rows.push({ kind: 'insn', insn });
   }
   return rows;
+}
+
+/** A module's symbol state, as far as a listing cares. */
+export interface AsmSymbolStatus {
+  base_address: string;
+  status: SymbolStatusKind;
+}
+
+/** The modules with usable symbols (a PDB or export names), by base address. */
+function usableSymbolsByBase(statuses: AsmSymbolStatus[] | undefined): Map<string, SymbolStatusKind> {
+  return new Map((statuses ?? []).filter((s) => hasUsableSymbols(s.status)).map((s) => [s.base_address, s.status]));
+}
+
+/** A module's address range, for deciding whether its symbols matter to a listing. */
+export interface AsmModuleRange {
+  base_address: string;
+  size: number;
+}
+
+/**
+ * Whether anything in `insns` can read differently once the module at
+ * `[lo, hi)` has symbols: a row inside it (its label, its `module!name`), or a
+ * branch target / memory operand pointing into it.
+ */
+function listingTouchesRange(insns: Instruction[], lo: number, hi: number): boolean {
+  if (insns.length === 0) return false;
+  const inRange = (hex: string | null | undefined) => {
+    if (!hex) return false;
+    const n = Number(hex);
+    return n >= lo && n < hi;
+  };
+  // Rows are in address order: the listing's span is its first and last row.
+  const first = Number(insns[0].address);
+  const last = Number(insns[insns.length - 1].address);
+  if (first < hi && last >= lo) return true;
+  return insns.some((i) => inRange(i.jump_target) || inRange(i.mem_ref));
+}
+
+/** The fields a symbol load or a diagnostic switch can change on a row. */
+function sameAnnotations(a: Instruction, b: Instruction): boolean {
+  return a.op_str === b.op_str
+    && a.jump_target === b.jump_target
+    && (a.mem_ref ?? null) === (b.mem_ref ?? null)
+    && (a.symbols ?? []).join('\n') === (b.symbols ?? []).join('\n');
 }
 
 /** Display-row count of `buildAsmRows(insns)` without materializing the rows. */
@@ -152,6 +198,10 @@ export interface AssemblyViewState {
    *  on it re-fires even for equal counts. The view compensates the scroll
    *  offset so the viewport stays visually stable. */
   prependSignal: { count: number };
+  /** Bumps when the rows were updated in place (same instructions, fresher
+   *  names). Label rows may have appeared or gone above the viewport: the view
+   *  keeps the row at the top of the viewport where it was. */
+  annotationSeq: number;
   /** Bumps on every PC-follow decision (step or new pause event, including a
    *  re-hit of the same breakpoint address). The view keys its PC auto-scroll
    *  on this so an unchanged-PC pause still re-centers the RIP row. */
@@ -214,6 +264,12 @@ export interface UseAssemblyViewOptions {
   /** Changes when a module's symbols finish loading in the background; triggers
    * a refresh so raw addresses upgrade to symbol names. */
   symbolsRefreshKey?: string;
+  /** Session mode: the per-module symbol states behind `symbolsRefreshKey`,
+   * which say whose symbols landed. */
+  symbolStatuses?: AsmSymbolStatus[];
+  /** The process's modules. With them a symbol load refreshes the listing
+   * only when the module that got symbols has something to do with it. */
+  modules?: AsmModuleRange[];
   /** Non-session disassembly source (PE file). */
   disassemble?: AsmDisassembleFn;
   /** VA to disassemble first when using a file source. */
@@ -265,7 +321,7 @@ function isAddressInView(instructions: Instruction[], addr: bigint): boolean {
 }
 
 export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewState & AssemblyViewActions {
-  const { sessionId, isPaused, canLoad = true, pcAddress: pcAddressProp, registers = {}, resolveSymbol, symbolsRefreshKey, disassemble, initialAddress, navHistory } = options;
+  const { sessionId, isPaused, canLoad = true, pcAddress: pcAddressProp, registers = {}, resolveSymbol, symbolsRefreshKey, symbolStatuses, modules, disassemble, initialAddress, navHistory } = options;
 
   // State
   const [instructions, setInstructions] = useState<Instruction[]>([]);
@@ -292,6 +348,7 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
   // (keep the viewport visually stable).
   const [loadGeneration, setLoadGeneration] = useState(0);
   const [prependSignal, setPrependSignal] = useState<{ count: number }>({ count: 0 });
+  const [annotationSeq, setAnnotationSeq] = useState(0);
   const [followSeq, setFollowSeq] = useState(0);
 
   // Raw pause-transition counter. The debounced `displayStatus` swallows runs
@@ -411,9 +468,17 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
       !userNavigatedAway.current && pcAddress !== null ? pcAddress : currentAddress;
   }, [navHistory, currentAddress, pcAddress]);
 
+  // Why the next function load is requested, for the telemetry (`ui.asm.load.<reason>`).
+  // Set by a caller right before it triggers a load; anything unset is a
+  // user navigation.
+  const loadReason = useRef<AsmLoadReason | null>(null);
+
   // Load disassembly for an address. `prefetchContext` (PC-follow loads only)
   // arms an automatic one-chunk extension on both sides once the replace lands.
   const loadDisassembly = useCallback(async (address: bigint, prefetchContext = false) => {
+    // Consumed here, before any early return, so it never labels a later load.
+    const reason = loadReason.current ?? "navigation";
+    loadReason.current = null;
     if (!sessionId && !disassemble) return;
     // Session mode with no live target (stopped/exited): nothing can serve the
     // request — don't enter the loading state at all.
@@ -449,6 +514,7 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
       return;
     }
 
+    perfAsmLoadStart(reason, sessionId);
     try {
       await invoke('request_function_disassembly', {
         sessionId,
@@ -599,7 +665,60 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
   // fails its echo check and is dropped — leaving the view stuck on the old
   // function (the PC row never appears). The ref is already the new target, so
   // a refresh re-requests it and the dup-guard collapses the redundant load.
+  // Re-decode the rows on screen and update them in place: same instructions,
+  // fresher annotations (symbol labels, named operands). This is what a symbol
+  // load calls for — not a reload: the view keeps its rows, its extended
+  // context and its scroll position, so nothing flickers. The whole loaded
+  // range is asked for in one tagged request and matched back by address.
+  const pendingAnnotation = useRef<string | null>(null);
+  const annotationRequestSeq = useRef(0);
+  const refreshAnnotations = useCallback(() => {
+    if (disassemble || !sessionId || !canLoad) return;
+    const cur = instructionsRef.current;
+    // A load in flight returns fresh annotations anyway.
+    if (cur.length === 0 || requestInFlight.current) return;
+    const first = parseAddress(cur[0].address);
+    if (first === null) return;
+    const requestId = `annotations-${++annotationRequestSeq.current}`;
+    pendingAnnotation.current = requestId;
+    invoke('request_disassembly', {
+      sessionId,
+      address: Number(first),
+      count: cur.length,
+      compareImage: compareImageRef.current,
+      requestId,
+    }).catch(() => {
+      if (pendingAnnotation.current === requestId) pendingAnnotation.current = null;
+    });
+  }, [disassemble, sessionId, canLoad]);
+
+  // Apply an annotation refresh. Returns false when the code itself turned out
+  // to differ (bytes changed under the listing): then only a real reload will do.
+  const applyAnnotations = useCallback((incoming: Instruction[]): boolean => {
+    const byAddress = new Map(incoming.map((i) => [i.address, i]));
+    const prev = instructionsRef.current;
+    let changed = false;
+    for (const old of prev) {
+      const fresh = byAddress.get(old.address);
+      if (fresh && fresh.bytes !== old.bytes) return false;
+    }
+    const next = prev.map((old) => {
+      const fresh = byAddress.get(old.address);
+      // Rows keep their identity unless something on them changed, so the
+      // memoized rows that did not change do not re-render.
+      if (!fresh || sameAnnotations(old, fresh)) return old;
+      changed = true;
+      return fresh;
+    });
+    if (!changed) return true;
+    instructionsRef.current = next;
+    setInstructions(next);
+    setAnnotationSeq((n) => n + 1);
+    return true;
+  }, []);
+
   const refresh = useCallback(() => {
+    loadReason.current ??= "refresh";
     const keepContext = contextActive.current;
     const target = lastRequestedAddress.current ?? currentAddress ?? pcAddress;
     if (target !== null) {
@@ -658,12 +777,56 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
   // Re-request the current view when background symbol loading completes so raw
   // addresses upgrade to symbol names. The ref starts at the mount value, so no
   // refresh fires until the key actually changes.
+  //
+  // Only for a module the listing has something to do with — one that holds
+  // rows on screen or is the target of a branch or memory operand in them. A
+  // process loads dozens of modules, each landing its symbols on its own; a
+  // listing that reloaded for every one of them flickered once per module.
+  // And in place (`refreshAnnotations`), not as a reload.
   const prevSymbolsKey = useRef(symbolsRefreshKey);
+  // The modules with symbols as of the last key change, to tell which ones
+  // the change was about.
+  const prevSymbolStatuses = useRef(usableSymbolsByBase(symbolStatuses));
+  const symbolStatusesRef = useRef(symbolStatuses);
+  symbolStatusesRef.current = symbolStatuses;
+  const modulesRef = useRef(modules);
+  modulesRef.current = modules;
+  // `refresh` changes identity with every step; the effects below must not
+  // re-run (or re-subscribe) for that.
+  const refreshRef = useRef(refresh);
+  refreshRef.current = refresh;
   useEffect(() => {
     if (symbolsRefreshKey === prevSymbolsKey.current) return;
     prevSymbolsKey.current = symbolsRefreshKey;
-    refresh();
-  }, [symbolsRefreshKey, refresh]);
+    const before = prevSymbolStatuses.current;
+    const now = usableSymbolsByBase(symbolStatusesRef.current);
+    prevSymbolStatuses.current = now;
+    if (disassemble) {
+      // File mode: symbols come from one explicitly loaded file; reload.
+      loadReason.current = "symbols_loaded";
+      refreshRef.current();
+      return;
+    }
+    // The modules whose symbols just became usable, or upgraded from export
+    // names: their state differs from the one at the last change.
+    const relevant = [...now].some(([baseAddress, status]) => {
+      if (before.get(baseAddress) === status) return false;
+      const base = parseAddress(baseAddress);
+      const module = base === null ? undefined : modulesRef.current?.find((m) => parseAddress(m.base_address) === base);
+      // A module we cannot place: refresh rather than risk stale names.
+      if (base === null || !module) return true;
+      return listingTouchesRange(instructionsRef.current, Number(base), Number(base) + module.size);
+    });
+    if (relevant) refreshAnnotations();
+  }, [symbolsRefreshKey, disassemble, refreshAnnotations]);
+
+  // The diagnostic disassembly switches (Settings -> Diagnostics) changed what
+  // a listing contains: re-request the current one.
+  useEffect(() => {
+    if (!sessionId || disassemble) return;
+    const unlisten = listen('disasm-options-changed', () => refreshRef.current());
+    return () => { void unlisten.then((fn) => fn()); };
+  }, [sessionId, disassemble]);
 
   // Listen for disassembly events (session mode only; file mode resolves inline)
   useEffect(() => {
@@ -685,6 +848,7 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
           // stale ones, but the mirror must never lag a full replace).
           instructionsRef.current = event.payload.instructions;
           setInstructions(event.payload.instructions);
+          perfAsmLoadEnd(event.payload.instructions.length);
           setLoadGeneration((g) => g + 1);
           resetExtension();
           // An armed replace produces a context view; anything else is bare.
@@ -757,10 +921,19 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
     // must never be treated as a replace: that would hijack the fresh view with
     // an old-edge chunk, which is exactly the "goto/step lands on the wrong
     // rows" bug. `applyEdgeExtension`'s echo check discards it.
-    const unlistenOldSuccess = listen<{session_id: string, address: number, instructions: Instruction[]}>(
+    const unlistenOldSuccess = listen<{session_id: string, address: number, instructions: Instruction[], request_id?: string | null}>(
       'disassembly-updated',
       (event) => {
         if (event.payload.session_id !== sessionId) return;
+        // A tagged answer is an annotation refresh of the loaded range — never
+        // an append. Only the latest one asked for counts; if the code itself
+        // changed under the listing, fall back to a real reload.
+        if (event.payload.request_id) {
+          if (event.payload.request_id !== pendingAnnotation.current) return;
+          pendingAnnotation.current = null;
+          if (!applyAnnotations(event.payload.instructions)) refresh();
+          return;
+        }
         let echoed: bigint | null = null;
         try { echoed = BigInt(event.payload.address); } catch { echoed = null; }
         applyEdgeExtension('below', echoed, event.payload.instructions);
@@ -772,10 +945,15 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
     // `pendingAppendTarget`, so the single-in-flight guard wedges scroll-down
     // permanently. With resilient decode a bad byte no longer errors; a hard
     // error here means genuinely unreadable memory below, so latch the edge.
-    const unlistenForwardError = listen<{ session_id: string; address: number; error: string }>(
+    const unlistenForwardError = listen<{ session_id: string; address: number; error: string; request_id?: string | null }>(
       'disassembly-error',
       (event) => {
         if (event.payload.session_id !== sessionId) return;
+        // A failed annotation refresh leaves the rows as they are.
+        if (event.payload.request_id) {
+          if (event.payload.request_id === pendingAnnotation.current) pendingAnnotation.current = null;
+          return;
+        }
         let echoed: bigint | null = null;
         try { echoed = BigInt(event.payload.address); } catch { echoed = null; }
         if (pendingAppendTarget.current === null || echoed !== pendingAppendTarget.current) return;
@@ -789,15 +967,20 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
     // same `revision`; it bumps the revision only on view-affecting changes. Gate
     // the (expensive, full-function) re-decode on that — otherwise every single
     // step would re-disassemble the current function even though nothing changed.
-    const unlistenPatches = listen<{ session_id: string; revision: number }>(
+    const unlistenPatches = listen<{ session_id: string; revision: number; changed?: boolean }>(
       'patches-updated',
       (event) => {
         if (event.payload.session_id !== sessionId || lastRequestedAddress.current === null) return;
-        if (event.payload.revision === lastPatchRevision.current) return; // unchanged — nothing to re-decode
+        // `changed` is the backend saying so itself. Comparing revisions alone
+        // re-decoded on the first event after every load, when there was no
+        // earlier revision to compare with.
+        const changed = event.payload.changed ?? event.payload.revision !== lastPatchRevision.current;
         lastPatchRevision.current = event.payload.revision;
+        if (!changed) return; // the per-pause re-broadcast — nothing to re-decode
         // Re-request the current disassembly to pick up is_patched flags and
         // new bytes. Context views get their surrounding code back.
         if (contextActive.current) prefetchArmed.current = true;
+        perfAsmLoadStart("patches_updated", sessionId);
         invoke('request_function_disassembly', {
           sessionId,
           address: Number(lastRequestedAddress.current),
@@ -857,6 +1040,7 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
     // Skip if user already navigated (e.g., pending symbol navigation consumed in same render)
     if (currentAddress === null && !userNavigatedAway.current) {
       lastAutoPcAddress.current = pcAddress;
+      loadReason.current = "pc_follow";
       goToAddressDirect(pcAddress, { auto: true });
       return;
     }
@@ -904,6 +1088,7 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
         if (!pcLoaded) {
           // PC left the decoded window — load a fresh view around it, with
           // adjacent-code context so it's never an isolated view.
+          loadReason.current = "pc_follow";
           goToAddressDirect(pcAddress, { auto: true, prefetchContext: isRealStep });
         } else if (!contextActive.current && isRealStep) {
           // In-window step on a bare view (e.g. right after a goto): pull in
@@ -971,6 +1156,7 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
     // Infinite-scroll extension
     loadGeneration,
     prependSignal,
+    annotationSeq,
     followSeq,
     // Actions
     goToAddress,

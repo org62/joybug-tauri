@@ -2,6 +2,7 @@ use crate::error::{Error, Result};
 use crate::session::{UICommand, SymbolData};
 use crate::state::SessionStatesMap;
 use joybug_core::interfaces::DisassemblerProvider;
+use joybug_core::protocol::LineInfoState;
 use joybug_core::protocol_io::{PdbLoadOutcome, SymbolLoadState};
 use super::types::{ModuleSymbolStatusData, PdbLoadResultData, PdbMismatchData};
 use tauri::State;
@@ -46,6 +47,11 @@ pub fn get_session_symbol_status(
                     symbol_count,
                     error,
                     pdb_path: s.pdb_path,
+                    line_info: match s.line_info {
+                        LineInfoState::NotLoaded => "none",
+                        LineInfoState::Loading => "loading",
+                        LineInfoState::Ready => "ready",
+                    },
                 }
             }).collect();
             Ok(data)

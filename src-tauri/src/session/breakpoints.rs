@@ -2,7 +2,8 @@ use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, Manager};
 use tracing::{error, info, warn};
 
-use super::helpers::{format_symbol, is_system_module_path, module_short_name};
+use super::helpers::{format_symbol, is_system_module_path, module_containing, module_short_name};
+use super::source::FileLine;
 use super::types::DebugSession;
 use crate::state::SessionStateUI;
 
@@ -16,12 +17,53 @@ fn parse_hw_type(hw_type: &str) -> Option<joybug_core::protocol::HardwareBreakpo
     }
 }
 
-/// Resolve an address to a source file/line for breakpoint display (best-effort).
-fn resolve_source_line(session: &mut DebugSession, pid: u32, address: u64) -> (Option<String>, Option<u32>) {
-    match super::source::resolve_file_line(session, pid, address) {
-        Some((path, line)) => (Some(path), Some(line)),
-        None => (None, None),
+/// The source file/line shown on a breakpoint row (display only).
+///
+/// Never waits for the module's line table: this runs on the session thread,
+/// at module load and whenever a breakpoint is set. When the table is still
+/// being parsed the row goes without for now and a background refresh fills
+/// it in — for every breakpoint of that module at once — when the table lands.
+fn resolve_source_line(
+    session: &mut DebugSession,
+    app_handle: &Option<AppHandle>,
+    pid: u32,
+    address: u64,
+) -> (Option<String>, Option<u32>) {
+    match super::source::lookup_file_line(session, pid, address) {
+        FileLine::Found(path, line) => (Some(path), Some(line)),
+        FileLine::None => (None, None),
+        FileLine::Pending => {
+            schedule_source_line_refresh(session, app_handle, pid, address);
+            (None, None)
+        }
     }
+}
+
+/// Fill in the source lines of the breakpoints in the module containing
+/// `address` once its line table is parsed. A background job per module, on
+/// its own connection, off the session thread: at most one runs and one waits
+/// (`CoalescedJobs`), and modules do not wait for each other.
+fn schedule_source_line_refresh(session: &DebugSession, app_handle: &Option<AppHandle>, pid: u32, address: u64) {
+    let Some(handle) = app_handle.clone() else { return };
+    let (session_id, module_name) = {
+        let state = session.state.lock().unwrap();
+        let Some(module) = module_containing(&state.modules, address) else { return };
+        (state.id.clone(), module_short_name(&module.name))
+    };
+
+    let key = format!("source-lines:{session_id}:{}", module_name.to_lowercase());
+    let state_arc = session.state.clone();
+    handle.clone().state::<crate::commands::CoalescedJobs>().request(&key, move |_| {
+        match crate::commands::create_oob_client(&state_arc) {
+            Ok((mut client, _)) => {
+                // A request with nothing to do with a breakpoint row must not
+                // time out a parse that takes longer than the OOB default.
+                let _ = client.set_read_timeout(None);
+                refresh_breakpoint_source_lines_for_module(&mut client, &Some(handle), pid, &module_name);
+            }
+            Err(e) => warn!("Source-line refresh for {}: no OOB client: {}", module_name, e),
+        }
+    });
 }
 
 /// Convert hw_size u8 to joybug-core HardwareBreakpointSize
@@ -301,7 +343,7 @@ fn add_software_breakpoint(
             }
             _ => None,
         };
-        let (source_file, source_line) = resolve_source_line(session, pid, address);
+        let (source_file, source_line) = resolve_source_line(session, app_handle_clone, pid, address);
         (symbol, source_file, source_line)
     };
 
@@ -756,9 +798,12 @@ pub(crate) fn process_update_breakpoint(
 
 /// Re-resolve source file/line for a module's active breakpoints and, if any
 /// changed, emit + persist. Called after a manual PDB finishes loading
-/// asynchronously (see `reapply_symbols_for_module`), so breakpoints that were
-/// re-applied before the symbols were ready pick up their source lines. Runs
-/// over whichever client the caller holds (the async path uses an OOB client).
+/// asynchronously (see `reapply_symbols_for_module`) and when a line table that
+/// was still being parsed lands (`schedule_source_line_refresh`), so breakpoints
+/// that were applied before then pick up their source lines.
+///
+/// Waits for the line table, so it is for a background thread with its own
+/// OOB client — never the session thread.
 pub(crate) fn refresh_breakpoint_source_lines_for_module(
     session: &mut DebugSession,
     app_handle_clone: &Option<AppHandle>,
@@ -778,7 +823,10 @@ pub(crate) fn refresh_breakpoint_source_lines_for_module(
 
     let mut changed = false;
     for (bp_id, addr) in targets {
-        let (source_file, source_line) = resolve_source_line(session, pid, addr);
+        let (source_file, source_line) = match session.resolve_address_to_line(pid, addr) {
+            Ok(Some(info)) => (Some(info.file.path), Some(info.line_entry.line_start)),
+            _ => (None, None),
+        };
         let mut state = session.state.lock().unwrap();
         if let Some(bp) = state.breakpoints.iter_mut().find(|b| b.id == bp_id) {
             if bp.source_file != source_file || bp.source_line != source_line {
@@ -853,7 +901,7 @@ pub(crate) fn reapply_breakpoints_for_module(
         if snap.enabled && !armed {
             continue;
         }
-        let (source_file, source_line) = resolve_source_line(session, pid, addr);
+        let (source_file, source_line) = resolve_source_line(session, app_handle_clone, pid, addr);
         let mut state = session.state.lock().unwrap();
         if let Some(bp) = state.breakpoints.iter_mut().find(|b| b.id == snap.id) {
             bp.address = addr;
@@ -1012,7 +1060,7 @@ fn arm_hardware_at(
         }
         _ => None,
     };
-    let (source_file, source_line) = resolve_source_line(session, pid, address);
+    let (source_file, source_line) = resolve_source_line(session, app_handle_clone, pid, address);
 
     let module_fingerprint = module_fingerprint_at(session, address);
 

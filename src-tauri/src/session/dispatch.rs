@@ -7,7 +7,6 @@ use super::callstack::*;
 use super::disassembly::*;
 use super::emulation::*;
 use super::helpers::report_step_error;
-use super::image_patches::process_scan_image_patches;
 use super::memory::*;
 use super::minidump::process_write_minidump;
 use super::patches::*;
@@ -16,7 +15,8 @@ use super::threads::*;
 use super::runner::emit_session_event;
 use super::source::*;
 use super::symbols::*;
-use super::types::{DebugSession, UICommand};
+use super::types::{DebugSession, QueuedCommand, UICommand};
+use crate::telemetry;
 use crate::error::Result;
 use crate::state::SessionStatusUI;
 
@@ -25,7 +25,7 @@ use crate::state::SessionStatusUI;
 fn dedup_commands(commands: Vec<UICommand>) -> Vec<UICommand> {
     // Track which idempotent command types we've seen (scanning from the end)
     let mut seen_fn_disasm: Option<u64> = None;
-    let mut seen_disasm: Option<u64> = None;
+    let mut seen_disasm: Vec<(u64, Option<String>)> = Vec::new();
     let mut seen_disasm_backward: Option<(u64, u32)> = None;
     let mut seen_callstack = false;
     let mut seen_deref_batch = false;
@@ -58,12 +58,16 @@ fn dedup_commands(commands: Vec<UICommand>) -> Vec<UICommand> {
                     seen_fn_disasm = Some(*address);
                 }
             }
-            UICommand::Disassembly { address, .. } => {
-                if seen_disasm == Some(*address) {
+            // Keyed on the request id too: a tagged request (an annotation
+            // refresh of the whole listing) and an untagged one (a scroll
+            // extension) for the same address are different questions.
+            UICommand::Disassembly { address, request_id, .. } => {
+                let key = (*address, request_id.clone());
+                if seen_disasm.contains(&key) {
                     keep[i] = false;
                     debug!("Dedup: dropping duplicate Disassembly for 0x{:X}", address);
                 } else {
-                    seen_disasm = Some(*address);
+                    seen_disasm.push(key);
                 }
             }
             // Key on (target, count): rapid scroll enqueues many backward requests
@@ -133,7 +137,7 @@ fn dedup_commands(commands: Vec<UICommand>) -> Vec<UICommand> {
 
 /// Handles UI commands in a loop, returns true to continue execution, false to stop session
 pub(crate) fn handle_ui_commands(
-    ui_receiver: &std::sync::mpsc::Receiver<UICommand>,
+    ui_receiver: &std::sync::mpsc::Receiver<QueuedCommand>,
     session: &mut DebugSession,
     app_handle_clone: &Option<AppHandle>,
     event: &joybug_core::protocol_io::DebugEvent,
@@ -152,10 +156,23 @@ pub(crate) fn handle_ui_commands(
         };
 
         // Drain any additional pending commands and dedup the batch
-        let mut batch = vec![first];
+        let mut queued = vec![first];
         while let Ok(cmd) = ui_receiver.try_recv() {
-            batch.push(cmd);
+            queued.push(cmd);
         }
+        let received = queued.len();
+        // Since when each kind of command has been waiting: a command that
+        // survives the dedup stands for the earliest request of its kind.
+        let mut waiting_since: Vec<(&'static str, std::time::Instant)> = Vec::new();
+        if telemetry::enabled() {
+            for q in &queued {
+                let kind = telemetry::variant_name(&q.command);
+                if !waiting_since.iter().any(|(k, _)| *k == kind) {
+                    waiting_since.push((kind, q.queued_at));
+                }
+            }
+        }
+        let mut batch: Vec<UICommand> = queued.into_iter().map(|q| q.command).collect();
         if batch.len() > 1 {
             debug!("Batched {} commands, deduplicating", batch.len());
             batch = dedup_commands(batch);
@@ -163,7 +180,16 @@ pub(crate) fn handle_ui_commands(
         }
 
         // Process the deduped batch
+        let kept = batch.len();
         for command in batch {
+            let kind = if telemetry::enabled() { telemetry::variant_name(&command) } else { "" };
+            let _request = telemetry::request_scope(kind);
+            let mut span = telemetry::span("app.command");
+            if let Some((_, since)) = waiting_since.iter().find(|(k, _)| *k == kind) {
+                span.attr_elapsed("queue_us", *since);
+                span.attr("received", received as u64);
+                span.attr("kept", kept as u64);
+            }
             info!("Processing UI command: {:?}", command);
 
             // A command that moves the target's registers or memory invalidates
@@ -175,9 +201,13 @@ pub(crate) fn handle_ui_commands(
             if mutates_target {
                 invalidate_callstack_cache(session);
             }
+            drop(span);
             match result {
                 CommandResult::Continue => {}
-                CommandResult::ResumeExecution => return Ok(true),
+                CommandResult::ResumeExecution => {
+                    telemetry::mark_resume();
+                    return Ok(true);
+                }
                 CommandResult::StopSession => return Ok(false),
             }
         }
@@ -402,8 +432,8 @@ fn process_command(
             }
             CommandResult::ResumeExecution
         }
-        UICommand::Disassembly { arch, address, count, compare_image } => {
-            process_disassembly_request(session, app_handle_clone, event.pid(), arch, address, count, compare_image);
+        UICommand::Disassembly { arch, address, count, compare_image, request_id } => {
+            process_disassembly_request(session, app_handle_clone, event.pid(), arch, address, count, compare_image, request_id);
             CommandResult::Continue
         }
         UICommand::DisassembleFunction { arch, address, max_instructions, compare_image } => {
@@ -472,6 +502,12 @@ fn process_command(
         }
         UICommand::SyncAutoBreakpoints => {
             process_sync_auto_breakpoints(session, app_handle_clone, event.pid());
+            CommandResult::Continue
+        }
+        UICommand::SetDisasmOptions { options } => {
+            if let Err(e) = session.set_disasm_options(options) {
+                warn!("Failed to apply disassembly options: {}", e);
+            }
             CommandResult::Continue
         }
         UICommand::RemoveBreakpoint { ref breakpoint_id } => {
@@ -552,10 +588,6 @@ fn process_command(
         }
         UICommand::RestoreImageBytes { address } => {
             process_restore_image_bytes(session, app_handle_clone, event.pid(), address);
-            CommandResult::Continue
-        }
-        UICommand::ScanImagePatches => {
-            process_scan_image_patches(session, app_handle_clone, event.pid());
             CommandResult::Continue
         }
         UICommand::AddBookmark { ref kind, address, ref value_type, ref name, ref comment, ref pointer_offsets, ref base_symbol, ref asm_text } => {

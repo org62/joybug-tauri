@@ -1,8 +1,9 @@
 use crate::error::Result;
 use crate::session::memory::{
     process_dereference_batch, process_dereference_request, process_memory_read,
-    process_memory_regions_request, process_memory_search, process_memory_write,
+    process_memory_regions_request, process_memory_search, process_memory_write, protect_range,
 };
+use super::types::{ProtectRange, ProtectResult};
 use crate::session::UICommand;
 use crate::state::SessionStatesMap;
 use tauri::State;
@@ -106,6 +107,61 @@ pub fn request_set_register(
     super::send_paused_command(&session_id, &session_states, UICommand::SetRegister { register_name: register_name.clone(), value })?;
     info!("Set register request sent for session {}: {} = 0x{:X}", session_id, register_name, value);
     Ok(())
+}
+
+/// Change the protection of each range to `protect` (a `PAGE_*` value) over the
+/// OOB connection, so it works on a running target where the OS allows it.
+/// Every range reports its own outcome: one bad range does not cost the rest of
+/// a selection. The caller re-requests the region list afterwards.
+#[tauri::command]
+pub fn set_memory_protection(
+    session_id: String,
+    ranges: Vec<ProtectRange>,
+    protect: u32,
+    session_states: State<'_, SessionStatesMap>,
+    oob_pool: State<'_, super::OobPool>,
+    app_handle: tauri::AppHandle,
+) -> Result<Vec<ProtectResult>> {
+    let session_arc = super::get_session_arc(&session_id, &session_states)?;
+    let results = super::with_oob_client(&session_arc, &session_id, &oob_pool, move |client, pid| {
+        ranges
+            .into_iter()
+            .map(|range| {
+                let outcome = super::parse_hex_u64(&range.address, "address")
+                    .map_err(|e| e.to_string())
+                    .and_then(|address| protect_range(client, pid, address, range.size, protect));
+                ProtectResult {
+                    address: range.address,
+                    size: range.size,
+                    old_protect: outcome.as_ref().ok().copied(),
+                    error: outcome.err(),
+                }
+            })
+            .collect::<Vec<_>>()
+    })?;
+    let new_name = joybug_core::formatting::memory::protect_to_str(protect);
+    for r in &results {
+        let session = Some(session_id.clone());
+        match (&r.old_protect, &r.error) {
+            (Some(old), _) => crate::ui_logger::log_info(
+                &app_handle,
+                &format!(
+                    "Protection of {} (+0x{:X}) changed: {} -> {}",
+                    r.address, r.size, joybug_core::formatting::memory::protect_to_str(*old), new_name
+                ),
+                session,
+            ),
+            (None, error) => crate::ui_logger::log_error(
+                &app_handle,
+                &format!(
+                    "Changing protection of {} (+0x{:X}) to {} failed: {}",
+                    r.address, r.size, new_name, error.as_deref().unwrap_or("unknown error")
+                ),
+                session,
+            ),
+        }
+    }
+    Ok(results)
 }
 
 #[tauri::command]

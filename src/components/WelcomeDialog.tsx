@@ -27,10 +27,11 @@ interface WelcomeDialogProps {
 
 /**
  * First run of each newly released version: says this is a beta, points at
- * GitHub issues, and captures the auto-update preference.
+ * GitHub issues, and captures the auto-update preference and the telemetry
+ * opt-in (unchecked unless the user already opted in).
  *
- * Not dismissable by Escape or an overlay click — the checkbox value is only
- * written on "Get started", so an accidental dismiss would silently discard it.
+ * Not dismissable by Escape or an overlay click — the checkbox values are only
+ * written on "Get started", so an accidental dismiss would silently discard them.
  */
 export function WelcomeDialog({ state, onDismissed }: WelcomeDialogProps) {
   const { settings, toggle } = useDebugSettings();
@@ -38,6 +39,8 @@ export function WelcomeDialog({ state, onDismissed }: WelcomeDialogProps) {
   // way must not persist it.
   const [draft, setDraft] = useState<boolean | null>(null);
   const autoUpdateCheck = draft ?? settings.auto_update_check;
+  const [telemetryDraft, setTelemetryDraft] = useState<boolean | null>(null);
+  const telemetryEnabled = telemetryDraft ?? settings.telemetry_enabled;
   const [saving, setSaving] = useState(false);
 
   const handleGetStarted = async () => {
@@ -47,6 +50,9 @@ export function WelcomeDialog({ state, onDismissed }: WelcomeDialogProps) {
       // writer for settings.json; dismiss_welcome only stamps app_state.json.
       if (autoUpdateCheck !== settings.auto_update_check) {
         await toggle("auto_update_check");
+      }
+      if (telemetryEnabled !== settings.telemetry_enabled) {
+        await toggle("telemetry_enabled");
       }
       await dismissWelcome();
     } catch (e) {
@@ -101,6 +107,22 @@ export function WelcomeDialog({ state, onDismissed }: WelcomeDialogProps) {
         </div>
         <p className="text-xs text-muted-foreground -mt-1">
           You can change this any time in Settings → General.
+        </p>
+
+        <div className="flex items-center gap-2 rounded border bg-muted/40 px-3 py-2">
+          <Checkbox
+            id="welcome-telemetry"
+            checked={telemetryEnabled}
+            onCheckedChange={(checked) => setTelemetryDraft(checked === true)}
+          />
+          <Label htmlFor="welcome-telemetry" className="text-sm font-normal">
+            Send anonymous performance data
+          </Label>
+        </div>
+        <p className="text-xs text-muted-foreground -mt-1">
+          Timings of the debugger's own operations, to find out where it is slow — never paths,
+          addresses, symbol names or memory. Nothing is sent until a collector address is set in
+          Settings → Diagnostics, where you can also turn this off.
         </p>
 
         <DialogFooter className="sm:justify-between">

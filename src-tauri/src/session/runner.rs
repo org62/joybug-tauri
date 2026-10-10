@@ -262,6 +262,8 @@ pub fn run_debug_session(
     };
 
     info!("Starting debug session: {}", session_id);
+    // This thread is the session's debug loop for as long as the run lasts.
+    crate::telemetry::bind_session(&session_id);
 
     let ui_receiver = {
         let mut state = session_state.lock().unwrap();
@@ -334,6 +336,12 @@ pub fn run_debug_session(
         .on_event(move |session, event| {
             debug!("📥 Received debug event from server: {}", event);
             info!("Debug event: {}", event);
+            // From here to the wait for the user's next command is what a
+            // pause costs before the UI can react to it.
+            crate::telemetry::target_stopped();
+            let event_kind = if crate::telemetry::enabled() { crate::telemetry::variant_name(event) } else { "" };
+            let event_scope = crate::telemetry::request_scope(event_kind);
+            let mut event_span = crate::telemetry::span("app.debug_event");
 
             // A new event means the target ran: whatever stack walk and
             // exception record the previous pause produced are stale.
@@ -423,6 +431,7 @@ pub fn run_debug_session(
             let exception_detail = match event {
                 joybug_core::protocol_io::DebugEvent::Exception { .. } => {
                     let capture = handle.state::<SettingsState>().inner().lock().unwrap().capture_exception_context;
+                    let _span = crate::telemetry::span("app.describe_exception");
                     super::exceptions::describe_exception(session, event, capture)
                 }
                 _ => None,
@@ -667,7 +676,10 @@ pub fn run_debug_session(
                 // Reapply patches then breakpoints for newly loaded modules. Passing
                 // `&None` makes the DllUnloaded arm a no-op — deactivation already
                 // happened above with the state locked.
-                handle_event_breakpoints(session, &app_handle_clone, event, &None);
+                {
+                    let _span = crate::telemetry::span("app.event_breakpoints");
+                    handle_event_breakpoints(session, &app_handle_clone, event, &None);
+                }
 
                 let session_id = session.state.lock().unwrap().id.clone();
                 emit_dll_events(handle, &session_id, event, unloaded_module_name);
@@ -676,11 +688,17 @@ pub fn run_debug_session(
 
             // Emit session events
             emit_session_event(&session.state, handle);
-            emit_breakpoints_event(session, &app_handle_clone);
-            emit_patches_event(session, &app_handle_clone, false);
-            super::bookmarks::emit_bookmarks_event(session, event.pid(), &app_handle_clone);
+            {
+                let _span = crate::telemetry::span("app.emit.pause_lists");
+                emit_breakpoints_event(session, &app_handle_clone);
+                emit_patches_event(session, &app_handle_clone, false);
+                super::bookmarks::emit_bookmarks_event(session, event.pid(), &app_handle_clone);
+            }
 
             info!("Debug event received, waiting for user command");
+            event_span.attr("paused", 1);
+            drop(event_span);
+            drop(event_scope);
 
             // Wait for user commands
             match handle_ui_commands(&ui_receiver, session, &app_handle_clone, event) {
@@ -712,6 +730,15 @@ pub fn run_debug_session(
     if !initial_signals.is_empty() {
         if let Err(e) = session_builder.set_reported_signals(&initial_signals) {
             info!("Signal policy not applied (server too old?): {}", e);
+        }
+    }
+
+    // The diagnostic disassembly switches, when any is on. Later changes are
+    // pushed by `update_debug_settings`.
+    let disasm_options = super::disassembly::disasm_options(&app_handle);
+    if disasm_options != Default::default() {
+        if let Err(e) = session_builder.set_disasm_options(disasm_options) {
+            info!("Disassembly options not applied: {}", e);
         }
     }
 
@@ -769,6 +796,7 @@ pub(crate) fn emit_session_event(
     session_state: &Arc<Mutex<SessionStateUI>>,
     app_handle: &AppHandle,
 ) {
+    let _span = crate::telemetry::span("app.emit.session_updated");
     let debug_session = {
         let state = session_state.lock().unwrap();
         state.to_debug_session()

@@ -1,7 +1,7 @@
 use crate::error::{Error, Result};
 use crate::session::UICommand;
 use crate::state::{PatchInfo, SessionStatesMap};
-use tauri::State;
+use tauri::{Emitter, Manager, State};
 use tracing::info;
 
 #[tauri::command]
@@ -87,24 +87,50 @@ pub fn restore_image_bytes(
     Ok(())
 }
 
-/// Diff all loaded modules' executable sections against their on-disk images
-/// and emit the modified runs on `image-patches-updated` (the Image Patches
-/// window). Runs in the debug loop when paused, otherwise over OOB so a running
-/// or non-invasive `Open` session can scan without an attach.
+/// Payload of `image-patches-scan-failed`.
+#[derive(serde::Serialize, Clone)]
+struct ImagePatchScanFailed {
+    session_id: String,
+    error: String,
+}
+
+/// Diff every loaded module's code against its on-disk image (the Image
+/// Patches window) and emit the result on `image-patches-updated`.
+///
+/// The scan runs as a background job on the session's snapshot connection,
+/// whatever the session is doing — a paused session included, so seconds of
+/// scanning never sit in front of a step or a disassembly request. Requests
+/// are coalesced per session: a new one cancels the scan in progress and
+/// replaces any that was waiting, so only the latest produces a result.
 #[tauri::command]
 pub fn scan_image_patches(
     session_id: String,
     session_states: State<'_, SessionStatesMap>,
-    oob_pool: State<'_, super::OobPool>,
+    jobs: State<'_, super::CoalescedJobs>,
     app_handle: tauri::AppHandle,
 ) -> Result<()> {
-    let handle = Some(app_handle);
-    super::paused_or_oob(
-        &session_id, &session_states, &oob_pool,
-        UICommand::ScanImagePatches,
-        |client, pid| crate::session::image_patches::process_scan_image_patches(client, &handle, pid),
-    )?;
-    info!("Image patch scan request sent for session {}", session_id);
+    let session_arc = super::get_session_arc(&session_id, &session_states)?;
+    // No process, no scan: say so now rather than from the job.
+    super::oob_pid(&session_arc)?;
+
+    let key = format!("image-patches:{session_id}");
+    let job_session = session_id.clone();
+    jobs.request(&key, move |cancel| {
+        let pool = app_handle.state::<super::OobPool>();
+        let handle = Some(app_handle.clone());
+        let scanned = super::with_oob_snapshot_client(&session_arc, &job_session, &pool, |client, pid| {
+            crate::session::image_patches::process_scan_image_patches(client, &handle, pid, cancel)
+        });
+        if let Err(e) = scanned {
+            // A superseded scan has a successor that will report; a failed one
+            // has to release the view from "scanning" itself.
+            if !cancel.is_cancelled() {
+                let failed = ImagePatchScanFailed { session_id: job_session.clone(), error: e.to_string() };
+                let _ = app_handle.emit("image-patches-scan-failed", failed);
+            }
+        }
+    });
+    info!("Image patch scan requested for session {}", session_id);
     Ok(())
 }
 

@@ -70,6 +70,7 @@ The joybug-core external crate has integration tests (`external/joybug-core/test
   - `error.rs` — Error types
   - `settings.rs` — Debug settings
   - `ui_logger.rs` — UI logging utilities
+  - `telemetry/` — opt-in performance telemetry (see "Telemetry & diagnostics" below): `mod.rs` (switches, recorder sink), `anonymize.rs` (the wire format; the only place that decides what a record may say), `sender.rs` (worker: batch, POST, local file), `collector.rs` (`--telemetry-collect` / `--telemetry-summarize` roles)
 - `src/` — React/TypeScript frontend
   - `pages/` — Route pages (`SessionDocked.tsx` is the main debugging view)
   - `components/session/` — Context wrapper components (`Context*View.tsx`)
@@ -86,6 +87,9 @@ The joybug-core external crate has integration tests (`external/joybug-core/test
 1. Frontend calls `invoke("command_name", { args })` (Tauri IPC)
 2. Command handler in `commands/` calls `send_paused_command()` to send a `UICommand` variant through an mpsc channel
 3. Session loop in `session/runner.rs` receives it; `handle_ui_commands()` in `session/dispatch.rs` processes it
+   - **The session thread serves a paused session's commands one at a time, in order.** Anything slow on it is latency for every command queued behind it (a step, a listing, a source lookup). Work that can take seconds does not go there:
+     - a heavy read-only snapshot of the target (the image-patch scan) runs as a `CoalescedJobs` background job (`commands/jobs.rs`) on the session's `snapshot` OOB connection — latest request wins, a superseded one is cancelled;
+     - a source-line lookup never waits for a line-table parse: `try_resolve_address_to_line` answers `Pending` and the core parses in the background (see "Line tables" below). Only a background thread with its own OOB client may use the waiting `resolve_address_to_line`.
 4. **Stepping commands** (Go, StepIn, StepOver, StepOut) return from the handler to resume execution
 5. **Non-stepping commands** (Disassembly, ReadMemory, Emulate, etc.) call domain-specific `process_*()` functions in `session/`, emit a Tauri event, and stay paused
 6. Frontend hooks listen for events (e.g., `session-updated`, `disassembly-updated`, `memory-read-result`) and update component state
@@ -109,6 +113,8 @@ The joybug-core external crate has integration tests (`external/joybug-core/test
   }, [sessionId, canUseMemoryOps]);
   ```
   Any control whose handler invokes the backend against the process is `disabled` on that predicate; the Stopped transition is a normal UI state (`ProcessUnavailableState` from `@/components/ui/empty-state`), never a red error box or a toast. Command handlers report failures through `reportSessionError()` (`lib/sessionHelpers.ts`), which drops the benign "process went away" rejections — never a hand-written `catch` + `toastError`. On the Rust side the three routes of a persisted-config command (paused channel / state-only while Stopped / OOB) are chosen once by `paused_or_offline_or_oob()` in `commands/mod.rs`.
+- **Non-results states** (`@/components/ui/empty-state`): a panel with nothing to show uses `EmptyState` / `ProcessUnavailableState` / `LoadingState`, never a hand-rolled block. They share one icon box (`STATE_ICON_CLASS`) and one text layout, because a panel swaps between them with nothing else changing — a different icon size or a missing subtitle line shows as the icon jumping. A loading state that can alternate with an empty one goes through `useDelayedFlag` so a load of a few milliseconds does not flash it.
+- **Refreshing a listing vs reloading it**: when only the *annotations* of the rows on screen can have changed (a module's symbols landed), update them in place — `refreshAnnotations` in `useAssemblyView` re-decodes the loaded range with a tagged `request_disassembly` and merges by address, keeping rows, extended context and scroll position — and only when the module concerned touches the listing (`listingTouchesRange`). A reload (`refresh`) is for when the code or the view's anchor changed. `patches-updated` carries `changed`: the per-pause re-broadcast has `changed: false` and must not trigger work.
 - **Debounced status**: `useDebugSession` provides `displayStatus` (debounced) to prevent UI flicker during rapid stepping.
 - **Navigation**: Cross-component navigation (jump to disassembly address, jump to memory) uses callback props through `SessionContext` (`onNavigateToDisassembly`, `onNavigateToMemory`).
 - **Back/forward history**: one app-wide store, `appNavHistory` (`src/lib/navHistory.ts`), records every user navigation — route changes (App's location effect), dock tab switches (`useNavHistoryDock`), disassembly jumps/steps (`useAssemblyView`). Mouse X-buttons and Alt+Left/Right are handled once in `App.tsx` and always consumed (native WebView2 history is never the fallback). A dock host registers with a `scope` (session id / PE path); tab/address parts only restore into their own scope — call `invalidateScope()` when that content goes away. E2E resets it per test via the `joybug:reset-nav-history` window event.
@@ -122,6 +128,77 @@ The joybug-core external crate has integration tests (`external/joybug-core/test
 | `memory-read-result` / `memory-write-result` | Memory commands | `useHexEditor` |
 | `breakpoints-updated` | Breakpoint commands | `useBreakpoints` |
 | `emulation-result` | Emulate command | `useQuickEmulation` |
+| `source-line-resolved` | ResolveAddressToLine (`pending: true` = line table still parsing) | `useSourceView`; `useDebugSession` re-reads symbol status on `pending` |
+| `image-patches-updated` / `image-patches-scan-failed` | background scan job | `useImagePatches` |
+| `source-checksum-verified` | background checksum of an opened source file | `useSourceView` |
+| `disasm-options-changed` | `update_debug_settings` | `useAssemblyView` (reloads the listing) |
+| `telemetry-status-changed` | `update_debug_settings` | `lib/perf.ts`, `SettingsDiagnostics` |
+
+### Line tables
+
+A module's source line table takes seconds to parse for a large debug file. The core
+(`symbols/line_tables.rs`) parses each one once, in the background, starting the moment the
+module's debug file is loaded — one at a time, on a dedicated thread — so it is usually ready
+before anything asks. `SymbolManager::get_line_table` waits for it, `try_get_line_table` answers
+`Pending` instead; `ModuleSymbolStatus.line_info` (`none | loading | ready`) reports it. The UI path is: a lookup answers `pending` →
+`useDebugSession` re-reads the symbol status and keeps polling while anything is `loading` → the
+source view's refresh key (built in `ContextSourceView` from the statuses) changes on `ready` and
+it asks again. Breakpoint rows get their source lines the same way without blocking: a `Pending`
+lookup schedules one background refresh per module (`schedule_source_line_refresh`). The debug
+server runs symbol work that can take seconds (PDB load, line-table parse, line maps) with the
+platform lock released (`symbols_and_module` in core's `server.rs`), so it cannot stall a step or
+a breakpoint write.
+
+### Source files
+
+The Source view reads windows of lines, never a whole file (`commands/source.rs`). Opening a
+file must stay instant even at several gigabytes, so `commands/source_index.rs` keeps the
+expensive passes off the open: the line index is block-based (line breaks before each 128 KB
+block), which lets the blocks be counted in parallel; it is cached under
+`<data dir>/source-index/` keyed by path and validated by size + mtime (50 most recent kept);
+and the checksum against the debug info — a second, sequential pass — is verified on a
+background thread, reported by `source-checksum-verified` and stored with the index.
+`open_source_file` returns `checksum_pending: true` until then. `cargo test --release --lib
+source_index -- --ignored --nocapture` benchmarks it on a 5 GB file.
+
+### Telemetry & diagnostics
+
+Opt-in, off by default, for finding out where a slow UI spends its time on a machine we cannot
+see. Three switches in Settings → Diagnostics (`telemetry_enabled` + `telemetry_endpoint`,
+`telemetry_record_to_file`) and an unchecked checkbox in the welcome dialog. Nothing is sent
+until the switch is on **and** an address is set; the file switch stands on its own. With both
+off no recorder sink is installed and a span costs one atomic load.
+
+- **One recorder, one clock.** Spans go through `joybug_core::perf` (`perf::span("name")`,
+  `.attr(key, number)`), from the app (`app.*`), the embedded debug server and the symbol
+  workers (core: `server.request`, `client.request`, `disasm.*`, `symbols.*`), and the frontend
+  (`ui.*`, via `src/lib/perf.ts` → the `telemetry_record` command). A span is a name of ours,
+  a duration and numbers. `perf::request_scope` tags nested spans with the request being
+  served, which is how a listing is followed from the queued `UICommand` to Capstone.
+- **Anonymization lives in `telemetry/anonymize.rs` and nowhere else.** A module is an index
+  into the run's module table; the table names system modules by file name and every other
+  module as a per-run salted hash. Core says which module a span was about only through the
+  `module_key` attribute (`perf::path_key`), which is translated to that index or dropped —
+  never forwarded. Never put a path, address, symbol name or any other target string in a
+  span name or attribute key, on either side; frontend records that don't look like ours are
+  rejected. Extend the hostile-sample tests there when adding a line kind.
+- **What to instrument.** A new slow path gets a span at the layer that owns it; a new
+  `UICommand` is already covered (`app.command` carries its name, queue wait and run time).
+  For the frontend use `perfRecord` / `usePerfRender` / `perfInvoke`, not ad-hoc
+  `performance.now()` logging. No `println!`/`eprintln!` timing output anywhere.
+- **Collector.** The same exe: `joybug-tauri --telemetry-collect 127.0.0.1:4318 [--out <dir>]`
+  appends each run to `<dir>/<run>.ndjson` (the format the file switch writes under
+  `<data dir>/telemetry/`); `joybug-tauri --telemetry-summarize <file-or-dir> [--out <file>]`
+  prints the step-latency breakdown, every span by total time and a line per known suspect.
+  The collector is plain HTTP with no auth — loopback, or behind a reverse proxy.
+- **Diagnostic disassembly switches** (`diag_skip_symbolization`, `diag_naive_disassembly`):
+  `DisasmOptions` in core, per debug server, pushed with `SetDisasmOptions` at session start
+  and on change (`UICommand::SetDisasmOptions` / OOB). They exist to A/B a slow listing, not
+  as features: no symbols, or a plain linear decode with no function bounds. The session
+  header shows a badge while one is on.
+- E2E resets settings between tests with a partial payload, so every one of these fields must
+  keep a serde default of "off". `telemetry.spec.ts` uses a Node HTTP server as the collector
+  double; `diagnostics.spec.ts` covers the switches.
 
 ## Conventions
 

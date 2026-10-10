@@ -33,7 +33,8 @@ pub(crate) fn persist_patches(session_state: &Arc<Mutex<SessionStateUI>>) {
 
 /// `changed = true` marks a view-affecting change (bumps `patches_revision`);
 /// the runner's every-pause re-broadcast passes `false` so listeners doing
-/// expensive refreshes can skip it by comparing revisions.
+/// expensive refreshes can skip it — by comparing revisions, or, when they
+/// have no earlier event to compare with, by the payload's own `changed`.
 pub(crate) fn emit_patches_event(
     session: &DebugSession,
     app_handle_clone: &Option<AppHandle>,
@@ -64,9 +65,11 @@ pub(crate) fn emit_patches_event_from_state(
         session_id: String,
         patches: Vec<PatchInfo>,
         revision: u64,
+        /// This emission reports a change, not the per-pause re-broadcast.
+        changed: bool,
     }
 
-    let payload = PatchesUpdatedEvent { session_id, patches, revision };
+    let payload = PatchesUpdatedEvent { session_id, patches, revision, changed };
     if let Err(e) = handle.emit("patches-updated", &payload) {
         error!("Failed to emit patches-updated event: {}", e);
     }
@@ -589,7 +592,7 @@ pub(crate) fn process_restore_image_bytes(
     // loaded DLL off disk just to restore a handful of bytes.
     let covering: Vec<(u64, String)> = crate::session::helpers::modules_or_enumerate(session, pid)
         .into_iter()
-        .filter(|m| address >= m.base && address < m.base + m.size.unwrap_or(0))
+        .filter(|m| m.contains(address))
         .map(|m| (m.base, m.name))
         .collect();
     let images = crate::session::image_cache::ensure_all_and_snapshot_images(&session.state, &covering);

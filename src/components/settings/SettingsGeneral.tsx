@@ -12,14 +12,9 @@ import { Switch } from "@/components/ui/switch";
 import { useDebugSettings } from "@/hooks/useDebugSettings";
 import { useJitDebugger } from "@/hooks/useJitDebugger";
 import { usePlatform } from "@/hooks/usePlatform";
+import { matchesSettingItem, type SettingItem } from "@/lib/settingsSearch";
 import { applyZoom, getStoredZoom, ZOOM_CHANGED_EVENT, ZOOM_STEPS } from "@/lib/uiZoom";
 import { ACCENT_OPTIONS, applyAccent, getStoredAccent, type AccentId } from "@/lib/accent";
-
-interface SettingItem {
-  key: string;
-  label: string;
-  keywords: string[];
-}
 
 const SETTING_ITEMS: SettingItem[] = [
   { key: "theme", label: "Theme", keywords: ["dark", "light", "system", "appearance", "color"] },
@@ -88,20 +83,9 @@ export function SettingsGeneral({ searchQuery }: SettingsGeneralProps) {
     return () => window.removeEventListener(ZOOM_CHANGED_EVENT, onZoomChanged);
   }, []);
 
-  const matchesSearch = (item: SettingItem): boolean => {
-    if (!searchQuery) return true;
-    const q = searchQuery.toLowerCase();
-    return (
-      item.label.toLowerCase().includes(q) ||
-      "general".includes(q) ||
-      "appearance".includes(q) ||
-      item.keywords.some(kw => kw.includes(q))
-    );
-  };
-
   const visibleItems = SETTING_ITEMS
     .filter((item) => item.key !== "jitDebugger" || features.jit)
-    .filter(matchesSearch);
+    .filter((item) => matchesSettingItem(searchQuery, ["general", "appearance"], item));
   if (visibleItems.length === 0) return null;
 
   return (

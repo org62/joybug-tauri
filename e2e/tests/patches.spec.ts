@@ -10,7 +10,7 @@ import {
   restoreDefaultSettings,
   continueSession,
 } from "../helpers/wait-helpers";
-import { ASM_ROW } from "../helpers/selectors";
+import { PC_ROW } from "../helpers/selectors";
 import { dataDir } from "../helpers/launch-commands";
 
 const PATCHES_FILE = path.join(dataDir(), "patches.json");
@@ -479,10 +479,14 @@ test.describe("Assembly Patching", () => {
       // Wait for disassembly to load
       await waitForDisassemblyLoaded(page);
 
-      // Right-click on the first visible instruction row
-      // The instruction rows are rendered inside the virtualized list
-      const firstRow = page.locator(ASM_ROW).first();
-      await firstRow.click({ button: "right" });
+      // Right-click the PC row. Not "the first row": in the virtualized list
+      // that is an overscan row above the viewport. Scrolling it into view for
+      // the click reaches the top of the loaded listing, which makes the view
+      // load more rows above — and the row the click was aimed at is replaced
+      // before the click lands.
+      const pcRow = page.locator(PC_ROW);
+      await expect(pcRow).toBeVisible({ timeout: 10_000 });
+      await pcRow.click({ button: "right" });
 
       // Context menu should appear with "Assemble..." option
       const assembleBtn = page.getByRole("menuitem", { name: "Assemble..." });
@@ -595,9 +599,11 @@ test.describe("Assembly Patching", () => {
       // Wait for disassembly
       await waitForDisassemblyLoaded(page);
 
-      // Right-click → Assemble...
-      const firstRow = page.locator(ASM_ROW).first();
-      await firstRow.click({ button: "right" });
+      // Right-click the PC row → Assemble... (the PC row, not "the first row":
+      // see the context-menu test above.)
+      const pcRow = page.locator(PC_ROW);
+      await expect(pcRow).toBeVisible({ timeout: 10_000 });
+      await pcRow.click({ button: "right" });
       await page.getByRole("menuitem", { name: "Assemble..." }).click();
 
       // Inline input should appear

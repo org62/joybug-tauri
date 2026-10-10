@@ -55,8 +55,11 @@ import {
   Play, Square, Pause, ArrowDownToLine, CornerDownRight, ArrowUpFromLine, SkipForward,
   Plus, RotateCcw, Navigation, HardDriveDownload, FileDown,
 } from "lucide-react";
+import { usePerfRender } from "@/lib/perf";
 
 export default function SessionDocked() {
+  // Telemetry: what one update of the session view costs, every panel included.
+  usePerfRender("session");
   const { sessionId } = useParams<{ sessionId: string }>();
   const platform = usePlatform();
   const navigate = useNavigate();
@@ -72,6 +75,7 @@ export default function SessionDocked() {
     threads,
     symbolStatuses,
     symbolsRefreshKey,
+    lineTablesReadyKey,
     loadModules,
     loadThreads,
     loadModulePdb,
@@ -618,6 +622,7 @@ export default function SessionDocked() {
     threads,
     symbolStatuses,
     symbolsRefreshKey,
+    lineTablesReadyKey,
     // Passed through unwrapped: views depend on these in effects, and the
     // useDebugSession callbacks are stable per session (an inline wrapper here
     // would change identity on every session-updated event and re-fire them).
@@ -637,7 +642,7 @@ export default function SessionDocked() {
     onNavigateToSource: handleNavigateToSource,
     onNavigateToType: handleNavigateToType,
     onFindAccesses: handleFindAccesses,
-  }), [session, displayStatus, isPaused, canUseMemoryOps, processId, modules, threads, symbolStatuses, symbolsRefreshKey, loadModules, loadThreads, loadModulePdb, retryModuleSymbols, unloadModuleSymbols, searchSymbols, breakpointState, patchState, bookmarkState, watchpointState, handleNavigateToDisassembly, handleNavigateToMemory, handleNavigateToMemoryRegion, handleNavigateToSource, handleNavigateToType, handleFindAccesses]);
+  }), [session, displayStatus, isPaused, canUseMemoryOps, processId, modules, threads, symbolStatuses, symbolsRefreshKey, lineTablesReadyKey, loadModules, loadThreads, loadModulePdb, retryModuleSymbols, unloadModuleSymbols, searchSymbols, breakpointState, patchState, bookmarkState, watchpointState, handleNavigateToDisassembly, handleNavigateToMemory, handleNavigateToMemoryRegion, handleNavigateToSource, handleNavigateToType, handleFindAccesses]);
   
   // Static tab content - components will update via context.
   // Typed against the registry, so adding a tab to SESSION_TAB_DEFS without

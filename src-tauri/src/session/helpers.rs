@@ -101,16 +101,14 @@ pub(crate) fn module_image_keys(
     modules.iter().map(|m| (m.base, m.name.clone())).collect()
 }
 
+/// The module whose mapped range contains `address`.
+pub(crate) fn module_containing(modules: &[joybug_core::protocol_io::ModuleInfo], address: u64) -> Option<&joybug_core::protocol_io::ModuleInfo> {
+    modules.iter().find(|m| m.contains(address))
+}
+
 /// Finds the module containing the given address, returns (short_name, offset_from_base)
 pub(crate) fn find_module_for_address(modules: &[joybug_core::protocol_io::ModuleInfo], address: u64) -> Option<(String, u64)> {
-    for module in modules {
-        if let Some(size) = module.size {
-            if address >= module.base && address < module.base + size {
-                return Some((extract_module_name(&module.name), address - module.base));
-            }
-        }
-    }
-    None
+    module_containing(modules, address).map(|m| (extract_module_name(&m.name), address - m.base))
 }
 
 /// `module!symbol+0x..` when the server has a symbol for `address`, else the

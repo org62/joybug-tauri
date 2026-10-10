@@ -7,6 +7,7 @@ import { DebugSession, Module, ModuleSymbolStatus, PdbLoadResult, Thread, Symbol
 import { isProcessAvailable, isPausedSession, isTargetLive, canStopSession, formatTauriError, sessionDisplayName, dumpMenuLabels } from '@/lib/sessionHelpers';
 import { useDisplayStatus } from '@/hooks/useDisplayStatus';
 import { usePlatform } from '@/hooks/usePlatform';
+import { perfInvoke, perfSessionUpdate, perfStepIssued } from "@/lib/perf";
 
 // The 1s live poll returns fresh arrays every tick even when nothing changed;
 // keeping the previous reference when contents match stops every context
@@ -20,6 +21,9 @@ function sameThreads(a: Thread[], b: Thread[]): boolean {
     t.id === b[i].id && t.start_address === b[i].start_address && t.suspend_count === b[i].suspend_count);
 }
 
+// `line_info` is deliberately not compared: line tables land one module at a
+// time, and a fresh array for each would re-render every context consumer.
+// Their state is carried separately (`lineTablesReadyKey`, `lineTablesLoading`).
 function sameSymbolStatuses(a: ModuleSymbolStatus[], b: ModuleSymbolStatus[]): boolean {
   return a.length === b.length && a.every((s, i) =>
     s.base_address === b[i].base_address && s.status === b[i].status && s.symbol_count === b[i].symbol_count);
@@ -35,6 +39,11 @@ export function useDebugSession(sessionId: string | undefined) {
   const [modules, setModules] = useState<Module[]>([]);
   const [threads, setThreads] = useState<Thread[]>([]);
   const [symbolStatuses, setSymbolStatuses] = useState<ModuleSymbolStatus[]>([]);
+  // Line tables are parsed in the background, after the symbols. The key names
+  // the modules whose table is ready (the source view asks again when it
+  // changes); `lineTablesLoading` keeps the status poll going until they are.
+  const [lineTablesReadyKey, setLineTablesReadyKey] = useState('');
+  const [lineTablesLoading, setLineTablesLoading] = useState(false);
 
   // Debounced display status - prevents UI flicker during quick stepping
   // operations. Shared with the header's active-session pill so both settle
@@ -65,7 +74,7 @@ export function useDebugSession(sessionId: string | undefined) {
   const loadModules = useCallback(async () => {
     if (!sessionId) return [];
     try {
-      const mods = await invoke<Module[]>("get_session_modules", { sessionId });
+      const mods = await perfInvoke<Module[]>("modules", "get_session_modules", { sessionId }, sessionId);
       setModules(prev => sameModules(prev, mods) ? prev : mods);
       return mods;
     } catch (error) {
@@ -79,7 +88,7 @@ export function useDebugSession(sessionId: string | undefined) {
   const loadThreads = useCallback(async () => {
     if (!sessionId) return [];
     try {
-      const thrs = await invoke<Thread[]>("get_session_threads", { sessionId });
+      const thrs = await perfInvoke<Thread[]>("threads", "get_session_threads", { sessionId }, sessionId);
       setThreads(prev => sameThreads(prev, thrs) ? prev : thrs);
       return thrs;
     } catch (error) {
@@ -95,8 +104,10 @@ export function useDebugSession(sessionId: string | undefined) {
   const loadSymbolStatuses = useCallback(async () => {
     if (!sessionId) return;
     try {
-      const statuses = await invoke<ModuleSymbolStatus[]>("get_session_symbol_status", { sessionId });
+      const statuses = await perfInvoke<ModuleSymbolStatus[]>("symbol_status", "get_session_symbol_status", { sessionId }, sessionId);
       setSymbolStatuses(prev => sameSymbolStatuses(prev, statuses) ? prev : statuses);
+      setLineTablesReadyKey(statuses.filter((s) => s.line_info === 'ready').map((s) => s.base_address).sort().join(','));
+      setLineTablesLoading(statuses.some((s) => s.line_info === 'loading'));
     } catch (error) {
       console.error(`Failed to load symbol statuses: ${error}`);
     }
@@ -137,7 +148,10 @@ export function useDebugSession(sessionId: string | undefined) {
   // fallback). Consumers refresh symbol-derived views (e.g. disassembly) when
   // it changes so raw addresses upgrade to symbol names as background
   // downloads land. The status is part of each entry so an exports_only →
-  // loaded upgrade at an unchanged base still triggers a refresh.
+  // loaded upgrade at an unchanged base still triggers a refresh. A line table
+  // landing is deliberately not part of it: only the source view waits for
+  // that (`lineTablesReadyKey`), and folding it in here would reload every
+  // disassembly and hex view for nothing.
   const symbolsRefreshKey = useMemo(
     () => symbolStatuses
       .filter((s) => hasUsableSymbols(s.status))
@@ -210,6 +224,8 @@ export function useDebugSession(sessionId: string | undefined) {
   }, [sessionId]);
 
   const handleSessionUpdate = useCallback((newSession: DebugSession) => {
+    // Before React sees it: the pause must be on record when the views commit.
+    perfSessionUpdate(newSession);
     setSession(newSession);
     setIsLoading(false);
     // Persist latest exception code so settings page can pre-populate new rules
@@ -278,6 +294,8 @@ export function useDebugSession(sessionId: string | undefined) {
       setModules([]);
       setThreads([]);
       setSymbolStatuses([]);
+      setLineTablesReadyKey('');
+      setLineTablesLoading(false);
     }
   }, [session?.status, loadModules, loadThreads, loadSymbolStatuses]);
 
@@ -313,19 +331,32 @@ export function useDebugSession(sessionId: string | undefined) {
     return () => clearInterval(interval);
   }, [session?.status, sessionId, loadModules, loadThreads, handleSessionUpdate]);
 
-  // Poll symbol statuses while PDB downloads are in flight (also while Paused —
-  // downloads continue in the background) and while the target runs live (in
-  // Open mode new modules appear without dll events). Once every module has
-  // settled on a paused target the poll stops; the dll-loaded listener and the
-  // explicit refreshes in loadModulePdb/retryModuleSymbols re-arm it.
+  // Poll symbol statuses while PDB downloads or line-table parses are in flight
+  // (also while Paused — both continue in the background) and while the target
+  // runs live (in Open mode new modules appear without dll events). Once every
+  // module has settled on a paused target the poll stops; the dll-loaded
+  // listener, the explicit refreshes in loadModulePdb/retryModuleSymbols and
+  // the line-table listener below re-arm it.
   useEffect(() => {
-    const loading = symbolStatuses.some((s) => s.status === 'loading');
+    const loading = lineTablesLoading || symbolStatuses.some((s) => s.status === 'loading');
     if (!isTargetLive(session?.status) && !(loading && isProcessAvailable(session?.status))) return;
     const interval = setInterval(() => {
       loadSymbolStatuses();
     }, 1000);
     return () => clearInterval(interval);
-  }, [session?.status, symbolStatuses, loadSymbolStatuses]);
+  }, [session?.status, symbolStatuses, lineTablesLoading, loadSymbolStatuses]);
+
+  // A source lookup that found its module's line table still unparsed has just
+  // started the parse (in the background, in the debug server). Re-read the
+  // statuses so the poll above sees the table loading and follows it to
+  // `ready` — which is what brings the answer to the views that asked.
+  useEffect(() => {
+    if (!sessionId) return;
+    const unlisten = listen<{ session_id: string; pending?: boolean }>('source-line-resolved', (event) => {
+      if (event.payload.session_id === sessionId && event.payload.pending) loadSymbolStatuses();
+    });
+    return () => { void unlisten.then((fn) => fn()); };
+  }, [sessionId, loadSymbolStatuses]);
 
   // Listen for dll load/unload targeted events to refresh modules quickly
   useEffect(() => {
@@ -387,6 +418,7 @@ export function useDebugSession(sessionId: string | undefined) {
     if (!sessionId || !canStep) return;
     setBusyAction("stepIn");
     try {
+      perfStepIssued(sessionId);
       await invoke("step_in_debug_session", { sessionId });
       // The session-updated event will refresh the state
     } catch (error) {
@@ -402,6 +434,7 @@ export function useDebugSession(sessionId: string | undefined) {
     if (!sessionId || !canStep) return;
     setBusyAction("stepOut");
     try {
+      perfStepIssued(sessionId);
       await invoke("step_out_debug_session", { sessionId });
     } catch (error) {
       const errorMessage = `Failed to step out session: ${error}`;
@@ -416,6 +449,7 @@ export function useDebugSession(sessionId: string | undefined) {
     if (!sessionId || !canStep) return;
     setBusyAction("stepOver");
     try {
+      perfStepIssued(sessionId);
       await invoke("step_over_debug_session", { sessionId });
     } catch (error) {
       const errorMessage = `Failed to step over session: ${error}`;
@@ -561,6 +595,7 @@ export function useDebugSession(sessionId: string | undefined) {
     threads,
     symbolStatuses,
     symbolsRefreshKey,
+    lineTablesReadyKey,
     loadModules,
     loadThreads,
     loadModulePdb,

@@ -4,6 +4,56 @@ use tracing::{debug, error, info};
 use super::helpers::{emit_scan_error, format_bytes};
 use super::types::*;
 
+const PAGE_SIZE: u64 = 0x1000;
+const MEM_COMMIT: u32 = 0x1000;
+
+/// Change the protection of the pages covering `[address, address + size)` to
+/// `protect`, returning what the first page had.
+///
+/// The range is applied one region at a time: a single protect call cannot
+/// cross an allocation on Windows, and a hand-typed range often does. Every
+/// page is checked to be committed before anything is changed, so a range
+/// with a hole in it fails whole instead of half-applied.
+pub(crate) fn protect_range(
+    session: &mut DebugSession,
+    pid: u32,
+    address: u64,
+    size: u64,
+    protect: u32,
+) -> Result<u32, String> {
+    if size == 0 {
+        return Err("the range is empty".to_string());
+    }
+    let start = address & !(PAGE_SIZE - 1);
+    let end = address
+        .checked_add(size)
+        .and_then(|e| e.checked_add(PAGE_SIZE - 1))
+        .ok_or_else(|| "the range wraps the address space".to_string())?
+        & !(PAGE_SIZE - 1);
+
+    let mut chunks: Vec<(u64, u64)> = Vec::new();
+    let mut cursor = start;
+    while cursor < end {
+        let region = session.query_memory_region(pid, cursor).map_err(|e| e.to_string())?;
+        let region_end = region.base_address.saturating_add(region.region_size);
+        if region.state != MEM_COMMIT || region_end <= cursor {
+            return Err(format!("0x{:X} is not committed memory", cursor));
+        }
+        let chunk_end = region_end.min(end);
+        chunks.push((cursor, chunk_end - cursor));
+        cursor = chunk_end;
+    }
+
+    let mut first_old = None;
+    for (chunk_address, chunk_size) in chunks {
+        let old = session
+            .protect_memory(pid, chunk_address, chunk_size as usize, protect)
+            .map_err(|e| e.to_string())?;
+        first_old.get_or_insert(old);
+    }
+    first_old.ok_or_else(|| "the range is empty".to_string())
+}
+
 /// Processes a memory read request and emits results to the frontend
 pub(crate) fn process_memory_read(
     session: &mut DebugSession,

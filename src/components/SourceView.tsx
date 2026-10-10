@@ -16,6 +16,7 @@ import { useContextMenu } from "@/hooks/useContextMenu";
 import { useRecenterOnReveal, applyOverFrames } from "@/hooks/useRecenterOnReveal";
 import { Virtualizer } from "@tanstack/react-virtual";
 import { languageForPath, highlightToLines, type SyntaxLine } from "@/lib/syntaxHighlight";
+import { usePerfRender } from "@/lib/perf";
 
 const SOURCE_ROW_HEIGHT = DATA_ROW_HEIGHT;
 
@@ -51,6 +52,7 @@ export function SourceView({
   onToggleBreakpoint,
   onNavigateToDisassembly,
 }: SourceViewProps) {
+  usePerfRender("source");
   const {
     filePath,
     lineCount,
@@ -64,6 +66,7 @@ export function SourceView({
     fileMissing,
     checksumMismatch,
     noLineInfo,
+    lineInfoLoading,
     isLoading,
     scrollToLine,
     selectFile,
@@ -341,7 +344,13 @@ export function SourceView({
           <div className="flex flex-col items-center justify-center h-full text-muted-foreground p-4">
             <div className="text-center">
               <FileCode className="h-12 w-12 mx-auto mb-4 opacity-50" />
-              {showEmptyState ? (
+              {sessionId && lineInfoLoading ? (
+                // Before the empty state: there is no file to show *yet*.
+                <>
+                  <p className="text-base font-medium" data-testid="source-line-info-loading">Loading line information...</p>
+                  <p className="text-sm mt-1">Reading the module's debug file; the source appears when it is done</p>
+                </>
+              ) : showEmptyState ? (
                 <>
                   <p className="text-base font-medium">No source available</p>
                   <p className="text-sm mt-1">Step or navigate to code with source line info</p>

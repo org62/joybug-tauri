@@ -1,15 +1,16 @@
 use crate::error::{Error, Result};
 use crate::session::source::{
     emit_source_error, emit_source_file_line_map, emit_source_files_listed,
-    emit_source_line_resolved,
+    resolve_and_emit_source_line,
 };
 use crate::session::UICommand;
 use crate::settings::SettingsState;
 use crate::state::SessionStatesMap;
-use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
+use super::source_index::{self, ChecksumKind, IndexedFile, LineIndex};
+use std::io::{BufRead, BufReader, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use tauri::State;
+use tauri::{Emitter, State};
 use tracing::{debug, info};
 
 #[tauri::command]
@@ -27,10 +28,7 @@ pub fn resolve_address_to_line(
         &session_states,
         &oob_pool,
         UICommand::ResolveAddressToLine { address: address_val },
-        |oob, pid| match oob.resolve_address_to_line(pid, address_val) {
-            Ok(info) => emit_source_line_resolved(&app_handle, session_id.clone(), address_val, info),
-            Err(e) => emit_source_error(&app_handle, "source-line-error", session_id.clone(), e.to_string()),
-        },
+        |oob, pid| resolve_and_emit_source_line(oob, &app_handle, session_id.clone(), pid, address_val),
     )
 }
 
@@ -87,69 +85,96 @@ pub fn list_source_files(
 // ---------------------------------------------------------------------------
 // Windowed source-file reading.
 //
-// The Source view never loads a whole file: `open_source_file` streams it once
-// to count lines, verify the checksum, and build a *sparse* offset index (one
-// byte offset every INDEX_STRIDE lines). `read_source_window` then seeks via the
-// index and returns only the requested line range, so multi-GB files display
-// with bounded memory in both the backend and the webview.
+// The Source view never loads a whole file: `open_source_file` indexes it once
+// (see `source_index`: a parallel pass, cached on disk) and `read_source_window`
+// then seeks via the index and returns only the requested line range, so
+// multi-GB files display with bounded memory in both the backend and the
+// webview. The checksum against the module's debug info is verified in the
+// background and reported by `source-checksum-verified`.
 // ---------------------------------------------------------------------------
-
-/// Record a byte offset every this many lines. The index for a 250 M-line file is
-/// then ~122 K entries (~1 MB); a window read seeks then scans at most this many
-/// lines forward.
-const INDEX_STRIDE: u64 = 2048;
 
 /// Sanity ceiling — far above any real source file; guards against a bad path.
 const MAX_SOURCE_FILE_SIZE: u64 = 8 * 1024 * 1024 * 1024;
 
-/// Streaming scan buffer.
-const SCAN_BUF: usize = 1 << 20;
-
 /// Most windowed reads a single view keeps around; small LRU.
 const MAX_CACHED_INDEXES: usize = 8;
 
-/// Sparse line index for one resolved file path, plus the identity used to detect
-/// edits (so a changed file is re-indexed).
-struct LineIndex {
-    len: u64,
-    mtime_ns: u128,
-    line_count: u64,
-    /// `offsets[k]` = byte offset of the first line of block `k`, i.e. line
-    /// `k * INDEX_STRIDE + 1` (1-based). `offsets[0]` is always 0.
-    offsets: Vec<u64>,
-}
-
-/// Managed LRU cache of line indexes, keyed by resolved path. Clones share the
+/// Managed LRU cache of indexed files, keyed by resolved path. Clones share the
 /// same cache, so a handle can move into `run_blocking` closures.
 #[derive(Default, Clone)]
 pub struct SourceIndexCache {
-    inner: Arc<Mutex<Vec<(String, Arc<LineIndex>)>>>,
+    inner: Arc<Mutex<Vec<(String, Arc<IndexedFile>)>>>,
+    /// One lock per path being indexed, so a file is read once however many
+    /// requests arrive for it meanwhile (a view re-asks on every step).
+    indexing: Arc<Mutex<std::collections::HashMap<String, Arc<Mutex<()>>>>>,
 }
 
 impl SourceIndexCache {
-    fn get(&self, path: &str, len: u64, mtime_ns: u128) -> Option<Arc<LineIndex>> {
+    fn get(&self, path: &str, len: u64, mtime_ns: u128) -> Option<Arc<IndexedFile>> {
         let mut cache = self.inner.lock().unwrap();
         if let Some(pos) = cache.iter().position(|(p, _)| p == path) {
-            let (_, idx) = &cache[pos];
-            if idx.len == len && idx.mtime_ns == mtime_ns {
+            let (_, file) = &cache[pos];
+            if file.index.len == len && file.index.mtime_ns == mtime_ns {
                 let entry = cache.remove(pos);
-                let idx = entry.1.clone();
+                let file = entry.1.clone();
                 cache.push(entry); // move-to-front (most-recently-used at the end)
-                return Some(idx);
+                return Some(file);
             }
             cache.remove(pos); // stale — drop it
         }
         None
     }
 
-    fn put(&self, path: String, idx: Arc<LineIndex>) {
+    fn put(&self, path: String, file: Arc<IndexedFile>) {
         let mut cache = self.inner.lock().unwrap();
         cache.retain(|(p, _)| p != &path);
-        cache.push((path, idx));
+        cache.push((path, file));
         while cache.len() > MAX_CACHED_INDEXES {
             cache.remove(0);
         }
     }
+
+    /// The index of the file at `path`: from memory, else from the disk cache,
+    /// else built now (and stored). Says where it came from, for telemetry.
+    fn index(&self, resolved_path: &str, path: &Path, len: u64, mtime: u128) -> std::io::Result<(Arc<IndexedFile>, IndexSource)> {
+        if let Some(file) = self.get(resolved_path, len, mtime) {
+            return Ok((file, IndexSource::Memory));
+        }
+        // Single-flight: whoever gets here first indexes; the others wait for
+        // it and find the result in memory.
+        let gate = self.indexing.lock().unwrap().entry(resolved_path.to_string()).or_default().clone();
+        let _indexing = gate.lock().unwrap();
+        if let Some(file) = self.get(resolved_path, len, mtime) {
+            self.indexing.lock().unwrap().remove(resolved_path);
+            return Ok((file, IndexSource::Memory));
+        }
+        let indexed = self.load_or_build(resolved_path, path, len, mtime);
+        self.indexing.lock().unwrap().remove(resolved_path);
+        indexed
+    }
+
+    fn load_or_build(&self, resolved_path: &str, path: &Path, len: u64, mtime: u128) -> std::io::Result<(Arc<IndexedFile>, IndexSource)> {
+        let (file, from) = match source_index::load(resolved_path, len, mtime) {
+            Some(file) => (file, IndexSource::Disk),
+            None => {
+                let file = IndexedFile::new(LineIndex::build(path, mtime)?, None);
+                source_index::save(resolved_path, &file);
+                (file, IndexSource::Built)
+            }
+        };
+        let file = Arc::new(file);
+        self.put(resolved_path.to_string(), file.clone());
+        Ok((file, from))
+    }
+}
+
+/// Where a file's line index came from: the `index_from` attribute of the
+/// `app.source.open` and `app.source.read_window` spans.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IndexSource {
+    Memory = 0,
+    Disk = 1,
+    Built = 2,
 }
 
 /// Metadata returned by `open_source_file`.
@@ -160,8 +185,19 @@ pub struct SourceFileMeta {
     /// Total line count (a maximal run of non-newline chars, `\n`- or EOF-terminated).
     pub line_count: u64,
     /// Whether the on-disk file matches the PDB's recorded checksum. `None` when
-    /// the PDB has no checksum (e.g. MASM) or the kind is unknown.
+    /// the PDB has no checksum (e.g. MASM), the kind is unknown, or the answer
+    /// is not in yet (`checksum_pending`).
     pub checksum_matches: Option<bool>,
+    /// The checksum is being verified in the background; the answer arrives as
+    /// a `source-checksum-verified` event.
+    pub checksum_pending: bool,
+}
+
+/// Payload of `source-checksum-verified`.
+#[derive(serde::Serialize, Clone)]
+struct SourceChecksumVerified {
+    resolved_path: String,
+    matches: bool,
 }
 
 /// One window of source lines.
@@ -203,100 +239,15 @@ fn mtime_ns(meta: &std::fs::Metadata) -> u128 {
         .unwrap_or(0)
 }
 
-/// Incremental checksum over the streamed bytes, chosen by PDB checksum kind.
-enum HashState {
-    Md5(md5::Md5),
-    Sha1(sha1::Sha1),
-    Sha256(sha2::Sha256),
-}
-
-impl HashState {
-    fn new(kind: &str) -> Option<Self> {
-        match kind {
-            "md5" => Some(HashState::Md5(md5::Md5::default())),
-            "sha1" => Some(HashState::Sha1(sha1::Sha1::default())),
-            "sha256" => Some(HashState::Sha256(sha2::Sha256::default())),
-            _ => None,
-        }
-    }
-    fn update(&mut self, data: &[u8]) {
-        use md5::Digest;
-        match self {
-            HashState::Md5(h) => h.update(data),
-            HashState::Sha1(h) => h.update(data),
-            HashState::Sha256(h) => h.update(data),
-        }
-    }
-    fn finalize_hex(self) -> String {
-        use md5::Digest;
-        let bytes: Vec<u8> = match self {
-            HashState::Md5(h) => h.finalize().to_vec(),
-            HashState::Sha1(h) => h.finalize().to_vec(),
-            HashState::Sha256(h) => h.finalize().to_vec(),
-        };
-        bytes.iter().map(|b| format!("{b:02x}")).collect()
-    }
-}
-
-/// Stream `path` once: build the sparse line index, count lines, and (when
-/// `hasher` is set) compute the content checksum.
-fn build_index(path: &Path, mut hasher: Option<HashState>) -> std::io::Result<(LineIndex, Option<String>)> {
-    let file = std::fs::File::open(path)?;
-    let meta = file.metadata()?;
-    let len = meta.len();
-    let mut reader = BufReader::with_capacity(SCAN_BUF, file);
-
-    let mut offsets = vec![0u64];
-    let mut total: u64 = 0; // bytes consumed so far (offset of buf[0])
-    let mut line: u64 = 1; // running line number (incremented per '\n')
-    let mut any = false;
-    let mut last_byte = 0u8;
-    let mut buf = vec![0u8; SCAN_BUF];
-
-    loop {
-        let n = reader.read(&mut buf)?;
-        if n == 0 {
-            break;
-        }
-        any = true;
-        last_byte = buf[n - 1];
-        if let Some(h) = hasher.as_mut() {
-            h.update(&buf[..n]);
-        }
-        // Walk newline positions (vectorized) rather than every byte.
-        let mut off = 0usize;
-        while let Some(rel) = buf[off..n].iter().position(|&b| b == b'\n') {
-            let next_line_start = total + (off + rel + 1) as u64;
-            line += 1;
-            if (line - 1) % INDEX_STRIDE == 0 {
-                offsets.push(next_line_start);
-            }
-            off += rel + 1;
-        }
-        total += n as u64;
-    }
-
-    let newlines = line - 1;
-    let line_count = if !any {
-        0
-    } else if last_byte == b'\n' {
-        newlines // trailing newline → no line after it
-    } else {
-        newlines + 1
-    };
-
-    let checksum = hasher.map(|h| h.finalize_hex());
-    Ok((
-        LineIndex { len, mtime_ns: mtime_ns(&meta), line_count, offsets },
-        checksum,
-    ))
-}
-
-/// Open a source file for windowed reading: resolve the path, index it, verify
-/// the checksum, and cache the index. Needs no debug session. The body runs on
-/// the blocking pool (see `run_blocking`) — the indexing/checksum pass, or a
+/// Open a source file for windowed reading: resolve the path and index it (or
+/// find its index in the cache). Needs no debug session. The body runs on the
+/// blocking pool (see `run_blocking`) — indexing a file not seen before, or a
 /// slow path probe like a dead UNC prefix from a PDB, would otherwise freeze
 /// the UI (sync command) or stall the shared async workers (bare async).
+///
+/// The checksum against the module's debug info is not part of opening: when
+/// it is not already known for this file it is verified on a background thread
+/// (`checksum_pending`) and reported by `source-checksum-verified`.
 #[tauri::command]
 pub async fn open_source_file(
     file_path: String,
@@ -304,11 +255,12 @@ pub async fn open_source_file(
     checksum: Option<String>,
     settings: State<'_, SettingsState>,
     index_cache: State<'_, SourceIndexCache>,
+    app_handle: tauri::AppHandle,
 ) -> Result<SourceFileMeta> {
     let source_map = settings.lock().unwrap().source_map.clone();
     let index_cache = index_cache.inner().clone();
     super::run_blocking(move || {
-        open_source_file_impl(file_path, checksum_kind, checksum, source_map, index_cache)
+        open_source_file_impl(file_path, checksum_kind, checksum, source_map, index_cache, app_handle)
     })
     .await
 }
@@ -319,10 +271,16 @@ fn open_source_file_impl(
     checksum: Option<String>,
     source_map: Vec<(String, String)>,
     index_cache: SourceIndexCache,
+    app_handle: tauri::AppHandle,
 ) -> Result<SourceFileMeta> {
+    // Path resolution probes the disk through the source map; indexing reads
+    // the whole file unless its index is cached.
+    let mut span = crate::telemetry::span("app.source.open");
+    let started = std::time::Instant::now();
     let resolved = resolve_source_path(&file_path, &source_map)
         .ok_or_else(|| Error::InvalidParameter(format!("Source file not found: {}", file_path)))?;
     let resolved_path = resolved.display().to_string();
+    span.attr_elapsed("locate_us", started);
 
     let meta = std::fs::metadata(&resolved)
         .map_err(|e| Error::InvalidParameter(format!("Cannot stat {}: {}", resolved_path, e)))?;
@@ -333,26 +291,70 @@ fn open_source_file_impl(
             resolved_path
         )));
     }
+    span.attr("bytes", meta.len());
 
-    // Verify only when the PDB recorded a usable checksum.
-    let want = match (checksum_kind.as_deref(), checksum.as_deref()) {
-        (Some(kind), Some(sum)) if kind != "none" && !sum.is_empty() => Some((kind.to_string(), sum.to_string())),
-        _ => None,
-    };
-    let hasher = want.as_ref().and_then(|(k, _)| HashState::new(k));
-
-    let (index, actual) = build_index(&resolved, hasher)
+    let (file, index_from) = index_cache
+        .index(&resolved_path, &resolved, meta.len(), mtime_ns(&meta))
         .map_err(|e| Error::InvalidParameter(format!("Cannot index {}: {}", resolved_path, e)))?;
-    let checksum_matches = match (&want, &actual) {
-        (Some((_, sum)), Some(actual)) => Some(actual.eq_ignore_ascii_case(sum)),
+    let line_count = file.index.line_count;
+    span.attr("index_from", index_from as u64);
+    span.attr("lines", line_count);
+
+    // Verify only when the PDB recorded a checksum we can compute.
+    let want = match (checksum_kind.as_deref().and_then(ChecksumKind::parse), checksum) {
+        (Some(kind), Some(sum)) if !sum.is_empty() => Some((kind, sum)),
         _ => None,
     };
+    let (checksum_matches, checksum_pending) = match want {
+        None => (None, false),
+        Some((kind, expected)) => match file.checksum(kind) {
+            Some(actual) => (Some(actual.eq_ignore_ascii_case(&expected)), false),
+            None => {
+                verify_checksum_in_background(app_handle, file, resolved, resolved_path.clone(), kind, expected);
+                (None, true)
+            }
+        },
+    };
+    span.attr("checksum_pending", checksum_pending as u64);
+    info!(
+        "Opened source file {} ({} lines, checksum_matches={:?}, pending={})",
+        resolved_path, line_count, checksum_matches, checksum_pending
+    );
 
-    let line_count = index.line_count;
-    index_cache.put(resolved_path.clone(), Arc::new(index));
-    info!("Indexed source file {} ({} lines, checksum_matches={:?})", resolved_path, line_count, checksum_matches);
+    Ok(SourceFileMeta { resolved_path, line_count, checksum_matches, checksum_pending })
+}
 
-    Ok(SourceFileMeta { resolved_path, line_count, checksum_matches })
+/// Hash the file on a thread of its own, remember the result with the index
+/// (in memory and on disk) and report whether it matches `expected`. One
+/// verification per file at a time: an open that finds one under way just
+/// waits for its event.
+fn verify_checksum_in_background(
+    app_handle: tauri::AppHandle,
+    file: Arc<IndexedFile>,
+    path: PathBuf,
+    resolved_path: String,
+    kind: ChecksumKind,
+    expected: String,
+) {
+    if !file.begin_verifying() {
+        return;
+    }
+    std::thread::spawn(move || {
+        let mut span = crate::telemetry::span("app.source.checksum");
+        span.attr("bytes", file.index.len);
+        let computed = source_index::file_checksum(&path, kind);
+        drop(span);
+        match computed {
+            Ok(actual) => {
+                file.set_checksum(kind, &actual);
+                source_index::save(&resolved_path, &file);
+                let verified = SourceChecksumVerified { resolved_path, matches: actual.eq_ignore_ascii_case(&expected) };
+                let _ = app_handle.emit("source-checksum-verified", verified);
+            }
+            Err(e) => tracing::warn!("Checksum of {} not verified: {}", resolved_path, e),
+        }
+        file.end_verifying();
+    });
 }
 
 /// Read `count` lines starting at `start_line` (1-based) from an already-opened
@@ -375,33 +377,30 @@ fn read_source_window_impl(
     count: u64,
     index_cache: SourceIndexCache,
 ) -> Result<SourceWindow> {
+    let mut span = crate::telemetry::span("app.source.read_window");
+    span.attr("lines", count);
     let path = PathBuf::from(&resolved_path);
     let meta = std::fs::metadata(&path)
         .map_err(|e| Error::InvalidParameter(format!("Cannot stat {}: {}", resolved_path, e)))?;
     let len = meta.len();
     let mtime = mtime_ns(&meta);
 
-    let index = match index_cache.get(&resolved_path, len, mtime) {
-        Some(idx) => idx,
-        None => {
-            // Evicted or first window without an open — rebuild (no checksum pass).
-            let (idx, _) = build_index(&path, None)
-                .map_err(|e| Error::InvalidParameter(format!("Cannot index {}: {}", resolved_path, e)))?;
-            let idx = Arc::new(idx);
-            index_cache.put(resolved_path.clone(), idx.clone());
-            idx
-        }
-    };
+    // Normally in memory from the open; evicted or changed, it comes back
+    // from the disk cache or a rebuild.
+    let (file, index_from) = index_cache
+        .index(&resolved_path, &path, len, mtime)
+        .map_err(|e| Error::InvalidParameter(format!("Cannot index {}: {}", resolved_path, e)))?;
+    span.attr("index_from", index_from as u64);
+    let index = &file.index;
 
     let start_line = start_line.max(1);
     if start_line > index.line_count {
         return Ok(SourceWindow { start_line, lines: Vec::new() });
     }
 
-    // Seek to the nearest indexed block, then scan forward to `start_line`.
-    let block = ((start_line - 1) / INDEX_STRIDE) as usize;
-    let base = index.offsets.get(block).copied().unwrap_or(0);
-    let skip = (start_line - 1) - (block as u64) * INDEX_STRIDE;
+    // Seek to the indexed block the line starts in (or just before), then
+    // read past the line breaks between there and `start_line`.
+    let (base, skip) = index.seek_for_line(start_line);
 
     let file = std::fs::File::open(&path)
         .map_err(|e| Error::InvalidParameter(format!("Cannot read {}: {}", resolved_path, e)))?;

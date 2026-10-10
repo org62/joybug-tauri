@@ -2,12 +2,7 @@ import { useState } from "react";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { useDebugSettings } from "@/hooks/useDebugSettings";
-
-interface SettingItem {
-  key: string;
-  label: string;
-  keywords: string[];
-}
+import { matchesSettingItem, type SettingItem } from "@/lib/settingsSearch";
 
 const SETTING_ITEMS: SettingItem[] = [
   { key: "symbolPath", label: "Symbol path", keywords: ["symbol", "pdb", "path", "server", "srv", "nt_symbol_path", "download", "cache"] },
@@ -23,17 +18,7 @@ export function SettingsSymbols({ searchQuery }: SettingsSymbolsProps) {
   const { settings, toggle, setSymbolPath } = useDebugSettings();
   const [symbolPathDraft, setSymbolPathDraft] = useState<string | null>(null);
 
-  const matchesSearch = (item: SettingItem): boolean => {
-    if (!searchQuery) return true;
-    const q = searchQuery.toLowerCase();
-    return (
-      item.label.toLowerCase().includes(q) ||
-      "symbols".includes(q) ||
-      item.keywords.some(kw => kw.includes(q))
-    );
-  };
-
-  const visibleItems = SETTING_ITEMS.filter(matchesSearch);
+  const visibleItems = SETTING_ITEMS.filter((item) => matchesSettingItem(searchQuery, ["symbols"], item));
   if (visibleItems.length === 0) return null;
 
   return (

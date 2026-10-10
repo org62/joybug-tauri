@@ -747,7 +747,7 @@ pub fn stop_debug_session(
             let mut state = session_state.lock().unwrap();
             if let Some(sender) = state.ui_sender.take() {
                 info!("Stopping session by dropping the step_sender.");
-                let _ = sender.send(UICommand::Stop);
+                let _ = sender.send(UICommand::Stop.into());
             }
             // Mark the session Stopped immediately (not only for non-invasive
             // sessions). A running target's debug-loop thread only flips the

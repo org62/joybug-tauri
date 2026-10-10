@@ -5,6 +5,7 @@ import { open as openFileDialog } from '@tauri-apps/plugin-dialog';
 import { formatTauriError, isBenignSessionError } from '@/lib/sessionHelpers';
 import { useNavigationChannel } from '@/hooks/useNavigationChannel';
 import { sourceNavigation } from '@/lib/navigationStore';
+import { perfInvoke, perfRecord } from '@/lib/perf';
 
 export interface SourceFileInfo {
   path: string;
@@ -24,6 +25,8 @@ interface SourceLineResolvedPayload {
     checksum_kind: string;
     checksum: string;
   } | null;
+  /** No answer yet: the module's line table is still being parsed. */
+  pending?: boolean;
 }
 
 interface SourceFileLineMapPayload {
@@ -85,8 +88,8 @@ export interface UseSourceViewOptions {
   /** False when the session has no process (Stopped): the view clears. */
   canUseMemoryOps?: boolean;
   pcAddress?: number;
-  /** Changes when a module's symbols finish loading; triggers a PC re-resolve so
-   * line info appears once a module's PDB path becomes known. */
+  /** Changes when a module's symbols finish loading or its line table lands;
+   * triggers a PC re-resolve so line info appears once it is available. */
   symbolsRefreshKey?: string;
 }
 
@@ -107,6 +110,8 @@ export interface SourceViewState {
   fileMissing: boolean;
   checksumMismatch: boolean;
   noLineInfo: boolean;
+  /** The PC's module is still parsing its line table; the line follows. */
+  lineInfoLoading: boolean;
   isLoading: boolean;
   scrollToLine: ScrollToLine | null;
 }
@@ -148,6 +153,16 @@ export function useSourceView(options: UseSourceViewOptions): SourceViewState & 
   const [fileMissing, setFileMissing] = useState(false);
   const [checksumMismatch, setChecksumMismatch] = useState(false);
   const [noLineInfo, setNoLineInfo] = useState(false);
+  const [lineInfoLoading, setLineInfoLoading] = useState(false);
+  // A disassembly → source jump whose module was still parsing its line
+  // table: asked again when the table lands.
+  const pendingNavRef = useRef<bigint | null>(null);
+  // When the view started waiting for a line table, and when it last asked
+  // for the window's line map (telemetry).
+  const lineInfoWaitRef = useRef<number | null>(null);
+  const lineMapRequestedRef = useRef<number | null>(null);
+  // Whether the current PC already resolved to a source line.
+  const pcResolvedRef = useRef(false);
   const [isLoading, setIsLoading] = useState(false);
   const [scrollToLine, setScrollToLine] = useState<ScrollToLine | null>(null);
 
@@ -156,7 +171,7 @@ export function useSourceView(options: UseSourceViewOptions): SourceViewState & 
   followPcRef.current = followPc;
 
   // normalized address -> intent of an in-flight resolve_address_to_line
-  const pendingResolvesRef = useRef(new Map<string, { isPc: boolean }>());
+  const pendingResolvesRef = useRef(new Map<string, { isPc: boolean; started: number }>());
   // The currently open file (identity + resolved path + total lines), for handlers.
   const openRef = useRef<OpenFile | null>(null);
   // Serializes window reads (open/extend) so they don't interleave.
@@ -165,6 +180,11 @@ export function useSourceView(options: UseSourceViewOptions): SourceViewState & 
   const openTokenRef = useRef(0);
   // key -> cached meta so switching back to a file skips the re-scan open call.
   const metaCacheRef = useRef(new Map<string, SourceFileMeta & { fileMissing: boolean }>());
+  // key -> the open of that file still in progress. Opening a file the app has
+  // not indexed yet takes as long as reading it (seconds for a huge one), and
+  // every step in the meantime asks for the same file again: those requests
+  // join the open under way instead of starting another and discarding it.
+  const openingRef = useRef(new Map<string, Promise<SourceFileMeta & { fileMissing: boolean }>>());
   // pdb file path (lowercased) -> user-picked local override
   const manualPathsRef = useRef(new Map<string, string>());
   const listedBasesRef = useRef(new Set<string>());
@@ -198,11 +218,11 @@ export function useSourceView(options: UseSourceViewOptions): SourceViewState & 
       // Missing files have no resolved path — nothing to read.
       if (!of || !of.resolvedPath) return;
       try {
-        const win = await invoke<SourceWindow>('read_source_window', {
+        const win = await perfInvoke<SourceWindow>('source.window', 'read_source_window', {
           resolvedPath: of.resolvedPath,
           startLine: Math.max(1, start),
           count,
-        });
+        }, sessionId, (w) => ({ lines: w.lines.length }));
         if (token !== openTokenRef.current) return; // superseded by a newer open
         if (mode === 'replace') {
           setWindowStart(win.start_line);
@@ -276,32 +296,40 @@ export function useSourceView(options: UseSourceViewOptions): SourceViewState & 
         requestScroll(line, transient);
       };
 
-      const cached = metaCacheRef.current.get(key);
-      if (cached) {
-        applyMeta(cached);
-        setIsLoading(false);
-        return;
+      let meta = metaCacheRef.current.get(key);
+      if (!meta) {
+        let opening = openingRef.current.get(key);
+        if (!opening) {
+          opening = (async () => {
+            let opened: SourceFileMeta & { fileMissing: boolean };
+            try {
+              const override = manualPathsRef.current.get(fPath.toLowerCase());
+              const result = await perfInvoke<SourceFileMeta>('source.open', 'open_source_file', {
+                filePath: override ?? fPath,
+                checksumKind: checksumKind || null,
+                checksum: checksum || null,
+              }, sessionId, (r) => ({ lines: r.line_count }));
+              opened = { ...result, fileMissing: false };
+            } catch (err) {
+              const msg = formatTauriError(err);
+              if (!isBenignSessionError(msg)) console.warn('Source file unavailable:', msg);
+              // The miss is cached (negatively): every PC move / disasm click
+              // re-resolves the same file, and without this each one re-invokes
+              // open_source_file. Refresh and Locate drop the cache to re-check disk.
+              opened = { resolved_path: '', line_count: 0, checksum_matches: null, fileMissing: true };
+            }
+            // Cached whoever is still waiting for it: the work is done either way.
+            cacheMeta(key, opened);
+            openingRef.current.delete(key);
+            return opened;
+          })();
+          openingRef.current.set(key, opening);
+        }
+        meta = await opening;
+        // Superseded: a newer request owns the view. If it is for this same
+        // file it awaited this same open and applies it with its own line.
+        if (token !== openTokenRef.current) return;
       }
-
-      let meta: SourceFileMeta & { fileMissing: boolean };
-      try {
-        const override = manualPathsRef.current.get(fPath.toLowerCase());
-        const opened = await invoke<SourceFileMeta>('open_source_file', {
-          filePath: override ?? fPath,
-          checksumKind: checksumKind || null,
-          checksum: checksum || null,
-        });
-        meta = { ...opened, fileMissing: false };
-      } catch (err) {
-        const msg = formatTauriError(err);
-        if (!isBenignSessionError(msg)) console.warn('Source file unavailable:', msg);
-        // The miss is cached (negatively) below: every PC move / disasm click
-        // re-resolves the same file, and without this each one re-invokes
-        // open_source_file. Refresh and Locate drop the cache to re-check disk.
-        meta = { resolved_path: '', line_count: 0, checksum_matches: null, fileMissing: true };
-      }
-      if (token !== openTokenRef.current) return; // superseded — the newer open owns isLoading
-      cacheMeta(key, meta);
       applyMeta(meta);
       setIsLoading(false);
     },
@@ -337,7 +365,7 @@ export function useSourceView(options: UseSourceViewOptions): SourceViewState & 
     async (address: bigint, isPc: boolean) => {
       if (!sessionId) return;
       const hex = `0x${address.toString(16)}`;
-      pendingResolvesRef.current.set(normAddr(hex), { isPc });
+      pendingResolvesRef.current.set(normAddr(hex), { isPc, started: performance.now() });
       try {
         await invoke('resolve_address_to_line', { sessionId, address: hex });
       } catch (err) {
@@ -358,17 +386,44 @@ export function useSourceView(options: UseSourceViewOptions): SourceViewState & 
       const intent = pendingResolvesRef.current.get(normAddr(event.payload.address));
       if (!intent) return;
       pendingResolvesRef.current.delete(normAddr(event.payload.address));
+      const now = performance.now();
+      perfRecord('ui.source.resolve', intent.started, now - intent.started, {
+        pending: event.payload.pending ? 1 : 0,
+        is_pc: intent.isPc ? 1 : 0,
+      }, sessionId);
+
+      // Not an answer yet: the module's line table is being parsed in the
+      // background. The symbol status follows it; when it turns ready the
+      // refresh-key effect below asks again.
+      if (event.payload.pending) {
+        lineInfoWaitRef.current ??= now;
+        if (intent.isPc) {
+          setPcLine(null);
+          setNoLineInfo(false);
+          setLineInfoLoading(true);
+        } else {
+          try { pendingNavRef.current = BigInt(event.payload.address); } catch { /* ignore */ }
+        }
+        return;
+      }
+      if (lineInfoWaitRef.current !== null) {
+        perfRecord('ui.source.line_info_wait', lineInfoWaitRef.current, now - lineInfoWaitRef.current, undefined, sessionId);
+        lineInfoWaitRef.current = null;
+      }
 
       const info = event.payload.info;
       if (!info) {
         if (intent.isPc) {
           setPcLine(null);
+          setLineInfoLoading(false);
           setNoLineInfo(true);
         }
         return;
       }
 
       if (intent.isPc) {
+        pcResolvedRef.current = true;
+        setLineInfoLoading(false);
         setNoLineInfo(false);
         setPcLine(info.line);
         if (followPcRef.current) {
@@ -405,6 +460,11 @@ export function useSourceView(options: UseSourceViewOptions): SourceViewState & 
       for (const arr of map.values()) {
         arr.sort((a, b) => (BigInt(a) < BigInt(b) ? -1 : BigInt(a) > BigInt(b) ? 1 : 0));
       }
+      if (lineMapRequestedRef.current !== null) {
+        const started = lineMapRequestedRef.current;
+        lineMapRequestedRef.current = null;
+        perfRecord('ui.source.line_map', started, performance.now() - started, { entries: event.payload.entries.length }, sessionId);
+      }
       setLineMap(map);
     });
 
@@ -413,10 +473,24 @@ export function useSourceView(options: UseSourceViewOptions): SourceViewState & 
       setFileList(event.payload.files);
     });
 
+    // A file opens before its checksum is verified (hashing a large file takes
+    // seconds); this is the verdict arriving. Remembered for every cached open
+    // of that file, shown if it is the one on screen.
+    const unlistenChecksum = listen<{ resolved_path: string; matches: boolean }>('source-checksum-verified', (event) => {
+      const { resolved_path, matches } = event.payload;
+      for (const meta of metaCacheRef.current.values()) {
+        if (meta.resolved_path === resolved_path) {
+          meta.checksum_matches = matches;
+        }
+      }
+      if (openRef.current?.resolvedPath === resolved_path) setChecksumMismatch(!matches);
+    });
+
     return () => {
       unlistenResolved.then((u) => u());
       unlistenMap.then((u) => u());
       unlistenFiles.then((u) => u());
+      unlistenChecksum.then((u) => u());
     };
   }, [sessionId, openFile]);
 
@@ -426,18 +500,28 @@ export function useSourceView(options: UseSourceViewOptions): SourceViewState & 
     if (!sessionId || pcAddress === null || isPaused === false) return;
     if (lastPcRef.current === pcAddress) return;
     lastPcRef.current = pcAddress;
+    pcResolvedRef.current = false;
     setNavTargetLine(null);
     resolveAddress(pcAddress, true);
   }, [sessionId, pcAddress, isPaused, resolveAddress]);
 
-  // When symbols finish loading, re-resolve the PC so line info can appear.
+  // When symbols finish loading — or a line table that was still being parsed
+  // lands — re-resolve the PC so line info can appear, and redo a disassembly →
+  // source jump that was waiting for the same table.
   const prevSymbolsKey = useRef(symbolsRefreshKey);
   useEffect(() => {
     if (symbolsRefreshKey === prevSymbolsKey.current) return;
     prevSymbolsKey.current = symbolsRefreshKey;
-    if (pcAddress !== null) {
+    // Only when the PC has no line yet: one that resolved stays resolved, and
+    // re-asking on every module's symbols landing reopened the file each time.
+    if (pcAddress !== null && !pcResolvedRef.current) {
       lastPcRef.current = null;
       resolveAddress(pcAddress, true);
+    }
+    const nav = pendingNavRef.current;
+    if (nav !== null) {
+      pendingNavRef.current = null;
+      resolveAddress(nav, false);
     }
   }, [symbolsRefreshKey, pcAddress, resolveAddress]);
 
@@ -457,6 +541,7 @@ export function useSourceView(options: UseSourceViewOptions): SourceViewState & 
     const start = windowStart;
     const end = windowStart + windowLines.length - 1;
     const timer = setTimeout(() => {
+      lineMapRequestedRef.current = performance.now();
       invoke('get_source_file_line_map', {
         sessionId,
         moduleBase,
@@ -500,6 +585,12 @@ export function useSourceView(options: UseSourceViewOptions): SourceViewState & 
       setFileMissing(false);
       setChecksumMismatch(false);
       setNoLineInfo(false);
+      setLineInfoLoading(false);
+      pendingNavRef.current = null;
+      pcResolvedRef.current = false;
+      openingRef.current.clear();
+      lineInfoWaitRef.current = null;
+      lineMapRequestedRef.current = null;
       setIsLoading(false);
       setScrollToLine(null);
       pendingResolvesRef.current.clear();
@@ -578,6 +669,7 @@ export function useSourceView(options: UseSourceViewOptions): SourceViewState & 
     fileMissing,
     checksumMismatch,
     noLineInfo,
+    lineInfoLoading,
     isLoading,
     scrollToLine,
     selectFile,

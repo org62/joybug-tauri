@@ -96,6 +96,41 @@ test.describe("Breakpoints from a pasted list", () => {
       await page.getByTestId("breakpoint-list-input").fill(`${pcReg}+0x40`);
       await page.getByTestId("breakpoint-list-apply").click();
       await expect(page.getByTestId("breakpoint-list-dialog")).toBeHidden({ timeout: 20_000 });
+
+      const sessionBreakpoints = async () =>
+        ((await invoke(page, "get_debug_session", { sessionId })) as {
+          breakpoints: BreakpointData[];
+        }).breakpoints;
+
+      // The re-apply after a report stays in the group the first one used.
+      await expect(async () => {
+        const grouped = (await sessionBreakpoints()).filter((b) => b.group === GROUP);
+        expect(grouped).toHaveLength(4);
+      }).toPass({ timeout: 10_000, intervals: [50, 100] });
+
+      // A list with the group box left alone still lands in a group of its
+      // own, never as loose rows that can only be removed one at a time.
+      await page.getByTestId("breakpoints-add-list").click();
+      await expect(page.getByTestId("breakpoint-list-dialog")).toBeVisible();
+      await page.getByTestId("breakpoint-list-input").fill(`${pcReg}+0x60\n${pcReg}+0x80`);
+      await page.getByTestId("breakpoint-list-apply").click();
+      await expect(page.getByTestId("breakpoint-list-dialog")).toBeHidden({ timeout: 20_000 });
+      await expect(async () => {
+        const all = await sessionBreakpoints();
+        expect(all.filter((b) => b.group === "Pasted list")).toHaveLength(2);
+        expect(all.filter((b) => !b.group)).toHaveLength(0);
+      }).toPass({ timeout: 10_000, intervals: [50, 100] });
+
+      // Remove all asks first, then clears every group in one go.
+      await page.getByTestId("breakpoints-remove-all").click();
+      await expect(page.getByTestId("breakpoints-remove-all-dialog")).toContainText(
+        "All 6 breakpoints",
+      );
+      await page.getByTestId("breakpoints-remove-all-confirm").click();
+      await expect(page.getByTestId("breakpoints-remove-all-dialog")).toBeHidden();
+      await expect(async () => {
+        expect(await sessionBreakpoints()).toHaveLength(0);
+      }).toPass({ timeout: 10_000, intervals: [50, 100] });
     } finally {
       await cleanupSession(page, sessionId);
       await closeWindow(page, "Breakpoints");

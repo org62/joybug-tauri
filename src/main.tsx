@@ -8,6 +8,7 @@ import App from "./App";
 import { ThemeProvider } from "next-themes";
 import { runMouseNav } from "./lib/mouseNav";
 import { applyAccent, getStoredAccent } from "./lib/accent";
+import { initPerf } from "@/lib/perf";
 
 // Apply the persisted accent before React mounts so the first paint already
 // has the right --syn-accent (no accent flash on startup).
@@ -33,6 +34,9 @@ window.addEventListener('mousedown', (e: MouseEvent) => {
     runMouseNav(e.button === 3 ? 'back' : 'forward');
   }
 }, { capture: true });
+
+// Opt-in performance telemetry: follows the backend's switch, idle until it is on.
+initPerf();
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>

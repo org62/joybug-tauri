@@ -14,6 +14,9 @@ mod events;
 mod jit;
 mod patch_store;
 mod symbol_store;
+pub mod telemetry;
+#[cfg(test)]
+mod test_util;
 mod ui_logger;
 #[cfg(windows)]
 mod sandbox;
@@ -47,8 +50,10 @@ pub fn run() {
         if let Some(data_dir) = dirs::data_local_dir() {
             let log_dir = data_dir.join("joybug");
             let file_appender = tracing_appender::rolling::daily(&log_dir, "joybug.log");
+            // Timed: these writes are synchronous on whichever thread logs,
+            // the session thread included.
             tracing_subscriber::fmt()
-                .with_writer(file_appender)
+                .with_writer(telemetry::TimedWriter(file_appender))
                 .with_env_filter(filter)
                 .with_ansi(false)
                 .init();
@@ -105,9 +110,15 @@ pub fn run() {
         .manage(LogsState::default())
         .manage(SettingsState::new(load_settings_from_disk()))
         .manage(commands::OobPool::default())
+        .manage(commands::CoalescedJobs::default())
         .manage(commands::SourceIndexCache::default())
         .manage(commands::PeFilesState::default())
         .manage(StartupAttachState(std::sync::Mutex::new(startup_attach)))
+        .setup(|app| {
+            let settings = app.state::<SettingsState>().lock().unwrap().clone();
+            telemetry::init(app.handle().clone(), &settings);
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             commands::greet,
             commands::create_debug_session,
@@ -171,6 +182,7 @@ pub fn run() {
             commands::read_memory_sync,
             commands::request_set_register,
             commands::request_memory_regions,
+            commands::set_memory_protection,
             commands::request_dereference,
             commands::request_dereference_batch,
             commands::request_memory_search,
@@ -178,6 +190,9 @@ pub fn run() {
             commands::update_window_state,
             commands::get_debug_settings,
             commands::update_debug_settings,
+            commands::telemetry_record,
+            commands::telemetry_status,
+            commands::telemetry_open_folder,
             commands::check_for_updates,
             commands::startup_update_check,
             commands::skip_update_version,
@@ -264,6 +279,8 @@ pub fn run() {
             // On exit, stop any still-running sandboxes so a hard app close never
             // leaks a Windows Sandbox VM.
             if let tauri::RunEvent::Exit = event {
+                // Deliver what telemetry still holds before the process goes.
+                telemetry::flush(std::time::Duration::from_secs(2));
                 let handles = app_handle.state::<SandboxHandlesMap>();
                 let drained: Vec<_> = handles.lock().unwrap().drain().collect();
                 for (session_id, handle) in drained {

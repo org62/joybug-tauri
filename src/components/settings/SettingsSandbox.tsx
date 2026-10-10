@@ -4,12 +4,7 @@ import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useDebugSettings } from "@/hooks/useDebugSettings";
 import { useSandbox } from "@/hooks/useSandbox";
-
-interface SettingItem {
-  key: string;
-  label: string;
-  keywords: string[];
-}
+import { matchesSettingItem, type SettingItem } from "@/lib/settingsSearch";
 
 const SETTING_ITEMS: SettingItem[] = [
   { key: "sandboxStatus", label: "Windows Sandbox", keywords: ["sandbox", "wsb", "available", "24h2", "26100", "isolation", "detonate"] },
@@ -28,16 +23,7 @@ export function SettingsSandbox({ searchQuery }: SettingsSandboxProps) {
   const { status } = useSandbox();
   const [memoryDraft, setMemoryDraft] = useState<string | null>(null);
 
-  const matchesSearch = (item: SettingItem): boolean => {
-    if (!searchQuery) return true;
-    const q = searchQuery.toLowerCase();
-    return (
-      item.label.toLowerCase().includes(q) ||
-      item.keywords.some((kw) => kw.includes(q))
-    );
-  };
-
-  const visibleItems = SETTING_ITEMS.filter(matchesSearch);
+  const visibleItems = SETTING_ITEMS.filter((item) => matchesSettingItem(searchQuery, [], item));
   if (visibleItems.length === 0) return null;
 
   const available = !!status && status.supported && status.wsb_present;

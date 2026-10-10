@@ -1,6 +1,8 @@
 use tauri::{AppHandle, Emitter};
 use tracing::{debug, error};
 
+use joybug_core::protocol_io::LineLookup;
+
 use super::types::DebugSession;
 
 // Payloads are shared with the OOB fallback path in commands/source.rs so both
@@ -21,6 +23,9 @@ pub(crate) struct SourceLineResolvedPayload {
     pub session_id: String,
     pub address: String,
     pub info: Option<SourceLineInfoPayload>,
+    /// No answer yet: the module's line table is still being parsed. The view
+    /// asks again when the module's `line_info` status turns "ready".
+    pub pending: bool,
 }
 
 #[derive(serde::Serialize)]
@@ -62,15 +67,31 @@ pub(crate) struct SourceErrorPayload {
     pub error: String,
 }
 
-pub(crate) fn emit_source_line_resolved(
-    handle: &AppHandle,
-    session_id: String,
-    address: u64,
-    info: Option<joybug_core::protocol_io::AddressLineInfo>,
-) {
+/// Resolve `address` to its source line for the Source view and emit the
+/// answer (`source-line-resolved`) or the failure (`source-line-error`).
+/// Never waits for a line-table parse: the session thread and the pooled OOB
+/// connection both serve other requests behind this one.
+pub(crate) fn resolve_and_emit_source_line(session: &mut DebugSession, handle: &AppHandle, session_id: String, pid: u32, address: u64) {
+    let mut span = crate::telemetry::span("app.source.resolve_line");
+    match session.try_resolve_address_to_line(pid, address) {
+        Ok(lookup) => {
+            span.attr("pending", matches!(lookup, LineLookup::Pending) as u64);
+            emit_source_line_resolved(handle, session_id, address, lookup);
+        }
+        Err(e) => emit_source_error(handle, "source-line-error", session_id, e.to_string()),
+    }
+}
+
+fn emit_source_line_resolved(handle: &AppHandle, session_id: String, address: u64, lookup: LineLookup) {
+    let (info, pending) = match lookup {
+        LineLookup::Found(info) => (Some(*info), false),
+        LineLookup::NoLineInfo => (None, false),
+        LineLookup::Pending => (None, true),
+    };
     let payload = SourceLineResolvedPayload {
         session_id,
         address: format!("{:#X}", address),
+        pending,
         info: info.map(|i| SourceLineInfoPayload {
             module_path: i.module_path,
             module_base: format!("{:#X}", i.module_base),
@@ -147,14 +168,40 @@ fn session_id_of(session: &DebugSession) -> String {
     session.state.lock().unwrap().id.clone()
 }
 
-/// Resolve an address to its `(source file path, line)` pair, best-effort.
-/// Both a resolve error and missing line info collapse to `None`.
+/// An address looked up for its `(source file path, line)` without waiting.
+pub(crate) enum FileLine {
+    Found(String, u32),
+    /// No line for this address, or the lookup failed.
+    None,
+    /// The module's line table is still being parsed.
+    Pending,
+}
+
+impl FileLine {
+    pub(crate) fn found(self) -> Option<(String, u32)> {
+        match self {
+            FileLine::Found(path, line) => Some((path, line)),
+            FileLine::None | FileLine::Pending => None,
+        }
+    }
+}
+
+/// Look up an address's source line without waiting for a line-table parse —
+/// this runs on the session thread, where a wait is a stall of everything
+/// queued behind it. A parse not yet done is started in the background.
+pub(crate) fn lookup_file_line(session: &mut DebugSession, pid: u32, address: u64) -> FileLine {
+    match session.try_resolve_address_to_line(pid, address) {
+        Ok(LineLookup::Found(info)) => FileLine::Found(info.file.path, info.line_entry.line_start),
+        Ok(LineLookup::Pending) => FileLine::Pending,
+        Ok(LineLookup::NoLineInfo) | Err(_) => FileLine::None,
+    }
+}
+
+/// [`lookup_file_line`] for callers that treat "not yet" like "none": a
+/// source-line step taken while the table is still loading steps one
+/// instruction, like a step with no line info.
 pub(crate) fn resolve_file_line(session: &mut DebugSession, pid: u32, address: u64) -> Option<(String, u32)> {
-    session
-        .resolve_address_to_line(pid, address)
-        .ok()
-        .flatten()
-        .map(|i| (i.file.path, i.line_entry.line_start))
+    lookup_file_line(session, pid, address).found()
 }
 
 /// Resolve an address to file:line and emit `source-line-resolved`.
@@ -168,10 +215,7 @@ pub(crate) fn process_resolve_address_to_line(
     debug!("📤 Processing resolve-address-to-line: pid={}, address=0x{:X}", pid, address);
     let Some(handle) = app_handle.as_ref() else { return };
     let session_id = session_id_of(session);
-    match session.resolve_address_to_line(pid, address) {
-        Ok(info) => emit_source_line_resolved(handle, session_id, address, info),
-        Err(e) => emit_source_error(handle, "source-line-error", session_id, e.to_string()),
-    }
+    resolve_and_emit_source_line(session, handle, session_id, pid, address);
 }
 
 /// Fetch the line map for one source file (bounded to `start_line..=end_line`

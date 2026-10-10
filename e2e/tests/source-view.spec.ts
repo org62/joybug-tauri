@@ -13,6 +13,10 @@ import {
 import { installEventCapture, waitForCapturedEvent } from "../helpers/event-helpers";
 import type { Page } from "../helpers/test-fixtures";
 import { IS_WINDOWS } from "../helpers/launch-commands";
+import crypto from "crypto";
+import fs from "fs";
+import os from "os";
+import path from "path";
 
 /**
  * Invoke a fire-and-forget backend command and resolve with the payload of the
@@ -200,6 +204,65 @@ test.describe("Source View", () => {
       await cleanupSession(page, sessionId);
     } finally {
       await restoreDefaultSettings(page);
+    }
+  });
+
+  test("opens a file before its checksum is verified, and remembers the verdict", async ({ tauriPage: page }) => {
+    // No session needed: opening and reading a source file is a file operation.
+    // A fresh name per run, so neither the app's in-memory index nor the one
+    // it keeps on disk already knows the file.
+    const file = path.join(os.tmpdir(), `joybug-e2e-source-${crypto.randomUUID()}.c`);
+    const lines = Array.from({ length: 5000 }, (_, i) => `int line_${i + 1} = ${i};`);
+    const content = lines.join("\r\n") + "\r\n";
+    fs.writeFileSync(file, content);
+    const md5 = crypto.createHash("md5").update(content).digest("hex");
+    const wrong = "0".repeat(32);
+    const open = (checksum: string | null) =>
+      invoke(page, "open_source_file", { filePath: file, checksumKind: checksum ? "md5" : null, checksum });
+    const verdictFor = (matches: boolean) =>
+      waitForCapturedEvent(page, "source-checksum-verified", (p) => p.resolved_path === file && p.matches === matches);
+
+    try {
+      await installEventCapture(page, ["source-checksum-verified"]);
+
+      // The first open answers with the line count at once; the checksum is
+      // still being computed, and its verdict arrives as an event.
+      const first = await open(wrong);
+      expect(first.line_count).toBe(5000);
+      expect(first.checksum_matches).toBeNull();
+      expect(first.checksum_pending).toBe(true);
+      await verdictFor(false);
+
+      // From then on the file's checksum is known: the answer is immediate,
+      // whichever checksum the caller expects.
+      const again = await open(wrong);
+      expect(again.checksum_pending).toBe(false);
+      expect(again.checksum_matches).toBe(false);
+      const right = await open(md5);
+      expect(right.checksum_pending).toBe(false);
+      expect(right.checksum_matches).toBe(true);
+      // Nothing to verify without a recorded checksum.
+      const none = await open(null);
+      expect(none.checksum_pending).toBe(false);
+      expect(none.checksum_matches).toBeNull();
+
+      // Windows of lines, anywhere in the file, without the line terminators.
+      for (const start of [1, 2, 2048, 2049, 4999]) {
+        const win = await invoke(page, "read_source_window", { resolvedPath: first.resolved_path, startLine: start, count: 3 });
+        expect(win.start_line).toBe(start);
+        expect(win.lines).toEqual(lines.slice(start - 1, start + 2));
+      }
+      const past = await invoke(page, "read_source_window", { resolvedPath: first.resolved_path, startLine: 5001, count: 3 });
+      expect(past.lines).toEqual([]);
+
+      // An edited file is a different file: indexed again, verified again.
+      fs.writeFileSync(file, content + "int appended;\r\n");
+      const edited = await open(md5);
+      expect(edited.line_count).toBe(5001);
+      expect(edited.checksum_pending).toBe(true);
+      await verdictFor(false);
+    } finally {
+      fs.rmSync(file, { force: true });
     }
   });
 });

@@ -34,6 +34,24 @@ pub struct ThreadActionResult {
     pub error: Option<String>,
 }
 
+/// One range of a `set_memory_protection` request.
+#[derive(serde::Deserialize)]
+pub struct ProtectRange {
+    /// Hex address ("0x...").
+    pub address: String,
+    pub size: u64,
+}
+
+/// Outcome of one range of a `set_memory_protection` request.
+#[derive(serde::Serialize)]
+pub struct ProtectResult {
+    pub address: String,
+    pub size: u64,
+    /// Protection the first page had, when the change went through.
+    pub old_protect: Option<u32>,
+    pub error: Option<String>,
+}
+
 #[derive(serde::Serialize)]
 pub struct ThreadTebData {
     pub tid: u32,
@@ -50,6 +68,9 @@ pub struct ModuleSymbolStatusData {
     pub symbol_count: Option<usize>,
     pub error: Option<String>,
     pub pdb_path: Option<String>,
+    /// The module's source line table: "none" | "loading" | "ready". Parsed
+    /// in the background on the first source-level request.
+    pub line_info: &'static str,
 }
 
 #[derive(serde::Serialize)]

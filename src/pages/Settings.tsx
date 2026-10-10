@@ -11,12 +11,13 @@ import { SettingsEvents } from "@/components/settings/SettingsEvents";
 import { SettingsPebNormalize } from "@/components/settings/SettingsPebNormalize";
 import { SettingsSymbols } from "@/components/settings/SettingsSymbols";
 import { SettingsSandbox } from "@/components/settings/SettingsSandbox";
+import { SettingsDiagnostics } from "@/components/settings/SettingsDiagnostics";
 import { usePlatform } from "@/hooks/usePlatform";
 
 const SECTION_GRID = "grid gap-x-6 gap-y-5 items-start";
 const SECTION_GRID_COLS = { gridTemplateColumns: "repeat(auto-fill, minmax(20rem, 1fr))" };
 
-const VALID_TABS = ["all", "general", "keybindings", "events", "hiding", "sandbox"];
+const VALID_TABS = ["all", "general", "keybindings", "events", "hiding", "sandbox", "diagnostics"];
 
 export default function Settings() {
   const [searchParams] = useSearchParams();
@@ -66,6 +67,7 @@ export default function Settings() {
               <TabsTrigger value="events">Events and Exceptions</TabsTrigger>
               {features.peb_normalize && <TabsTrigger value="peb-normalize">PEB Normalization</TabsTrigger>}
               {features.sandbox && <TabsTrigger value="sandbox">Sandbox</TabsTrigger>}
+              <TabsTrigger value="diagnostics">Diagnostics</TabsTrigger>
             </TabsList>
 
             {/* All: one flat grid with every section as a grid item */}
@@ -77,6 +79,7 @@ export default function Settings() {
                   <SettingsEvents searchQuery={searchQuery} />
                   {features.peb_normalize && <SettingsPebNormalize searchQuery={searchQuery} />}
                   {features.sandbox && <SettingsSandbox searchQuery={searchQuery} />}
+                  <SettingsDiagnostics searchQuery={searchQuery} />
                   <SettingsKeybindings searchQuery={searchQuery} embedded />
                 </div>
               </ScrollArea>
@@ -120,6 +123,15 @@ export default function Settings() {
               <ScrollArea className="h-full">
                 <div className={SECTION_GRID} style={SECTION_GRID_COLS}>
                   <SettingsSandbox searchQuery={searchQuery} />
+                </div>
+              </ScrollArea>
+            </TabsContent>
+
+            {/* Diagnostics only */}
+            <TabsContent value="diagnostics" className="mt-4 min-h-0 flex-1">
+              <ScrollArea className="h-full">
+                <div className={SECTION_GRID} style={SECTION_GRID_COLS}>
+                  <SettingsDiagnostics searchQuery={searchQuery} />
                 </div>
               </ScrollArea>
             </TabsContent>

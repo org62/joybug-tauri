@@ -1,7 +1,7 @@
 import React from 'react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Square, Play, RedoDot, ArrowDownToDot, ArrowUpFromDot, Pause, Plus, ChevronDown, Unplug, Loader2, AlertTriangle, RotateCcw, HardDriveDownload, FileDown } from 'lucide-react';
+import { Activity, Square, Play, RedoDot, ArrowDownToDot, ArrowUpFromDot, Pause, Plus, ChevronDown, Unplug, Loader2, AlertTriangle, RotateCcw, HardDriveDownload, FileDown } from 'lucide-react';
 import { exceptionName, formatExceptionCode, EXCEPTION_SINGLE_STEP } from '@/lib/exceptionNames';
 import {
   DropdownMenu,
@@ -20,6 +20,8 @@ import { ExceptionHoverPopup } from '@/components/ExceptionDetailBlock';
 import { shortHex } from '@/lib/hexUtils';
 import { sessionDisplayName, dumpMenuLabels } from '@/lib/sessionHelpers';
 import { useKeybindingContext } from '@/contexts/KeybindingContext';
+import { useDebugSettings } from '@/hooks/useDebugSettings';
+import { useTelemetryStatus } from '@/lib/perf';
 
 export interface SessionHeaderProps {
   session: DebugSession;
@@ -67,6 +69,47 @@ const ArchBadge: React.FC<{ session: DebugSession }> = ({ session }) => {
     <Badge variant="outline" size="xs" data-testid="session-arch" title="Target architecture">
       {label}
     </Badge>
+  );
+};
+
+/**
+ * Says so while a Settings -> Diagnostics switch changes what this view shows
+ * or records, so a degraded disassembly is never mistaken for the real one
+ * and telemetry is never on unnoticed.
+ */
+const DiagnosticsBadges: React.FC = () => {
+  const { settings } = useDebugSettings();
+  const degraded = settings.diag_naive_disassembly
+    ? "Naive disassembly"
+    : settings.diag_skip_symbolization ? "No symbols in disassembly" : null;
+  // The backend's verdict, not the switches: it also knows whether the
+  // collector address is one it can use.
+  const telemetry = useTelemetryStatus()?.active ?? false;
+  return (
+    <>
+      {degraded && (
+        <Badge
+          variant="outline"
+          size="xs"
+          data-testid="session-diag-disassembly"
+          title="A diagnostic disassembly mode is on (Settings → Diagnostics)"
+        >
+          <AlertTriangle />
+          {degraded}
+        </Badge>
+      )}
+      {telemetry && (
+        <Badge
+          variant="outline"
+          size="xs"
+          data-testid="session-telemetry"
+          title="Performance telemetry is on (Settings → Diagnostics)"
+        >
+          <Activity />
+          Telemetry
+        </Badge>
+      )}
+    </>
   );
 };
 
@@ -198,6 +241,7 @@ export const SessionHeader: React.FC<SessionHeaderProps> = ({
           {getStatusBadge(session.status)}
           <ArchBadge session={session} />
           <ExceptionBadge event={session.current_event} />
+          <DiagnosticsBadges />
           {symbolLoadingCount > 0 && (
             <Badge variant="outline" size="xs" title="Symbol downloads in progress">
               <Loader2 className="h-3 w-3 mr-1 animate-spin" />

@@ -120,6 +120,38 @@ Joybug is early-stage and deliberately narrow. What that means concretely:
 
 ---
 
+## Privacy
+
+Joybug makes no network requests about you. The two it does make are the update check against
+GitHub Releases (Settings → General) and symbol downloads for the modules you debug.
+
+There is an **opt-in** performance telemetry, off by default, for the case where the UI is slow
+on your machine and we cannot reproduce it. It is in Settings → Diagnostics:
+
+- **Send anonymous performance data** sends to the collector address you enter there. There is
+  no built-in address: nothing leaves your machine until you turn the switch on *and* set one.
+- **Record performance data to a local file** writes the same data to a file instead (or as
+  well), so you can read exactly what would be sent, or hand the file over yourself.
+
+What it contains: how long the debugger's own operations took (timings, counts, sizes), the app
+version, OS, CPU architecture and core count. System modules are named (`ntdll.dll`); every
+other module — including the program you are debugging — appears as a random-looking code that
+changes on every run. It never contains paths, addresses, symbol names, command lines, register
+or memory contents.
+
+The same page has two diagnostic switches, *Disassemble without symbols* and *Naive
+disassembly*, which trade detail for speed so you can see for yourself whether symbols or
+function analysis are what slows a listing down.
+
+To receive the data yourself, the app doubles as the collector:
+
+```
+Joybug-UI-x64.exe --telemetry-collect 127.0.0.1:4318 --out reports
+Joybug-UI-x64.exe --telemetry-summarize reports --out summary.txt
+```
+
+---
+
 ## Architecture
 
 ```

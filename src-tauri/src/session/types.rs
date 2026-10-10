@@ -15,7 +15,9 @@ pub enum UICommand {
     StepIntoLine,
     Stop,
     Detach,
-    Disassembly{ arch: joybug_core::interfaces::Architecture, address: u64, count: u32, compare_image: bool },
+    /// `request_id` is echoed in the result: the caller's way to tell its
+    /// own answer from another request for the same address.
+    Disassembly{ arch: joybug_core::interfaces::Architecture, address: u64, count: u32, compare_image: bool, request_id: Option<String> },
     DisassembleFunction{ arch: joybug_core::interfaces::Architecture, address: u64, max_instructions: u32, compare_image: bool },
     DisassembleBackward{ arch: joybug_core::interfaces::Architecture, target: u64, count: u32, compare_image: bool },
     GetCallStack,
@@ -36,6 +38,8 @@ pub enum UICommand {
     ToggleBreakpoint { address: u64, single_shot: bool },
     SetBreakpoints { addresses: Vec<u64>, group: Option<String>, single_shot: bool },
     SyncAutoBreakpoints,
+    /// Push the diagnostic disassembly switches to the debug server.
+    SetDisasmOptions { options: joybug_core::protocol::DisasmOptions },
     RemoveBreakpoint { breakpoint_id: String },
     RemoveBreakpoints { breakpoint_ids: Vec<String> },
     EnableBreakpoint { breakpoint_id: String, enabled: bool },
@@ -66,7 +70,6 @@ pub enum UICommand {
     RestoreImageBytes { address: u64 },
     /// Diff every loaded module's executable sections against its on-disk
     /// image and emit the modified runs (the Image Patches window).
-    ScanImagePatches,
     AddBookmark {
         kind: String,
         address: u64,
@@ -91,6 +94,20 @@ pub enum UICommand {
     RefreshBookmarks,
     /// Write a minidump of the paused target to `path`.
     WriteMinidump { path: String, kind: MinidumpKind },
+}
+
+/// A command on its way to the session thread, stamped when it was sent so
+/// the time it spent waiting behind other commands can be measured.
+#[derive(Debug)]
+pub struct QueuedCommand {
+    pub command: UICommand,
+    pub queued_at: std::time::Instant,
+}
+
+impl From<UICommand> for QueuedCommand {
+    fn from(command: UICommand) -> Self {
+        Self { command, queued_at: std::time::Instant::now() }
+    }
 }
 
 impl UICommand {

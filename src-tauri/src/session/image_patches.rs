@@ -14,8 +14,10 @@ use super::image_cache::ensure_all_and_snapshot_images;
 use super::patches::MAX_RESTORE_BYTES;
 use super::types::{DebugSession, ImagePatchEntry, ImagePatchesResult};
 
-/// Bytes read per memory request while diffing a section.
-const CHUNK_SIZE: usize = 0x10000;
+/// Bytes read per memory request while diffing a section. Large, because a big
+/// module is hundreds of megabytes of code and every request is a round trip;
+/// a chunk that fails to read is skipped whole.
+const CHUNK_SIZE: usize = 0x40000;
 /// A longer contiguous modified region splits into runs of the restore
 /// command's bound, so one entry maps to one restorable run.
 const MAX_RUN_BYTES: usize = MAX_RESTORE_BYTES;
@@ -37,15 +39,24 @@ struct DiffRun {
 /// breakpoints (0xCC written by the debugger itself) are excluded from the
 /// diff; tracked user patches are included and flagged `tracked`.
 ///
-/// Runs off a plain pid, so it serves both the paused debug loop and the OOB
-/// path used by a running or non-invasive `Open` session (which has neither
+/// Reads every module's code out of the target — seconds for a large one — so
+/// it never runs on the session thread: the caller is a background job with
+/// its own connection (`commands::scan_image_patches`), for a paused session
+/// as much as for a running or non-invasive `Open` one (which has neither
 /// breakpoints nor tracked patches, so those sets come back empty).
+///
+/// `cancel` is checked between reads; a cancelled scan emits nothing (the
+/// request that superseded it will).
 pub(crate) fn process_scan_image_patches(
     session: &mut DebugSession,
     app_handle_clone: &Option<AppHandle>,
     pid: u32,
+    cancel: &crate::commands::Cancel,
 ) {
     let arch = crate::commands::get_session_arch(&session.state);
+    let mut span = crate::telemetry::span("app.image_patch_scan");
+    let mut bytes_read = 0u64;
+    let mut reads = 0u64;
 
     let (session_id, bp_addrs, patch_ranges) = {
         let state = session.state.lock().unwrap();
@@ -78,12 +89,18 @@ pub(crate) fn process_scan_image_patches(
     let mut runs: Vec<DiffRun> = Vec::new();
     let mut capped = false;
 
+    span.attr("modules", images.iter().filter(|im| !im.unavailable).count() as u64);
     'scan: for image in images.iter().filter(|im| !im.unavailable) {
         for (start_rva, end_rva) in image.comparable_code_ranges() {
             let mut va = image.base() + start_rva as u64;
             let range_end = image.base() + end_rva as u64;
             while va < range_end {
+                if cancel.is_cancelled() {
+                    span.attr("cancelled", 1);
+                    return;
+                }
                 let len = CHUNK_SIZE.min((range_end - va) as usize);
+                reads += 1;
                 let live = match session.read_memory(pid, va, len) {
                     Ok(b) => b,
                     Err(e) => {
@@ -95,6 +112,7 @@ pub(crate) fn process_scan_image_patches(
                 // A short read still gets compared; the loop then resumes at the
                 // first unread byte instead of skipping the chunk's remainder.
                 let cmp_len = live.len().min(len);
+                bytes_read += cmp_len as u64;
                 let advance = if cmp_len > 0 { cmp_len } else { len };
                 let Some(orig) = image.bytes_at(va, cmp_len) else {
                     va += advance as u64;
@@ -135,6 +153,9 @@ pub(crate) fn process_scan_image_patches(
     }
 
     debug!("Image patch scan: {} modified runs (capped={})", runs.len(), capped);
+    span.attr("reads", reads);
+    span.attr("bytes", bytes_read);
+    span.attr("runs", runs.len() as u64);
 
     let entries: Vec<ImagePatchEntry> = runs
         .iter()
@@ -214,6 +235,10 @@ pub(crate) fn process_scan_image_patches(
         })
         .collect();
 
+    if cancel.is_cancelled() {
+        span.attr("cancelled", 1);
+        return;
+    }
     if let Some(ref handle) = app_handle_clone {
         let payload = ImagePatchesResult { session_id, patches: entries, capped };
         if let Err(e) = handle.emit("image-patches-updated", &payload) {

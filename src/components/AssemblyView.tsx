@@ -13,12 +13,13 @@ import { Cpu, ArrowLeft, ArrowRight, RefreshCw, ChevronRight, Circle, CircleDot,
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuCheckboxItem } from "@/components/ui/dropdown-menu";
 import { sourceNavigation } from "@/lib/navigationStore";
 import { cn, DATA_ROW_HEIGHT, LINK_VALUE_CLASS, PC_ROW_HIGHLIGHT_CLASS } from "@/lib/utils";
-import { useAssemblyView, buildAsmRows, Instruction, AsmDisassembleFn } from "@/hooks/useAssemblyView";
+import { useAssemblyView, buildAsmRows, Instruction, AsmDisassembleFn, type AsmModuleRange, type AsmSymbolStatus } from "@/hooks/useAssemblyView";
 import { NavHistoryStore } from "@/lib/navHistory";
 import { RegisterContext, SymbolResolver } from "@/lib/hexUtils";
 import { AddressExpressionInput } from "@/components/AddressExpressionInput";
 import { isBenignSessionError } from "@/lib/sessionHelpers";
-import { EmptyState, ProcessUnavailableState } from "@/components/ui/empty-state";
+import { EmptyState, LoadingState, ProcessUnavailableState, STATE_ICON_CLASS } from "@/components/ui/empty-state";
+import { useDelayedFlag } from "@/hooks/useDelayedFlag";
 import { copyToClipboard } from "@/lib/clipboard";
 import { useContextMenu } from "@/hooks/useContextMenu";
 import { useRecenterOnReveal, applyOverFrames } from "@/hooks/useRecenterOnReveal";
@@ -34,6 +35,7 @@ import { HoverPopupPanel } from "@/components/ui/hover-popup";
 import { Virtualizer } from "@tanstack/react-virtual";
 import { useKeybindingContext } from "@/contexts/KeybindingContext";
 import { keyboardEventToChord } from "@/lib/keybindings";
+import { perfAsmCommitted, perfStepPending, usePerfRender } from "@/lib/perf";
 
 const COLUMN_WIDTHS_KEY = "assembly-column-widths";
 const NOP_PAD_KEY = "assembly-nop-pad";
@@ -42,6 +44,8 @@ type ColumnWidths = { symbol: number; bytes: number; mnemonic: number };
 
 const DEFAULT_COLUMN_WIDTHS: ColumnWidths = { symbol: 320, bytes: 144, mnemonic: 64 };
 const ASSEMBLY_ROW_HEIGHT = DATA_ROW_HEIGHT;
+/** A load must take this long before the view says "Loading". */
+const LOADING_STATE_DELAY_MS = 200;
 // Passes listed in the lightning-trace popup for a repeatedly executed row.
 const TRACE_POPUP_MAX_PASSES = 20;
 
@@ -74,6 +78,11 @@ interface AssemblyViewProps {
   onRestoreImageBytes?: (address: string) => void;
   onAddBookmark?: (address: string, asmText: string) => void;
   symbolsRefreshKey?: string;
+  /** Session mode: the per-module symbol states behind `symbolsRefreshKey`. */
+  symbolStatuses?: AsmSymbolStatus[];
+  /** The process's modules, so a symbol load refreshes the listing only when
+   *  its module matters to it. */
+  modules?: AsmModuleRange[];
   /** Activate the Source tab and reveal an address's source line (context-menu action). */
   onNavigateToSource?: (address: string) => void;
   /** Open the Memory view at an address. Enables clickable memory operands
@@ -99,7 +108,7 @@ interface AssemblyViewProps {
   navHistory: NavHistoryStore;
 }
 
-export function AssemblyView({ sessionId, isPaused, canLoad, address, registers, resolveSymbol, breakpointAddresses, emulation, onToggleBreakpoint, onToggleSingleShotBreakpoint, onSetHardwareBreakpoint, onAssemblePatch, onRestoreImageBytes, onAddBookmark, symbolsRefreshKey, onNavigateToSource, onNavigateToMemory, onShowInMemoryRegions, onShowXrefs, onEmulateFrom, disassemble, initialAddress, addressFormatter, translateGotoInput, navHistory }: AssemblyViewProps) {
+export function AssemblyView({ sessionId, isPaused, canLoad, address, registers, resolveSymbol, breakpointAddresses, emulation, onToggleBreakpoint, onToggleSingleShotBreakpoint, onSetHardwareBreakpoint, onAssemblePatch, onRestoreImageBytes, onAddBookmark, symbolsRefreshKey, symbolStatuses, modules, onNavigateToSource, onNavigateToMemory, onShowInMemoryRegions, onShowXrefs, onEmulateFrom, disassemble, initialAddress, addressFormatter, translateGotoInput, navHistory }: AssemblyViewProps) {
   const [addressInput, setAddressInput] = useState("");
   // Inline assembly input state
   const [assembleTarget, setAssembleTarget] = useState<{ address: string; defaultText: string } | null>(null);
@@ -137,6 +146,7 @@ export function AssemblyView({ sessionId, isPaused, canLoad, address, registers,
     jumpTarget,
     loadGeneration,
     prependSignal,
+    annotationSeq,
     followSeq,
     goToAddressDirect,
     followJump,
@@ -154,6 +164,8 @@ export function AssemblyView({ sessionId, isPaused, canLoad, address, registers,
     registers,
     resolveSymbol,
     symbolsRefreshKey,
+    symbolStatuses,
+    modules,
     disassemble,
     initialAddress,
     navHistory,
@@ -177,6 +189,14 @@ export function AssemblyView({ sessionId, isPaused, canLoad, address, registers,
     upperAddrs.forEach((a, i) => m.set(a, i));
     return m;
   }, [upperAddrs]);
+
+  // Telemetry: this view's render cost, and the moment a step's result — the
+  // new PC row — is committed here.
+  usePerfRender("asm");
+  useLayoutEffect(() => {
+    if (!perfStepPending()) return;
+    perfAsmCommitted(sessionId, () => pcAddress !== null && addrIndex.has(`0x${pcAddress.toString(16)}`.toUpperCase()));
+  }, [sessionId, pcAddress, addrIndex]);
 
   // All instruction addresses between two endpoints, inclusive. Falls back to
   // just the destination when an endpoint left the loaded range (full replace).
@@ -410,6 +430,27 @@ export function AssemblyView({ sessionId, isPaused, canLoad, address, registers,
     }
   }, [prependSignal, jumpTarget, pcAddress, scrollToInstruction]);
 
+  // An in-place annotation refresh (symbols landed) can add or remove label
+  // rows above the viewport. Keep the instruction at the top of the viewport
+  // where it was, synchronously (pre-paint), so the listing does not jump.
+  const rowsBeforeRef = useRef(rows);
+  const handledAnnotationRef = useRef(annotationSeq);
+  useLayoutEffect(() => {
+    const before = rowsBeforeRef.current;
+    rowsBeforeRef.current = rows;
+    if (annotationSeq === handledAnnotationRef.current) return;
+    handledAnnotationRef.current = annotationSeq;
+    const el = virtualizerRef.current?.scrollElement;
+    if (!el || before === rows) return;
+    let top = Math.floor(el.scrollTop / ASSEMBLY_ROW_HEIGHT);
+    while (top < before.length && before[top].kind !== 'insn') top++;
+    const anchor = before[top];
+    if (!anchor || anchor.kind !== 'insn') return;
+    const address = anchor.insn.address;
+    const now = rows.findIndex((r) => r.kind === 'insn' && r.insn.address === address);
+    if (now >= 0 && now !== top) el.scrollTop += (now - top) * ASSEMBLY_ROW_HEIGHT;
+  }, [rows, annotationSeq]);
+
   // Shared edge check for the scroll and wheel handlers. `only` restricts the
   // check to one edge (the wheel direction), so an up-wheel on content that fits
   // the viewport doesn't also pull in rows below. The hook's single-in-flight +
@@ -518,7 +559,18 @@ export function AssemblyView({ sessionId, isPaused, canLoad, address, registers,
   const benignUnavailable = error !== null && isBenignSessionError(error);
   const showInstructions = instructions.length > 0;
   const showErrorState = error !== null && !benignUnavailable;
-  const showLoadingState = isLoading && !showInstructions && !error;
+  // The loading state replaces the empty state only for a load slow enough to
+  // be worth announcing. A view with nothing to show re-asks on every pause
+  // (unreadable code, a target that keeps running); each of those is over in
+  // milliseconds, and swapping the two states that fast is a flicker. The very
+  // first load has no empty state to hold on to and shows "loading" at once.
+  const slowLoad = useDelayedFlag(isLoading, LOADING_STATE_DELAY_MS);
+  const idleEmpty = !showInstructions && !isLoading && !showErrorState;
+  const wasEmptyRef = useRef(false);
+  useEffect(() => {
+    if (!isLoading) wasEmptyRef.current = idleEmpty;
+  }, [isLoading, idleEmpty]);
+  const showLoadingState = isLoading && !showInstructions && !error && (slowLoad || !wasEmptyRef.current);
   // Catch-all so the panel is NEVER blank: whenever there are no instructions to
   // render and we're not mid-load or showing an error, fall back to the neutral
   // empty state. Covers "no address entered yet" AND "disassembled an address
@@ -790,7 +842,7 @@ export function AssemblyView({ sessionId, isPaused, canLoad, address, registers,
             <ProcessUnavailableState icon={Cpu} what="Disassembly" />
           ) : (
             <EmptyState
-              icon={<Cpu className="h-12 w-12 mx-auto mb-4 opacity-50" />}
+              icon={<Cpu className={STATE_ICON_CLASS} />}
               title="No disassembly available"
               subtitle="Enter an address or symbol above to disassemble"
             />
@@ -803,14 +855,8 @@ export function AssemblyView({ sessionId, isPaused, canLoad, address, registers,
               </div>
             </div>
           )}
-          {showLoadingState && (
-            <div className="flex items-center justify-center h-full text-muted-foreground p-4">
-              <div className="text-center">
-                <Cpu className="h-8 w-8 mx-auto mb-2 animate-pulse" />
-                <p>Loading disassembly...</p>
-              </div>
-            </div>
-          )}
+          {/* Same icon, same box as the empty state above: only the title changes. */}
+          {showLoadingState && <LoadingState icon={Cpu} title="Loading disassembly..." />}
         </PanelBody>
       )}
 

@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useState, useMemo, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { Virtualizer } from '@tanstack/react-virtual';
@@ -12,7 +12,10 @@ import { memoryRegionsNavigation } from '@/lib/navigationStore';
 import { useContextMenu } from '@/hooks/useContextMenu';
 import { toastError } from '@/lib/logger';
 import { cn } from '@/lib/utils';
-import { AlertCircle, MemoryStick, Loader2, Eye, Code, Copy } from 'lucide-react';
+import { AlertCircle, MemoryStick, Loader2, Eye, Code, Copy, Shield, ShieldPlus } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
+import { MemoryProtectDialog, type ProtectTarget } from '@/components/MemoryProtectDialog';
 import { DockPanel, PanelToolbar } from '@/components/ui/panel';
 import { ProcessUnavailableState } from '@/components/ui/empty-state';
 import { VirtualizedList } from '@/components/ui/virtualized-list';
@@ -49,7 +52,7 @@ const TYPE_FILTER_MATCH: Record<string, string> = {
 };
 
 // Columns don't reflow below this width; the panel scrolls horizontally instead.
-const REGIONS_MIN_WIDTH = 900;
+const REGIONS_MIN_WIDTH = 924;
 
 // Badge kinds whose structure has a PDB type — clicking the badge opens the
 // Types view with that type overlaid at the annotation's address.
@@ -111,6 +114,16 @@ const regionContains = (region: MemoryRegion, address: bigint) => {
 const regionEndAddress = (region: MemoryRegion) =>
   formatAddress(BigInt(region.base_address) + BigInt(region.region_size));
 
+// Only committed pages have a protection to change.
+const isCommitted = (region: MemoryRegion) => region.state === 'MEM_COMMIT';
+
+const toProtectTarget = (region: MemoryRegion): ProtectTarget => ({
+  address: region.base_address,
+  size: region.region_size,
+  protect: region.protect,
+  protectRaw: region.protect_raw,
+});
+
 interface ContextMemoryRegionsViewProps {
   onNavigateToAddress?: (address: string) => void;
 }
@@ -129,6 +142,11 @@ export function ContextMemoryRegionsView({ onNavigateToAddress }: ContextMemoryR
   const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const headerScrollRef = useRef<HTMLDivElement>(null);
   const { contextMenu, openContextMenu, closeContextMenu } = useContextMenu<MemoryRegion>();
+  // Selection for bulk protection changes, keyed by base address.
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const lastToggledRef = useRef<string | null>(null);
+  // Ranges the protection dialog is open on: [] is a range typed by hand.
+  const [protectTargets, setProtectTargets] = useState<ProtectTarget[] | null>(null);
 
   const registers = useMemo(
     () => contextToRegisters(sessionData?.session?.current_event?.context),
@@ -180,8 +198,66 @@ export function ContextMemoryRegionsView({ onNavigateToAddress }: ContextMemoryR
       setPendingGoto(null);
       setHighlightedBase(null);
       setGotoInput('');
+      setSelected(new Set());
+      setProtectTargets(null);
     }
   }, [sessionData?.session?.id, sessionData.canUseMemoryOps, sessionData?.session?.current_event]);
+
+  // A protection change splits and merges regions, and the target maps and
+  // unmaps them as it runs: drop selected bases that no longer start a region.
+  useEffect(() => {
+    setSelected((prev) => {
+      if (prev.size === 0) return prev;
+      const bases = new Set(regions.map((r) => r.base_address));
+      const next = new Set([...prev].filter((b) => bases.has(b)));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [regions]);
+
+  // Shift-click extends from the last toggled row over the rows on screen.
+  const toggleSelect = useCallback((base: string, shift: boolean) => {
+    const bases = filteredRegions.map((r) => r.base_address);
+    setSelected((prev) => {
+      const next = new Set(prev);
+      const anchor = lastToggledRef.current;
+      if (shift && anchor !== null && bases.includes(anchor) && bases.includes(base)) {
+        const [a, b] = [bases.indexOf(anchor), bases.indexOf(base)].sort((x, y) => x - y);
+        for (const id of bases.slice(a, b + 1)) next.add(id);
+      } else if (next.has(base)) {
+        next.delete(base);
+      } else {
+        next.add(base);
+      }
+      return next;
+    });
+    lastToggledRef.current = base;
+  }, [filteredRegions]);
+
+  const selectedRegions = useMemo(
+    () => regions.filter((r) => selected.has(r.base_address)),
+    [regions, selected],
+  );
+  const selectedProtectable = useMemo(() => selectedRegions.filter(isCommitted), [selectedRegions]);
+  const visibleSelected = filteredRegions.filter((r) => selected.has(r.base_address)).length;
+  const allVisibleSelected = filteredRegions.length > 0 && visibleSelected === filteredRegions.length;
+
+  // Select-all works on the filtered list: "every private region" is a filter
+  // plus one click.
+  const toggleSelectAll = () => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      for (const r of filteredRegions) {
+        if (allVisibleSelected) next.delete(r.base_address);
+        else next.add(r.base_address);
+      }
+      return next;
+    });
+  };
+
+  // A right-click acts on the selection when the row is part of it, otherwise
+  // on that row alone.
+  const protectTargetsFor = (region: MemoryRegion): ProtectTarget[] =>
+    (selected.has(region.base_address) ? selectedProtectable : [region].filter(isCommitted)).map(toProtectTarget);
 
   // Listen for memory regions updates
   useEffect(() => {
@@ -305,7 +381,30 @@ export function ContextMemoryRegionsView({ onNavigateToAddress }: ContextMemoryR
           </SelectContent>
         </Select>
 
+        <Button
+          variant="outline"
+          size="xs"
+          disabled={!sessionData.canUseMemoryOps || selectedProtectable.length === 0}
+          onClick={() => setProtectTargets(selectedProtectable.map(toProtectTarget))}
+          title="Change the protection of the selected regions"
+          data-testid="memory-regions-protect-selected"
+        >
+          <Shield />
+          Protect{selectedProtectable.length > 0 ? ` (${selectedProtectable.length})` : ''}…
+        </Button>
+        <Button
+          variant="outline"
+          size="icon-xs"
+          disabled={!sessionData.canUseMemoryOps}
+          onClick={() => setProtectTargets([])}
+          title="Change the protection of an address range"
+          data-testid="memory-regions-protect-range"
+        >
+          <ShieldPlus />
+        </Button>
+
         <span className="text-xs text-muted-foreground ml-auto">
+          {selected.size > 0 && `${selected.size} selected · `}
           {filteredRegions.length} / {regions.length} regions
         </span>
       </PanelToolbar>
@@ -316,6 +415,15 @@ export function ContextMemoryRegionsView({ onNavigateToAddress }: ContextMemoryR
           className="flex items-center px-2 py-1 text-xs font-medium text-muted-foreground whitespace-nowrap"
           style={{ minWidth: REGIONS_MIN_WIDTH }}
         >
+          <span className="w-6 shrink-0 flex items-center">
+            <Checkbox
+              checked={allVisibleSelected ? true : visibleSelected > 0 ? 'indeterminate' : false}
+              onCheckedChange={toggleSelectAll}
+              disabled={filteredRegions.length === 0}
+              title={allVisibleSelected ? 'Deselect all listed regions' : 'Select all listed regions'}
+              data-testid="memory-regions-select-all"
+            />
+          </span>
           <span className="w-40 shrink-0">Base Address</span>
           <span className="w-40 shrink-0">End Address</span>
           <span className="w-20 shrink-0 text-right">Size</span>
@@ -343,18 +451,29 @@ export function ContextMemoryRegionsView({ onNavigateToAddress }: ContextMemoryR
           getItemKey={(region, index) => `${region.base_address}-${index}`}
           renderItem={(region) => {
             const highlighted = region.base_address === highlightedBase;
+            const isSelected = selected.has(region.base_address);
             return (
             <div
               data-testid="memory-region-row"
               data-base={region.base_address}
               data-highlighted={highlighted ? '' : undefined}
+              data-selected={isSelected ? '' : undefined}
               onClick={() => handleRegionClick(region)}
               onContextMenu={(e) => openContextMenu(e, region)}
               className={cn(
                 'flex items-center px-2 border-b hover:bg-accent cursor-pointer text-xs h-full whitespace-nowrap',
+                isSelected && 'bg-accent/30',
                 highlighted && 'bg-primary/20',
               )}
             >
+              <span className="w-6 shrink-0 flex items-center">
+                <Checkbox
+                  checked={isSelected}
+                  onClick={(e) => { e.stopPropagation(); toggleSelect(region.base_address, e.shiftKey); }}
+                  title="Select (Shift-click for a range)"
+                  data-testid="memory-region-checkbox"
+                />
+              </span>
               <span className="font-mono w-40 shrink-0 truncate">{region.base_address}</span>
               <span className="font-mono w-40 shrink-0 truncate">{regionEndAddress(region)}</span>
               <span className="w-20 shrink-0 text-right">{region.region_size_formatted}</span>
@@ -444,6 +563,19 @@ export function ContextMemoryRegionsView({ onNavigateToAddress }: ContextMemoryR
             </ContextMenuItem>
           )}
           <ContextMenuSeparator />
+          {(() => {
+            const targets = protectTargetsFor(contextMenu.data);
+            return (
+              <ContextMenuItem
+                icon={<Shield />}
+                disabled={!sessionData.canUseMemoryOps || targets.length === 0}
+                onClick={() => setProtectTargets(targets)}
+              >
+                Change Protection…{targets.length > 1 ? ` (${targets.length})` : ''}
+              </ContextMenuItem>
+            );
+          })()}
+          <ContextMenuSeparator />
           <ContextMenuItem
             icon={<Copy />}
             onClick={() => copyToClipboard(contextMenu.data.base_address, 'base address')}
@@ -463,6 +595,16 @@ export function ContextMemoryRegionsView({ onNavigateToAddress }: ContextMemoryR
           </ContextMenuItem>
         </ContextMenu>
       )}
+
+      <MemoryProtectDialog
+        open={protectTargets !== null}
+        onClose={() => setProtectTargets(null)}
+        sessionId={sessionData.session.id}
+        targets={protectTargets ?? []}
+        registers={registers}
+        resolveSymbol={resolveSymbol}
+        onApplied={fetchMemoryRegions}
+      />
     </DockPanel>
   );
 }

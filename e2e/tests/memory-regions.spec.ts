@@ -307,4 +307,103 @@ test.describe("Memory Regions", () => {
       await restoreDefaultSettings(page);
     }
   });
+
+  // Protection is changed from the list: on several selected regions at once,
+  // or on a range typed by hand (which splits the region it lands in).
+  test("selected regions and a typed range change protection", async ({ tauriPage: page }) => {
+    test.setTimeout(60_000);
+    await configureMinimalStopSettings(page);
+
+    try {
+      const sessionId = await createAndStartSession(page, "Region Protect");
+      await waitForPaused(page, sessionId);
+
+      // Two private read-write regions of at least two pages — not the PEB/TEB
+      // block, whose protection Windows refuses to change. Protection is
+      // checked by address afterwards, not by region identity: neighbours that
+      // end up with the same protection merge into one region.
+      const before = await fetchRegions(page, sessionId);
+      const [a, b] = before.filter(
+        (r) =>
+          r.state === "MEM_COMMIT" &&
+          r.region_type === "MEM_PRIVATE" &&
+          r.protect === "PAGE_READWRITE" &&
+          r.region_size >= 0x2000 &&
+          !r.annotations.some((x) => x.kind === "peb" || x.kind === "teb"),
+      );
+      expect(a, "a private read-write region").toBeTruthy();
+      expect(b, "a second private read-write region").toBeTruthy();
+      const protectAt = async (address: bigint) =>
+        containingRegion(await fetchRegions(page, sessionId), address)?.protect;
+      const aBase = BigInt(a.base_address);
+      const bBase = BigInt(b.base_address);
+
+      await goToWindow(page, "Memory Regions");
+      const panel = page.locator('[data-testid="memory-regions-panel"]');
+      const gotoInput = panel.getByPlaceholder(/Address/);
+      const protectSelected = panel.getByTestId("memory-regions-protect-selected");
+      await expect(protectSelected).toBeDisabled();
+
+      // The list is virtualized: bring each row in with goto, then tick it.
+      for (const region of [a, b]) {
+        await gotoInput.fill(region.base_address);
+        await gotoInput.press("Enter");
+        const row = panel.locator(`${REGION_ROW}[data-base="${region.base_address}"]`);
+        await expect(row).toBeVisible({ timeout: 5_000 });
+        await row.getByTestId("memory-region-checkbox").click();
+        await expect(row).toHaveAttribute("data-selected", "");
+      }
+      await expect(protectSelected).toContainText("Protect (2)");
+
+      const dialog = page.getByTestId("memory-protect-dialog");
+      const pickProtection = async (name: string) => {
+        await page.getByTestId("memory-protect-base").click();
+        await page.getByRole("option", { name: new RegExp(`^${name} `) }).click();
+      };
+
+      await protectSelected.click();
+      await expect(dialog.getByTestId("memory-protect-target")).toHaveCount(2);
+      await pickProtection("PAGE_READONLY");
+      await page.getByTestId("memory-protect-apply").click();
+      await expect(dialog).toBeHidden({ timeout: 10_000 });
+      await expect(async () => {
+        expect(await protectAt(aBase)).toBe("PAGE_READONLY");
+        expect(await protectAt(bBase)).toBe("PAGE_READONLY");
+      }).toPass({ timeout: 10_000, intervals: [50, 100] });
+      // The list behind the dialog was re-read, not left showing the old value.
+      await expect(
+        panel.locator(`${REGION_ROW}[data-base="${b.base_address}"]`),
+      ).toContainText("PAGE_READONLY", { timeout: 10_000 });
+
+      // A typed range: one page at the start of the first region goes back to
+      // read-write, the rest of it stays read-only.
+      await panel.getByTestId("memory-regions-protect-range").click();
+      await expect(dialog).toBeVisible();
+      await page.getByTestId("memory-protect-address").fill(a.base_address);
+      await page.getByTestId("memory-protect-size").fill("1");
+      await pickProtection("PAGE_READWRITE");
+      await page.getByTestId("memory-protect-apply").click();
+      await expect(dialog).toBeHidden({ timeout: 10_000 });
+      await expect(async () => {
+        expect(await protectAt(aBase)).toBe("PAGE_READWRITE");
+        expect(await protectAt(aBase + 0x1000n)).toBe("PAGE_READONLY");
+      }).toPass({ timeout: 10_000, intervals: [50, 100] });
+
+      // A range with nothing mapped is refused, and the dialog says why.
+      await panel.getByTestId("memory-regions-protect-range").click();
+      await expect(dialog).toBeVisible();
+      await page.getByTestId("memory-protect-address").fill("0x1000");
+      await page.getByTestId("memory-protect-apply").click();
+      await expect(page.getByTestId("memory-protect-failure")).toContainText(
+        "not committed memory",
+        { timeout: 10_000 },
+      );
+      await page.getByTestId("memory-protect-cancel").click();
+      await expect(dialog).toBeHidden();
+
+      await cleanupSession(page, sessionId);
+    } finally {
+      await restoreDefaultSettings(page);
+    }
+  });
 });

@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import type { KeybindingSettings } from "@/lib/keybindings";
 
 export interface ExceptionRule {
   code: number;
@@ -34,14 +35,20 @@ export interface DebugSettings {
   symbol_offline: boolean; // never download symbols
   auto_update_check: boolean; // ask GitHub Releases for a newer version on startup
   lightning_instructions: number; // instructions the always-on lightning emulation runs per pause
+  telemetry_enabled: boolean; // send anonymized performance data to telemetry_endpoint (opt-in)
+  telemetry_endpoint: string; // collector: host:port or an http(s) URL; empty = none
+  telemetry_record_to_file: boolean; // write the same data to a local file
+  diag_skip_symbolization: boolean; // diagnostic: disassemble without symbols
+  diag_naive_disassembly: boolean; // diagnostic: plain linear decode, no function bounds
   sandbox_default_memory_mb: number; // default guest memory (MB) for new sandbox sessions
   sandbox_collect_etw: boolean; // default "collect ETW trace" for new sandbox sessions
   sandbox_etw_preset: string; // default ETW capture preset: "all" | "files" | "registry" | "network"
+  keybindings?: KeybindingSettings; // absent until the user changes a binding (hooks/useKeybindings)
 }
 
 // Keys whose value is a boolean, derived structurally so new settings never
 // require editing a hand-maintained exclusion list.
-type BooleanSettingKey = { [K in keyof DebugSettings]: DebugSettings[K] extends boolean ? K : never }[keyof DebugSettings];
+type BooleanSettingKey = { [K in keyof DebugSettings]-?: DebugSettings[K] extends boolean ? K : never }[keyof DebugSettings];
 
 export interface EventSettingItem {
   key: BooleanSettingKey;
@@ -93,10 +100,22 @@ const DEFAULTS: DebugSettings = {
   symbol_offline: false,
   auto_update_check: true,
   lightning_instructions: 100,
+  telemetry_enabled: false,
+  telemetry_endpoint: "",
+  telemetry_record_to_file: false,
+  diag_skip_symbolization: false,
+  diag_naive_disassembly: false,
   sandbox_default_memory_mb: 4096,
   sandbox_collect_etw: true,
   sandbox_etw_preset: "all",
 };
+
+/**
+ * Window event carrying the settings just written (`detail`: `DebugSettings`).
+ * Every `useDebugSettings` instance follows it, so two mounted at once (the
+ * Settings sections, a session view) never show — or write back — a stale copy.
+ */
+const SETTINGS_CHANGED_EVENT = "joybug:settings-changed";
 
 export function useDebugSettings() {
   const [settings, setSettings] = useState<DebugSettings>(DEFAULTS);
@@ -110,16 +129,16 @@ export function useDebugSettings() {
     }
   }, []);
 
-  // Shared set-and-persist: apply the change optimistically, then write the
-  // whole settings object to the backend.
+  // Shared set-and-persist. The backend takes the whole settings object, so
+  // the change is applied to what the backend holds *now*, not to this
+  // instance's copy: another writer (a different settings section, the
+  // keybinding editor) may have changed something since this one loaded.
   const update = useCallback(async (updater: (prev: DebugSettings) => DebugSettings) => {
-    let next!: DebugSettings;
-    setSettings(prev => {
-      next = updater(prev);
-      return next;
-    });
     try {
+      const next = updater(await invoke<DebugSettings>("get_debug_settings"));
+      setSettings(next);
       await invoke("update_debug_settings", { newSettings: next });
+      window.dispatchEvent(new CustomEvent(SETTINGS_CHANGED_EVENT, { detail: next }));
     } catch (e) {
       console.error("Failed to update debug settings:", e);
     }
@@ -127,6 +146,9 @@ export function useDebugSettings() {
 
   useEffect(() => {
     load();
+    const onChanged = (e: Event) => setSettings((e as CustomEvent<DebugSettings>).detail);
+    window.addEventListener(SETTINGS_CHANGED_EVENT, onChanged);
+    return () => window.removeEventListener(SETTINGS_CHANGED_EVENT, onChanged);
   }, [load]);
 
   const toggle = useCallback((key: BooleanSettingKey) =>
@@ -154,6 +176,9 @@ export function useDebugSettings() {
   const setSymbolPath = useCallback((path: string) =>
     update(prev => ({ ...prev, symbol_path: path })), [update]);
 
+  const setTelemetryEndpoint = useCallback((endpoint: string) =>
+    update(prev => ({ ...prev, telemetry_endpoint: endpoint })), [update]);
+
   const setSandboxMemoryMb = useCallback((mb: number) => {
     const sanitized = Number.isFinite(mb) && mb >= 1024 ? Math.floor(mb) : 4096;
     return update(prev => ({ ...prev, sandbox_default_memory_mb: sanitized }));
@@ -162,5 +187,5 @@ export function useDebugSettings() {
   const setSandboxEtwPreset = useCallback((preset: string) =>
     update(prev => ({ ...prev, sandbox_etw_preset: preset })), [update]);
 
-  return { settings, toggle, updateExceptionRules, togglePebNormalize, setScanThreadCount, setSymbolPath, setLightningInstructions, setSandboxMemoryMb, setSandboxEtwPreset };
+  return { settings, update, toggle, updateExceptionRules, togglePebNormalize, setScanThreadCount, setSymbolPath, setLightningInstructions, setTelemetryEndpoint, setSandboxMemoryMb, setSandboxEtwPreset };
 }

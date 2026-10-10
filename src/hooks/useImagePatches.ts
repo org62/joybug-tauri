@@ -27,6 +27,11 @@ interface ImagePatchesPayload {
  * when the session pauses or the patch set changes) — the hook lives in the
  * view's context wrapper so no scanning happens while the tab is closed.
  *
+ * A scan reads every module's code out of the target, so the backend runs it
+ * as a background job, off the session thread, and keeps only the latest
+ * request: asking again while one runs cancels it and starts over. Asking is
+ * therefore cheap, but still not free — hence the `changed` gate below.
+ *
  * `canScan` is "a process is reachable", not "paused": the backend runs the
  * scan over the out-of-band connection when the session isn't paused, so a
  * running target — or a non-invasive `Open` one that was never attached — scans
@@ -85,19 +90,27 @@ export function useImagePatches(sessionId?: string, canScan?: boolean, isPaused?
       }
     });
 
-    // Patch changes and image-byte restores emit patches-updated; the scan
-    // result is stale the moment that fires.
-    const unlistenPatches = listen<{ session_id: string }>('patches-updated', (event) => {
-      if (event.payload.session_id === sessionId && canScanRef.current) {
-        scan();
-      }
+    // The scan could not run (the target went away under it): leave what was
+    // last shown and stop saying "scanning".
+    const unlistenFailed = listen<{ session_id: string }>('image-patches-scan-failed', (event) => {
+      if (event.payload.session_id === sessionId) setScanning(false);
     });
 
-    listenersReady.current = Promise.all([unlistenUpdated, unlistenPatches]);
+    // Patch changes and image-byte restores emit patches-updated; the scan
+    // result is stale the moment that fires. The backend also re-emits the
+    // event on every pause with the list unchanged, flagged `changed: false`.
+    // A pause already triggers its own scan below, so only a real change asks
+    // for another.
+    const unlistenPatches = listen<{ session_id: string; changed: boolean }>('patches-updated', (event) => {
+      if (event.payload.session_id === sessionId && event.payload.changed && canScanRef.current) scan();
+    });
+
+    listenersReady.current = Promise.all([unlistenUpdated, unlistenFailed, unlistenPatches]);
 
     return () => {
       listenersReady.current = null;
       unlistenUpdated.then(f => f());
+      unlistenFailed.then(f => f());
       unlistenPatches.then(f => f());
     };
   }, [sessionId, scan]);

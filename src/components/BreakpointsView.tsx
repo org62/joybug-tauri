@@ -14,6 +14,9 @@ import { BreakpointListDialog } from "@/components/BreakpointListDialog";
 import { GroupedItemList } from "./GroupedItemList";
 import { DockPanel, PanelToolbar } from "./ui/panel";
 import { ContextMenu, ContextMenuItem, ContextMenuSeparator } from "./ui/context-menu";
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
+} from "./ui/dialog";
 import { TruncatedSymbol } from "./ui/truncated-symbol";
 
 type ColKey = "name" | "address";
@@ -96,6 +99,7 @@ export function BreakpointsView({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
   const [listOpen, setListOpen] = useState(false);
+  const [removeAllOpen, setRemoveAllOpen] = useState(false);
 
   const handleAddBreakpoint = useCallback((address: bigint) => {
     onToggleBreakpoint(`0x${address.toString(16)}`);
@@ -121,13 +125,13 @@ export function BreakpointsView({
     setEditingId(null);
   }, [editingId, editValue, breakpoints, onUpdateBreakpoint]);
 
-  // Generate a unique "New Group" name
-  const generateNewGroupName = useCallback(() => {
-    let name = "New Group";
+  // A group name no existing group has: `base`, then "base 2", "base 3", ...
+  const uniqueGroupName = useCallback((base: string) => {
+    let name = base;
     let counter = 2;
     const existingGroups = new Set(breakpoints.map((b) => b.group).filter(Boolean));
     while (existingGroups.has(name)) {
-      name = `New Group ${counter}`;
+      name = `${base} ${counter}`;
       counter++;
     }
     return name;
@@ -306,6 +310,18 @@ export function BreakpointsView({
                 <ListPlus />
               </Button>
             )}
+            {/* Not gated on the process: removal is a persisted-config edit. */}
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              className="shrink-0 text-muted-foreground hover:text-destructive"
+              title="Remove all breakpoints"
+              disabled={breakpoints.length === 0}
+              onClick={() => setRemoveAllOpen(true)}
+              data-testid="breakpoints-remove-all"
+            >
+              <Trash2 />
+            </Button>
             {!canUseMemoryOps && (
               <Badge
                 size="xs"
@@ -363,7 +379,7 @@ export function BreakpointsView({
             <ContextMenuItem
               onClick={() => {
                 if (!bp) return;
-                const name = generateNewGroupName();
+                const name = uniqueGroupName("New Group");
                 onUpdateBreakpoint(bp.id, bp.name ?? undefined, name);
               }}
             >
@@ -385,10 +401,38 @@ export function BreakpointsView({
           open={listOpen}
           onClose={() => setListOpen(false)}
           onApply={onAddBreakpoints}
+          defaultGroup={uniqueGroupName("Pasted list")}
           registers={registers}
           resolveSymbol={resolveSymbol}
         />
       )}
+
+      <Dialog open={removeAllOpen} onOpenChange={setRemoveAllOpen}>
+        <DialogContent className="sm:max-w-md" data-testid="breakpoints-remove-all-dialog">
+          <DialogHeader>
+            <DialogTitle>Remove all breakpoints?</DialogTitle>
+            <DialogDescription>
+              {breakpoints.length === 1
+                ? "The breakpoint"
+                : `All ${breakpoints.length.toLocaleString()} breakpoints`}{" "}
+              in this session will be removed, in every group. This cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRemoveAllOpen(false)}>Cancel</Button>
+            <Button
+              variant="destructive"
+              onClick={() => {
+                onRemoveBreakpoints(breakpoints.map((b) => b.id));
+                setRemoveAllOpen(false);
+              }}
+              data-testid="breakpoints-remove-all-confirm"
+            >
+              Remove all
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </DockPanel>
   );
 }

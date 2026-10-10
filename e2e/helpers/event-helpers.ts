@@ -55,28 +55,37 @@ export interface EmittedInstruction {
   bytes: string;
   mnemonic: string;
   op_str: string;
+  symbols: string[];
   is_patched?: boolean;
   original_bytes?: string;
   original_disasm?: string;
 }
 
+/** The payload of `function-disassembly-updated`. */
+export interface FunctionListing {
+  instructions: EmittedInstruction[];
+  function_start: string | null;
+  function_end: string | null;
+  function_name: string | null;
+}
+
 export const FN_DISASM_EVENT = "function-disassembly-updated";
 
 /**
- * Request a function disassembly anchored at `address` (image-diffed) and
- * return that response's instructions. Requires `installEventCapture` for
+ * Request a function listing anchored at `address` and return that response
+ * as the backend emits it. Requires `installEventCapture` for
  * `FN_DISASM_EVENT`. The address echo is part of the predicate: the view issues
  * its own requests concurrently and they share the bucket.
  */
-export async function disassembleFunction(
+export async function listFunction(
   page: Page,
   sessionId: string,
   address: number,
-  maxInstructions = 200,
-): Promise<EmittedInstruction[]> {
+  { maxInstructions = 200, compareImage = false } = {},
+): Promise<FunctionListing> {
   await clearCapturedEvents(page, FN_DISASM_EVENT);
-  await invoke(page, "request_function_disassembly", { sessionId, address, maxInstructions, compareImage: true });
-  const payload = await waitForCapturedEvent(
+  await invoke(page, "request_function_disassembly", { sessionId, address, maxInstructions, compareImage });
+  return waitForCapturedEvent(
     page,
     FN_DISASM_EVENT,
     (p) =>
@@ -85,7 +94,11 @@ export async function disassembleFunction(
       Array.isArray(p.instructions) &&
       p.instructions.length > 0,
   );
-  return payload.instructions as EmittedInstruction[];
+}
+
+/** The instructions of the function at `address`, diffed against the on-disk image. */
+export async function disassembleFunction(page: Page, sessionId: string, address: number): Promise<EmittedInstruction[]> {
+  return (await listFunction(page, sessionId, address, { compareImage: true })).instructions;
 }
 
 /**

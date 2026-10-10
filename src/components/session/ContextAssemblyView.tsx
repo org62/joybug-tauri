@@ -65,6 +65,8 @@ export const ContextAssemblyView = () => {
       onRestoreImageBytes={restoreImageBytes}
       onAddBookmark={(addr, asmText) => addBookmark({ kind: 'code', address: addr, asmText })}
       symbolsRefreshKey={sessionData.symbolsRefreshKey}
+      symbolStatuses={sessionData.symbolStatuses}
+      modules={sessionData.modules}
       onNavigateToSource={sessionData.onNavigateToSource}
       onNavigateToMemory={sessionData.onNavigateToMemory}
       onShowInMemoryRegions={sessionData.onNavigateToMemoryRegion}

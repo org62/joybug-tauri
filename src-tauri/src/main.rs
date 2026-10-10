@@ -10,6 +10,11 @@ fn main() {
     // lines against; it is a raw argv scan, so the GUI's own arguments (Tauri,
     // WebView2, "open with") fall through untouched.
     let argv: Vec<String> = std::env::args().skip(1).collect();
+    // The telemetry collector and its report are roles too, and are picked
+    // first: their `--out` is also a guest-role flag.
+    if let Some(role) = joybug_tauri_lib::telemetry::collector::role_from_argv(&argv) {
+        joybug_tauri_lib::telemetry::collector::run(role);
+    }
     if let Some(role) = joybug_core::guest_roles::from_argv(&argv) {
         joybug_core::guest_roles::run(role, argv);
     }

@@ -162,6 +162,10 @@ export interface ModuleSymbolStatus {
   symbol_count?: number | null;
   error?: string | null;
   pdb_path?: string | null;
+  /** The module's source line table, as the backend reported it. It is parsed
+   * in the background after the symbols, and `symbolStatuses` is not replaced
+   * when only this changes: follow `lineTablesReadyKey` instead. */
+  line_info?: "none" | "loading" | "ready";
 }
 
 export interface PdbLoadResult {
@@ -221,6 +225,9 @@ export interface SessionContextData {
   /** Identity of the set of modules with loaded symbols; changes when background
    * symbol loading completes so views can refresh symbol-derived data. */
   symbolsRefreshKey: string;
+  /** Identity of the set of modules whose source line table is parsed; changes
+   * as the background parses land, so the source view can ask again. */
+  lineTablesReadyKey: string;
   loadModules: () => Promise<Module[]>;
   loadThreads: () => Promise<Thread[]>;
   loadModulePdb: (baseAddress: string, pdbPath: string, force: boolean) => Promise<PdbLoadResult>;

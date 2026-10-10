@@ -2,7 +2,8 @@ use std::sync::Arc;
 
 use joybug_core::interfaces::{Architecture, DisassemblerProvider};
 use joybug_core::windows_platform::disassembler::CapstoneDisassembler;
-use tauri::{AppHandle, Emitter};
+use std::time::Instant;
+use tauri::{AppHandle, Emitter, Manager};
 use tracing::{debug, error};
 
 use super::helpers::{effective_op_str, hex_join};
@@ -179,6 +180,39 @@ pub(crate) fn serialize_instructions(
         .collect()
 }
 
+/// What the diagnostic switches (Settings -> Diagnostics) ask of a listing.
+/// The debug server applies them to the decode; this side drops the work it
+/// adds on top (entry-point labels, the on-disk image comparison).
+pub(crate) fn disasm_options(app_handle: &Option<AppHandle>) -> joybug_core::protocol::DisasmOptions {
+    app_handle
+        .as_ref()
+        .map(|handle| handle.state::<crate::settings::SettingsState>().inner().lock().unwrap().disasm_options())
+        .unwrap_or_default()
+}
+
+/// The per-listing context every request builds before asking the server:
+/// applied patch ranges, the original-image snapshot, the module's anchors.
+/// Timed into `span`.
+fn listing_context(
+    session: &mut DebugSession,
+    app_handle: &Option<AppHandle>,
+    span: &mut crate::telemetry::Span,
+    pid: u32,
+    arch: Architecture,
+    address: u64,
+    compare_image: bool,
+) -> (Vec<(u64, u64)>, Option<ImageDiff>, Vec<super::pe_anchors::Anchor>) {
+    let options = disasm_options(app_handle);
+    let t = Instant::now();
+    let patched_ranges = applied_patch_ranges(&session.state.lock().unwrap());
+    let image_diff = (compare_image && !options.naive).then(|| build_image_diff_context(&session.state, arch, address)).flatten();
+    span.attr_elapsed("image_diff_us", t);
+    let t = Instant::now();
+    let anchors = if options.symbolizes() { super::pe_anchors::anchors_for_address(session, pid, address) } else { Vec::new() };
+    span.attr_elapsed("anchors_us", t);
+    (patched_ranges, image_diff, anchors)
+}
+
 /// Processes a disassembly request and emits results to the frontend
 pub(crate) fn process_disassembly_request(
     session: &mut DebugSession,
@@ -188,16 +222,22 @@ pub(crate) fn process_disassembly_request(
     address: u64,
     count: u32,
     compare_image: bool,
+    request_id: Option<String>,
 ) {
     debug!("📤 Processing disassembly request: pid={}, address=0x{:X}, count={}", pid, address, count);
-    let patched_ranges = applied_patch_ranges(&session.state.lock().unwrap());
-    let image_diff = compare_image.then(|| build_image_diff_context(&session.state, arch, address)).flatten();
-    let anchors = super::pe_anchors::anchors_for_address(session, pid, address);
-    match session.disassemble_memory(pid, address, count as usize, arch) {
+    let mut span = crate::telemetry::span("app.disasm.forward");
+    let (patched_ranges, image_diff, anchors) = listing_context(session, app_handle_clone, &mut span, pid, arch, address, compare_image);
+    let t = Instant::now();
+    let listing = session.disassemble_memory(pid, address, count as usize, arch);
+    span.attr_elapsed("rpc_us", t);
+    match listing {
         Ok(instructions) => {
             debug!("📥 Received {} instructions from disassemble_memory", instructions.len());
 
+            let t = Instant::now();
             let serializable_instructions = serialize_instructions(&instructions, &patched_ranges, image_diff.as_ref(), &anchors);
+            span.attr_elapsed("serialize_us", t);
+            span.attr("instructions", instructions.len() as u64);
 
             if let Some(ref handle) = app_handle_clone {
                 let session_id = {
@@ -210,15 +250,20 @@ pub(crate) fn process_disassembly_request(
                     session_id: String,
                     address: u64,
                     instructions: Vec<SerializableInstruction>,
+                    request_id: Option<String>,
                 }
 
                 let result = DisassemblyResult {
                     session_id,
                     address,
                     instructions: serializable_instructions,
+                    request_id,
                 };
 
-                if let Err(e) = handle.emit("disassembly-updated", &result) {
+                let t = Instant::now();
+                let emitted = handle.emit("disassembly-updated", &result);
+                span.attr_elapsed("emit_us", t);
+                if let Err(e) = emitted {
                     error!("Failed to emit disassembly-updated event: {}", e);
                 } else {
                     debug!("📡 Emitted disassembly-updated event for address 0x{:X}", address);
@@ -239,12 +284,14 @@ pub(crate) fn process_disassembly_request(
                     session_id: String,
                     address: u64,
                     error: String,
+                    request_id: Option<String>,
                 }
 
                 let error_result = DisassemblyError {
                     session_id,
                     address,
                     error: e.to_string(),
+                    request_id,
                 };
 
                 if let Err(emit_err) = handle.emit("disassembly-error", &error_result) {
@@ -284,19 +331,25 @@ pub(crate) fn process_disassembly_backward_request(
     compare_image: bool,
 ) {
     debug!("📤 Processing backward disassembly request: pid={}, target=0x{:X}, count={}", pid, target, count);
-    let (patched_ranges, session_id) = {
-        let state = session.state.lock().unwrap();
-        (applied_patch_ranges(&state), state.id.clone())
-    };
-    let image_diff = compare_image.then(|| build_image_diff_context(&session.state, arch, target)).flatten();
-    let anchors = super::pe_anchors::anchors_for_address(session, pid, target);
+    let session_id = session.state.lock().unwrap().id.clone();
+    let mut span = crate::telemetry::span("app.disasm.backward");
+    let (patched_ranges, image_diff, anchors) = listing_context(session, app_handle_clone, &mut span, pid, arch, target, compare_image);
 
-    match session.disassemble_backward(pid, target, count as usize, arch) {
+    let t = Instant::now();
+    let listing = session.disassemble_backward(pid, target, count as usize, arch);
+    span.attr_elapsed("rpc_us", t);
+    match listing {
         Ok(instructions) => {
+            let t = Instant::now();
             let serializable_instructions = serialize_instructions(&instructions, &patched_ranges, image_diff.as_ref(), &anchors);
+            span.attr_elapsed("serialize_us", t);
+            span.attr("instructions", instructions.len() as u64);
             if let Some(ref handle) = app_handle_clone {
                 let result = DisassemblyBackwardResult { session_id, target, instructions: serializable_instructions };
-                if let Err(e) = handle.emit("disassembly-backward-updated", &result) {
+                let t = Instant::now();
+                let emitted = handle.emit("disassembly-backward-updated", &result);
+                span.attr_elapsed("emit_us", t);
+                if let Err(e) = emitted {
                     error!("Failed to emit disassembly-backward-updated event: {}", e);
                 }
             }
@@ -325,14 +378,19 @@ pub(crate) fn process_function_disassembly_request(
 ) {
     debug!("📤 Processing function disassembly request: pid={}, address=0x{:X}, max_instructions={}", pid, address, max_instructions);
 
-    let patched_ranges = applied_patch_ranges(&session.state.lock().unwrap());
-    let image_diff = compare_image.then(|| build_image_diff_context(&session.state, arch, address)).flatten();
-    let anchors = super::pe_anchors::anchors_for_address(session, pid, address);
-    match session.disassemble_function(pid, address, max_instructions as usize, arch) {
+    let mut span = crate::telemetry::span("app.disasm.function");
+    let (patched_ranges, image_diff, anchors) = listing_context(session, app_handle_clone, &mut span, pid, arch, address, compare_image);
+    let t = Instant::now();
+    let listing = session.disassemble_function(pid, address, max_instructions as usize, arch);
+    span.attr_elapsed("rpc_us", t);
+    match listing {
         Ok((instructions, function_start, function_end, function_name)) => {
             debug!("📥 Received {} instructions from disassemble_function", instructions.len());
 
+            let t = Instant::now();
             let serializable_instructions = serialize_instructions(&instructions, &patched_ranges, image_diff.as_ref(), &anchors);
+            span.attr_elapsed("serialize_us", t);
+            span.attr("instructions", instructions.len() as u64);
 
             if let Some(ref handle) = app_handle_clone {
                 let session_id = {
@@ -359,7 +417,10 @@ pub(crate) fn process_function_disassembly_request(
                     function_name,
                 };
 
-                if let Err(e) = handle.emit("function-disassembly-updated", &result) {
+                let t = Instant::now();
+                let emitted = handle.emit("function-disassembly-updated", &result);
+                span.attr_elapsed("emit_us", t);
+                if let Err(e) = emitted {
                     error!("Failed to emit function-disassembly-updated event: {}", e);
                 } else {
                     debug!("📡 Emitted function-disassembly-updated event for address 0x{:X}", address);

@@ -123,6 +123,25 @@ pub struct DebugSettings {
     #[serde(default = "default_lightning_instructions")]
     pub lightning_instructions: usize,
 
+    /// Send anonymized performance measurements to `telemetry_endpoint`.
+    /// Opt-in; nothing is sent until this is on *and* an address is set.
+    #[serde(default)]
+    pub telemetry_enabled: bool,
+    /// The collector: `host:port` or an `http(s)://` URL. Empty = none.
+    #[serde(default)]
+    pub telemetry_endpoint: String,
+    /// Write the same measurements to a local file under the data dir,
+    /// independently of sending them.
+    #[serde(default)]
+    pub telemetry_record_to_file: bool,
+    /// Diagnostic: disassemble without symbols (no names, no source lines).
+    #[serde(default)]
+    pub diag_skip_symbolization: bool,
+    /// Diagnostic: disassemble as a plain linear decode from the requested
+    /// address (no function bounds, no symbols, no indirect-target reads).
+    #[serde(default)]
+    pub diag_naive_disassembly: bool,
+
     /// Default guest memory (MB) for new Windows Sandbox sessions.
     #[serde(default = "default_sandbox_memory_mb")]
     pub sandbox_default_memory_mb: u32,
@@ -160,6 +179,11 @@ impl Default for DebugSettings {
             source_map: Vec::new(),
             auto_update_check: true,
             lightning_instructions: 100,
+            telemetry_enabled: false,
+            telemetry_endpoint: String::new(),
+            telemetry_record_to_file: false,
+            diag_skip_symbolization: false,
+            diag_naive_disassembly: false,
             sandbox_default_memory_mb: 4096,
             sandbox_collect_etw: true,
             sandbox_etw_preset: "all".to_string(),
@@ -168,6 +192,14 @@ impl Default for DebugSettings {
 }
 
 impl DebugSettings {
+    /// How the debug server decodes listings under the diagnostic switches.
+    pub fn disasm_options(&self) -> joybug_core::protocol::DisasmOptions {
+        joybug_core::protocol::DisasmOptions {
+            symbolize: !self.diag_skip_symbolization,
+            naive: self.diag_naive_disassembly,
+        }
+    }
+
     /// Symbol configuration for an embedded server. An empty `symbol_path`
     /// means unset (env var / Microsoft symbol server).
     pub fn symbol_config(&self) -> joybug_core::SymbolConfig {
@@ -230,6 +262,12 @@ mod tests {
         let settings: DebugSettings = serde_json::from_str(PARTIAL).expect("partial settings deserialize");
         assert!(settings.capture_exception_context);
         assert!(DebugSettings::default().capture_exception_context);
+
+        // Telemetry and the diagnostic switches are opt-in: a payload that
+        // does not mention them (every E2E settings reset) turns them off.
+        assert!(!settings.telemetry_enabled && !settings.telemetry_record_to_file);
+        assert!(settings.telemetry_endpoint.is_empty());
+        assert_eq!(settings.disasm_options(), joybug_core::protocol::DisasmOptions::default());
 
         let explicit = PARTIAL.replacen("{", "{ \"capture_exception_context\": false,", 1);
         let off: DebugSettings = serde_json::from_str(&explicit).expect("explicit off deserializes");

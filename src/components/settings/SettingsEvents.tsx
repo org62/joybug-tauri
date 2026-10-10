@@ -12,6 +12,7 @@ import {
 import { Plus, Trash2 } from "lucide-react";
 import { useDebugSettings, EVENT_ITEMS, type EventSettingItem, type ExceptionRule } from "@/hooks/useDebugSettings";
 import { usePlatform } from "@/hooks/usePlatform";
+import { matchesSettingItem } from "@/lib/settingsSearch";
 import { POSIX_SIGNALS, exceptionCodeSignal, signalExceptionCode } from "@/lib/exceptionNames";
 
 interface SettingsEventsProps {
@@ -23,16 +24,10 @@ export function SettingsEvents({ searchQuery }: SettingsEventsProps) {
   const { settings, toggle, updateExceptionRules } = useDebugSettings();
   const signals = usePlatform().os === "linux";
 
-  const matchesSearch = useCallback((item: EventSettingItem): boolean => {
-    if (!searchQuery) return true;
-    const q = searchQuery.toLowerCase();
-    return (
-      item.label.toLowerCase().includes(q) ||
-      "events".includes(q) ||
-      "exceptions".includes(q) ||
-      item.keywords.some(kw => kw.includes(q))
-    );
-  }, [searchQuery]);
+  const matchesSearch = useCallback(
+    (item: EventSettingItem): boolean => matchesSettingItem(searchQuery, ["events", "exceptions"], item),
+    [searchQuery],
+  );
 
   const showExceptionRules = useMemo(() => {
     if (!searchQuery) return true;

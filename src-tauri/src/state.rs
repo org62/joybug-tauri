@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{mpsc, Arc, Mutex};
-use crate::session::UICommand;
+use crate::session::types::QueuedCommand;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BreakpointInfo {
@@ -543,8 +543,8 @@ pub struct SessionStateUI {
     /// from the list. `None` for a non-invasive Open session, which receives no
     /// debug events at all, and for a run that hasn't started.
     pub main_tid: Option<u32>,
-    pub ui_sender: Option<mpsc::Sender<UICommand>>, // Send true to continue, false to stop
-    pub ui_receiver: Option<mpsc::Receiver<UICommand>>,
+    pub ui_sender: Option<mpsc::Sender<QueuedCommand>>,
+    pub ui_receiver: Option<mpsc::Receiver<QueuedCommand>>,
     pub debug_result: Option<Result<(), String>>, // Track if debug session succeeded or failed
     /// Join handle of the debug-loop thread while one is running. Taken by
     /// restart so it can wait for the old loop to fully unwind before starting

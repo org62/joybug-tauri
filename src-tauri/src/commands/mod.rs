@@ -9,6 +9,7 @@ mod etw_trace;
 #[path = "etw_trace_unsupported.rs"]
 mod etw_trace;
 mod jit_debugger;
+mod jobs;
 mod logging;
 mod memory;
 mod patches;
@@ -20,8 +21,10 @@ mod self_update;
 mod session_lifecycle;
 mod settings;
 mod source;
+mod source_index;
 mod stepping;
 mod symbols;
+mod telemetry;
 mod threads;
 pub(crate) mod types;
 mod type_system;
@@ -36,6 +39,7 @@ pub use disassembly::*;
 pub use emulation::*;
 pub use etw_trace::*;
 pub use jit_debugger::*;
+pub use jobs::{Cancel, CoalescedJobs};
 pub use logging::*;
 pub use memory::*;
 pub use patches::*;
@@ -49,6 +53,7 @@ pub use settings::*;
 pub use source::*;
 pub use stepping::*;
 pub use symbols::*;
+pub use telemetry::*;
 pub use threads::*;
 pub use type_system::*;
 pub use updates::*;
@@ -107,7 +112,7 @@ fn send_paused_command(
     };
 
     ui_sender
-        .send(command)
+        .send(command.into())
         .map_err(|e| Error::InternalCommunication(format!("Failed to send command: {}", e)))?;
 
     Ok(())
@@ -141,7 +146,7 @@ pub(crate) fn try_send_paused_command(
     if let Some(sender) = state.ui_sender.as_ref() {
         let sender = sender.clone();
         drop(state);
-        let _ = sender.send(command);
+        let _ = sender.send(command.into());
         Ok(())
     } else {
         Err(RunningFallback)
@@ -178,16 +183,19 @@ pub(crate) struct OobConn {
     pid: u32,
 }
 
-/// Pool of long-lived OOB clients, one per session. Holds two independent
+/// Pool of long-lived OOB clients, one per session. Holds three independent
 /// connections per session:
 /// - `live`: high-frequency live polling (bookmark values) and freeze registration.
 /// - `scan`: stateful memory/pointer scans, kept on their own connection so a long
 ///   scan doesn't head-of-line-block bookmark polling / freeze on `live`.
+/// - `snapshot`: the background snapshot jobs (`CoalescedJobs`) — long, read-only
+///   and stateless, so they block neither of the above nor the session thread.
 /// Per-session inner locks keep sessions from serialising.
 #[derive(Default)]
 pub struct OobPool {
     live: Mutex<std::collections::HashMap<String, Arc<Mutex<Option<OobConn>>>>>,
     scan: Mutex<std::collections::HashMap<String, Arc<Mutex<Option<OobConn>>>>>,
+    snapshot: Mutex<std::collections::HashMap<String, Arc<Mutex<Option<OobConn>>>>>,
 }
 
 impl OobPool {
@@ -196,12 +204,13 @@ impl OobPool {
     pub(crate) fn remove(&self, session_id: &str) {
         self.live.lock().unwrap().remove(session_id);
         self.scan.lock().unwrap().remove(session_id);
+        self.snapshot.lock().unwrap().remove(session_id);
     }
 }
 
 /// Resolve a session's OOB target pid: prefer the running/paused debug event's
 /// pid; fall back to a non-invasive session's opened pid (which has no debug event).
-fn oob_pid(session_arc: &Arc<Mutex<SessionStateUI>>) -> Result<u32> {
+pub(crate) fn oob_pid(session_arc: &Arc<Mutex<SessionStateUI>>) -> Result<u32> {
     let pid = {
         let state = session_arc.lock().unwrap();
         // A stopped session has no live target: fast-fail so background pollers
@@ -299,6 +308,7 @@ fn with_pooled_client<R>(
     f: impl FnOnce(&mut crate::session::types::DebugSession, u32) -> R,
 ) -> Result<R> {
     let pid = oob_pid(session_arc)?;
+    let mut span = crate::telemetry::span("app.oob_request");
 
     // Get (or create) this session's slot without holding the map lock during I/O.
     let slot_arc = {
@@ -313,16 +323,20 @@ fn with_pooled_client<R>(
     if !matches!(slot.as_ref(), Some(c) if c.pid == pid) {
         let (client, _) = create_oob_client(session_arc)?;
         *slot = Some(OobConn { client, pid });
+        span.attr("connected", 1);
     }
 
     // Liveness probe: if the socket died (server/process gone), reconnect once.
     // Skipped for scan connections so it never disturbs in-flight scanner state.
     if probe {
+        let started = std::time::Instant::now();
         let conn = slot.as_mut().unwrap();
         if conn.client.list_modules(pid).is_err() {
             let (client, _) = create_oob_client(session_arc)?;
             conn.client = client;
+            span.attr("connected", 1);
         }
+        span.attr_elapsed("probe_us", started);
     }
 
     let conn = slot.as_mut().unwrap();
@@ -352,6 +366,17 @@ pub(crate) fn with_oob_scan_client<R>(
     f: impl FnOnce(&mut crate::session::types::DebugSession, u32) -> R,
 ) -> Result<R> {
     with_pooled_client(session_arc, session_id, &pool.scan, false, f)
+}
+
+/// Run `f` with the reused **snapshot** OOB client for `session_id` — the
+/// connection of the background snapshot jobs. `f` may take seconds.
+pub(crate) fn with_oob_snapshot_client<R>(
+    session_arc: &Arc<Mutex<SessionStateUI>>,
+    session_id: &str,
+    pool: &OobPool,
+    f: impl FnOnce(&mut crate::session::types::DebugSession, u32) -> R,
+) -> Result<R> {
+    with_pooled_client(session_arc, session_id, &pool.snapshot, true, f)
 }
 
 /// Target architecture of a session (see [`SessionStateUI::target_arch`]).

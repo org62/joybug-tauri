@@ -267,10 +267,6 @@ fn parse_sha256_sidecar(body: &str) -> Result<String> {
     Ok(hash.to_ascii_lowercase())
 }
 
-fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
-}
-
 // ---------------------------------------------------------------------------
 // The swap
 // ---------------------------------------------------------------------------
@@ -458,7 +454,7 @@ async fn download_to(
     drop(file);
 
     emit_progress(app, "verifying", downloaded, total.or(Some(downloaded)));
-    let actual = hex(&hasher.finalize());
+    let actual = crate::data_dir::hex_lower(&hasher.finalize());
     if actual != expected {
         return Err(Error::UpdateInstall(format!(
             "the download does not match the published checksum (expected {expected}, got {actual})"
@@ -495,30 +491,7 @@ pub fn restart_app(app_handle: tauri::AppHandle) -> Result<()> {
 mod tests {
     use super::*;
 
-    /// A scratch directory that cleans itself up, so the swap tests can work on
-    /// real files without pulling in a dev-dependency.
-    struct TempDir(PathBuf);
-
-    impl TempDir {
-        fn new() -> Self {
-            let dir =
-                std::env::temp_dir().join(format!("joybug-selfupdate-{}", uuid::Uuid::new_v4()));
-            std::fs::create_dir_all(&dir).unwrap();
-            TempDir(dir)
-        }
-
-        fn file(&self, name: &str, contents: &str) -> PathBuf {
-            let path = self.0.join(name);
-            std::fs::write(&path, contents).unwrap();
-            path
-        }
-    }
-
-    impl Drop for TempDir {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.0);
-        }
-    }
+    use crate::test_util::TempDir;
 
     #[test]
     fn sibling_keeps_the_whole_file_name() {
@@ -571,12 +544,12 @@ mod tests {
 
     #[test]
     fn sweep_stale_artifacts_removes_only_our_scratch_files() {
-        let dir = TempDir::new();
-        let exe = dir.file("app.exe", "current");
-        dir.file("app.exe.download", "partial");
-        dir.file("app.exe.1111.old", "previous");
-        dir.file("notes.old", "the user's");
-        dir.file("app.exe.log", "the app's");
+        let dir = TempDir::new("joybug-selfupdate");
+        let exe = dir.file("app.exe", b"current");
+        dir.file("app.exe.download", b"partial");
+        dir.file("app.exe.1111.old", b"previous");
+        dir.file("notes.old", b"the user's");
+        dir.file("app.exe.log", b"the app's");
 
         assert!(sweep_stale_artifacts(&exe));
 
@@ -615,15 +588,10 @@ mod tests {
     }
 
     #[test]
-    fn hex_pads_every_byte() {
-        assert_eq!(hex(&[0x00, 0x0f, 0xff]), "000fff");
-    }
-
-    #[test]
     fn swap_in_place_installs_and_keeps_the_backup() {
-        let dir = TempDir::new();
-        let current = dir.file("app.exe", "old");
-        let staged = dir.file("app.exe.download", "new");
+        let dir = TempDir::new("joybug-selfupdate");
+        let current = dir.file("app.exe", b"old");
+        let staged = dir.file("app.exe.download", b"new");
         let backup = dir.0.join("app.exe.backup");
 
         swap_in_place(&current, &staged, &backup).unwrap();
@@ -635,8 +603,8 @@ mod tests {
 
     #[test]
     fn swap_in_place_restores_the_original_when_the_install_fails() {
-        let dir = TempDir::new();
-        let current = dir.file("app.exe", "old");
+        let dir = TempDir::new("joybug-selfupdate");
+        let current = dir.file("app.exe", b"old");
         // Never staged — the second rename fails, which is the case that would
         // otherwise leave the user with no executable.
         let staged = dir.0.join("app.exe.download");
@@ -666,7 +634,7 @@ mod tests {
 
     #[test]
     fn ensure_writable_accepts_a_writable_dir_and_leaves_nothing_behind() {
-        let dir = TempDir::new();
+        let dir = TempDir::new("joybug-selfupdate");
         ensure_writable(&dir.0).unwrap();
         assert_eq!(std::fs::read_dir(&dir.0).unwrap().count(), 0);
 

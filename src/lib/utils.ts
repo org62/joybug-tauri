@@ -36,3 +36,6 @@ export const NAV_HIGHLIGHT_MS = 2500
 // one line of text. Change both together.
 export const DATA_ROW_HEIGHT = 18
 
+/** "3 breakpoints", "1 line": a count with its noun, for toasts and summaries. */
+export const plural = (n: number, word: string) => `${n.toLocaleString()} ${word}${n === 1 ? "" : "s"}`
+
