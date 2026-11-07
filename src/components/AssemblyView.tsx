@@ -11,7 +11,7 @@ import { Switch } from "./ui/switch";
 import { Label } from "./ui/label";
 import { Cpu, ArrowLeft, ArrowRight, RefreshCw, ChevronRight, Circle, CircleDot, Wrench, Copy, Bookmark, FileCode, HardDrive, LocateFixed, Zap, Undo2, Ellipsis, Crosshair, Play } from "lucide-react";
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuCheckboxItem } from "@/components/ui/dropdown-menu";
-import { sourceNavigation } from "@/lib/navigationStore";
+import { pseudocodeNavigation, sourceNavigation } from "@/lib/navigationStore";
 import { cn, DATA_ROW_HEIGHT, LINK_VALUE_CLASS, PC_ROW_HIGHLIGHT_CLASS } from "@/lib/utils";
 import { useAssemblyView, buildAsmRows, Instruction, AsmDisassembleFn, type AsmModuleRange, type AsmSymbolStatus } from "@/hooks/useAssemblyView";
 import { NavHistoryStore } from "@/lib/navHistory";
@@ -19,7 +19,7 @@ import { RegisterContext, SymbolResolver } from "@/lib/hexUtils";
 import { AddressExpressionInput } from "@/components/AddressExpressionInput";
 import { isBenignSessionError } from "@/lib/sessionHelpers";
 import { EmptyState, LoadingState, ProcessUnavailableState, STATE_ICON_CLASS } from "@/components/ui/empty-state";
-import { useDelayedFlag } from "@/hooks/useDelayedFlag";
+import { LOADING_STATE_DELAY_MS, useDelayedFlag } from "@/hooks/useDelayedFlag";
 import { copyToClipboard } from "@/lib/clipboard";
 import { useContextMenu } from "@/hooks/useContextMenu";
 import { useRecenterOnReveal, applyOverFrames } from "@/hooks/useRecenterOnReveal";
@@ -44,8 +44,6 @@ type ColumnWidths = { symbol: number; bytes: number; mnemonic: number };
 
 const DEFAULT_COLUMN_WIDTHS: ColumnWidths = { symbol: 320, bytes: 144, mnemonic: 64 };
 const ASSEMBLY_ROW_HEIGHT = DATA_ROW_HEIGHT;
-/** A load must take this long before the view says "Loading". */
-const LOADING_STATE_DELAY_MS = 200;
 // Passes listed in the lightning-trace popup for a repeatedly executed row.
 const TRACE_POPUP_MAX_PASSES = 20;
 
@@ -58,6 +56,8 @@ const EMPTY_SELECTION: Selection = { addrs: new Set(), anchor: null };
 
 interface AssemblyViewProps {
   sessionId?: string;
+  /** Identity of the session or opened image receiving passive pseudocode sync. */
+  pseudocodeScope: string;
   isPaused?: boolean;
   /** False when no target can serve disassembly requests (session stopped). */
   canLoad?: boolean;
@@ -108,7 +108,7 @@ interface AssemblyViewProps {
   navHistory: NavHistoryStore;
 }
 
-export function AssemblyView({ sessionId, isPaused, canLoad, address, registers, resolveSymbol, breakpointAddresses, emulation, onToggleBreakpoint, onToggleSingleShotBreakpoint, onSetHardwareBreakpoint, onAssemblePatch, onRestoreImageBytes, onAddBookmark, symbolsRefreshKey, symbolStatuses, modules, onNavigateToSource, onNavigateToMemory, onShowInMemoryRegions, onShowXrefs, onEmulateFrom, disassemble, initialAddress, addressFormatter, translateGotoInput, navHistory }: AssemblyViewProps) {
+export function AssemblyView({ sessionId, pseudocodeScope, isPaused, canLoad, address, registers, resolveSymbol, breakpointAddresses, emulation, onToggleBreakpoint, onToggleSingleShotBreakpoint, onSetHardwareBreakpoint, onAssemblePatch, onRestoreImageBytes, onAddBookmark, symbolsRefreshKey, symbolStatuses, modules, onNavigateToSource, onNavigateToMemory, onShowInMemoryRegions, onShowXrefs, onEmulateFrom, disassemble, initialAddress, addressFormatter, translateGotoInput, navHistory }: AssemblyViewProps) {
   const [addressInput, setAddressInput] = useState("");
   // Inline assembly input state
   const [assembleTarget, setAssembleTarget] = useState<{ address: string; defaultText: string } | null>(null);
@@ -279,11 +279,12 @@ export function AssemblyView({ sessionId, isPaused, canLoad, address, registers,
   // Stable row handlers so the memoized InstructionRow can bail out of
   // unrelated parent re-renders (emulation results, hover state, scrolling).
   // Selection itself is handled on mousedown; click only does the passive
-  // source sync (if the Source tab is mounted it scrolls to the matching
-  // line; it does not steal the active tab).
+  // sync of the code views (a mounted Source / Pseudocode tab scrolls to the
+  // matching line; neither steals the active tab).
   const handleRowClick = useCallback((addr: string) => {
     sourceNavigation.request(addr);
-  }, []);
+    pseudocodeNavigation.request({ scope: pseudocodeScope, address: addr });
+  }, [pseudocodeScope]);
 
   // Right-click keeps an existing multi-selection (so the menu can act on it)
   // but collapses to the clicked row when it lands outside the selection —

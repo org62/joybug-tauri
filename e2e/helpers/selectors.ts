@@ -13,6 +13,17 @@ export const ASM_INVALID_ROW = `${ASM_ROW}[data-invalid]`;
 /** Symbol label rows inserted above exact-symbol (offset 0) instructions. */
 export const ASM_LABEL_ROW = `${ASM_PANEL} [data-testid="asm-label-row"]`;
 
+/** Pseudocode-view selectors: one row per line of the decompiled function. */
+export const PSEUDOCODE_PANEL = '[data-testid="pseudocode-panel"]';
+export const PSEUDOCODE_ROW = `${PSEUDOCODE_PANEL} [data-testid="pseudocode-row"]`;
+/** The name of the function on screen (the toolbar label). */
+export const PSEUDOCODE_FUNCTION = `${PSEUDOCODE_PANEL} [data-testid="pseudocode-function"]`;
+/** Lines that map to instructions (they navigate, and can carry a breakpoint). */
+export const PSEUDOCODE_CODE_ROW = `${PSEUDOCODE_ROW}[data-has-code]`;
+export const PSEUDOCODE_PC_ROW = `${PSEUDOCODE_ROW}[data-pc]`;
+/** The line the last navigation from another view landed on. */
+export const PSEUDOCODE_NAV_ROW = `${PSEUDOCODE_ROW}[data-nav-target]`;
+
 /** Hex-editor selectors. Every instance renders `hex-panel`; `data-memory-view-id`
  *  distinguishes them (the Memory tabs, the PE reader, the Stack tab's hex mode). */
 export const HEX_PANEL = '[data-testid="hex-panel"]';

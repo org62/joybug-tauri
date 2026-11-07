@@ -20,6 +20,7 @@ import { SessionContext, SessionStatus } from "@/contexts/SessionContext";
 import { isProcessAvailable, isPausedSession, isTargetLive, dumpMenuLabels } from "@/lib/sessionHelpers";
 import { ContextAssemblyView } from "@/components/session/ContextAssemblyView";
 import { ContextSourceView } from "@/components/session/ContextSourceView";
+import { ContextPseudocodeView } from "@/components/session/ContextPseudocodeView";
 import { ContextRegisterView } from "@/components/session/ContextRegisterView";
 import { ContextModulesView } from "@/components/session/ContextModulesView";
 import { ContextThreadsView } from "@/components/session/ContextThreadsView";
@@ -650,6 +651,7 @@ export default function SessionDocked() {
   const dynamicTabContent: Record<SessionTabId, React.ReactElement> = useMemo(() => ({
     disassembly: <ContextAssemblyView />,
     source: <ContextSourceView />,
+    pseudocode: <ContextPseudocodeView />,
     registers: <ContextRegisterView />,
     modules: <ContextModulesView onOpenModuleInfo={handleOpenModuleInfo} />,
     threads: <ContextThreadsView onNavigateToDisassembly={handleNavigateToDisassembly} onNavigateToMemoryPointer={handleNavigateToMemoryPointer} />,

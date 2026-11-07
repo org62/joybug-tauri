@@ -1,7 +1,11 @@
 import { useMemo, useCallback, memo } from "react";
 import { useResizablePaneHeight } from "@/hooks/useResizablePaneHeight";
-import { Copy, Loader2 } from "lucide-react";
+import { Copy, Loader2, Save } from "lucide-react";
+import { invoke } from "@tauri-apps/api/core";
+import { save as saveFileDialog } from "@tauri-apps/plugin-dialog";
 import { copyToClipboard } from "@/lib/clipboard";
+import { toastSuccess, toastError } from "@/lib/logger";
+import { formatTauriError } from "@/lib/sessionHelpers";
 import { ScrollArea } from "./ui/scroll-area";
 import { VirtualizedList } from "./ui/virtualized-list";
 import { Button } from "./ui/button";
@@ -257,7 +261,7 @@ export const EmulationQuickView = memo(function EmulationQuickView({ emulation, 
 
   // Render the visible emulation output (summary + trace lines) as plain text,
   // with the trace columns aligned like the on-screen layout.
-  const handleCopyLog = useCallback(() => {
+  const buildLogText = useCallback(() => {
     const lines: string[] = [];
     if (toggles.syscall) {
       lines.push(
@@ -280,9 +284,15 @@ export const EmulationQuickView = memo(function EmulationQuickView({ emulation, 
     if (traceLines.length > 0) {
       lines.push("");
       const addrTexts = traceLines.map(stepLabel);
-      const addrWidth = Math.max(...addrTexts.map((a) => a.length));
       const asmTexts = traceLines.map((l) => (l.opStr ? `${l.mnemonic} ${l.opStr}` : l.mnemonic));
-      const asmWidth = Math.max(...asmTexts.map((a) => a.length));
+      // A loop, not Math.max(...): spreading a long trace (hundreds of
+      // thousands of steps) as arguments overflows the call stack.
+      let addrWidth = 0;
+      let asmWidth = 0;
+      for (let i = 0; i < traceLines.length; i++) {
+        addrWidth = Math.max(addrWidth, addrTexts[i].length);
+        asmWidth = Math.max(asmWidth, asmTexts[i].length);
+      }
       const idxWidth = String(traceLines.length - 1).length;
       traceLines.forEach((l, i) => {
         const extras = [l.kind && `${l.kind} →`, formatStepValues(l)].filter(Boolean).join(", ");
@@ -292,8 +302,33 @@ export const EmulationQuickView = memo(function EmulationQuickView({ emulation, 
       });
     }
 
-    copyToClipboard(lines.join("\n"), "emulation log");
+    return lines.join("\n");
   }, [toggles.syscall, toggles.module, syscall.label, module.label, traceDistances.syscall, syscallResult, moduleResult, traceResult, traceLines]);
+
+  const handleCopyLog = useCallback(() => {
+    copyToClipboard(buildLogText(), "emulation log");
+  }, [buildLogText]);
+
+  // Same text as the copy, written to a file the user picks.
+  const handleSaveLog = useCallback(async () => {
+    let path: string | null;
+    try {
+      path = await saveFileDialog({
+        defaultPath: "emulation-log.txt",
+        filters: [{ name: "Text", extensions: ["txt"] }, { name: "All Files", extensions: ["*"] }],
+      });
+    } catch (error) {
+      toastError(`Failed to open save dialog: ${formatTauriError(error)}`);
+      return;
+    }
+    if (!path) return;
+    try {
+      await invoke("save_text_file", { path, contents: buildLogText() });
+      toastSuccess(`Saved emulation log to ${path}`);
+    } catch (error) {
+      toastError(`Failed to save emulation log: ${formatTauriError(error)}`);
+    }
+  }, [buildLogText]);
 
   const toggleButton = (name: EmulationToggle, label: string) => (
     <Button
@@ -340,10 +375,21 @@ export const EmulationQuickView = memo(function EmulationQuickView({ emulation, 
             variant="outline"
             size="icon-xs"
             title="Copy emulation log"
+            data-testid="emu-copy-log"
             disabled={!hasAnyData}
             onClick={handleCopyLog}
           >
             <Copy />
+          </Button>
+          <Button
+            variant="outline"
+            size="icon-xs"
+            title="Save emulation log to file"
+            data-testid="emu-save-log"
+            disabled={!hasAnyData}
+            onClick={handleSaveLog}
+          >
+            <Save />
           </Button>
         </div>
       </div>

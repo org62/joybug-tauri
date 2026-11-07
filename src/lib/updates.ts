@@ -46,6 +46,8 @@ export interface WelcomeState {
 export const GITHUB_UI_URL = "https://github.com/org62/joybug-tauri";
 export const GITHUB_CORE_URL = "https://github.com/org62/joybug-core";
 export const GITHUB_ISSUES_URL = `${GITHUB_UI_URL}/issues`;
+/** The decompiler engine behind the Pseudocode view (Apache-2.0). */
+export const KUNA_URL = "https://github.com/Noelo-Lab/kuna";
 
 /**
  * Hand a URL to the OS browser. Always go through the opener plugin — a raw

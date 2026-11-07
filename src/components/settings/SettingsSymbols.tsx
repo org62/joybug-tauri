@@ -3,6 +3,7 @@ import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { useDebugSettings } from "@/hooks/useDebugSettings";
 import { matchesSettingItem, type SettingItem } from "@/lib/settingsSearch";
+import { SettingsSection, SettingsGroup, SettingsRow, SettingsNote } from "./SettingsSection";
 
 const SETTING_ITEMS: SettingItem[] = [
   { key: "symbolPath", label: "Symbol path", keywords: ["symbol", "pdb", "path", "server", "srv", "nt_symbol_path", "download", "cache"] },
@@ -22,19 +23,14 @@ export function SettingsSymbols({ searchQuery }: SettingsSymbolsProps) {
   if (visibleItems.length === 0) return null;
 
   return (
-    <div>
-      <h3 className="text-sm font-semibold text-muted-foreground mb-2">Symbols</h3>
-      <div>
+    <SettingsSection title="Symbols">
+      <SettingsGroup>
         {visibleItems.map((item) => (
-          <div
-            key={item.key}
-            className="flex items-center justify-between gap-3 py-1.5 px-2 rounded hover:bg-muted/50 border-b border-border/50 last:border-b-0"
-          >
-            <div className="text-sm font-medium shrink-0">{item.label}</div>
+          <SettingsRow key={item.key} label={item.label}>
             {item.key === "symbolPath" && (
               <Input
                 inputSize="xs"
-                className="max-w-[22rem] font-mono"
+                className="w-[26rem] max-w-[50vw] font-mono"
                 placeholder="srv*C:\Symbols*https://msdl.microsoft.com/download/symbols"
                 value={symbolPathDraft ?? settings.symbol_path}
                 onChange={(e) => setSymbolPathDraft(e.target.value)}
@@ -53,13 +49,13 @@ export function SettingsSymbols({ searchQuery }: SettingsSymbolsProps) {
                 onCheckedChange={() => toggle("symbol_offline")}
               />
             )}
-          </div>
+          </SettingsRow>
         ))}
-      </div>
-      <p className="text-xs text-muted-foreground mt-2 px-2">
+      </SettingsGroup>
+      <SettingsNote>
         Empty path uses _NT_SYMBOL_PATH or the Microsoft symbol server. Applies to locally
         launched sessions, starting with the next session.
-      </p>
-    </div>
+      </SettingsNote>
+    </SettingsSection>
   );
 }

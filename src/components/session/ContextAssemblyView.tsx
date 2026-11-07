@@ -5,6 +5,7 @@ import { contextToRegisters, isProcessAvailable } from '@/lib/sessionHelpers';
 import { appNavHistory } from '@/lib/navHistory';
 import { useQuickEmulation } from '@/hooks/useQuickEmulation';
 import { useSymbolResolver } from '@/hooks/useSymbolResolver';
+import { useBreakpointAddresses } from '@/hooks/useBreakpointAddresses';
 
 export const ContextAssemblyView = () => {
   const sessionData = useSessionContext();
@@ -23,6 +24,7 @@ export const ContextAssemblyView = () => {
 
   const isPaused = sessionData.isPaused;
   const sessionId = sessionData?.session?.id;
+  const processId = currentEvent?.process_id ?? sessionData.session?.attach_pid ?? 0;
 
   // Quick emulation is a session capability, so the hook lives in this wrapper —
   // the shared AssemblyView (also hosted by the PE viewer) just receives the state.
@@ -36,21 +38,12 @@ export const ContextAssemblyView = () => {
   const { assemblePatch, restoreImageBytes } = sessionData.patchState;
   const { addBookmark } = sessionData.bookmarkState;
 
-  // Build a set of breakpoint addresses (uppercase hex) for quick lookup.
-  // Exclude unresolved breakpoints (address "0x0") since they have no real location yet.
-  const breakpointAddresses = useMemo(() => {
-    const set = new Set<string>();
-    for (const bp of breakpoints) {
-      if (bp.address !== "0x0") {
-        set.add(bp.address.toUpperCase());
-      }
-    }
-    return set;
-  }, [breakpoints]);
+  const breakpointAddresses = useBreakpointAddresses(breakpoints);
 
   return (
     <AssemblyView
       sessionId={sessionId}
+      pseudocodeScope={`session:${sessionId}:${processId}`}
       isPaused={isPaused}
       canLoad={isProcessAvailable(displayStatus)}
       address={address}

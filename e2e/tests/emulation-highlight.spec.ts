@@ -1,5 +1,9 @@
 import { test, expect } from "../helpers/test-fixtures";
-import { createAndStartSession, cleanupSession } from "../helpers/session-helpers";
+import { createAndStartSession, cleanupSession, invoke } from "../helpers/session-helpers";
+import crypto from "crypto";
+import fs from "fs";
+import os from "os";
+import path from "path";
 import {
   waitForPaused,
   waitForDisassemblyLoaded,
@@ -83,6 +87,9 @@ test.describe("Emulation", () => {
       await expect(syscallRow).toHaveCount(0);
       await expect(moduleRow).toHaveCount(0);
       await expect(page.locator(TRACE_LISTING_ROW)).toHaveCount(0);
+      // Nothing to copy or save yet.
+      await expect(panel.getByTestId("emu-copy-log")).toBeDisabled();
+      await expect(panel.getByTestId("emu-save-log")).toBeDisabled();
 
       // Syscall alone.
       await syscallToggle.click();
@@ -90,6 +97,17 @@ test.describe("Emulation", () => {
       await expect(syscallRow).toBeVisible();
       await expect(syscallRow).not.toContainText("...", { timeout: 30_000 });
       await expect(moduleRow).toHaveCount(0);
+      await expect(panel.getByTestId("emu-copy-log")).toBeEnabled();
+      await expect(panel.getByTestId("emu-save-log")).toBeEnabled();
+
+      // The save button's native dialog can't be driven; the write behind it can.
+      const logFile = path.join(os.tmpdir(), `joybug-e2e-emu-log-${crypto.randomUUID()}.txt`);
+      try {
+        await invoke(page, "save_text_file", { path: logFile, contents: "Next Syscall: x\n  0  a  nop" });
+        expect(fs.readFileSync(logFile, "utf8")).toBe("Next Syscall: x\n  0  a  nop");
+      } finally {
+        fs.rmSync(logFile, { force: true });
+      }
 
       // Instructions adds the table (header + rows) without touching the others.
       await instructionsToggle.click();

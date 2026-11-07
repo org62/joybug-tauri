@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useLayoutEffect, useMemo, useCallback } from "react";
+import { useState, useRef, useLayoutEffect, useMemo, useCallback } from "react";
 import type { UIEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { VirtualizedList } from "./ui/virtualized-list";
@@ -8,11 +8,13 @@ import { Button } from "./ui/button";
 import { Label } from "./ui/label";
 import { Switch } from "./ui/switch";
 import { VirtualCombobox, type VirtualComboboxItem } from "./ui/virtual-combobox";
-import { FileCode, ChevronRight, Circle, RefreshCw, AlertTriangle, FolderSearch, ArrowRightToLine, CornerDownRight, ArrowDownToLine } from "lucide-react";
-import { cn, DATA_ROW_HEIGHT, NAV_HIGHLIGHT_MS, PC_ROW_HIGHLIGHT_CLASS } from "@/lib/utils";
+import { FileCode, Circle, RefreshCw, AlertTriangle, FolderSearch, ArrowRightToLine, CornerDownRight, ArrowDownToLine } from "lucide-react";
+import { cn, DATA_ROW_HEIGHT } from "@/lib/utils";
+import { CodeLineRow } from "./CodeLineRow";
 import { moduleBasename, pathDirname } from "@/lib/symbolUtils";
 import { useSourceView } from "@/hooks/useSourceView";
 import { useContextMenu } from "@/hooks/useContextMenu";
+import { useBreakpointLines, useLineFlash, useListingWidth } from "@/hooks/useCodeListing";
 import { useRecenterOnReveal, applyOverFrames } from "@/hooks/useRecenterOnReveal";
 import { Virtualizer } from "@tanstack/react-virtual";
 import { languageForPath, highlightToLines, type SyntaxLine } from "@/lib/syntaxHighlight";
@@ -80,7 +82,6 @@ export function SourceView({
 
   const virtualizerRef = useRef<Virtualizer<HTMLDivElement, Element>>(null);
   const [selectedLine, setSelectedLine] = useState<number | null>(null);
-  const [flashLine, setFlashLine] = useState<number | null>(null);
   const { contextMenu, openContextMenu, closeContextMenu } = useContextMenu<{ line: number; hasCode: boolean }>();
 
   // Rows carry ABSOLUTE line numbers (windowStart + offset), since only a window
@@ -102,14 +103,7 @@ export function SourceView({
   // (the window is a slice of the file), so it stays stable while scrolling.
   const numDigits = Math.max(4, String(lineCount).length);
 
-  // Widen the scroll area to the longest line so long lines scroll horizontally.
-  // The pad covers the fixed gutters (breakpoint + PC columns) and the
-  // digit-dependent line-number column.
-  const minContentWidth = useMemo(() => {
-    let max = 80;
-    for (const l of windowLines) if (l.length > max) max = l.length;
-    return `${max + numDigits + 8}ch`;
-  }, [windowLines, numDigits]);
+  const minContentWidth = useListingWidth(windowLines, numDigits, 80);
 
   // File-picker items, alphabetical by file name (paths can number in the
   // thousands for CRT-heavy PDBs — the picker virtualizes them).
@@ -121,15 +115,7 @@ export function SourceView({
     [fileList],
   );
 
-  // Which source lines carry a breakpoint (any of the line's addresses is set).
-  const breakpointLines = useMemo(() => {
-    const set = new Set<number>();
-    if (!breakpointAddresses || breakpointAddresses.size === 0) return set;
-    for (const [line, addrs] of lineMap.entries()) {
-      if (addrs.some((a) => breakpointAddresses.has(a.toUpperCase()))) set.add(line);
-    }
-    return set;
-  }, [breakpointAddresses, lineMap]);
+  const breakpointLines = useBreakpointLines(lineMap, breakpointAddresses);
 
   // Extend the window when scrolling near a vertical edge (infinite scroll).
   const EDGE_EXTEND_PX = 400;
@@ -210,12 +196,7 @@ export function SourceView({
   useRecenterOnReveal(virtualizerRef, items.length > 0, centerLineRef, centerOn);
 
   // Transient highlight flash for nav-target lines.
-  useEffect(() => {
-    if (!scrollToLine?.transient) return;
-    setFlashLine(scrollToLine.line);
-    const timer = setTimeout(() => setFlashLine(null), NAV_HIGHLIGHT_MS);
-    return () => clearTimeout(timer);
-  }, [scrollToLine]);
+  const flashLine = useLineFlash(scrollToLine?.transient ? scrollToLine : null);
 
   const goToDisassembly = useCallback(
     (line: number) => {
@@ -231,6 +212,11 @@ export function SourceView({
       if (addr && onToggleBreakpoint) onToggleBreakpoint(addr);
     },
     [lineToAddress, onToggleBreakpoint],
+  );
+
+  const openLineMenu = useCallback(
+    (e: React.MouseEvent, line: number) => openContextMenu(e, { line, hasCode: lineMap.has(line) }),
+    [openContextMenu, lineMap],
   );
 
   const showEmptyState = !sessionId || (filePath === null && !isLoading);
@@ -316,27 +302,23 @@ export function SourceView({
             minContentWidth={minContentWidth}
             onViewportScroll={handleViewportScroll}
             getItemKey={(item) => item.n}
-            renderItem={(item) => {
-              const hasCode = lineMap.has(item.n);
-              return (
-                <SourceRow
-                  line={item.n}
-                  text={item.text}
-                  tokens={highlighted?.[item.n - windowStart]}
-                  hasCode={hasCode}
-                  isPC={pcLine === item.n}
-                  isNavTarget={navTargetLine === item.n}
-                  isFlashing={flashLine === item.n}
-                  isSelected={selectedLine === item.n}
-                  hasBreakpoint={breakpointLines.has(item.n)}
-                  onClick={() => setSelectedLine(item.n)}
-                  onDoubleClick={() => goToDisassembly(item.n)}
-                  onGutterClick={() => hasCode && toggleBreakpoint(item.n)}
-                  onContextMenu={(e) => openContextMenu(e, { line: item.n, hasCode })}
-                  style={{ height: SOURCE_ROW_HEIGHT }}
-                />
-              );
-            }}
+            renderItem={(item) => (
+              <CodeLineRow
+                line={item.n}
+                text={item.text}
+                tokens={highlighted?.[item.n - windowStart]}
+                hasCode={lineMap.has(item.n)}
+                isPC={pcLine === item.n}
+                isNavTarget={navTargetLine === item.n}
+                isFlashing={flashLine === item.n}
+                isSelected={selectedLine === item.n}
+                hasBreakpoint={breakpointLines.has(item.n)}
+                onClick={setSelectedLine}
+                onDoubleClick={goToDisassembly}
+                onGutterClick={toggleBreakpoint}
+                onContextMenu={openLineMenu}
+              />
+            )}
           />
         </div>
       ) : (
@@ -404,99 +386,5 @@ export function SourceView({
         </ContextMenu>
       )}
     </DockPanel>
-  );
-}
-
-interface SourceRowProps {
-  line: number;
-  text: string;
-  tokens?: SyntaxLine;
-  hasCode: boolean;
-  isPC: boolean;
-  isNavTarget: boolean;
-  isFlashing: boolean;
-  isSelected: boolean;
-  hasBreakpoint: boolean;
-  onClick: () => void;
-  onDoubleClick: () => void;
-  onGutterClick: () => void;
-  onContextMenu: (e: React.MouseEvent) => void;
-  style?: React.CSSProperties;
-}
-
-function SourceRow({
-  line,
-  text,
-  tokens,
-  hasCode,
-  isPC,
-  isNavTarget,
-  isFlashing,
-  isSelected,
-  hasBreakpoint,
-  onClick,
-  onDoubleClick,
-  onGutterClick,
-  onContextMenu,
-  style,
-}: SourceRowProps) {
-  return (
-    <div
-      className={cn(
-        // overflow-hidden: rows are a fixed px height in a virtualized list, so
-        // clip rather than let an over-tall line (e.g. under OS text scaling)
-        // bleed into the neighbouring row. Prefer the UI-scale zoom for enlarging.
-        "flex items-center overflow-hidden hover:bg-muted/30 cursor-default font-mono text-data",
-        isSelected && "bg-accent/50",
-        isPC && !isSelected && PC_ROW_HIGHLIGHT_CLASS,
-        isNavTarget && !isPC && !isSelected && "bg-syn-link/10",
-        isFlashing && "animate-highlight-fade",
-      )}
-      style={style}
-      onClick={onClick}
-      onDoubleClick={onDoubleClick}
-      onContextMenu={onContextMenu}
-    >
-      {/* Breakpoint gutter (click to toggle when the line has code) */}
-      <span
-        className={cn("w-5 shrink-0 flex items-center justify-center", hasCode && "cursor-pointer")}
-        onClick={(e) => { e.stopPropagation(); onGutterClick(); }}
-        title={hasCode ? "Toggle breakpoint" : undefined}
-      >
-        {hasBreakpoint ? (
-          <Circle className="h-2.5 w-2.5 fill-destructive text-destructive" />
-        ) : hasCode ? (
-          <Circle className="h-2 w-2 text-muted-foreground/30" />
-        ) : null}
-      </span>
-
-      {/* PC indicator */}
-      <span className="w-4 shrink-0 text-syn-state">
-        {isPC && <ChevronRight className="h-3 w-3" />}
-      </span>
-
-      {/* Line number (border-box width: --src-ln-w digits + the pr-2 gap) */}
-      <span
-        className={cn(
-          "w-[calc(var(--src-ln-w)+0.5rem)] shrink-0 pr-2 text-right tabular-nums select-none",
-          hasCode ? "text-muted-foreground" : "text-muted-foreground/40",
-        )}
-      >
-        {line}
-      </span>
-
-      {/* Source text */}
-      <span className="whitespace-pre text-foreground/90">
-        {tokens && tokens.length > 0
-          ? tokens.map((tok, i) =>
-              tok.type ? (
-                <span key={i} className={`tok-${tok.type}`}>{tok.text}</span>
-              ) : (
-                <span key={i}>{tok.text}</span>
-              ),
-            )
-          : text || " "}
-      </span>
-    </div>
   );
 }

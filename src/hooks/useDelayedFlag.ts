@@ -1,5 +1,9 @@
 import { useEffect, useState } from "react";
 
+/** The delay for a loading state: a load shorter than this is not announced,
+ *  and whatever was on screen stays until the answer replaces it. */
+export const LOADING_STATE_DELAY_MS = 200;
+
 /**
  * `flag`, but turning true only once it has stayed true for `delayMs`; it
  * turns false at once.

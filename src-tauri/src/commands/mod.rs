@@ -1,6 +1,7 @@
 mod bookmarks;
 mod breakpoints;
 mod coverage;
+mod decompile;
 mod disassembly;
 mod emulation;
 #[cfg(windows)]
@@ -35,6 +36,7 @@ mod window_state;
 pub use bookmarks::*;
 pub use breakpoints::*;
 pub use coverage::*;
+pub use decompile::*;
 pub use disassembly::*;
 pub use emulation::*;
 pub use etw_trace::*;

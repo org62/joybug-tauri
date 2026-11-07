@@ -24,6 +24,12 @@ use joybug_core::perf::PerfRecord;
 
 pub const WIRE_VERSION: u32 = 1;
 
+/// What the app's spans measure. Bump it with every change to the
+/// instrumentation (a new span, a new attribute), so a recording says whether
+/// the client already has it. The frontend has its own (`UI_INSTRUMENTATION`
+/// in `src/lib/perf.ts`): in a dev build the UI is served live and can be newer.
+pub const INSTRUMENTATION: u32 = 3;
+
 /// Core's attribute naming the module a span was about (see `perf::path_key`).
 /// Translated to `module` (a table index) or dropped; never forwarded.
 const MODULE_KEY_ATTR: &str = "module_key";
@@ -50,6 +56,13 @@ pub struct RunInfo {
     pub os: String,
     pub arch: String,
     pub cpus: u32,
+    /// `INSTRUMENTATION` of the exe; 0 in recordings older than it.
+    #[serde(default)]
+    pub rev: u32,
+    /// Which code the exe was built from (`JOYBUG_BUILD_ID`, see build.rs):
+    /// commits, a hash of uncommitted changes, build time.
+    #[serde(default)]
+    pub build: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

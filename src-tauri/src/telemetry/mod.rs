@@ -104,6 +104,8 @@ struct Shared {
     failed_batches: AtomicU64,
     dropped: AtomicU64,
     last_error: Mutex<Option<String>>,
+    /// The collector URL last POSTed to and whether that POST went through.
+    reached: Mutex<Option<(String, bool)>>,
     file: Mutex<Option<PathBuf>>,
     /// Set to ask the worker for an immediate flush; `flushes` counts them.
     flush_requested: AtomicBool,
@@ -135,6 +137,7 @@ pub fn init(app: AppHandle, settings: &DebugSettings) {
         failed_batches: AtomicU64::new(0),
         dropped: AtomicU64::new(0),
         last_error: Mutex::new(None),
+        reached: Mutex::new(None),
         file: Mutex::new(None),
         flush_requested: AtomicBool::new(false),
         flushes: AtomicU64::new(0),
@@ -179,6 +182,11 @@ pub fn apply_settings(settings: &DebugSettings) {
 }
 
 impl Shared {
+    /// Whether the last POST to `url` went through; `None` before the first.
+    fn connected_to(&self, url: &str) -> Option<bool> {
+        self.reached.lock().unwrap().as_ref().filter(|(u, _)| u == url).map(|(_, ok)| *ok)
+    }
+
     /// Where a report goes right now: the configured destinations, or for a
     /// moment after switching off, the ones that were configured.
     fn delivery(&self) -> Config {
@@ -247,6 +255,9 @@ pub struct TelemetryStatus {
     /// The URL reports are POSTed to, when sending is on and an address is set.
     pub url: Option<String>,
     pub recording_to_file: bool,
+    /// Whether the collector at `url` took the last batch: `None` until the
+    /// first one was sent (there is no URL, or it is being tried).
+    pub connected: Option<bool>,
     pub sent_records: u64,
     pub sent_batches: u64,
     pub failed_batches: u64,
@@ -260,6 +271,7 @@ pub fn status() -> TelemetryStatus {
     let config = shared.config.lock().unwrap().clone();
     TelemetryStatus {
         active: config.active(),
+        connected: config.url.as_deref().and_then(|url| shared.connected_to(url)),
         url: config.url,
         recording_to_file: config.to_file,
         sent_records: shared.sent_records.load(Ordering::Relaxed),

@@ -1,6 +1,6 @@
-import { useMemo } from 'react';
 import { useSessionContext } from '@/contexts/SessionContext';
 import { SourceView } from '@/components/SourceView';
+import { useBreakpointAddresses } from '@/hooks/useBreakpointAddresses';
 
 export const ContextSourceView = () => {
   const sessionData = useSessionContext();
@@ -12,14 +12,7 @@ export const ContextSourceView = () => {
 
   const { breakpoints, toggleBreakpoint } = sessionData.breakpointState;
 
-  // Uppercase-hex breakpoint addresses for the gutter; skip unresolved ("0x0").
-  const breakpointAddresses = useMemo(() => {
-    const set = new Set<string>();
-    for (const bp of breakpoints) {
-      if (bp.address !== '0x0') set.add(bp.address.toUpperCase());
-    }
-    return set;
-  }, [breakpoints]);
+  const breakpointAddresses = useBreakpointAddresses(breakpoints);
 
   // The source view re-resolves when symbols land and when a line table
   // does: a lookup that found the table still being parsed is answered

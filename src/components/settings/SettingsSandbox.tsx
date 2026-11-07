@@ -5,6 +5,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useDebugSettings } from "@/hooks/useDebugSettings";
 import { useSandbox } from "@/hooks/useSandbox";
 import { matchesSettingItem, type SettingItem } from "@/lib/settingsSearch";
+import { SettingsSection, SettingsGroup, SettingsRow, SettingsNote, SETTING_CONTROL_WIDTH } from "./SettingsSection";
 
 const SETTING_ITEMS: SettingItem[] = [
   { key: "sandboxStatus", label: "Windows Sandbox", keywords: ["sandbox", "wsb", "available", "24h2", "26100", "isolation", "detonate"] },
@@ -29,15 +30,10 @@ export function SettingsSandbox({ searchQuery }: SettingsSandboxProps) {
   const available = !!status && status.supported && status.wsb_present;
 
   return (
-    <div>
-      <h3 className="text-sm font-semibold text-muted-foreground mb-2">Sandbox</h3>
-      <div>
+    <SettingsSection title="Sandbox">
+      <SettingsGroup>
         {visibleItems.map((item) => (
-          <div
-            key={item.key}
-            className="flex items-center justify-between gap-3 py-1.5 px-2 rounded hover:bg-muted/50 border-b border-border/50 last:border-b-0"
-          >
-            <div className="text-sm font-medium shrink-0">{item.label}</div>
+          <SettingsRow key={item.key} label={item.label}>
 
             {item.key === "sandboxStatus" && (
               <div className="text-xs text-right">
@@ -56,7 +52,7 @@ export function SettingsSandbox({ searchQuery }: SettingsSandboxProps) {
             {item.key === "sandboxMemory" && (
               <Input
                 inputSize="xs"
-                className="w-24 text-right tabular-nums"
+                className={`${SETTING_CONTROL_WIDTH} tabular-nums`}
                 type="number"
                 min={1024}
                 step={1024}
@@ -84,7 +80,7 @@ export function SettingsSandbox({ searchQuery }: SettingsSandboxProps) {
                 value={settings.sandbox_etw_preset}
                 onValueChange={(v) => setSandboxEtwPreset(v)}
               >
-                <SelectTrigger size="xs" className="w-44">
+                <SelectTrigger size="xs" className={SETTING_CONTROL_WIDTH}>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -96,13 +92,13 @@ export function SettingsSandbox({ searchQuery }: SettingsSandboxProps) {
               </Select>
             )}
 
-          </div>
+          </SettingsRow>
         ))}
-      </div>
-      <p className="text-xs text-muted-foreground mt-2 px-2">
+      </SettingsGroup>
+      <SettingsNote>
         Defaults apply to new Windows Sandbox sessions. Networking is always enabled for sandbox
         sessions because the debugger connects to the in-sandbox server over the network.
-      </p>
-    </div>
+      </SettingsNote>
+    </SettingsSection>
   );
 }

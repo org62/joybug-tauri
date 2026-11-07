@@ -253,6 +253,15 @@ fn summarize_report(name: &str, report: &Report, out: &mut String) {
     match &report.run {
         Some(run) => {
             let _ = writeln!(out, "run {}  app {}  {} {}  {} cpus", run.run, run.app, run.os, run.arch, run.cpus);
+            let build = if run.build.is_empty() { "(not recorded)" } else { run.build.as_str() };
+            let ui = named(spans, "ui.instrumentation").map(|s| attr(s, "revision")).max();
+            let ui = ui.map_or_else(|| "(not recorded)".to_string(), |rev| rev.to_string());
+            let _ = writeln!(
+                out,
+                "build {build}  instrumentation: app {} (this summarizer {}), ui {ui}",
+                run.rev,
+                super::anonymize::INSTRUMENTATION
+            );
         }
         None => {
             let _ = writeln!(out, "(no run line)");
@@ -377,6 +386,64 @@ fn summarize_report(name: &str, report: &Report, out: &mut String) {
         scans.iter().map(|s| attr(s, "bytes")).sum::<u64>() / (1024 * 1024)
     );
 
+    let _ = writeln!(out, "\n-- pseudocode");
+    let loads: Vec<&SpanLine> = named(spans, "ui.pseudocode.load").collect();
+    let _ = writeln!(
+        out,
+        "  request to answer, as the view saw it: {}  ({} failed, {} dropped for a newer one)",
+        Stat::of(loads.iter().map(|s| s.d)).line(),
+        loads.iter().filter(|s| attr(s, "outcome") == 3).count(),
+        loads.iter().filter(|s| attr(s, "dropped") > 0).count()
+    );
+    let _ = writeln!(out, "  spinner still up (every 5 s):          {}", Stat::of(named(spans, "ui.pseudocode.waiting").map(|s| s.d)).line());
+    let decompiles: Vec<&SpanLine> = named(spans, "app.decompile").collect();
+    let _ = writeln!(
+        out,
+        "  session decompile:                     {}  (asking the target {}, listing symbols {}, the engine {})",
+        Stat::of(decompiles.iter().map(|s| s.d)).line(),
+        ms(decompiles.iter().map(|s| attr(s, "target_us")).sum()),
+        ms(decompiles.iter().map(|s| attr(s, "symbols_us")).sum()),
+        ms(decompiles.iter().map(|s| attr(s, "engine_us")).sum())
+    );
+    let _ = writeln!(out, "  image viewer decompile:                {}", Stat::of(named(spans, "app.pe_decompile").map(|s| s.d)).line());
+    let requests: Vec<&SpanLine> = named(spans, "decompile.request").collect();
+    let _ = writeln!(
+        out,
+        "  engine requests:                       {}  (queued for at most {}, {} superseded)",
+        Stat::of(requests.iter().map(|s| s.d)).line(),
+        ms(requests.iter().map(|s| attr(s, "queue_us")).max().unwrap_or(0)),
+        requests.iter().filter(|s| attr(s, "outcome") == 2).count()
+    );
+    let image_loads: Vec<&SpanLine> = named(spans, "decompile.load").collect();
+    let _ = writeln!(
+        out,
+        "  image loads into the engine:           {}  (bootstrap {}, analysis {}, largest file {} KB)",
+        Stat::of(image_loads.iter().map(|s| s.d)).line(),
+        ms(image_loads.iter().map(|s| attr(s, "bootstrap_us")).sum()),
+        ms(image_loads.iter().map(|s| attr(s, "analysis_us")).sum()),
+        image_loads.iter().map(|s| attr(s, "file_bytes")).max().unwrap_or(0) / 1024
+    );
+    let _ = writeln!(out, "  functions decompiled:                  {}", Stat::of(named(spans, "decompile.function").map(|s| s.d)).line());
+    // A span is recorded when it ends; its `.begin` marker when it starts.
+    let waited_out = named(spans, "decompile.load.waited_out").count();
+    if waited_out > 0 {
+        let phase = |name: &str| spans.iter().filter(|s| s.n == name).count();
+        let _ = writeln!(
+            out,
+            "  answered \"still analysing\":          {waited_out}  (load phases started: bootstrap {}, analysis {}; loads finished {})",
+            phase("decompile.load.bootstrap.begin"),
+            phase("decompile.load.analysis.begin"),
+            image_loads.len()
+        );
+    }
+    for name in ["app.decompile", "app.pe_decompile", "decompile.request", "decompile.load", "decompile.function"] {
+        let begun = spans.iter().filter(|s| s.n.strip_suffix(".begin") == Some(name)).count();
+        let ended = named(spans, name).filter(|s| name != "decompile.request" || attr(s, "outcome") != 2).count();
+        if begun > ended {
+            let _ = writeln!(out, "  NEVER FINISHED: {name} ({} started, {} ended)", begun, ended);
+        }
+    }
+
     let _ = writeln!(out, "\n-- source view");
     let resolves: Vec<&SpanLine> = named(spans, "ui.source.resolve").collect();
     let _ = writeln!(
@@ -499,7 +566,7 @@ mod tests {
     }
 
     fn run_info(run: &str) -> RunInfo {
-        RunInfo { v: 1, run: run.into(), app: "0.0.0".into(), os: "windows".into(), arch: "x86_64".into(), cpus: 8 }
+        RunInfo { v: 1, run: run.into(), app: "0.0.0".into(), os: "windows".into(), arch: "x86_64".into(), cpus: 8, rev: 2, build: "abc core def @0".into() }
     }
 
     fn span(n: &str, req: &str, d: u64, attrs: &[(&str, u64)]) -> Line {

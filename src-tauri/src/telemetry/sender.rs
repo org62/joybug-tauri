@@ -9,10 +9,10 @@ use std::sync::mpsc::{Receiver, RecvTimeoutError};
 use std::time::{Duration, Instant};
 
 use joybug_core::perf::{self, PerfRecord};
-use tauri::{AppHandle, Manager};
-use tracing::warn;
+use tauri::{AppHandle, Emitter, Manager};
+use tracing::{info, warn};
 
-use super::anonymize::{ndjson, Batch, Line, PendingSpan, RunInfo, SessionLine, SpanLine, WIRE_VERSION};
+use super::anonymize::{ndjson, Batch, Line, PendingSpan, RunInfo, SessionLine, SpanLine, INSTRUMENTATION, WIRE_VERSION};
 use super::{take_log_stats, Pending, Shared};
 use crate::state::{EmbeddedServersMap, SessionStatesMap};
 
@@ -34,6 +34,8 @@ fn run_info(app: &AppHandle) -> RunInfo {
         os: std::env::consts::OS.to_string(),
         arch: std::env::consts::ARCH.to_string(),
         cpus: std::thread::available_parallelism().map(|n| n.get() as u32).unwrap_or(0),
+        rev: INSTRUMENTATION,
+        build: env!("JOYBUG_BUILD_ID").to_string(),
     }
 }
 
@@ -186,11 +188,16 @@ fn flush(shared: &Shared, app: &AppHandle, run: &RunInfo, file: &mut FileSink, d
         shared.dropped.fetch_add(dropped, Ordering::Relaxed);
         lines.push(Line::Dropped { t: perf::now_us(), count: dropped });
     }
-    if lines.is_empty() {
+    // A collector address nobody has tried yet is tried at once, with an empty
+    // batch if need be, so Settings and the session header can say whether
+    // it is reachable before anything was recorded.
+    let probe = config.url.as_deref().is_some_and(|url| shared.connected_to(url).is_none());
+    if lines.is_empty() && !probe {
         return;
     }
 
     let mut error = None;
+    let mut reach_changed = false;
     let mut delivered = false;
     if config.to_file {
         match file.append(run, &lines) {
@@ -204,7 +211,16 @@ fn flush(shared: &Shared, app: &AppHandle, run: &RunInfo, file: &mut FileSink, d
     if let Some(url) = &config.url {
         let count = lines.len() as u64;
         let batch = Batch { run: run.clone(), lines };
-        match post(app, url, &batch) {
+        let result = post(app, url, &batch);
+        let reached = Some((url.clone(), result.is_ok()));
+        let previous = std::mem::replace(&mut *shared.reached.lock().unwrap(), reached.clone());
+        if previous != reached {
+            reach_changed = true;
+            if result.is_ok() {
+                info!("telemetry: connected to the collector at {url}");
+            }
+        }
+        match result {
             Ok(()) => {
                 delivered = true;
                 shared.sent_batches.fetch_add(1, Ordering::Relaxed);
@@ -228,6 +244,10 @@ fn flush(shared: &Shared, app: &AppHandle, run: &RunInfo, file: &mut FileSink, d
     }
     if error.is_some() || delivered {
         *last_error = error;
+    }
+    drop(last_error);
+    if reach_changed {
+        let _ = app.emit("telemetry-status-changed", super::status());
     }
 }
 

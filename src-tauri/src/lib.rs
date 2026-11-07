@@ -113,10 +113,13 @@ pub fn run() {
         .manage(commands::CoalescedJobs::default())
         .manage(commands::SourceIndexCache::default())
         .manage(commands::PeFilesState::default())
+        .manage(commands::DecompilerSymbols::default())
         .manage(StartupAttachState(std::sync::Mutex::new(startup_attach)))
         .setup(|app| {
             let settings = app.state::<SettingsState>().lock().unwrap().clone();
             telemetry::init(app.handle().clone(), &settings);
+            // The decompiler unpacks its processor specifications here on first use.
+            joybug_core::decompiler::set_cache_dir(data_dir::joybug_data_dir());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -187,6 +190,7 @@ pub fn run() {
             commands::request_dereference_batch,
             commands::request_memory_search,
             commands::request_emulation,
+            commands::save_text_file,
             commands::update_window_state,
             commands::get_debug_settings,
             commands::update_debug_settings,
@@ -258,6 +262,8 @@ pub fn run() {
             commands::pe_write_bytes,
             commands::pe_disassemble,
             commands::pe_disassemble_preview_batch,
+            commands::pe_decompile,
+            commands::decompile_function,
             commands::pe_save,
             commands::pe_close,
             commands::pe_load_symbols,

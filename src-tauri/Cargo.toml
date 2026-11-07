@@ -63,3 +63,18 @@ windows-sys = { version = "0.59", features = [
     "Win32_UI_WindowsAndMessaging",
 ] }
 
+# The decompiler engine is unusable unoptimized: a large function that takes
+# a fraction of a second in a release build runs past its time budget in a
+# plain dev build. So it is optimized in dev builds too.
+[profile.dev.package.kuna-base]
+opt-level = 3
+[profile.dev.package.kuna-num]
+opt-level = 3
+[profile.dev.package.kuna-sleigh]
+opt-level = 3
+[profile.dev.package.kuna-decomp]
+opt-level = 3
+[profile.dev.package.kuna-analysis]
+opt-level = 3
+[profile.dev.package.kuna-console]
+opt-level = 3

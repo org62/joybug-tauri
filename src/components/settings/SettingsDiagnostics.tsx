@@ -7,6 +7,7 @@ import { Switch } from "@/components/ui/switch";
 import { useDebugSettings } from "@/hooks/useDebugSettings";
 import { useTelemetryStatus, type TelemetryStatus } from "@/lib/perf";
 import { matchesSettingItem, type SettingItem } from "@/lib/settingsSearch";
+import { SettingsSection, SettingsGroup, SettingsRow, SettingsNote } from "./SettingsSection";
 
 const SETTING_ITEMS: SettingItem[] = [
   { key: "telemetryEnabled", label: "Send anonymous performance data", keywords: ["telemetry", "performance", "anonymous", "usage", "data", "privacy", "slow", "collector", "send", "opt-in"] },
@@ -45,15 +46,10 @@ export function SettingsDiagnostics({ searchQuery }: SettingsDiagnosticsProps) {
   if (visibleItems.length === 0) return null;
 
   return (
-    <div data-testid="settings-diagnostics">
-      <h3 className="text-sm font-semibold text-muted-foreground mb-2">Diagnostics</h3>
-      <div>
+    <SettingsSection title="Diagnostics" data-testid="settings-diagnostics">
+      <SettingsGroup>
         {visibleItems.map((item) => (
-          <div
-            key={item.key}
-            className="flex items-center justify-between gap-3 py-1.5 px-2 rounded hover:bg-muted/50 border-b border-border/50 last:border-b-0"
-          >
-            <div className="text-sm font-medium shrink-0">{item.label}</div>
+          <SettingsRow key={item.key} label={item.label}>
             {item.key === "telemetryEnabled" && (
               <Switch
                 size="xs"
@@ -66,7 +62,7 @@ export function SettingsDiagnostics({ searchQuery }: SettingsDiagnosticsProps) {
             {item.key === "telemetryEndpoint" && (
               <Input
                 inputSize="xs"
-                className="max-w-[16rem] font-mono"
+                className="w-[16rem] font-mono"
                 placeholder="host:port or https://…"
                 aria-label={item.label}
                 data-testid="setting-telemetry-endpoint"
@@ -107,16 +103,14 @@ export function SettingsDiagnostics({ searchQuery }: SettingsDiagnosticsProps) {
                 data-testid="setting-diag-naive-disassembly"
               />
             )}
-          </div>
+          </SettingsRow>
         ))}
-      </div>
-      {/* The folder button sits here, not in the "record to a file" row: that
-          row's label leaves no room for a second control in a narrow column. */}
-      <div className="flex items-start justify-between gap-3 mt-2 px-2">
-        <p className="text-xs text-muted-foreground min-w-0 break-words" data-testid="telemetry-status">
+      </SettingsGroup>
+      <div className="flex items-start justify-between gap-3">
+        <SettingsNote className="min-w-0 break-words" data-testid="telemetry-status">
           {statusText(status, settings.telemetry_enabled)}
           {status?.last_error ? ` · Last error: ${status.last_error}` : ""}
-        </p>
+        </SettingsNote>
         <Button
           variant="outline"
           size="xs"
@@ -128,17 +122,17 @@ export function SettingsDiagnostics({ searchQuery }: SettingsDiagnosticsProps) {
           Open folder
         </Button>
       </div>
-      <p className="text-xs text-muted-foreground mt-2 px-2">
+      <SettingsNote>
         Performance data is how long the debugger's own operations take: timings, counts and
         sizes, plus this app's version, OS and CPU count. System modules are named (ntdll.dll);
         every other module is a one-time code. Never included: paths, addresses, symbol names,
         command lines, register or memory contents. The local file holds exactly what would be
         sent.
-      </p>
-      <p className="text-xs text-muted-foreground mt-2 px-2">
+      </SettingsNote>
+      <SettingsNote>
         The two disassembly switches trade detail for speed, to show whether symbols or function
         analysis are what makes a listing slow. They apply to every session at once.
-      </p>
-    </div>
+      </SettingsNote>
+    </SettingsSection>
   );
 }

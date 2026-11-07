@@ -15,6 +15,7 @@ import { usePlatform } from "@/hooks/usePlatform";
 import { matchesSettingItem, type SettingItem } from "@/lib/settingsSearch";
 import { applyZoom, getStoredZoom, ZOOM_CHANGED_EVENT, ZOOM_STEPS } from "@/lib/uiZoom";
 import { ACCENT_OPTIONS, applyAccent, getStoredAccent, type AccentId } from "@/lib/accent";
+import { SettingsSection, SettingsGroup, SettingsRow, SETTING_CONTROL_WIDTH } from "./SettingsSection";
 
 const SETTING_ITEMS: SettingItem[] = [
   { key: "theme", label: "Theme", keywords: ["dark", "light", "system", "appearance", "color"] },
@@ -48,7 +49,7 @@ function NumberSetting({
       min={min}
       step={1}
       inputSize="xs"
-      className="w-[130px]"
+      className={SETTING_CONTROL_WIDTH}
       value={draft ?? String(value)}
       onChange={(e) => setDraft(e.target.value)}
       onBlur={() => {
@@ -89,33 +90,27 @@ export function SettingsGeneral({ searchQuery }: SettingsGeneralProps) {
   if (visibleItems.length === 0) return null;
 
   return (
-    <div>
-      <h3 className="text-sm font-semibold text-muted-foreground mb-2">General</h3>
-      <div>
+    <SettingsSection title="General">
+      <SettingsGroup>
         {visibleItems.map((item) => (
-          <div
+          <SettingsRow
             key={item.key}
-            className="flex items-center justify-between py-1.5 px-2 rounded hover:bg-muted/50 border-b border-border/50 last:border-b-0"
+            label={item.label}
+            hint={item.key === "jitDebugger" && jit.status && (
+              jit.status.registered ? (
+                "Crashed processes open in Joybug. Turning off restores the previous debugger."
+              ) : jit.status.current ? (
+                <span className="block truncate" title={jit.status.current}>
+                  Current: {jit.status.current}
+                </span>
+              ) : (
+                "No postmortem debugger is registered."
+              )
+            )}
           >
-            <div className="min-w-0 pr-4">
-              <div className="text-sm font-medium">{item.label}</div>
-              {item.key === "jitDebugger" && jit.status && (
-                <div className="text-xs text-muted-foreground">
-                  {jit.status.registered ? (
-                    "Crashed processes open in Joybug. Turning off restores the previous debugger."
-                  ) : jit.status.current ? (
-                    <span className="block truncate" title={jit.status.current}>
-                      Current: {jit.status.current}
-                    </span>
-                  ) : (
-                    "No postmortem debugger is registered."
-                  )}
-                </div>
-              )}
-            </div>
             {item.key === "theme" && (
               <Select value={theme} onValueChange={setTheme}>
-                <SelectTrigger size="xs" className="w-[130px]">
+                <SelectTrigger size="xs" className={SETTING_CONTROL_WIDTH}>
                   <SelectValue placeholder="Select theme" />
                 </SelectTrigger>
                 <SelectContent>
@@ -134,7 +129,7 @@ export function SettingsGeneral({ searchQuery }: SettingsGeneralProps) {
                   setAccent(id);
                 }}
               >
-                <SelectTrigger size="xs" className="w-[130px]">
+                <SelectTrigger size="xs" className={SETTING_CONTROL_WIDTH}>
                   <SelectValue placeholder="Accent" />
                 </SelectTrigger>
                 <SelectContent>
@@ -158,7 +153,7 @@ export function SettingsGeneral({ searchQuery }: SettingsGeneralProps) {
                 // applyZoom fires ZOOM_CHANGED_EVENT, which updates uiScale.
                 onValueChange={(v) => applyZoom(parseFloat(v))}
               >
-                <SelectTrigger size="xs" className="w-[130px]">
+                <SelectTrigger size="xs" className={SETTING_CONTROL_WIDTH}>
                   <SelectValue placeholder="Scale" />
                 </SelectTrigger>
                 <SelectContent>
@@ -199,9 +194,9 @@ export function SettingsGeneral({ searchQuery }: SettingsGeneralProps) {
                 data-testid="setting-jit-debugger"
               />
             )}
-          </div>
+          </SettingsRow>
         ))}
-      </div>
-    </div>
+      </SettingsGroup>
+    </SettingsSection>
   );
 }

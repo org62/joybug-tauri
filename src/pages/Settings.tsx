@@ -1,10 +1,11 @@
 import { useState, useEffect } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Search } from "lucide-react";
+import { Page } from "@/components/ui/page";
+import { EmptyState, STATE_ICON_CLASS } from "@/components/ui/empty-state";
+import { Search, SearchX } from "lucide-react";
 import { SettingsGeneral } from "@/components/settings/SettingsGeneral";
 import { SettingsKeybindings } from "@/components/settings/SettingsKeybindings";
 import { SettingsEvents } from "@/components/settings/SettingsEvents";
@@ -13,29 +14,50 @@ import { SettingsSymbols } from "@/components/settings/SettingsSymbols";
 import { SettingsSandbox } from "@/components/settings/SettingsSandbox";
 import { SettingsDiagnostics } from "@/components/settings/SettingsDiagnostics";
 import { usePlatform } from "@/hooks/usePlatform";
+import type { PlatformFeatures } from "@/contexts/PlatformContext";
 
-const SECTION_GRID = "grid gap-x-6 gap-y-5 items-start";
-const SECTION_GRID_COLS = { gridTemplateColumns: "repeat(auto-fill, minmax(20rem, 1fr))" };
+/**
+ * The page is one column of sections, top to bottom, in this order. A tab
+ * narrows the column to its sections ("All" shows every one); it never
+ * rearranges them, so a setting is always found in the same place.
+ */
+const SECTIONS: { tab: string; Section: React.ComponentType<{ searchQuery: string }> }[] = [
+  { tab: "general", Section: SettingsGeneral },
+  { tab: "general", Section: SettingsSymbols },
+  { tab: "events", Section: SettingsEvents },
+  { tab: "peb-normalize", Section: SettingsPebNormalize },
+  { tab: "sandbox", Section: SettingsSandbox },
+  { tab: "diagnostics", Section: SettingsDiagnostics },
+  { tab: "keybindings", Section: SettingsKeybindings },
+];
 
-const VALID_TABS = ["all", "general", "keybindings", "events", "hiding", "sandbox", "diagnostics"];
+/** A tab the platform lacks (`requires`) is not offered, and neither are its sections. */
+const TABS: { value: string; label: string; requires?: keyof PlatformFeatures }[] = [
+  { value: "all", label: "All" },
+  { value: "general", label: "General" },
+  { value: "keybindings", label: "Keyboard Shortcuts" },
+  { value: "events", label: "Events and Exceptions" },
+  { value: "peb-normalize", label: "PEB Normalization", requires: "peb_normalize" },
+  { value: "sandbox", label: "Sandbox", requires: "sandbox" },
+  { value: "diagnostics", label: "Diagnostics" },
+];
+
+const isTab = (value: string | null): value is string => TABS.some((t) => t.value === value);
 
 export default function Settings() {
   const [searchParams] = useSearchParams();
-  const initialTab = VALID_TABS.includes(searchParams.get("tab") ?? "") ? searchParams.get("tab")! : "all";
+  const urlTab = searchParams.get("tab");
 
   const [searchQuery, setSearchQuery] = useState("");
   const { features } = usePlatform();
-  const [tab, setTab] = useState(initialTab);
+  const [tab, setTab] = useState(isTab(urlTab) ? urlTab : "all");
 
   // Sync tab with URL search params (e.g. navigating via command palette)
   useEffect(() => {
-    const urlTab = searchParams.get("tab") ?? "";
-    if (VALID_TABS.includes(urlTab)) {
-      setTab(urlTab);
-    }
-  }, [searchParams]);
+    if (isTab(urlTab)) setTab(urlTab);
+  }, [urlTab]);
 
-  // Auto-switch to "All" tab when user types a search query
+  // A search looks through every section, whichever tab it was typed in.
   const handleSearchChange = (value: string) => {
     setSearchQuery(value);
     if (value && tab !== "all") {
@@ -43,12 +65,17 @@ export default function Settings() {
     }
   };
 
+  const tabs = TABS.filter((t) => !t.requires || features[t.requires]);
+  const shown = (sectionTab: string) => (tab === "all" ? tabs.some((t) => t.value === sectionTab) : sectionTab === tab);
+
   return (
-    <div className="flex flex-col h-full p-6 overflow-hidden">
-      <Card className="flex flex-col min-h-0 flex-1">
-        <CardHeader className="shrink-0">
-          <CardTitle className="text-2xl">Settings</CardTitle>
-          <div className="relative mt-2">
+    <Page scroll={false} container={false} className="overflow-hidden">
+      {/* Fixed head: title, search and the section tabs, on the column the
+          settings themselves are laid out on. */}
+      <div className="shrink-0 border-b">
+        <div className="mx-auto w-full max-w-3xl px-6 pt-6 pb-3 space-y-3">
+          <h1 className="text-2xl font-bold">Settings</h1>
+          <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <Input
               placeholder="Search settings..."
@@ -57,87 +84,32 @@ export default function Settings() {
               className="pl-9"
             />
           </div>
-        </CardHeader>
-        <CardContent className="flex flex-col min-h-0 flex-1">
-          <Tabs value={tab} onValueChange={setTab} className="flex flex-col min-h-0 flex-1">
-            <TabsList className="shrink-0">
-              <TabsTrigger value="all">All</TabsTrigger>
-              <TabsTrigger value="general">General</TabsTrigger>
-              <TabsTrigger value="keybindings">Keyboard Shortcuts</TabsTrigger>
-              <TabsTrigger value="events">Events and Exceptions</TabsTrigger>
-              {features.peb_normalize && <TabsTrigger value="peb-normalize">PEB Normalization</TabsTrigger>}
-              {features.sandbox && <TabsTrigger value="sandbox">Sandbox</TabsTrigger>}
-              <TabsTrigger value="diagnostics">Diagnostics</TabsTrigger>
+          <Tabs value={tab} onValueChange={setTab}>
+            <TabsList className="h-auto max-w-full flex-wrap justify-start">
+              {tabs.map((t) => (
+                <TabsTrigger key={t.value} value={t.value} className="flex-none">{t.label}</TabsTrigger>
+              ))}
             </TabsList>
-
-            {/* All: one flat grid with every section as a grid item */}
-            <TabsContent value="all" className="mt-4 min-h-0 flex-1">
-              <ScrollArea className="h-full">
-                <div className={SECTION_GRID} style={SECTION_GRID_COLS}>
-                  <SettingsGeneral searchQuery={searchQuery} />
-                  <SettingsSymbols searchQuery={searchQuery} />
-                  <SettingsEvents searchQuery={searchQuery} />
-                  {features.peb_normalize && <SettingsPebNormalize searchQuery={searchQuery} />}
-                  {features.sandbox && <SettingsSandbox searchQuery={searchQuery} />}
-                  <SettingsDiagnostics searchQuery={searchQuery} />
-                  <SettingsKeybindings searchQuery={searchQuery} embedded />
-                </div>
-              </ScrollArea>
-            </TabsContent>
-
-            {/* General only */}
-            <TabsContent value="general" className="mt-4 min-h-0 flex-1">
-              <ScrollArea className="h-full">
-                <div className={SECTION_GRID} style={SECTION_GRID_COLS}>
-                  <SettingsGeneral searchQuery={searchQuery} />
-                  <SettingsSymbols searchQuery={searchQuery} />
-                </div>
-              </ScrollArea>
-            </TabsContent>
-
-            {/* Keyboard Shortcuts only */}
-            <TabsContent value="keybindings" className="mt-4 min-h-0 flex-1">
-              <SettingsKeybindings searchQuery={searchQuery} />
-            </TabsContent>
-
-            {/* Events and Exceptions only */}
-            <TabsContent value="events" className="mt-4 min-h-0 flex-1">
-              <ScrollArea className="h-full">
-                <div className={SECTION_GRID} style={SECTION_GRID_COLS}>
-                  <SettingsEvents searchQuery={searchQuery} />
-                </div>
-              </ScrollArea>
-            </TabsContent>
-
-            {/* PEB Normalization only */}
-            <TabsContent value="peb-normalize" className="mt-4 min-h-0 flex-1">
-              <ScrollArea className="h-full">
-                <div className={SECTION_GRID} style={SECTION_GRID_COLS}>
-                  <SettingsPebNormalize searchQuery={searchQuery} />
-                </div>
-              </ScrollArea>
-            </TabsContent>
-
-            {/* Sandbox only */}
-            <TabsContent value="sandbox" className="mt-4 min-h-0 flex-1">
-              <ScrollArea className="h-full">
-                <div className={SECTION_GRID} style={SECTION_GRID_COLS}>
-                  <SettingsSandbox searchQuery={searchQuery} />
-                </div>
-              </ScrollArea>
-            </TabsContent>
-
-            {/* Diagnostics only */}
-            <TabsContent value="diagnostics" className="mt-4 min-h-0 flex-1">
-              <ScrollArea className="h-full">
-                <div className={SECTION_GRID} style={SECTION_GRID_COLS}>
-                  <SettingsDiagnostics searchQuery={searchQuery} />
-                </div>
-              </ScrollArea>
-            </TabsContent>
           </Tabs>
-        </CardContent>
-      </Card>
-    </div>
+        </div>
+      </div>
+
+      <ScrollArea className="flex-1 min-h-0">
+        {/* Sections render nothing when the search leaves them empty; the
+            empty state below shows through when all of them do. */}
+        <div className="mx-auto w-full max-w-3xl px-6 py-6 space-y-8" data-testid="settings-sections">
+          {/* Keyed by place in SECTIONS, so a section that stays on screen
+              across a tab switch keeps its state. */}
+          {SECTIONS.map(({ tab: sectionTab, Section }, i) => shown(sectionTab) && <Section key={i} searchQuery={searchQuery} />)}
+          <div className="hidden first:block">
+            <EmptyState
+              icon={<SearchX className={STATE_ICON_CLASS} />}
+              title="No settings match"
+              subtitle={`Nothing is called "${searchQuery}"`}
+            />
+          </div>
+        </div>
+      </ScrollArea>
+    </Page>
   );
 }

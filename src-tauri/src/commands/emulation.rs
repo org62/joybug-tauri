@@ -29,3 +29,15 @@ pub fn request_emulation(
     info!("Emulation request sent for session {} with mode {}", session_id, mode);
     Ok(())
 }
+
+/// Write text the UI produced (an emulation log) to a path the user picked in a save dialog.
+#[tauri::command]
+pub async fn save_text_file(path: String, contents: String) -> Result<()> {
+    super::run_blocking(move || {
+        std::fs::write(&path, contents)
+            .map_err(|e| Error::InvalidParameter(format!("Failed to write '{}': {}", path, e)))?;
+        info!("Saved text file to '{}'", path);
+        Ok(())
+    })
+    .await
+}

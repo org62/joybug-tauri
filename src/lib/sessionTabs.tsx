@@ -2,7 +2,7 @@ import { imageTerms } from "@/lib/imageTerms";
 import React from "react";
 import type { PlatformFeatures } from "@/contexts/PlatformContext";
 import {
-  Code, Cpu, Box, Layers, ListTree, Search, HardDrive, MapPin, FileCode, FileDiff,
+  Code, Cpu, Box, Layers, ListTree, Search, HardDrive, MapPin, FileCode, FileDiff, Braces,
   ScanSearch, Puzzle, Crosshair, Bookmark as BookmarkIcon, Boxes, Type, Radar, Fingerprint, KeyRound, Activity,
 } from "lucide-react";
 import type { ActionId } from "@/lib/keybindings";
@@ -72,6 +72,9 @@ const TAB_DEFS = [
   { id: "source", title: "Source", category: "Code", home: "panel-center", minWidth: WIDE,
     action: "panel.source", icon: <FileCode className="size-4" />,
     keywords: ["source", "code", "c", "cpp", "line"] },
+  { id: "pseudocode", title: "Pseudocode", category: "Code", home: "panel-center", minWidth: WIDE,
+    icon: <Braces className="size-4" />,
+    keywords: ["pseudocode", "decompiler", "decompile", "c", "kuna"] },
   { id: "code_explorer", title: "Code Explorer", category: "Code", home: "panel-center", minWidth: WIDE,
     action: "panel.codeExplorer", icon: <Radar className="size-4" />,
     keywords: ["code", "explorer", "coverage", "heatmap", "functions", "breakpoint"] },

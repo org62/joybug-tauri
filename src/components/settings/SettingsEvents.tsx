@@ -14,6 +14,7 @@ import { useDebugSettings, EVENT_ITEMS, type EventSettingItem, type ExceptionRul
 import { usePlatform } from "@/hooks/usePlatform";
 import { matchesSettingItem } from "@/lib/settingsSearch";
 import { POSIX_SIGNALS, exceptionCodeSignal, signalExceptionCode } from "@/lib/exceptionNames";
+import { SettingsSection, SettingsGroup, SettingsRow, SettingsNote, SettingsSubheading } from "./SettingsSection";
 
 interface SettingsEventsProps {
   searchQuery: string;
@@ -64,39 +65,39 @@ export function SettingsEvents({ searchQuery }: SettingsEventsProps) {
   if (visibleItems.length === 0 && !showExceptionRules) return null;
 
   return (
-    <div>
-      <h3 className="text-sm font-semibold text-muted-foreground mb-2">Events and Exceptions</h3>
+    <SettingsSection title="Events and Exceptions">
       {visibleItems.length > 0 && (
-        <div>
+        <SettingsGroup>
           {visibleItems.map((item) => (
-            <div
-              key={item.key}
-              className="flex items-center justify-between py-1.5 px-2 rounded hover:bg-muted/50 border-b border-border/50 last:border-b-0"
-            >
-              <div className="text-sm font-medium">{item.label}</div>
+            <SettingsRow key={item.key} label={item.label}>
               <Switch
+                size="xs"
                 checked={settings[item.key]}
                 onCheckedChange={() => toggle(item.key)}
+                aria-label={item.label}
               />
-            </div>
+            </SettingsRow>
           ))}
-        </div>
+        </SettingsGroup>
       )}
 
       {showExceptionRules && (
-        <div className="mt-4">
-          <div className="flex items-center justify-between mb-2">
-            <h4 className="text-sm font-semibold text-muted-foreground">Exception Rules</h4>
-            <Button variant="outline" size="xs" onClick={handleAddRule}>
-              <Plus className="h-3 w-3 mr-1" />
-              Add
-            </Button>
-          </div>
+        <div>
+          <SettingsSubheading
+            action={
+              <Button variant="outline" size="xs" onClick={handleAddRule}>
+                <Plus />
+                Add
+              </Button>
+            }
+          >
+            Exception Rules
+          </SettingsSubheading>
           {settings.exception_rules.length === 0 ? (
-            <p className="text-xs text-muted-foreground px-2" data-testid="exception-rules-empty">
+            <SettingsNote data-testid="exception-rules-empty">
               No exception rules configured. All exceptions will stop the debugger.
               {signals && " Signals that are not faults (SIGUSR1, SIGINT, SIGTERM, …) reach the target unseen: add a rule for a signal to stop on it."}
-            </p>
+            </SettingsNote>
           ) : (
             <div className="space-y-1.5">
               {settings.exception_rules.map((rule, index) => (
@@ -113,7 +114,7 @@ export function SettingsEvents({ searchQuery }: SettingsEventsProps) {
           )}
         </div>
       )}
-    </div>
+    </SettingsSection>
   );
 }
 

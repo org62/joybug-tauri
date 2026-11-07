@@ -36,6 +36,7 @@
 
 ### Analysis
 
+- **Pseudocode** — a built-in decompiler ([Kuna](https://github.com/Noelo-Lab/kuna), a Rust port of Ghidra's, linked into the exe). The function you are stopped in — or any instruction you click — as C-like text, named from the loaded symbols, with the current line marked and every line tied to its instructions: click through to the disassembly, set a breakpoint from the gutter. Works on a file with no process too, in the image viewer.
 - **Emulation** — Unicorn-backed forward emulation of the *live* process state. A footer under the disassembly answers "where does this land, which syscall does it hit, which module does it transition to" without letting the target run. Five modes: basic, instruction trace, basic block, stop on module transition, and stop on first syscall.
 - **Image Patches** — continuously diffs every loaded module's executable sections against its on-disk PE. Inline hooks, EDR/AV detours, packers, and self-modifying code get highlighted right in the disassembly and listed in their own panel, with one-click restore of the original bytes. Because it diffs against the on-disk image rather than tracking your own edits, it surfaces changes you didn't make as well as ones you did.
 - **Code Explorer** — a module-wide execution map. Arms coverage breakpoints across every function in a module and shows live hit counts, first-execution ordering, and which threads hit what — a workflow that usually means reaching for DynamoRIO, Pin, or Lighthouse, available here as a tab.
@@ -100,9 +101,11 @@ npm run tauri dev      # or: npm run tauri build
 - Windows, a Rust MSVC toolchain, and Node.js.
 - Visual Studio with **both** the MSVC and the **LLVM/Clang** components.
 - **`LIBCLANG_PATH` must point at the libclang matching your host architecture** — the core's `build.rs` panics outright without it, and an ARM64 libclang on an x64 host fails with "invalid DLL".
-- Build from an MSVC developer shell (`Launch-VsDevShell.ps1 -Arch arm64`, or `vcvars64.bat`) — `build.rs` also compiles C test programs with `cl.exe`.
+- Build from an MSVC developer shell (`Launch-VsDevShell.ps1 -Arch amd64 -HostArch amd64 -SkipAutomaticLocation` for x64, `-Arch arm64` for ARM64, or `vcvars64.bat`). This also exposes Visual Studio's bundled Ninja on `PATH`; without it Unicorn fails with `CMAKE_MAKE_PROGRAM is not set`.
 - **On ARM64:** Keystone's bundled CMakeLists requires CMake < 4, which modern Visual Studio no longer ships. Install one alongside (`pip install cmake==3.31.6`), put it first on `PATH`, and set `CMAKE_GENERATOR=Ninja`.
-- Two dependencies (a Unicorn fork and a pelite fork) are pulled from GitHub rather than crates.io, so the build needs network access.
+- A Unicorn fork, a pelite fork, and the upstream Kuna decompiler are pulled from GitHub rather than crates.io, so the build needs network access.
+
+The decompiler uses **unmodified upstream Kuna**, pinned by revision in `external/joybug-core/Cargo.toml`; no local Kuna checkout or Cargo patch overrides are needed. When updating that revision, run `cargo run --example update_kuna_specs` from `external/joybug-core` to regenerate the embedded processor specifications.
 
 ---
 
@@ -175,7 +178,7 @@ The core also ships **`jlua`**, a Lua REPL exposing the full debugger API, plus 
 
 ## Tech stack
 
-Tauri v2 · Rust · React 18 · TypeScript · Vite · Tailwind CSS v4 · shadcn/ui · rc-dock · Playwright
+Tauri v2 · Rust · React 18 · TypeScript · Vite · Tailwind CSS v4 · shadcn/ui · rc-dock · WebdriverIO
 
 ---
 
@@ -184,7 +187,8 @@ Tauri v2 · Rust · React 18 · TypeScript · Vite · Tailwind CSS v4 · shadcn/
 ```bash
 npm run tauri dev      # Vite dev server + Tauri
 npm run lint           # ESLint, including the UI layout guardrails
-npm run test:e2e       # Playwright suite (~6 min, runs against a release build)
+npm run test:e2e:build # Build the debug binary used by the E2E suite
+npm run test:e2e       # WebdriverIO suite against the app's real webview
 ```
 
 See [`CLAUDE.md`](CLAUDE.md) for architecture notes and project conventions.

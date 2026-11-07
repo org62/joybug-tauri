@@ -16,6 +16,8 @@ import { listen } from "@tauri-apps/api/event";
 export interface TelemetryStatus {
   active: boolean;
   url: string | null;
+  /** Whether the collector at `url` took the last batch; null before the first try. */
+  connected: boolean | null;
   recording_to_file: boolean;
   sent_records: number;
   sent_batches: number;
@@ -64,6 +66,13 @@ interface PerfRecord {
   a?: Record<string, number>;
 }
 
+/**
+ * What the UI's spans measure; the frontend half of `INSTRUMENTATION` in
+ * `src-tauri/src/telemetry/anonymize.rs`. Bump both with every change to the
+ * instrumentation, so a recording says whether the client already has it.
+ */
+const UI_INSTRUMENTATION = 3;
+
 const FLUSH_MS = 1000;
 const MAX_QUEUED = 4000;
 /** A frame gap this long counts as a stall where `longtask` isn't supported. */
@@ -99,6 +108,7 @@ function setActive(next: boolean): void {
   if (next === active) return;
   active = next;
   if (active) {
+    perfRecord("ui.instrumentation", performance.now(), 0, { revision: UI_INSTRUMENTATION });
     flushTimer = setInterval(flush, FLUSH_MS);
     stopWatchingStalls = watchStalls();
   } else {
@@ -171,6 +181,23 @@ export async function perfInvoke<T>(
   } finally {
     perfRecord(`ui.invoke.${name}`, start, performance.now() - start, result !== undefined && attrs ? attrs(result) : undefined, sessionId);
   }
+}
+
+/** How often `perfWatchWait` reports a wait that is still going. */
+const WAIT_HEARTBEAT_MS = 5000;
+
+/**
+ * Report a wait that may never end (a spinner): every few seconds until the
+ * returned function is called, `name` is recorded spanning the wait so far.
+ * A span is only recorded when it finishes, so without this a hung request
+ * leaves no trace at all.
+ */
+export function perfWatchWait(name: string, sessionId?: string | null): () => void {
+  if (!active) return () => {};
+  const start = performance.now();
+  let beats = 0;
+  const timer = setInterval(() => perfRecord(name, start, performance.now() - start, { beats: ++beats }, sessionId), WAIT_HEARTBEAT_MS);
+  return () => clearInterval(timer);
 }
 
 /**

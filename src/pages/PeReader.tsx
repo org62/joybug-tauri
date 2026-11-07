@@ -1,6 +1,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { invoke } from "@tauri-apps/api/core";
+import { perfInvoke } from "@/lib/perf";
 import { save as saveFileDialog } from "@tauri-apps/plugin-dialog";
 import { FileUp, Save, SaveAll, X, FileSearch } from "lucide-react";
 
@@ -14,6 +15,7 @@ import DockingLayout, { DockingLayoutRef } from "@/components/DockingLayout";
 import { DockingConfig } from "@/hooks/useDocking";
 import { HexView } from "@/components/HexView";
 import { AssemblyView } from "@/components/AssemblyView";
+import { PseudocodeView } from "@/components/PseudocodeView";
 import { PeStructureTree, PE_TREE_MIN_WIDTH } from "@/components/pe/PeStructureTree";
 import { AddrModeSelect } from "@/components/pe/AddrModeSelect";
 import { PeSymbolsView, PeSymbol } from "@/components/pe/PeSymbolsView";
@@ -25,6 +27,7 @@ import { useQuickEmulation, QuickEmulationResult, QuickEmulationState, Emulation
 import { Download } from "lucide-react";
 import { HexDataSource } from "@/hooks/useHexEditor";
 import { AsmDisassembleFn, Instruction } from "@/hooks/useAssemblyView";
+import type { DecompileFn, DecompileOutcome } from "@/hooks/usePseudocode";
 import { ModuleExtraInfo } from "@/hooks/useModuleInfo";
 import { PeScanFn, PeStringScanResult } from "@/hooks/usePeStringScan";
 import { SymbolResolver } from "@/lib/hexUtils";
@@ -68,6 +71,7 @@ interface PeReaderContextValue {
   disassemble: AsmDisassembleFn | null;
   initialAddress: bigint;
   symbolsRefreshKey: string;
+  pseudocodeScope: string;
   setField: (field: string, value: number) => void;
   searchSymbols: (pattern: string, limit: number) => Promise<PeSymbol[]>;
   /** Bytes/disasm preview for visible symbol-search rows. */
@@ -168,14 +172,15 @@ const PeHexTab: React.FC = () => {
 };
 
 const PeDisasmTab: React.FC = () => {
-  const { summary, disassemble, initialAddress, mapping, mode, symbolsRefreshKey, resolveSymbol, navHistory, onGoToHex, showXrefs } = usePeReader();
+  const { summary, disassemble, initialAddress, mapping, mode, symbolsRefreshKey, pseudocodeScope, resolveSymbol, navHistory, onGoToHex, showXrefs } = usePeReader();
   const { emuOrigin, emulation, emulateFrom } = usePeEmu();
   if (!summary || !disassemble || !mapping) return <NoFilePlaceholder />;
   const emulating = emuOrigin !== null;
   return (
     <AssemblyView
-      key={summary.path}
+      key={pseudocodeScope}
       disassemble={disassemble}
+      pseudocodeScope={pseudocodeScope}
       initialAddress={initialAddress}
       symbolsRefreshKey={symbolsRefreshKey}
       resolveSymbol={resolveSymbol}
@@ -191,6 +196,28 @@ const PeDisasmTab: React.FC = () => {
       // (File mode leaves `isPaused` unset: the PC derives from `address` alone.)
       address={emulating ? Number(emuOrigin) : undefined}
       emulation={emulating ? emulation : undefined}
+    />
+  );
+};
+
+const PePseudocodeTab: React.FC = () => {
+  const { summary, initialAddress, symbolsRefreshKey, pseudocodeScope, onGoToDisasm } = usePeReader();
+  const path = summary?.path;
+  const decompile = useMemo<DecompileFn | null>(() => {
+    if (!path) return null;
+    return (va, client) => perfInvoke<DecompileOutcome>("decompile", "pe_decompile", { path, va, client });
+  }, [path]);
+  const inputsKeyFor = useCallback(() => symbolsRefreshKey, [symbolsRefreshKey]);
+  const goToDisasm = useCallback((address: string) => onGoToDisasm(BigInt(address)), [onGoToDisasm]);
+  if (!summary) return <NoFilePlaceholder />;
+  return (
+    <PseudocodeView
+      key={pseudocodeScope}
+      pseudocodeScope={pseudocodeScope}
+      decompile={decompile}
+      initialAddress={initialAddress}
+      inputsKeyFor={inputsKeyFor}
+      onNavigateToDisassembly={goToDisasm}
     />
   );
 };
@@ -251,6 +278,7 @@ const PE_TAB_DEFS = [
   { id: "pe-strings", title: "Strings", content: <PeStringsTab /> },
   { id: "pe-xrefs", title: "Xrefs", content: <PeXrefsTab /> },
   { id: "pe-disassembly", title: "Disassembly", content: <PeDisasmTab /> },
+  { id: "pe-pseudocode", title: "Pseudocode", content: <PePseudocodeTab /> },
   { id: "pe-hex", title: "Hex", content: <PeHexTab /> },
 ];
 
@@ -262,7 +290,7 @@ const PE_DOCK_CONFIG: DockingConfig = {
       mode: "horizontal",
       children: [
         { size: 360, tabs: [{ id: "pe-structures" }, { id: "pe-symbols" }, { id: "pe-strings" }, { id: "pe-xrefs" }], activeId: "pe-structures" },
-        { tabs: [{ id: "pe-disassembly" }], activeId: "pe-disassembly" },
+        { tabs: [{ id: "pe-disassembly" }, { id: "pe-pseudocode" }], activeId: "pe-disassembly" },
         { tabs: [{ id: "pe-hex" }], activeId: "pe-hex" },
       ],
     },
@@ -281,8 +309,9 @@ const PE_TABS: DockWindowsMenuTab[] = PE_TAB_DEFS.map(({ id, title }) => ({ id, 
 // explicit Close or when a different file is opened), and this module-level
 // snapshot rehydrates the page state on remount.
 let savedPeState: {
-  summary: PeFileSummary; dirty: boolean; mode: AddrMode; symbolsRefreshKey: string;
+  summary: PeFileSummary; dirty: boolean; mode: AddrMode; symbolsRefreshKey: string; openGeneration: number;
 } | null = null;
+let nextPeOpenGeneration = 0;
 
 export default function PeReader() {
   const [summary, setSummary] = useState<PeFileSummary | null>(() => savedPeState?.summary ?? null);
@@ -291,11 +320,13 @@ export default function PeReader() {
   const [mode, setMode] = useState<AddrMode>(() => savedPeState?.mode ?? "va");
   const [openDialog, setOpenDialog] = useState(false);
   const [symbolsRefreshKey, setSymbolsRefreshKey] = useState(() => savedPeState?.symbolsRefreshKey ?? "");
+  const [openGeneration, setOpenGeneration] = useState(() => savedPeState?.openGeneration ?? 0);
+  const pseudocodeScope = summary ? `image:${summary.path}:${summary.base}:${openGeneration}` : "";
   const dockingRef = useRef<DockingLayoutRef>(null);
 
   useEffect(() => {
-    savedPeState = summary ? { summary, dirty, mode, symbolsRefreshKey } : null;
-  }, [summary, dirty, mode, symbolsRefreshKey]);
+    savedPeState = summary ? { summary, dirty, mode, symbolsRefreshKey, openGeneration } : null;
+  }, [summary, dirty, mode, symbolsRefreshKey, openGeneration]);
 
   const path = summary?.path ?? null;
   const [searchParams, setSearchParams] = useSearchParams();
@@ -313,6 +344,7 @@ export default function PeReader() {
       // Release the previous file's backend buffer when switching files.
       if (path && path !== selected) invoke("pe_close", { path }).catch(() => {});
       setSummary(result);
+      setOpenGeneration(++nextPeOpenGeneration);
       setDirty(false);
       setSymbolsRefreshKey(`${selected}:${result.symbol_count}`);
     } catch (err) {
@@ -393,11 +425,11 @@ export default function PeReader() {
     // Not `!summary`: the open file survives navigation (savedPeState), so a
     // deep link arriving from a drop on another route must still replace it.
     const deepLink = searchParams.get("path");
-    if (deepLink && deepLink !== summary?.path && !busy) {
+    if (deepLink && !busy) {
       loadPath(deepLink, searchParams.get("base"));
       setSearchParams({}, { replace: true });
     }
-  }, [searchParams, summary, busy, loadPath, setSearchParams]);
+  }, [searchParams, busy, loadPath, setSearchParams]);
 
   const handleSave = useCallback(async (saveAs: boolean) => {
     if (!path) return;
@@ -545,6 +577,7 @@ export default function PeReader() {
     disassemble,
     initialAddress: summary && mapping ? initialDisasmVa(summary.info, mapping) : 0n,
     symbolsRefreshKey,
+    pseudocodeScope,
     setField,
     searchSymbols,
     fetchSymbolPreviews,
@@ -557,7 +590,7 @@ export default function PeReader() {
     xrefTarget,
     fetchXrefs,
     showXrefs,
-  }), [summary, mapping, mode, hexDataSource, disassemble, symbolsRefreshKey, setField, searchSymbols, fetchSymbolPreviews, resolveSymbol, stringScan, onGoToHex, onGoToDisasm, onSelectField, navHistory, xrefTarget, fetchXrefs, showXrefs]);
+  }), [summary, mapping, mode, hexDataSource, disassemble, symbolsRefreshKey, pseudocodeScope, setField, searchSymbols, fetchSymbolPreviews, resolveSymbol, stringScan, onGoToHex, onGoToDisasm, onSelectField, navHistory, xrefTarget, fetchXrefs, showXrefs]);
   const emuValue: PeEmuContextValue = useMemo(
     () => ({ emuOrigin, emulation, emulateFrom: setEmuOrigin }),
     [emuOrigin, emulation],

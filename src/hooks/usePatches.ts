@@ -27,6 +27,8 @@ interface PatchesUpdatedPayload {
   /// Bumped by the backend only on view-affecting changes; the every-pause
   /// re-broadcast keeps it stable (used by useAssemblyView to skip re-decodes).
   revision: number;
+  /// False for that re-broadcast.
+  changed?: boolean;
 }
 
 interface AssemblePatchErrorPayload {
@@ -52,6 +54,9 @@ function convertPatches(raw: RawPatch[]): Patch[] {
 
 export function usePatches(sessionId?: string, canUseMemoryOps?: boolean, sessionPatches?: RawPatch[]) {
   const [patches, setPatches] = useState<Patch[]>([]);
+  // The backend's revision as of the last real change seen here: a key for
+  // what depends on the patches applied, stable across the per-pause re-broadcast.
+  const [revision, setRevision] = useState(0);
 
   const sessionPatchRef = useRef(sessionPatches);
   sessionPatchRef.current = sessionPatches;
@@ -74,6 +79,7 @@ export function usePatches(sessionId?: string, canUseMemoryOps?: boolean, sessio
     const unlistenUpdated = listen<PatchesUpdatedPayload>('patches-updated', (event) => {
       if (event.payload.session_id === sessionId) {
         setPatches(convertPatches(event.payload.patches));
+        if (event.payload.changed) setRevision(event.payload.revision);
       }
     });
 
@@ -165,6 +171,7 @@ export function usePatches(sessionId?: string, canUseMemoryOps?: boolean, sessio
 
   return useMemo(() => ({
     patches,
+    revision,
     assemblePatch,
     undoPatch,
     undoPatches,
@@ -172,7 +179,7 @@ export function usePatches(sessionId?: string, canUseMemoryOps?: boolean, sessio
     updatePatch,
     enablePatchGroup,
     restoreImageBytes,
-  }), [patches, assemblePatch, undoPatch, undoPatches, enablePatch, updatePatch, enablePatchGroup, restoreImageBytes]);
+  }), [patches, revision, assemblePatch, undoPatch, undoPatches, enablePatch, updatePatch, enablePatchGroup, restoreImageBytes]);
 }
 
 export type PatchState = ReturnType<typeof usePatches>;

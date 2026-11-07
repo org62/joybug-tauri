@@ -467,15 +467,16 @@ export class Locator {
       // (0, 0) when a down/up arrives without a move in the same request.
       await el.scrollIntoView({ block: "center", inline: "center" });
       const b = opts.button === "right" ? 2 : 1;
-      await browser.action("pointer").move({ origin: el }).down({ button: b }).up({ button: b }).perform();
       await rememberPointer(el);
+      await browser.action("pointer").move({ origin: el }).down({ button: b }).up({ button: b }).perform();
     });
   }
   async dblclick(opts: ClickOptions = {}): Promise<void> {
     await this.withActionable(opts.timeout ?? ACTION_TIMEOUT, !opts.force, async (el) => {
       await el.scrollIntoView({ block: "center", inline: "center" });
-      await el.doubleClick();
+      // The action can navigate or unmount the row; capture its position first.
       await rememberPointer(el);
+      await el.doubleClick();
     });
   }
   async hover(opts: { timeout?: number } = {}): Promise<void> {
@@ -492,8 +493,8 @@ export class Locator {
         const overOrigin = r.left <= 0 && r.top <= 0 && r.right >= 0 && r.bottom >= 0;
         return overOrigin ? { x: window.innerWidth - 1, y: window.innerHeight - 1 } : { x: 0, y: 0 };
       }, el as unknown as Element);
-      await browser.action("pointer").move({ x: away.x, y: away.y, origin: "viewport" }).move({ origin: el }).perform();
       await rememberPointer(el);
+      await browser.action("pointer").move({ x: away.x, y: away.y, origin: "viewport" }).move({ origin: el }).perform();
     });
   }
   async focus(): Promise<void> {

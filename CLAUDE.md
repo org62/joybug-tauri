@@ -60,6 +60,7 @@ The joybug-core external crate has integration tests (`external/joybug-core/test
     - `session_lifecycle.rs` — Session CRUD (create, start, stop, delete)
     - `stepping.rs` — Go, StepIn, StepOver, StepOut
     - `disassembly.rs`, `memory.rs`, `breakpoints.rs`, `emulation.rs`, `symbols.rs`, `logging.rs`, `settings.rs`, `window_state.rs` — Per-domain commands
+    - `decompile.rs` — `decompile_function` (session) and the shared `DecompileOutcome`; `pe_decompile` lives in `pe_file.rs` (see "Decompiler" below)
     - `pe_file.rs` — Offline image viewer commands over `joybug_core::static_image::StaticFile` (a `PeImage` or `ElfImage`, opened by magic: open/hex/disasm/symbols/strings, plus `pe_xrefs_to` and `pe_emulate` for xrefs and process-less emulation; header field edits are PE-only)
     - `updates.rs` — GitHub-releases update check + first-run welcome state
   - `lib.rs` — App setup, command registration, global state
@@ -160,6 +161,44 @@ and the checksum against the debug info — a second, sequential pass — is ver
 background thread, reported by `source-checksum-verified` and stored with the index.
 `open_source_file` returns `checksum_pending: true` until then. `cargo test --release --lib
 source_index -- --ignored --nocapture` benchmarks it on a 5 GB file.
+
+### Decompiler
+
+The Pseudocode view (`PseudocodeView.tsx` + `usePseudocode`, hosted by `ContextPseudocodeView`
+in a session and by the `pe-pseudocode` tab of the image viewer) shows the function at an
+address as C-like text from `joybug_core::decompiler` — the Kuna engine, linked into the exe.
+
+- **It decompiles the module's file on disk, on the engine's own thread.** Never the session
+  thread: `decompile_function` / `pe_decompile` are async commands that wait on the blocking
+  pool and return a `DecompileOutcome` directly (`ok` | `no_function` | `superseded` |
+  `failed` — the expected ways of not getting pseudocode are outcomes the view renders as
+  states, not errors). The first function of a module loads the module into the engine (about
+  a second; far longer for a very large image) and the few most recent stay loaded.
+  Each image has its own host thread; invalidated hosts remain accounted for until their
+  work finishes. Loading and function execution have separate wait budgets. Deadlines do
+  not interrupt Kuna: a timed-out function cannot be evicted or accumulate queued retries.
+  Bootstrap is serialized because upstream Kuna hands Go ABI metadata through process-global
+  environment state; function execution stays on the image's thread.
+- **What the session side adds** (`commands/decompile.rs`): the module and its load base, the
+  function start from the unwind data (one `disassemble_function` on the live OOB client), the
+  module's function names (`DecompilerSymbols`, re-listed only when the module's file or symbol
+  state changes), and `differs_from_image` — the function's bytes in memory compared with the
+  file through the same `ImageDiff` the disassembly uses, shown as "Memory differs".
+- **Still one exe.** Kuna reads its processor specs from a directory; they are embedded in core
+  and unpacked on first use to `<data dir>/kuna-specs/<bundle id>/` (`set_cache_dir` in `lib.rs`).
+  Bumping Kuna means regenerating that bundle — see core's CLAUDE.md.
+  Extraction uses a private staging directory and atomic publication. Older bundles remain:
+  another running version may still be using them.
+- **Sync is by line.** The outcome maps lines to instruction addresses. The hook keeps one
+  function; an address inside it only moves a highlight (PC line, navigation target), one
+  outside it decompiles its function. A disassembly row click reaches the view through
+  `pseudocodeNavigation`, scoped to the session's process or the opened image's generation;
+  a line leads back with `onNavigateToDisassembly`. `inputsKeyFor` (module symbol state,
+  patch epoch) refreshes the requested target, including an in-flight load. Equal text does
+  not imply equal bounds or line mappings: refresh those while retaining the text array.
+  Requests carry a mounted-view ID and increasing sequence assigned before IPC; core
+  coalesces pending requests by that sequence, never by backend arrival order.
+- Rows are `CodeLineRow`, shared with the Source view.
 
 ### Telemetry & diagnostics
 

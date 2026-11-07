@@ -1,6 +1,8 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { keyboardEventToChord, formatKeybinding, type ChordString } from "@/lib/keybindings";
 import { cn } from "@/lib/utils";
+import { buttonVariants } from "@/components/ui/button";
+import { SETTING_CONTROL_WIDTH } from "./SettingsSection";
 
 interface KeyCaptureInputProps {
   onCapture: (chord: ChordString) => void;
@@ -75,14 +77,16 @@ export function KeyCaptureInput({ onCapture, onCancel }: KeyCaptureInputProps) {
       ref={ref}
       tabIndex={0}
       className={cn(
-        "inline-flex items-center px-2 py-1 rounded border-2 border-ring bg-accent text-sm font-mono",
-        "focus:outline-none min-w-[120px]"
+        // The shortcut button it stands in for, so the row does not move.
+        buttonVariants({ variant: "outline", size: "xs" }),
+        SETTING_CONTROL_WIDTH,
+        "border-2 border-ring bg-accent font-mono hover:bg-accent focus:outline-none"
       )}
     >
       {capturedChord ? (
         <span>{formatKeybinding(capturedChord)}</span>
       ) : (
-        <span className="text-muted-foreground italic">Press key combination...</span>
+        <span className="text-muted-foreground italic">Press keys…</span>
       )}
     </div>
   );

@@ -1,7 +1,7 @@
 import React from 'react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Activity, Square, Play, RedoDot, ArrowDownToDot, ArrowUpFromDot, Pause, Plus, ChevronDown, Unplug, Loader2, AlertTriangle, RotateCcw, HardDriveDownload, FileDown } from 'lucide-react';
+import { Activity, Square, Play, RedoDot, ArrowDownToDot, ArrowUpFromDot, Pause, Plus, ChevronDown, Unplug, Loader2, AlertTriangle, RotateCcw, HardDriveDownload, FileDown, Unlink } from 'lucide-react';
 import { exceptionName, formatExceptionCode, EXCEPTION_SINGLE_STEP } from '@/lib/exceptionNames';
 import {
   DropdownMenu,
@@ -21,7 +21,8 @@ import { shortHex } from '@/lib/hexUtils';
 import { sessionDisplayName, dumpMenuLabels } from '@/lib/sessionHelpers';
 import { useKeybindingContext } from '@/contexts/KeybindingContext';
 import { useDebugSettings } from '@/hooks/useDebugSettings';
-import { useTelemetryStatus } from '@/lib/perf';
+import { useTelemetryStatus, type TelemetryStatus } from '@/lib/perf';
+import { cn } from '@/lib/utils';
 
 export interface SessionHeaderProps {
   session: DebugSession;
@@ -83,8 +84,9 @@ const DiagnosticsBadges: React.FC = () => {
     ? "Naive disassembly"
     : settings.diag_skip_symbolization ? "No symbols in disassembly" : null;
   // The backend's verdict, not the switches: it also knows whether the
-  // collector address is one it can use.
-  const telemetry = useTelemetryStatus()?.active ?? false;
+  // collector address is one it can use, and whether the collector answers.
+  const telemetry = useTelemetryStatus();
+  const unsent = telemetry ? unsentTelemetry(telemetry) : null;
   return (
     <>
       {degraded && (
@@ -98,20 +100,34 @@ const DiagnosticsBadges: React.FC = () => {
           {degraded}
         </Badge>
       )}
-      {telemetry && (
+      {telemetry?.active && (
         <Badge
           variant="outline"
           size="xs"
           data-testid="session-telemetry"
-          title="Performance telemetry is on (Settings → Diagnostics)"
+          data-connected={unsent ? 'false' : 'true'}
+          className={cn(unsent && 'text-muted-foreground opacity-60')}
+          title={unsent ?? 'Performance telemetry is on (Settings → Diagnostics)'}
         >
-          <Activity />
+          {unsent ? <Unlink /> : <Activity />}
           Telemetry
         </Badge>
       )}
     </>
   );
 };
+
+/**
+ * Why telemetry that is on is not reaching its collector, or null when it is
+ * (or when it only records to a file). Only the file switch can make up for it.
+ */
+function unsentTelemetry(status: TelemetryStatus): string | null {
+  if (!status.url || status.connected === true) return null;
+  const fallback = status.recording_to_file ? ' Recording to file only.' : '';
+  if (status.connected === null) return `Telemetry is not connected yet: trying ${status.url}.${fallback}`;
+  const reason = status.last_error ? `\n${status.last_error}` : '';
+  return `Telemetry is not connected: the collector at ${status.url} cannot be reached.${fallback}${reason}\n(Settings → Diagnostics)`;
+}
 
 const ExceptionBadge: React.FC<{ event: DebugEventInfo | null }> = ({ event }) => {
   // The header renders inside the session's context provider; frame clicks in

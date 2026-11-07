@@ -228,6 +228,33 @@ pub async fn pe_disassemble(
     .await
 }
 
+/// Decompile the function containing `va` to pseudocode. The engine reads the
+/// file on disk, so bytes edited in the viewer and not saved are not in it.
+#[tauri::command]
+pub async fn pe_decompile(
+    path: String,
+    va: String,
+    client: joybug_core::decompiler::DecompileClient,
+    pe_files: State<'_, PeFilesState>,
+) -> Result<super::DecompileOutcome> {
+    let pe_files = pe_files.inner().clone();
+    run_blocking(move || {
+        let va = super::parse_hex_u64(&va, "va")?;
+        let mut span = joybug_core::perf::span("app.pe_decompile");
+        joybug_core::perf::record("app.pe_decompile.begin", joybug_core::perf::now_us(), 0, &[]);
+        // Only the request is built under the lock: the engine may take seconds.
+        let (request, base) =
+            with_file(&pe_files, &path, |file| Ok((file.decompile_request(va, Some(client)), file.base())))?;
+        let outcome = match request {
+            Some(request) => super::decompile::outcome(joybug_core::decompiler::global().decompile(request), base, false),
+            None => super::DecompileOutcome::NoFunction,
+        };
+        span.attr("outcome", outcome.code());
+        Ok(outcome)
+    })
+    .await
+}
+
 /// Disassemble the first instruction at each VA of an opened PE file — the PE
 /// viewer's analogue of the session-side `disassemble_preview_batch`, feeding
 /// the Symbols panel's per-row bytes/disasm preview. None per address outside

@@ -30,6 +30,24 @@ pub(crate) struct ImageDiff {
     arch: Architecture,
 }
 
+impl ImageDiff {
+    /// The image holding `inst` and its bytes there, when they are code and
+    /// not what is in memory.
+    fn original_if_different(&self, inst: &joybug_core::interfaces::Instruction) -> Option<(&OriginalModuleImage, &[u8])> {
+        let image = self.images.iter().find(|im| !im.unavailable && im.contains(inst.address))?;
+        if !image.is_code(inst.address) {
+            return None;
+        }
+        let original = image.bytes_at(inst.address, inst.bytes.len())?;
+        (original != inst.bytes.as_slice()).then_some((&**image, original))
+    }
+
+    /// Whether any of `instructions` differs from the on-disk image.
+    pub(crate) fn any_differs(&self, instructions: &[joybug_core::interfaces::Instruction]) -> bool {
+        instructions.iter().any(|inst| self.original_if_different(inst).is_some())
+    }
+}
+
 /// Build the disassembler + original-image snapshot for a live session's
 /// disassembly response. `None` (no disk-backed modules, or capstone init
 /// failure) disables the diff.
@@ -140,21 +158,10 @@ pub(crate) fn serialize_instructions(
             let mut original_bytes = None;
             let mut original_disasm = None;
             if let Some(diff) = image_diff {
-                if let Some(image) = diff
-                    .images
-                    .iter()
-                    .find(|im| !im.unavailable && im.contains(inst.address))
-                {
-                    if image.is_code(inst.address) {
-                        if let Some(orig) = image.bytes_at(inst.address, inst.bytes.len()) {
-                            if orig != inst.bytes.as_slice() {
-                                differs_from_image = true;
-                                original_bytes = Some(hex_join(orig));
-                                original_disasm =
-                                    disasm_original_at(diff, image, inst.address, inst.bytes.len());
-                            }
-                        }
-                    }
+                if let Some((image, orig)) = diff.original_if_different(inst) {
+                    differs_from_image = true;
+                    original_bytes = Some(hex_join(orig));
+                    original_disasm = disasm_original_at(diff, image, inst.address, inst.bytes.len());
                 }
             }
 

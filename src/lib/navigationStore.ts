@@ -61,6 +61,10 @@ export const memoryNavigation = new NavigationChannel<string | MemoryNavRequest>
 // Disassembly row click → source view scrolls/highlights the matching line
 // (passive sync; does not steal the active tab).
 export const sourceNavigation = new NavigationChannel();
+// Disassembly row click → the pseudocode view reveals the line of that
+// instruction, decompiling its function if another one is on screen (passive
+// sync, like the source view's).
+export const pseudocodeNavigation = new NavigationChannel<{ scope: string; address: string }>();
 // "Go to X" → focus the primary input of tab X. Payload is the dock tab id
 // (including dynamic ones like "memory-2"), so every subscribed view shares this
 // one channel and claims the payload via consumeIf. See hooks/usePanelFocus.

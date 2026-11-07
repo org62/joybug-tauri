@@ -13,6 +13,7 @@ import {
   GITHUB_CORE_URL,
   GITHUB_ISSUES_URL,
   GITHUB_UI_URL,
+  KUNA_URL,
   type UpdateInfo,
 } from "@/lib/updates";
 import reactLogo from "../assets/react.svg";
@@ -128,6 +129,13 @@ export default function About() {
             <div className="text-center pt-4 border-t space-y-3">
               <p className="text-sm text-muted-foreground">
                 {version && <>Version {version} • </>}Built with ❤️ using modern web technologies
+              </p>
+              <p className="text-xs text-muted-foreground">
+                Pseudocode by the{" "}
+                <Button variant="link" className="h-auto p-0 text-xs" onClick={() => openExternal(KUNA_URL)}>
+                  Kuna
+                </Button>{" "}
+                decompiler (Apache-2.0), a Rust port of Ghidra's.
               </p>
               {/* openExternal (the opener plugin), never a raw <a target="_blank">
                   — WebView2 has no tab to open one in. */}
