@@ -107,6 +107,16 @@ npm run tauri dev      # or: npm run tauri build
 
 The decompiler uses **unmodified upstream Kuna**, pinned by revision in `external/joybug-core/Cargo.toml`; no local Kuna checkout or Cargo patch overrides are needed. When updating that revision, run `cargo run --example update_kuna_specs` from `external/joybug-core` to regenerate the embedded processor specifications.
 
+### Keeping joybug-core current
+
+Keep `external/joybug-core` on the latest upstream `main`. Before starting development or a new build, run:
+
+```bash
+git submodule update --init --remote --checkout external/joybug-core
+```
+
+The submodule's update branch is `main` (configured in `.gitmodules`). Git still records a specific commit, so a normal clone or `git submodule update --init` restores that recorded revision rather than fetching the latest. Commit the updated `external/joybug-core` gitlink with the parent changes after verifying compatibility.
+
 ---
 
 ## Scope & limits
