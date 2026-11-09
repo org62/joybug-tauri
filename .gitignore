@@ -26,4 +26,5 @@ dist-ssr
 # Playwright
 test-results/
 e2e/results/
+temp/
 
