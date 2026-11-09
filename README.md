@@ -112,10 +112,11 @@ The decompiler uses **unmodified upstream Kuna**, pinned by revision in `externa
 Keep `external/joybug-core` on the latest upstream `main`. Before starting development or a new build, run:
 
 ```bash
-git submodule update --init --remote --checkout external/joybug-core
+git -C external/joybug-core switch main
+git -C external/joybug-core pull --ff-only origin main
 ```
 
-The submodule's update branch is `main` (configured in `.gitmodules`). Git still records a specific commit, so a normal clone or `git submodule update --init` restores that recorded revision rather than fetching the latest. Commit the updated `external/joybug-core` gitlink with the parent changes after verifying compatibility.
+These commands keep the checkout attached to `main` and refuse to merge diverged local commits. The submodule's update branch is also `main` (configured in `.gitmodules`), but `git submodule update --remote --checkout` leaves a detached HEAD. Git still records a specific commit, so a normal clone or `git submodule update --init` restores that recorded revision rather than fetching the latest. Commit the updated `external/joybug-core` gitlink with the parent changes after verifying compatibility.
 
 ---
 
