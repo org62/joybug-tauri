@@ -232,7 +232,14 @@ pub fn debug_event_to_info(event: &joybug_core::protocol_io::DebugEvent) -> Debu
             process_id: *pid,
             thread_id: *tid,
             // Exit codes are routinely status codes (0xC0000005 &c.), so lead with hex.
-            details: format!("Process exited: PID={}, Exit Code=0x{:X} ({})", pid, exit_code, exit_code),
+            details: {
+                let mut details = format!("Process exited: PID={}, Exit Code=0x{:X} ({})", pid, exit_code, exit_code);
+                if let Some(failure) = joybug_core::formatting::loader_failure(*exit_code) {
+                    details.push_str(": ");
+                    details.push_str(failure);
+                }
+                details
+            },
             // Resumable in the sense the UI cares about: when the session pauses on
             // this event, Go/Stop is what releases the zombie and ends the run.
             can_continue: true,

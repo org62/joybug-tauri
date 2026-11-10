@@ -18,7 +18,7 @@ import {
   setArmedBreakpoint,
 } from "../helpers/wait-helpers";
 import { ASM_PANEL } from "../helpers/selectors";
-import { exitCmd, dataDir } from "../helpers/launch-commands";
+import { exitCmd, dataDir, IS_WINDOWS } from "../helpers/launch-commands";
 // The literal the panels render — imported so the test can't drift from the UI.
 import { NO_PROCESS_HINT } from "../../src/components/ui/empty-state";
 
@@ -170,4 +170,44 @@ test.describe("Session stopped", () => {
       if (sessionId) await cleanupSession(page, sessionId);
     }
   });
+
+  for (const pauseAtExit of [false, true]) {
+    test(`loader-status exit cleans up live state (pause on exit: ${pauseAtExit})`, async ({ tauriPage: page }) => {
+      test.skip(!IS_WINDOWS, "Windows loader status codes");
+      await configureMinimalStopSettings(page, { stop_on_process_exit: pauseAtExit });
+      let sessionId: string | undefined;
+      try {
+        // Exercise the terminal-status path without depending on an installed/missing DLL.
+        sessionId = await createAndStartSession(page, "Loader Status", exitCmd(-1_073_741_515));
+        await waitForPaused(page, sessionId);
+        const pc = await getPcAddress(page, sessionId);
+        await setArmedBreakpoint(page, sessionId, `0x${pc!.toString(16)}`);
+        const breakpointId = (await session(page, sessionId)).breakpoints[0].id;
+        await continueSession(page, sessionId);
+
+        if (pauseAtExit) {
+          await expect(async () => {
+            const paused = await session(page, sessionId!);
+            expect(paused.status).toBe("Paused");
+            expect(paused.current_event?.event_type).toBe("ProcessExited");
+          }).toPass({ timeout: 10_000, intervals: [50, 100] });
+          await continueSession(page, sessionId);
+        }
+
+        await expect(async () => {
+          const finished = await session(page, sessionId!);
+          expect(finished.status.Error).toContain("STATUS_DLL_NOT_FOUND");
+          expect(finished.current_event).toBeNull();
+          expect(finished.main_thread_id).toBeNull();
+          const breakpoint = finished.breakpoints.find((bp: { id: string }) => bp.id === breakpointId);
+          expect(breakpoint.is_active).toBe(false);
+          expect(breakpoint.address).toBe(0);
+        }).toPass({ timeout: 10_000, intervals: [50, 100] });
+        await expect(page.getByRole("alert").filter({ hasText: "STATUS_DLL_NOT_FOUND" })).toBeVisible();
+      } finally {
+        await restoreDefaultSettings(page);
+        if (sessionId) await cleanupSession(page, sessionId);
+      }
+    });
+  }
 });

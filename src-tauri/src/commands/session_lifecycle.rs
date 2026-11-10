@@ -496,10 +496,10 @@ fn spawn_debug_loop(
                 let mut state = session_state.lock().unwrap();
                 match &result {
                     Ok(_) => {
-                        if !matches!(state.status, SessionStatusUI::Stopped) {
+                        if !matches!(state.status, SessionStatusUI::Stopped | SessionStatusUI::Error(_)) {
                             state.status = SessionStatusUI::Stopped;
                         }
-                        info!("Debug session {} completed successfully", session_id);
+                        info!("Debug session {} ended", session_id);
                     }
                     Err(e) => {
                         // A user-initiated stop marks the session Stopped up front and
@@ -508,16 +508,21 @@ fn spawn_debug_loop(
                         // spurious Error.
                         if matches!(state.status, SessionStatusUI::Stopped) {
                             info!("Debug session {} stopped by user", session_id);
-                        } else {
+                        } else if !matches!(state.status, SessionStatusUI::Error(_)) {
                             state.status = SessionStatusUI::Error(e.to_string());
                             let error_message = format!("Debug session {} failed: {}", session_id, e);
                             error!("{}", &error_message);
                             crate::ui_logger::log_error(&app_handle, &error_message, Some(session_id.clone()));
+                            crate::ui_logger::toast_error(&app_handle, &error_message);
                         }
                     }
                 }
-                state.debug_result = Some(result.map_err(|e| e.to_string()));
+                state.debug_result = Some(match &state.status {
+                    SessionStatusUI::Error(message) => Err(message.clone()),
+                    _ => result.map_err(|e| e.to_string()),
+                });
             }
+            emit_session_event(&session_state, &app_handle);
 
             // If this was a sandbox session, tear the VM down now that the debug
             // loop has ended — the target exited, or failed to start. Without this
@@ -526,8 +531,6 @@ fn spawn_debug_loop(
             // Stop already removed the handle in `stop_debug_session`, so this is
             // a harmless no-op in that path.
             crate::sandbox::teardown(&app_handle.state::<SandboxHandlesMap>(), &session_id);
-
-            emit_session_event(&session_state, &app_handle);
         }
     });
     session_state.lock().unwrap().debug_loop_handle = Some(handle);
@@ -565,6 +568,9 @@ fn provision_sandbox_and_start(
             error!("{}", msg);
             {
                 let mut state = session_state.lock().unwrap();
+                if matches!(state.status, SessionStatusUI::Stopped) {
+                    return;
+                }
                 state.status = SessionStatusUI::Error(msg.clone());
             }
             crate::ui_logger::log_error(&app_handle, &msg, Some(session_id.clone()));
@@ -614,7 +620,7 @@ fn provision_sandbox_and_start(
         emit_session_event(&session_state, &app_handle);
         crate::ui_logger::log_info(
             &app_handle,
-            &format!("Launched target in sandbox without a debugger: {}", session_id),
+            &format!("Starting target in sandbox without a debugger: {}", session_id),
             Some(session_id.clone()),
         );
         info!("Sandbox run-only session started: {}", session_id);
@@ -626,25 +632,36 @@ fn provision_sandbox_and_start(
             thread::spawn(move || {
                 // Blocks for the target's whole lifetime. ExistingLogin so the
                 // target is visible on the desktop the viewer shows.
-                let _ = crate::sandbox::exec_blocking(
+                let result = crate::sandbox::exec_blocking(
                     &sandbox_id,
                     &tracer_cmd,
                     crate::sandbox::RunAs::ExistingLogin,
-                );
-                // Target exited (or the session was stopped, which killed the VM and
-                // errored the exec). End the session if it isn't already ended.
+                )
+                .map_err(|e| format!("Sandbox execution failed: {e}"))
+                .and_then(|code| run_only_outcome(&crate::sandbox::io_events_path(&session_id), code));
+                // Stop marks the session before killing the VM. Its resulting
+                // transport error must not replace the user's Stopped outcome.
                 {
                     let mut state = session_state.lock().unwrap();
-                    if !matches!(
-                        state.status,
-                        SessionStatusUI::Stopped | SessionStatusUI::Error(_)
-                    ) {
-                        state.status = SessionStatusUI::Stopped;
+                    if !matches!(state.status, SessionStatusUI::Stopped | SessionStatusUI::Error(_)) {
                         state.clear_runtime_caches();
+                        state.debug_result = Some(result.as_ref().map(|_| ()).map_err(Clone::clone));
+                        match &result {
+                            Ok(message) => {
+                                state.status = SessionStatusUI::Stopped;
+                                crate::ui_logger::log_info(&app_handle, message, Some(session_id.clone()));
+                                crate::ui_logger::toast_info(&app_handle, message);
+                            }
+                            Err(message) => {
+                                state.status = SessionStatusUI::Error(message.clone());
+                                crate::ui_logger::log_error(&app_handle, message, Some(session_id.clone()));
+                                crate::ui_logger::toast_error(&app_handle, message);
+                            }
+                        }
                     }
                 }
-                crate::sandbox::teardown(&app_handle.state::<SandboxHandlesMap>(), &session_id);
                 emit_session_event(&session_state, &app_handle);
+                crate::sandbox::teardown(&app_handle.state::<SandboxHandlesMap>(), &session_id);
             });
         }
         return;
@@ -658,6 +675,56 @@ fn provision_sandbox_and_start(
         Some(session_id.clone()),
     );
     spawn_debug_loop(session_state, app_handle, session_id);
+}
+
+/// Prove that the collector ran before attributing its exit code to the target.
+/// Only the ambiguous collector spawn-failure code needs a full capture scan.
+#[cfg(windows)]
+fn run_only_outcome(path: &std::path::Path, code: i32) -> std::result::Result<String, String> {
+    use std::io::BufRead;
+
+    let status = joybug_core::formatting::process_exit_status(code as u32);
+    let file = std::fs::File::open(path)
+        .map_err(|e| format!("Sandbox collector failed to start (exit {status}): could not read '{}': {e}", path.display()))?;
+    let mut started = false;
+    let mut completed = false;
+    for line in std::io::BufReader::new(file).lines() {
+        let line = line.map_err(|e| format!("Could not read sandbox collector outcome (exit {status}): {e}"))?;
+        if !line.contains("\"tracer\"") {
+            continue;
+        }
+        let Some(event) = joybug_core::sandbox::TraceEvent::from_json_line(&line) else { continue };
+        if event.kind != "tracer" {
+            continue;
+        }
+        match event.op.as_str() {
+            "error" => {
+                return Err(format!(
+                    "Sandbox collector failed (exit {status}): {}",
+                    event.message.unwrap_or(line),
+                ));
+            }
+            "start" => {
+                started = true;
+                if code != 3 {
+                    break;
+                }
+            }
+            "done" => completed = true,
+            _ => {}
+        }
+    }
+    if !started {
+        return Err(format!("Sandbox collector never started: no tracer.start record (exit {status})"));
+    }
+    if code == 3 && !completed {
+        return Err(format!("Sandbox collector exited with {status} without completing; target exit is unknown"));
+    }
+    if joybug_core::formatting::loader_failure(code as u32).is_some() {
+        Err(format!("Sandbox target failed during Windows loading: {status}"))
+    } else {
+        Ok(format!("Sandbox target exited with code {status}"))
+    }
 }
 
 /// Promote a non-invasive `Open` session to a full attached debug session on the
@@ -731,18 +798,6 @@ pub fn stop_debug_session(
             (pid, state.server_url.clone(), state.non_invasive, matches!(state.status, SessionStatusUI::Stopped))
         };
 
-        // Terminate an invasive target so stopping a *running* session doesn't
-        // leak the debuggee, and so a debug loop blocked in WaitForDebugEvent
-        // unwinds on the resulting exit event (paused loops unwind via the Stop
-        // command below). Sent over a fresh OOB connection while the server is
-        // still up. Non-invasive sessions only opened the process read-only, so
-        // they are left running (see [[server-side-continuous-ops]]).
-        if pid != 0 && !non_invasive && !already_stopped {
-            if let Err(e) = send_out_of_band_request(&server_url, DebuggerRequest::TerminateProcess { pid }) {
-                warn!("stop: terminating target pid {} failed (already gone?): {}", pid, e);
-            }
-        }
-
         {
             let mut state = session_state.lock().unwrap();
             if let Some(sender) = state.ui_sender.take() {
@@ -762,6 +817,19 @@ pub fn stop_debug_session(
             // history, or annotation caches for a dead target. (The debug-loop
             // thread may still be unwinding; its clean-exit path clears again.)
             state.clear_runtime_caches();
+        }
+        emit_session_event(&session_state, &app_handle);
+
+        // Terminate an invasive target so stopping a *running* session doesn't
+        // leak the debuggee, and so a debug loop blocked in WaitForDebugEvent
+        // unwinds on the resulting exit event (paused loops unwind via the Stop
+        // command above). Sent over a fresh OOB connection while the server is
+        // still up. Non-invasive sessions only opened the process read-only, so
+        // they are left running (see [[server-side-continuous-ops]]).
+        if pid != 0 && !non_invasive && !already_stopped {
+            if let Err(e) = send_out_of_band_request(&server_url, DebuggerRequest::TerminateProcess { pid }) {
+                warn!("stop: terminating target pid {} failed (already gone?): {}", pid, e);
+            }
         }
 
         // Bind the handle out of the map lock before stopping it, so a slow
@@ -786,8 +854,6 @@ pub fn stop_debug_session(
             info!("stopping Windows Sandbox for session {}", session_id);
             thread::spawn(move || drop(sandbox_handle));
         }
-
-        emit_session_event(&session_state, &app_handle);
     }
     Ok(())
 }
@@ -1062,5 +1128,32 @@ pub fn delete_debug_session(
     } else {
         info!("Attempted to delete a session that was not found: {}", session_id);
         Ok(())
+    }
+}
+
+#[cfg(all(test, windows))]
+mod run_only_outcome_tests {
+    use super::run_only_outcome;
+    use crate::test_util::TempDir;
+
+    #[test]
+    fn loader_failure_is_an_error_but_application_returns_are_not() {
+        let temp = TempDir::new("sandbox-outcome");
+        let path = temp.file("trace.jsonl", b"{\"kind\":\"tracer\",\"op\":\"start\"}\n{\"kind\":\"tracer\",\"op\":\"done\"}\n");
+        assert!(run_only_outcome(&path, 0xC0000135u32 as i32).is_err());
+        for code in [0, 1, 3] {
+            assert!(run_only_outcome(&path, code).is_ok(), "application exit {code}");
+        }
+    }
+
+    #[test]
+    fn collector_spawn_failure_is_not_a_target_return_of_three() {
+        let temp = TempDir::new("sandbox-collector-failure");
+        let failed = temp.file("failed.jsonl", b"{\"kind\":\"tracer\",\"op\":\"start\"}\n{\"kind\":\"tracer\",\"op\":\"error\",\"message\":\"failed to launch target\"}\n");
+        let interrupted = temp.file("interrupted.jsonl", b"{\"kind\":\"tracer\",\"op\":\"start\"}\n");
+        let never_started = temp.file("never-started.jsonl", b"");
+        assert!(run_only_outcome(&failed, 3).is_err());
+        assert!(run_only_outcome(&interrupted, 3).is_err());
+        assert!(run_only_outcome(&never_started, 0).is_err());
     }
 }

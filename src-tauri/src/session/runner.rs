@@ -233,6 +233,17 @@ fn release_wer_event(state: &Arc<Mutex<SessionStateUI>>, app_handle: &Option<App
     }
 }
 
+fn loader_exit_message(event: &joybug_core::protocol_io::DebugEvent) -> Option<String> {
+    if let joybug_core::protocol_io::DebugEvent::ProcessExited { pid, exit_code, .. } = event {
+        joybug_core::formatting::loader_failure(*exit_code)?;
+        return Some(format!(
+            "Process {pid} failed during Windows loading: {}",
+            joybug_core::formatting::process_exit_status(*exit_code),
+        ));
+    }
+    None
+}
+
 pub fn run_debug_session(
     session_state: Arc<Mutex<SessionStateUI>>,
     app_handle: Option<AppHandle>,
@@ -334,6 +345,11 @@ pub fn run_debug_session(
             Ok(joybug_core::protocol_io::ExceptionAction::HandledByDebugger)
         })
         .on_event(move |session, event| {
+            // Stop is published before terminating the target/VM. Ignore the
+            // resulting exit/connection unwind instead of reporting a failure.
+            if matches!(session.state.lock().unwrap().status, SessionStatusUI::Stopped) {
+                return Ok(false);
+            }
             debug!("📥 Received debug event from server: {}", event);
             info!("Debug event: {}", event);
             // From here to the wait for the user's next command is what a
@@ -428,7 +444,7 @@ pub fn run_debug_session(
             // Stack panel reads from, so nothing is queried twice. Captured for
             // every exception, pausing or not — `capture_exception_context`
             // (see `settings.rs`) is the opt-out for exception storms.
-            let exception_detail = match event {
+            let mut exception_detail = match event {
                 joybug_core::protocol_io::DebugEvent::Exception { .. } => {
                     let capture = handle.state::<SettingsState>().inner().lock().unwrap().capture_exception_context;
                     let _span = crate::telemetry::span("app.describe_exception");
@@ -436,23 +452,48 @@ pub fn run_debug_session(
                 }
                 _ => None,
             };
-            let session_id = session.state.lock().unwrap().id.clone();
-            match &exception_detail {
-                Some(detail) => crate::ui_logger::log_exception(handle, detail, Some(session_id)),
-                None => crate::ui_logger::log_debug(
-                    handle,
-                    &format!("Received debug event: {}", event),
-                    Some(session_id),
-                ),
+            // A loader status can arrive as an exception before ProcessExited.
+            // Decode the observed status without treating a first-chance
+            // exception as a terminal failure or changing exception policy.
+            if let Some(detail) = &mut exception_detail {
+                if let Some(description) = joybug_core::formatting::loader_failure(detail.code) {
+                    detail.message.push_str(" — ");
+                    detail.message.push_str(description);
+                }
             }
-            // Toast for events here; Output/DllLoaded/DllUnloaded are toasted separately
-            // below / above (with richer messages). The frontend dispatcher coalesces any
+            let session_id = session.state.lock().unwrap().id.clone();
+            let loader_exit = loader_exit_message(event);
+            if let joybug_core::protocol_io::DebugEvent::ProcessExited { pid, exit_code, .. } = event {
+                if let Some(message) = &loader_exit {
+                    crate::ui_logger::log_error(handle, message, Some(session_id));
+                    crate::ui_logger::toast_error(handle, message);
+                } else {
+                    let message = format!(
+                        "Process {pid} exited with code {}",
+                        joybug_core::formatting::process_exit_status(*exit_code),
+                    );
+                    crate::ui_logger::log_info(handle, &message, Some(session_id));
+                    crate::ui_logger::toast_info(handle, &message);
+                }
+            } else {
+                match &exception_detail {
+                    Some(detail) => crate::ui_logger::log_exception(handle, detail, Some(session_id)),
+                    None => crate::ui_logger::log_debug(
+                        handle,
+                        &format!("Received debug event: {}", event),
+                        Some(session_id),
+                    ),
+                }
+            }
+            // Toast remaining events here; output, DLL and process-exit events
+            // have richer notices of their own. The frontend coalesces any
             // bursts (e.g. thousands of thread-creates) into a single summary toast.
             if !matches!(
                 event,
                 joybug_core::protocol_io::DebugEvent::Output { .. }
                     | joybug_core::protocol_io::DebugEvent::DllLoaded { .. }
                     | joybug_core::protocol_io::DebugEvent::DllUnloaded { .. }
+                    | joybug_core::protocol_io::DebugEvent::ProcessExited { .. }
             ) {
                 // For breakpoint hits, name the group + module (entry/TLS) or the user's
                 // label instead of the raw "Breakpoint(pid=…, address=0x…)" tuple.
@@ -468,7 +509,13 @@ pub fn run_debug_session(
                         None => format!("{}", event),
                     },
                 };
-                crate::ui_logger::toast_info(handle, &msg);
+                if exception_detail.as_ref().is_some_and(|detail| {
+                    joybug_core::formatting::loader_failure(detail.code).is_some()
+                }) {
+                    crate::ui_logger::toast_error(handle, &msg);
+                } else {
+                    crate::ui_logger::toast_info(handle, &msg);
+                }
             }
             // Moved in only now that the log entry and the toast have read it.
             session.state.lock().unwrap().exception_detail = exception_detail;
@@ -591,9 +638,15 @@ pub fn run_debug_session(
                     if is_process_exit {
                         {
                             let mut state = session.state.lock().unwrap();
+                            let stopped = matches!(state.status, SessionStatusUI::Stopped);
                             state.current_event = Some(event.clone());
                             state.events.push(event.clone());
                             super::helpers::finalize_process_exit(&mut state);
+                            if !stopped {
+                                if let Some(message) = &loader_exit {
+                                    state.status = SessionStatusUI::Error(message.clone());
+                                }
+                            }
                         }
                         emit_session_event(&session.state, handle);
                         return Ok(true);
@@ -703,6 +756,15 @@ pub fn run_debug_session(
             // Wait for user commands
             match handle_ui_commands(&ui_receiver, session, &app_handle_clone, event) {
                 Ok(should_continue) => {
+                    if let Some(message) = loader_exit {
+                        {
+                            let mut state = session.state.lock().unwrap();
+                            if !matches!(state.status, SessionStatusUI::Stopped | SessionStatusUI::Error(_)) {
+                                state.status = SessionStatusUI::Error(message);
+                            }
+                        }
+                        emit_session_event(&session.state, handle);
+                    }
                     return Ok(should_continue);
                 }
                 Err(e) => {
@@ -771,9 +833,9 @@ pub fn run_debug_session(
         let mut state = session_state.lock().unwrap();
         if !matches!(state.status, SessionStatusUI::Error(_)) {
             state.status = SessionStatusUI::Stopped;
-            state.reset();
         }
-        state.current_event = None;
+        // A retained terminal error still has no live process resources.
+        state.reset();
     }
 
     // Emit final session update, then the persisted-config lists: `reset()` just

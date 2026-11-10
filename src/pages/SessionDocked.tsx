@@ -771,6 +771,16 @@ export default function SessionDocked() {
           addNewMemoryTab={handleAddNewMemoryTab}
           symbolLoadingCount={symbolStatuses.filter((s) => s.status === 'loading').length}
         />
+        {typeof session.status !== "string" && (
+          <p role="alert" className="mb-2 shrink-0 whitespace-pre-wrap break-words text-sm text-destructive">
+            {session.status.Error}
+          </p>
+        )}
+        {session.status === "Paused" && session.current_event?.event_type === "ProcessExited" && (
+          <p role="status" className="mb-2 shrink-0 whitespace-pre-wrap break-words text-sm text-muted-foreground">
+            {session.current_event.details}
+          </p>
+        )}
 
         {/* Docking Layout */}
         <div className="relative flex-1">
