@@ -284,15 +284,16 @@ pub(crate) fn process_resolve_thread_symbols(
     session: &mut DebugSession,
     app_handle_clone: &Option<AppHandle>,
     event: &joybug_core::protocol_io::DebugEvent,
+    threads: &[(u32, u64)],
+    request_id: &str,
 ) {
     let pid = event.pid();
-    let threads: Vec<joybug_core::protocol_io::ThreadInfo> = session.state.lock().unwrap().threads.clone();
 
     // Non-blocking batch resolve, one round-trip for all threads: an address
     // in a module whose PDB is still parsing comes back `None` (shown as a raw
     // address) instead of stalling the debug loop — the threads panel
     // re-requests when `symbolsRefreshKey` flips, upgrading raw → named.
-    let start_addresses: Vec<u64> = threads.iter().map(|t| t.start_address).collect();
+    let start_addresses: Vec<u64> = threads.iter().map(|(_, address)| *address).collect();
     let resolved = session
         .try_resolve_addresses_to_symbols(pid, start_addresses)
         .unwrap_or_else(|_| vec![None; threads.len()]);
@@ -307,7 +308,7 @@ pub(crate) fn process_resolve_thread_symbols(
 
     let mut entries: Vec<ThreadSymbolEntry> = Vec::new();
 
-    for (thread, resolved) in threads.iter().zip(resolved) {
+    for ((tid, address), resolved) in threads.iter().zip(resolved) {
         let (symbol_info, is_function) = match resolved {
             Some((module, sym, offset)) => {
                 let short_module = crate::session::helpers::extract_module_name(&module);
@@ -317,13 +318,13 @@ pub(crate) fn process_resolve_thread_symbols(
             // A process's first thread starts at the image entry point, so this
             // is the row the PE pseudo-symbol names most often.
             None => (
-                crate::session::pe_anchors::resolve_pseudo_symbol(session, pid, thread.start_address),
+                crate::session::pe_anchors::resolve_pseudo_symbol(session, pid, *address),
                 true,
             ),
         };
         entries.push(ThreadSymbolEntry {
-            tid: thread.tid,
-            address: format!("0x{:016x}", thread.start_address),
+            tid: *tid,
+            address: format!("0x{:X}", address),
             symbol_info,
             is_function,
         });
@@ -336,13 +337,17 @@ pub(crate) fn process_resolve_thread_symbols(
         };
 
         #[derive(serde::Serialize, Clone)]
-        struct ThreadSymbolsResult {
+        struct ThreadSymbolsResult<'a> {
             session_id: String,
+            process_id: u32,
+            request_id: &'a str,
             symbols: Vec<ThreadSymbolEntry>,
         }
 
         let result = ThreadSymbolsResult {
             session_id,
+            process_id: pid,
+            request_id,
             symbols: entries,
         };
 

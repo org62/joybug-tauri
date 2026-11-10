@@ -5,6 +5,8 @@ import { ScrollArea } from "./scroll-area";
 interface VirtualizedListProps<T> {
   items: T[];
   rowHeight: number;
+  /** Measure expanding rows; rowHeight remains the initial estimate. */
+  measureRows?: boolean;
   renderItem: (item: T, index: number) => React.ReactNode;
   overscan?: number;
   className?: string;
@@ -23,6 +25,7 @@ interface VirtualizedListProps<T> {
 function VirtualizedListInner<T>({
   items,
   rowHeight,
+  measureRows = false,
   renderItem,
   overscan = 20,
   className,
@@ -41,11 +44,14 @@ function VirtualizedListInner<T>({
     getScrollElement: () => viewportRef.current,
     estimateSize: () => rowHeight,
     overscan,
+    ...(measureRows && getItemKey
+      ? { getItemKey: (index: number) => getItemKey(items[index], index) }
+      : {}),
   });
 
   useImperativeHandle(virtualizerRef, () => virtualizer, [virtualizer]);
 
-  if (items.length === 0) {
+  if (items.length === 0 && !measureRows) {
     return <ScrollArea className={className} style={style} orientation={resolvedOrientation} />;
   }
 
@@ -77,12 +83,14 @@ function VirtualizedListInner<T>({
           return (
             <div
               key={key}
+              data-index={measureRows ? virtualRow.index : undefined}
+              ref={measureRows ? virtualizer.measureElement : undefined}
               style={{
                 position: "absolute",
                 top: 0,
                 left: 0,
                 width: "100%",
-                height: virtualRow.size,
+                height: measureRows ? undefined : virtualRow.size,
                 transform: `translateY(${virtualRow.start}px)`,
               }}
             >

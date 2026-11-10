@@ -12,8 +12,12 @@ Joybug UI — a Tauri v2 desktop debugger for Windows. Rust backend manages debu
 npm run tauri dev      # Dev mode (starts Vite dev server + Tauri)
 npm run tauri build    # Production build + installer
 cd src-tauri && cargo build   # Rust-only build (useful for checking compilation)
-npm run test:e2e       # E2E tests (WebdriverIO + tauri-driver on the real webview; builds the debug binary first)
+npm run test:e2e       # E2E tests (WebdriverIO + tauri-driver on the real webview; build the debug binary first)
 ```
+
+### Review after major changes
+
+Before delivering a major feature, refactor, or bug fix, read `.claude/skills/review/SKILL.md` and run its joint review-and-fix workflow across this repository and `external/joybug-core`. For this post-change review, select the current task's uncommitted changes; explicit staged-review requests select staged mode. This is an assistant workflow, not a Git hook or CI job; never stage changes automatically.
 
 ### E2E Tests
 

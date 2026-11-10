@@ -256,9 +256,14 @@ pub async fn get_symbols_in_range(
 #[tauri::command]
 pub fn request_resolve_thread_symbols(
     session_id: String,
+    threads: Vec<(u32, String)>,
+    request_id: String,
     session_states: State<'_, SessionStatesMap>,
 ) -> Result<()> {
-    super::send_paused_command(&session_id, &session_states, UICommand::ResolveThreadSymbols)?;
+    let threads = threads.into_iter()
+        .map(|(tid, address)| super::parse_hex_u64(&address, "thread Entry").map(|address| (tid, address)))
+        .collect::<Result<Vec<_>>>()?;
+    super::send_paused_command(&session_id, &session_states, UICommand::ResolveThreadSymbols { threads, request_id })?;
     info!("Resolve thread symbols request sent for session {}", session_id);
     Ok(())
 }
@@ -268,13 +273,14 @@ pub fn request_thread_callstack(
     session_id: String,
     tid: u32,
     preview: bool,
+    request_id: String,
     session_states: State<'_, SessionStatesMap>,
     oob_pool: State<'_, super::OobPool>,
     app_handle: tauri::AppHandle,
 ) -> Result<()> {
     let handle = Some(app_handle);
-    super::paused_or_oob(&session_id, &session_states, &oob_pool, UICommand::GetThreadCallStack { tid, preview }, |client, pid| {
-        crate::session::callstack::process_thread_callstack_request(client, &handle, pid, tid, preview);
+    super::paused_or_oob(&session_id, &session_states, &oob_pool, UICommand::GetThreadCallStack { tid, preview, request_id: request_id.clone() }, |client, pid| {
+        crate::session::callstack::process_thread_callstack_request(client, &handle, pid, tid, preview, &request_id);
     })?;
     info!("Thread callstack processed for session {}, tid {}", session_id, tid);
     Ok(())

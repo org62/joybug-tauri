@@ -1,24 +1,30 @@
-import { useEffect, useState, useRef, useCallback } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import { useSessionContext } from '@/contexts/SessionContext';
-import { formatTauriError, isProcessAvailable } from '@/lib/sessionHelpers';
+import { useSessionContext, type Thread } from '@/contexts/SessionContext';
+import { formatTauriError, isPausedSession, isProcessAvailable, reportSessionError } from '@/lib/sessionHelpers';
 import { LINK_VALUE_CLASS } from '@/lib/utils';
+import {
+  formatThreadCreationTime, formatThreadCycles, formatThreadLastError, formatThreadPriority,
+  formatThreadTime, formatThreadWaitReason, matchesThreadFilter, UNAVAILABLE_THREAD_VALUE,
+} from '@/lib/threadDetails';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
+import { Input } from '@/components/ui/input';
 import { TruncatedSymbol } from '@/components/ui/truncated-symbol';
 import { VirtualizedList } from '@/components/ui/virtualized-list';
 import { DockPanel, PanelToolbar } from '@/components/ui/panel';
+import { EmptyState, ProcessUnavailableState, STATE_ICON_CLASS } from '@/components/ui/empty-state';
 import { ContextMenu, ContextMenuItem, ContextMenuSeparator } from '@/components/ui/context-menu';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
 } from '@/components/ui/dialog';
 import { useContextMenu } from '@/hooks/useContextMenu';
-import { Cpu, Loader2, Pause, Play, Square } from 'lucide-react';
-import { toast } from 'sonner';
-import { CallStackFrameList, CallStackFrame } from '@/components/CallStackFrameList';
+import { usePlatform } from '@/hooks/usePlatform';
+import { ChevronDown, ChevronRight, Cpu, Loader2, Pause, Play, Square, X } from 'lucide-react';
+import { CallStackFrameList, type CallStackFrame } from '@/components/CallStackFrameList';
 
 interface ThreadSymbolInfo {
   tid: number;
@@ -26,630 +32,447 @@ interface ThreadSymbolInfo {
   symbol_info: string | null;
   is_function: boolean;
 }
-
-interface ThreadActionResult {
-  tid: number;
-  error: string | null;
-}
-
+interface ThreadActionResult { tid: number; error: string | null }
 type ThreadActionCmd = 'suspend_threads' | 'resume_threads' | 'terminate_threads';
-
 interface ContextThreadsViewProps {
   onNavigateToDisassembly?: (address: string) => void;
   onNavigateToMemoryPointer?: (address: string) => void;
 }
-
-// Fixed row height (px) for the virtualized thread list. Rows are uniform (3 lines
-// of truncated text: title/status, Start, TEB), so a fixed height avoids per-row
-// getBoundingClientRect measurement.
+interface ThreadIdentity { key: string; creation: string | null }
+interface ThreadRow { thread: Thread; key: string; ordinal: number }
 const THREAD_ROW_HEIGHT = 68;
 
-export const ContextThreadsView = ({ onNavigateToDisassembly, onNavigateToMemoryPointer }: ContextThreadsViewProps) => {
+// A real process change (including loss) remounts every process-owned cache and
+// the measured viewport. Pause/resume and metadata snapshots do not.
+export function ContextThreadsView(props: ContextThreadsViewProps) {
+  const context = useSessionContext();
+  const available = context.canUseMemoryOps && !!context.session && isProcessAvailable(context.session.status);
+  const scope = `${context.session?.id ?? ''}:${available ? context.processId ?? 'pending' : 'none'}`;
+  return <ScopedThreadsView key={scope} {...props} available={available} />;
+}
+
+function ScopedThreadsView({ onNavigateToDisassembly, onNavigateToMemoryPointer, available }: ContextThreadsViewProps & { available: boolean }) {
   const sessionData = useSessionContext();
-  const sessionId = sessionData?.session?.id;
-  const displayStatus = sessionData?.displayStatus;
-  // Call stacks are available whenever a process is (paused, running, or the
-  // non-invasive Open session), since they run over the OOB connection.
-  const canUse = sessionData.canUseMemoryOps;
-  // Raw status, not the debounced `displayStatus`: this gates a backend
-  // precondition (`select_thread` is paused-only) and decides how to read a
-  // fresh `current_event`. The debounce exists for rendering, not decisions.
-  const isPaused = sessionData?.session?.status === 'Paused';
-  // Event = the thread that raised the pause; active = the thread whose context
-  // the views show, which is the event thread until the user switches away.
-  // Only meaningful while paused.
-  const currentEvent = sessionData?.session?.current_event;
-  const eventTid = isPaused ? currentEvent?.thread_id ?? null : null;
-  const activeTid = isPaused ? sessionData?.session?.selected_thread_id ?? eventTid : null;
-  // Identity, not state: the thread that ran the image entry point, badged
-  // whatever the session is doing. Absent for a non-invasive Open session,
-  // which never sees the ProcessCreated the backend reads it from.
-  const mainTid = sessionData?.session?.main_thread_id ?? null;
-
-  // Pulled out so callbacks depend on this stable function rather than on the
-  // whole context object, whose identity changes on every session update.
+  const isWindows = usePlatform().os === 'windows';
+  const sessionId = sessionData.session?.id;
+  // Context roles must follow raw capability, not debounced display status.
+  const isPaused = isPausedSession(sessionData.session?.status);
+  const eventTid = isPaused ? sessionData.session?.current_event?.thread_id ?? null : null;
+  const activeTid = isPaused ? sessionData.session?.selected_thread_id ?? eventTid : null;
+  const mainTid = sessionData.session?.main_thread_id ?? null;
+  const processId = sessionData.processId;
+  const processIdRef = useRef(processId);
+  processIdRef.current = processId;
+  const architecture = sessionData.session?.arch;
   const loadThreads = sessionData.loadThreads;
-
-  // Context-level navigation (reuses existing memory tab, like symbols view)
-  const onNavigateToDisassemblyCtx = sessionData.onNavigateToDisassembly;
-  const onNavigateToMemoryCtx = sessionData.onNavigateToMemory;
-  const onNavigateToTypeCtx = sessionData.onNavigateToType;
-
-  // Hover popover state
-  const [hoveredThreadId, setHoveredThreadId] = useState<number | null>(null);
-  const hoveredThreadIdRef = useRef<number | null>(null);
-  const [popoverPos, setPopoverPos] = useState<{ x: number; y: number } | null>(null);
-  const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const popoverHoveredRef = useRef(false);
-
-  // Cached callstacks per thread
-  const [threadCallStacks, setThreadCallStacks] = useState<Map<number, CallStackFrame[]>>(new Map());
-  const threadCallStacksRef = useRef<Map<number, CallStackFrame[]>>(new Map());
-  const loadingThreadIdRef = useRef<number | null>(null);
-  const [loadingThreadId, setLoadingThreadId] = useState<number | null>(null);
-  const [callstackError, setCallstackError] = useState<{ tid: number; message: string } | null>(null);
-
-  // Thread symbol resolution
-  const [threadSymbols, setThreadSymbols] = useState<Map<number, ThreadSymbolInfo>>(new Map());
-
-  // Multi-selection (by tid) for the bulk suspend/resume/kill actions.
-  const [selected, setSelected] = useState<Set<number>>(new Set());
-  const lastToggledRef = useRef<number | null>(null);
-  // Tids awaiting the Kill confirmation dialog.
-  const [killPending, setKillPending] = useState<number[] | null>(null);
-  const { contextMenu, openContextMenu, closeContextMenu } = useContextMenu<{ tid: number }>();
-
-  // Per-thread TEB base addresses (tid → hex), fetched over OOB when threads load.
-  const [threadTebs, setThreadTebs] = useState<Map<number, string>>(new Map());
-  // Tids already asked for (including those that yielded no TEB), so a thread-set
-  // change with no new threads (e.g. a thread exit) doesn't refetch everything.
-  const queriedTebTidsRef = useRef<Set<number>>(new Set());
-
-  // Keep refs in sync with state
-  const setLoadingThread = useCallback((tid: number | null) => {
-    loadingThreadIdRef.current = tid;
-    setLoadingThreadId(tid);
-  }, []);
-
-  const setHoveredThread = useCallback((tid: number | null) => {
-    hoveredThreadIdRef.current = tid;
-    setHoveredThreadId(tid);
-  }, []);
-
-  const setThreadCallStacksCb = useCallback((updater: (prev: Map<number, CallStackFrame[]>) => Map<number, CallStackFrame[]>) => {
-    setThreadCallStacks(prev => {
-      const next = updater(prev);
-      threadCallStacksRef.current = next;
-      return next;
-    });
-  }, []);
-
-  // Load threads when component mounts or session changes
-  useEffect(() => {
-    // Only with a process. Guarded on the *raw* status, which is what triggers
-    // this effect: `canUseMemoryOps` comes from the debounced status, updated by
-    // a parent effect that runs after this one, so on the stop commit it would
-    // still read true here and fire a load against the dead process.
-    if (sessionData?.session?.id && isProcessAvailable(sessionData.session.status)) {
-      loadThreads();
+  const aliveRef = useRef(true);
+  const identitiesRef = useRef(new Map<number, ThreadIdentity>());
+  const nextIdentityRef = useRef(0);
+  const rows = useMemo(() => {
+    const threads = available ? sessionData.threads : [];
+    const live = new Set(threads.map(thread => thread.id));
+    for (const tid of identitiesRef.current.keys()) {
+      if (!live.has(tid)) identitiesRef.current.delete(tid);
     }
-  }, [sessionData?.session?.id, sessionData?.session?.status, sessionData?.session?.current_event]);
-
-  // Request symbol resolution when threads change and session is paused. Also
-  // re-request when symbolsRefreshKey flips: the backend resolves only
-  // already-loaded modules (so it never blocks on a pending PDB parse), so once
-  // a module's symbols finish loading we must ask again to upgrade raw
-  // addresses to names.
-  useEffect(() => {
-    if (!sessionId || displayStatus !== 'Paused' || !sessionData?.threads?.length) return;
-    invoke('request_resolve_thread_symbols', { sessionId }).catch((err) => {
-      console.error('Failed to request thread symbol resolution:', err);
+    return threads.map((thread, index): ThreadRow => {
+      let identity = identitiesRef.current.get(thread.id);
+      const creation = thread.creation_time_filetime_100ns;
+      if (!identity || (identity.creation !== null && creation !== null && identity.creation !== creation)) {
+        identity = { key: `${thread.id}:${++nextIdentityRef.current}`, creation };
+        identitiesRef.current.set(thread.id, identity);
+      } else if (creation !== null) {
+        identity.creation = creation;
+      }
+      return { thread, key: identity.key, ordinal: index + 1 };
     });
-  }, [sessionId, displayStatus, sessionData?.threads, sessionData?.symbolsRefreshKey]);
-
-  // Fetch per-thread TEB addresses over OOB (works Paused/Running/Open). TEB bases
-  // are stable for a thread's lifetime, so fetch only when an unseen tid appears.
-  useEffect(() => {
-    if (!sessionId || !canUse || !sessionData?.threads?.length) return;
-    if (sessionData.threads.every((t) => queriedTebTidsRef.current.has(t.id))) return;
-    let cancelled = false;
-    invoke<Array<{ tid: number; teb: string | null }>>('get_session_thread_tebs', { sessionId })
-      .then((entries) => {
-        if (cancelled) return;
-        for (const e of entries) queriedTebTidsRef.current.add(e.tid);
-        setThreadTebs((prev) => {
-          const map = new Map(prev);
-          for (const e of entries) {
-            if (e.teb) map.set(e.tid, e.teb);
-          }
-          return map;
-        });
-      })
-      .catch((err) => {
-        console.error('Failed to fetch thread TEB addresses:', err);
-      });
-    return () => { cancelled = true; };
-  }, [sessionId, canUse, sessionData?.threads]);
-
-  // Listen for thread symbol resolution results
-  useEffect(() => {
-    if (!sessionId) return;
-
-    const unlisten = listen<{ session_id: string; symbols: ThreadSymbolInfo[] }>(
-      'thread-symbols-updated',
-      (event) => {
-        if (event.payload.session_id === sessionId) {
-          const map = new Map<number, ThreadSymbolInfo>();
-          for (const entry of event.payload.symbols) {
-            map.set(entry.tid, entry);
-          }
-          setThreadSymbols(map);
-        }
-      }
-    );
-
-    return () => { unlisten.then(f => f()); };
-  }, [sessionId]);
-
-  // Listen for thread callstack events (no loadingThreadId in deps - use ref instead)
-  useEffect(() => {
-    if (!sessionId) return;
-
-    const unlistenUpdated = listen<{ session_id: string; tid: number; frames: CallStackFrame[] }>(
-      'thread-callstack-updated',
-      (event) => {
-        if (event.payload.session_id === sessionId) {
-          setThreadCallStacksCb(prev => {
-            const next = new Map(prev);
-            next.set(event.payload.tid, event.payload.frames);
-            return next;
-          });
-          if (loadingThreadIdRef.current === event.payload.tid) {
-            setLoadingThread(null);
-          }
-          setCallstackError(prev => prev?.tid === event.payload.tid ? null : prev);
-        }
-      }
-    );
-
-    const unlistenError = listen<{ session_id: string; tid: number; error: string }>(
-      'thread-callstack-error',
-      (event) => {
-        if (event.payload.session_id === sessionId) {
-          if (loadingThreadIdRef.current === event.payload.tid) {
-            setLoadingThread(null);
-          }
-          setCallstackError({ tid: event.payload.tid, message: event.payload.error });
-        }
-      }
-    );
-
-    return () => {
-      unlistenUpdated.then(f => f());
-      unlistenError.then(f => f());
-    };
-  }, [sessionId, setLoadingThread, setThreadCallStacksCb]);
+  }, [available, sessionData.threads]);
+  const liveRowsRef = useRef(rows);
+  liveRowsRef.current = rows;
+  const liveKeys = rows.map(row => row.key).join('|');
+  const [query, setQuery] = useState('');
+  const [selected, setSelected] = useState(new Set<string>());
+  const [expanded, setExpanded] = useState(new Set<string>());
+  const anchorRef = useRef<string | null>(null);
+  const [killPending, setKillPending] = useState<string[] | null>(null);
+  const { contextMenu, openContextMenu, closeContextMenu } = useContextMenu<{ key: string; tid: number }>();
+  const [threadSymbols, setThreadSymbols] = useState(new Map<string, ThreadSymbolInfo>());
+  const [symbolListenerReady, setSymbolListenerReady] = useState(false);
+  const stackListenersReadyRef = useRef<Promise<unknown>>(Promise.resolve());
+  const [stacks, setStacks] = useState(new Map<string, CallStackFrame[]>());
+  const [hoveredKey, setHoveredKey] = useState<string | null>(null);
+  const hoveredKeyRef = useRef<string | null>(null);
+  const [popoverPos, setPopoverPos] = useState<{ x: number; y: number } | null>(null);
+  const [loadingKey, setLoadingKey] = useState<string | null>(null);
+  const [stackError, setStackError] = useState<{ key: string; message: string } | null>(null);
+  const pendingStacksRef = useRef(new Map<string, { key: string; tid: number }>());
+  const latestStackRequestRef = useRef(new Map<string, string>());
+  const symbolRequestRef = useRef<{ id: string; identities: Map<number, string> } | null>(null);
+  const nextRequestRef = useRef(0);
+  const hoverTimerRef = useRef<number | undefined>(undefined);
+  const hideTimerRef = useRef<number | undefined>(undefined);
+  const popoverHoveredRef = useRef(false);
+  const detailsPrefix = useId();
 
   const clearHoverTimers = useCallback(() => {
-    if (hoverTimerRef.current) {
-      clearTimeout(hoverTimerRef.current);
-      hoverTimerRef.current = null;
-    }
-    if (hideTimerRef.current) {
-      clearTimeout(hideTimerRef.current);
-      hideTimerRef.current = null;
-    }
+    window.clearTimeout(hoverTimerRef.current);
+    window.clearTimeout(hideTimerRef.current);
+    hoverTimerRef.current = undefined;
+    hideTimerRef.current = undefined;
   }, []);
-
-  // Drop the hover popover immediately (right-click, session end) — no grace
-  // period, and cancel any pending show so it can't reappear under the menu.
   const dismissPopover = useCallback(() => {
     clearHoverTimers();
     popoverHoveredRef.current = false;
-    setHoveredThread(null);
+    hoveredKeyRef.current = null;
+    setHoveredKey(null);
     setPopoverPos(null);
-    setCallstackError(null);
-  }, [clearHoverTimers, setHoveredThread]);
-
-  // Session cleanup: clear all hover/cache state when the session ends or the
-  // process becomes unavailable (Stopped/Error). Kept while paused/running/open.
-  useEffect(() => {
-    if (!sessionId || !canUse) {
-      setSelected(new Set());
-      setKillPending(null);
-      closeContextMenu();
-      dismissPopover();
-      setThreadCallStacks(new Map());
-      threadCallStacksRef.current = new Map();
-      setLoadingThread(null);
-      setThreadSymbols(new Map());
-      setThreadTebs(new Map());
-      queriedTebTidsRef.current = new Set();
-    }
-  }, [sessionId, canUse, setLoadingThread, closeContextMenu, dismissPopover]);
-
-  // ---- Selection ----
-  const toggleSelect = useCallback((tid: number, shift: boolean) => {
-    const ids = (sessionData?.threads ?? []).map((t) => t.id);
-    setSelected((prev) => {
-      const next = new Set(prev);
-      const anchor = lastToggledRef.current;
-      if (shift && anchor !== null && ids.includes(anchor) && ids.includes(tid)) {
-        const [a, b] = [ids.indexOf(anchor), ids.indexOf(tid)].sort((x, y) => x - y);
-        for (const id of ids.slice(a, b + 1)) next.add(id);
-      } else if (next.has(tid)) {
-        next.delete(tid);
-      } else {
-        next.add(tid);
-      }
-      return next;
-    });
-    lastToggledRef.current = tid;
-  }, [sessionData?.threads]);
-
-  const selectAll = useCallback(() => {
-    setSelected(new Set((sessionData?.threads ?? []).map((t) => t.id)));
-  }, [sessionData?.threads]);
-
-  const clearSelection = useCallback(() => setSelected(new Set()), []);
-
-  // ---- Thread control ----
-  // Per-tid results: one dead thread must not hide the outcome for the rest.
-  const runThreadAction = useCallback(async (cmd: ThreadActionCmd, tids: number[]) => {
-    if (!sessionId || tids.length === 0) return;
-    try {
-      const results = await invoke<ThreadActionResult[]>(cmd, { sessionId, tids });
-      for (const r of results) {
-        if (r.error) toast.error(`Thread ${r.tid}: ${r.error}`);
-      }
-    } catch (err) {
-      toast.error(`Thread action failed: ${formatTauriError(err)}`);
-    }
-    loadThreads();
-  }, [sessionId, loadThreads]);
-
-  // Switching the context thread is paused-only; the backend resets the
-  // selection on the next pause.
-  const switchToThread = useCallback((tid: number) => {
-    if (!sessionId) return;
-    invoke('select_thread', { sessionId, tid }).catch((err) => {
-      toast.error(`Failed to switch thread: ${formatTauriError(err)}`);
-    });
-  }, [sessionId]);
-
-  const requestKill = useCallback((tids: number[]) => {
-    if (tids.length > 0) setKillPending(tids);
-  }, []);
-
-  const confirmKill = useCallback(() => {
-    const tids = killPending ?? [];
-    setKillPending(null);
-    void runThreadAction('terminate_threads', tids);
-  }, [killPending, runThreadAction]);
-
-  const startHideTimer = useCallback(() => {
-    if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
-    hideTimerRef.current = setTimeout(() => {
-      if (!popoverHoveredRef.current) {
-        setHoveredThread(null);
-        setPopoverPos(null);
-        setCallstackError(null);
-      }
-    }, 150);
-  }, [setHoveredThread]);
-
-  // Show the call-stack popover at (x, y) and fetch the thread's stack.
-  // Always refetch: stacks change while the target runs (or across steps).
-  // The cached frames stay visible until the fresh ones arrive.
-  // `preview: true` marks a hover fetch — the Call Stack panel ignores those
-  // and only follows explicit clicks, so hovering can't hijack it.
-  const showThreadCallstack = useCallback((tid: number, x: number, y: number, preview: boolean) => {
-    setHoveredThread(tid);
-    setPopoverPos({ x: x + 16, y: y - 8 });
-    setCallstackError(null);
-    if (sessionId && canUse) {
-      setLoadingThread(tid);
-      invoke('request_thread_callstack', { sessionId, tid, preview }).catch((err) => {
-        console.error('Failed to request thread callstack:', err);
-        setLoadingThread(null);
-        setCallstackError({ tid, message: formatTauriError(err) });
-      });
-    }
-  }, [sessionId, canUse, setLoadingThread, setHoveredThread]);
-
-  const handleThreadMouseEnter = useCallback((tid: number, e: React.MouseEvent) => {
-    // Clear any pending hide
-    if (hideTimerRef.current) {
-      clearTimeout(hideTimerRef.current);
-      hideTimerRef.current = null;
-    }
-
-    // If we're already showing this thread, do nothing
-    if (hoveredThreadIdRef.current === tid) return;
-
-    // Clear any pending hover timer for a different thread
-    if (hoverTimerRef.current) {
-      clearTimeout(hoverTimerRef.current);
-    }
-
-    // Capture mouse position directly - works reliably with fixed positioning
-    // even when inside transformed ancestors (portal escapes them)
-    const mouseX = e.clientX;
-    const mouseY = e.clientY;
-
-    hoverTimerRef.current = setTimeout(() => {
-      showThreadCallstack(tid, mouseX, mouseY, true);
-    }, 400);
-  }, [showThreadCallstack]);
-
-  // Clicking a thread opens its call stack immediately (no hover delay) and,
-  // while paused, switches the context thread (registers, disassembly IP,
-  // call stack follow it until the next pause). Stepping stays on the event
-  // thread. In Open/Running sessions there is no context to switch, so the
-  // click only redirects the Call Stack panel.
-  const handleThreadClick = useCallback((tid: number, e: React.MouseEvent) => {
-    if (hoverTimerRef.current) { clearTimeout(hoverTimerRef.current); hoverTimerRef.current = null; }
-    if (hideTimerRef.current) { clearTimeout(hideTimerRef.current); hideTimerRef.current = null; }
-    if (isPaused) switchToThread(tid);
-    showThreadCallstack(tid, e.clientX, e.clientY, false);
-  }, [isPaused, switchToThread, showThreadCallstack]);
-
-  const handleThreadMouseLeave = useCallback(() => {
-    if (hoverTimerRef.current) {
-      clearTimeout(hoverTimerRef.current);
-      hoverTimerRef.current = null;
-    }
-    startHideTimer();
-  }, [startHideTimer]);
-
-  const handlePopoverMouseEnter = useCallback(() => {
-    popoverHoveredRef.current = true;
-    if (hideTimerRef.current) {
-      clearTimeout(hideTimerRef.current);
-      hideTimerRef.current = null;
-    }
-  }, []);
-
-  const handlePopoverMouseLeave = useCallback(() => {
-    popoverHoveredRef.current = false;
-    startHideTimer();
-  }, [startHideTimer]);
-
-  // Navigate to the thread start address - uses is_function to pick disasm vs memory
-  const handleStartAddressClick = useCallback((address: string, isFunction: boolean) => {
-    if (isFunction) {
-      onNavigateToDisassemblyCtx?.(address);
-    } else {
-      onNavigateToMemoryCtx?.(address);
-    }
-  }, [onNavigateToDisassemblyCtx, onNavigateToMemoryCtx]);
-
-  // Clean up timers on unmount
-  useEffect(() => {
-    return () => {
-      clearHoverTimers();
-    };
+    setStackError(null);
   }, [clearHoverTimers]);
 
-  const cachedFrames = hoveredThreadId !== null ? threadCallStacks.get(hoveredThreadId) : undefined;
-  // Spinner only when there's nothing to show yet; a refetch of an already
-  // cached stack keeps the previous frames visible until fresh ones arrive.
-  const isLoadingPopover = hoveredThreadId !== null && loadingThreadId === hoveredThreadId && !cachedFrames;
-  const popoverError = hoveredThreadId !== null && callstackError?.tid === hoveredThreadId ? callstackError.message : null;
+  useEffect(() => {
+    aliveRef.current = true;
+    return () => { aliveRef.current = false; clearHoverTimers(); };
+  }, [clearHoverTimers]);
 
-  const threads = sessionData?.threads ?? [];
-  // Intersected with the live list rather than pruned by an effect: a tid left
-  // in `selected` after its thread exits is simply never counted or acted on.
-  const selectedTids = threads.filter((t) => selected.has(t.id)).map((t) => t.id);
-  const actionsDisabled = !canUse || selectedTids.length === 0;
-  const allSelected = threads.length > 0 && selectedTids.length === threads.length;
-  // Context-menu target: the selection when the clicked row is part of it,
-  // otherwise just that row (file-manager convention).
-  const targetsFor = (tid: number): number[] => (selected.has(tid) ? selectedTids : [tid]);
+  useEffect(() => {
+    if (available && sessionId) void loadThreads();
+  }, [available, sessionId, sessionData.session?.status, sessionData.session?.current_event, loadThreads]);
+
+  // Only identity, Entry, symbol readiness and paused capability affect symbol
+  // work. Names and cumulative counters refresh without another resolve IPC.
+  const symbolInputs = rows.map(({ key, thread }) => `${key}:${thread.start_address ?? ''}`).join('|');
+  useEffect(() => {
+    if (!available || !sessionId || !isPaused || !symbolInputs || !symbolListenerReady) return;
+    const threads = liveRowsRef.current.flatMap(row => row.thread.start_address ? [[row.thread.id, row.thread.start_address]] : []);
+    if (!threads.length) return;
+    const requestId = `${detailsPrefix}:symbols:${++nextRequestRef.current}`;
+    symbolRequestRef.current = { id: requestId, identities: new Map(liveRowsRef.current.map(row => [row.thread.id, row.key])) };
+    invoke('request_resolve_thread_symbols', { sessionId, threads, requestId }).catch(error => {
+      if (aliveRef.current && symbolRequestRef.current?.id === requestId) reportSessionError('resolve thread symbols', error, sessionId);
+    });
+    return () => { if (symbolRequestRef.current?.id === requestId) symbolRequestRef.current = null; };
+  }, [available, sessionId, isPaused, symbolInputs, sessionData.symbolsRefreshKey, detailsPrefix, symbolListenerReady]);
+
+  useEffect(() => {
+    if (!available || !sessionId) return;
+    let cancelled = false;
+    const unlisten = listen<{ session_id: string; process_id: number; request_id: string; symbols: ThreadSymbolInfo[] }>('thread-symbols-updated', event => {
+      if (cancelled || !aliveRef.current || event.payload.session_id !== sessionId || event.payload.process_id !== processIdRef.current) return;
+      const request = symbolRequestRef.current;
+      if (!request || request.id !== event.payload.request_id) return;
+      const map = new Map<string, ThreadSymbolInfo>();
+      const rowsByTid = new Map(liveRowsRef.current.map(row => [row.thread.id, row]));
+      for (const entry of event.payload.symbols) {
+        const row = rowsByTid.get(entry.tid);
+        if (row && request.identities.get(entry.tid) === row.key && row.thread.start_address?.toLowerCase() === entry.address.toLowerCase()) map.set(row.key, entry);
+      }
+      setThreadSymbols(map);
+    });
+    void unlisten.then(() => { if (!cancelled) setSymbolListenerReady(true); });
+    return () => { cancelled = true; void unlisten.then(stop => stop()); };
+  }, [available, sessionId, processId]);
+
+  useEffect(() => {
+    if (!available || !sessionId) return;
+    let cancelled = false;
+    const keyFor = (tid: number, requestId: string) => {
+      const pending = pendingStacksRef.current.get(requestId);
+      pendingStacksRef.current.delete(requestId);
+      return pending && pending.tid === tid && latestStackRequestRef.current.get(pending.key) === requestId
+        && liveRowsRef.current.some(row => row.key === pending.key && row.thread.id === tid) ? pending.key : null;
+    };
+    const updated = listen<{ session_id: string; process_id: number; request_id: string; tid: number; frames: CallStackFrame[] }>('thread-callstack-updated', event => {
+      if (cancelled || !aliveRef.current || event.payload.session_id !== sessionId || event.payload.process_id !== processIdRef.current) return;
+      const key = keyFor(event.payload.tid, event.payload.request_id);
+      if (!key) return;
+      setStacks(previous => new Map(previous).set(key, event.payload.frames));
+      setLoadingKey(previous => previous === key ? null : previous);
+      setStackError(previous => previous?.key === key ? null : previous);
+    });
+    const failed = listen<{ session_id: string; process_id: number; request_id: string; tid: number; error: string }>('thread-callstack-error', event => {
+      if (cancelled || !aliveRef.current || event.payload.session_id !== sessionId || event.payload.process_id !== processIdRef.current) return;
+      const key = keyFor(event.payload.tid, event.payload.request_id);
+      if (!key) return;
+      setLoadingKey(previous => previous === key ? null : previous);
+      setStackError({ key, message: event.payload.error });
+    });
+    stackListenersReadyRef.current = Promise.all([updated, failed]);
+    return () => { cancelled = true; void updated.then(stop => stop()); void failed.then(stop => stop()); };
+  }, [available, sessionId, processId]);
+
+  useEffect(() => {
+    const live = new Set(liveRowsRef.current.map(row => row.key));
+    setSelected(previous => new Set([...previous].filter(key => live.has(key))));
+    setExpanded(previous => new Set([...previous].filter(key => live.has(key))));
+    setThreadSymbols(previous => new Map([...previous].filter(([key]) => live.has(key))));
+    setStacks(previous => new Map([...previous].filter(([key]) => live.has(key))));
+    for (const [requestId, pending] of pendingStacksRef.current) if (!live.has(pending.key)) pendingStacksRef.current.delete(requestId);
+    for (const key of latestStackRequestRef.current.keys()) if (!live.has(key)) latestStackRequestRef.current.delete(key);
+    if (anchorRef.current && !live.has(anchorRef.current)) anchorRef.current = null;
+    if (hoveredKeyRef.current && !live.has(hoveredKeyRef.current)) dismissPopover();
+    setLoadingKey(previous => previous && live.has(previous) ? previous : null);
+    setKillPending(previous => {
+      const pending = previous?.filter(key => live.has(key));
+      return pending?.length ? pending : null;
+    });
+    closeContextMenu();
+  }, [liveKeys, closeContextMenu, dismissPopover]);
+
+  const symbolFor = (row: ThreadRow) => {
+    const symbol = threadSymbols.get(row.key);
+    return symbol?.address.toLowerCase() === row.thread.start_address?.toLowerCase() ? symbol : undefined;
+  };
+  const visibleRows = rows.filter(row => matchesThreadFilter(row.thread, query, symbolFor(row)?.symbol_info ?? null, {
+    main: row.thread.id === mainTid, current: row.thread.id === activeTid, event: row.thread.id === eventTid,
+  }));
+  const visibleRowsRef = useRef(visibleRows);
+  visibleRowsRef.current = visibleRows;
+  const visibleKeys = new Set(visibleRows.map(row => row.key));
+  const selectedRows = visibleRows.filter(row => selected.has(row.key));
+  const hiddenSelected = rows.filter(row => selected.has(row.key) && !visibleKeys.has(row.key)).length;
+  const allSelected = visibleRows.length > 0 && selectedRows.length === visibleRows.length;
+  const actionsDisabled = !available || selectedRows.length === 0;
+  const visibleIdentities = visibleRows.map(row => row.key).join('|');
+  useEffect(() => {
+    if (anchorRef.current && !visibleRowsRef.current.some(row => row.key === anchorRef.current)) anchorRef.current = null;
+  }, [visibleIdentities]);
+
+  useEffect(() => {
+    dismissPopover();
+    closeContextMenu();
+    setKillPending(null);
+  }, [query, dismissPopover, closeContextMenu]);
+
+  const toggleSelect = (key: string, shift: boolean) => {
+    const keys = visibleRows.map(row => row.key);
+    const anchor = anchorRef.current;
+    setSelected(previous => {
+      const next = new Set(previous);
+      if (shift && anchor !== null && keys.includes(anchor)) {
+        const [a, b] = [keys.indexOf(anchor), keys.indexOf(key)].sort((x, y) => x - y);
+        for (const item of keys.slice(a, b + 1)) next.add(item);
+      } else if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+    anchorRef.current = key;
+  };
+  const toggleSelectAll = () => setSelected(previous => {
+    const next = new Set(previous);
+    for (const row of visibleRows) {
+      if (allSelected) next.delete(row.key);
+      else next.add(row.key);
+    }
+    return next;
+  });
+  const targetsFor = (key: string) => selected.has(key) ? selectedRows.map(row => row.key) : visibleKeys.has(key) ? [key] : [];
+
+  const runThreadAction = useCallback(async (command: ThreadActionCmd, keys: string[]) => {
+    if (!sessionId || !available) return;
+    // Revalidate at execution, especially after a confirmation was left open.
+    const tids = visibleRowsRef.current.filter(row => keys.includes(row.key)).map(row => row.thread.id);
+    if (!tids.length) return;
+    try {
+      const results = await invoke<ThreadActionResult[]>(command, { sessionId, tids });
+      if (!aliveRef.current) return;
+      for (const result of results) if (result.error) reportSessionError(`control thread ${result.tid}`, result.error, sessionId);
+    } catch (error) {
+      if (aliveRef.current) reportSessionError('control threads', error, sessionId);
+    }
+    if (aliveRef.current) void loadThreads();
+  }, [sessionId, available, loadThreads]);
+  const switchToThread = (key: string) => {
+    const row = visibleRowsRef.current.find(row => row.key === key);
+    if (!sessionId || !available || !isPaused || !row) return;
+    invoke('select_thread', { sessionId, tid: row.thread.id }).catch(error => {
+      if (aliveRef.current) reportSessionError('switch thread', error, sessionId);
+    });
+  };
+  const requestKill = (keys: string[]) => { if (keys.length) setKillPending(keys); };
+  const confirmKill = () => {
+    const keys = killPending ?? [];
+    setKillPending(null);
+    void runThreadAction('terminate_threads', keys);
+  };
+
+  const startHideTimer = () => {
+    window.clearTimeout(hideTimerRef.current);
+    hideTimerRef.current = window.setTimeout(() => { if (!popoverHoveredRef.current) dismissPopover(); }, 150);
+  };
+  const showStack = (row: ThreadRow, x: number, y: number, preview: boolean) => {
+    if (!sessionId || !available || !liveRowsRef.current.some(item => item.key === row.key)) return;
+    hoveredKeyRef.current = row.key;
+    setHoveredKey(row.key);
+    setPopoverPos({ x: x + 16, y: y - 8 });
+    setStackError(null);
+    setLoadingKey(row.key);
+    const requestId = `${detailsPrefix}:stack:${++nextRequestRef.current}`;
+    const previousRequest = latestStackRequestRef.current.get(row.key);
+    if (previousRequest) pendingStacksRef.current.delete(previousRequest);
+    latestStackRequestRef.current.set(row.key, requestId);
+    pendingStacksRef.current.set(requestId, { key: row.key, tid: row.thread.id });
+    void stackListenersReadyRef.current.then(() => {
+      if (!aliveRef.current || latestStackRequestRef.current.get(row.key) !== requestId
+        || !liveRowsRef.current.some(item => item.key === row.key)) return;
+      return invoke('request_thread_callstack', { sessionId, tid: row.thread.id, preview, requestId });
+    }).catch(error => {
+      if (!aliveRef.current || latestStackRequestRef.current.get(row.key) !== requestId || !pendingStacksRef.current.delete(requestId)) return;
+      setLoadingKey(previous => previous === row.key ? null : previous);
+      setStackError({ key: row.key, message: formatTauriError(error) });
+    });
+  };
+  const enterSummary = (row: ThreadRow, event: React.MouseEvent) => {
+    clearHoverTimers();
+    if (hoveredKeyRef.current === row.key) return;
+    const { clientX, clientY } = event;
+    hoverTimerRef.current = window.setTimeout(() => showStack(row, clientX, clientY, true), 400);
+  };
+  const leaveSummary = () => {
+    window.clearTimeout(hoverTimerRef.current);
+    hoverTimerRef.current = undefined;
+    startHideTimer();
+  };
+  const clickSummary = (row: ThreadRow, event: React.MouseEvent) => {
+    clearHoverTimers();
+    if (isPaused) switchToThread(row.key);
+    showStack(row, event.clientX, event.clientY, false);
+  };
+  const navigateEntry = (address: string, isFunction: boolean) => {
+    if (isFunction) sessionData.onNavigateToDisassembly?.(address);
+    else sessionData.onNavigateToMemory?.(address);
+  };
+  const navigateTeb = (thread: Thread) => {
+    if (!thread.teb_address) return;
+    if (thread.teb_architecture && thread.teb_architecture === architecture) sessionData.onNavigateToType?.('_TEB', thread.teb_address);
+    else sessionData.onNavigateToMemory?.(thread.teb_address);
+  };
+  const navigateIp = (thread: Thread, address: string) => {
+    if (thread.instruction_pointer_architecture && thread.instruction_pointer_architecture === architecture) sessionData.onNavigateToDisassembly?.(address);
+    else sessionData.onNavigateToMemory?.(address);
+  };
+  const addressLink = (address: string | null, navigate: () => void, title?: string) => address === null
+    ? UNAVAILABLE_THREAD_VALUE
+    : <span className={LINK_VALUE_CLASS} title={title} onContextMenu={event => event.stopPropagation()}
+      onClick={event => { event.stopPropagation(); navigate(); }}>{address}</span>;
+  const hoveredRow = rows.find(row => row.key === hoveredKey);
+  const cachedFrames = hoveredKey ? stacks.get(hoveredKey) : undefined;
+  const popoverError = stackError?.key === hoveredKey ? stackError.message : null;
 
   return (
     <DockPanel>
-      {threads.length > 0 && (
-        <PanelToolbar className="flex items-center gap-1 text-xs">
-          {/* The panel is narrow by default: the all/none toggle is a single
-              checkbox and the actions are icon-only, so the bar never overflows. */}
-          <Checkbox
-            className="mx-1"
-            data-testid="thread-select-all"
-            title={allSelected ? 'Clear selection' : 'Select all threads'}
-            checked={allSelected ? true : selectedTids.length > 0 ? 'indeterminate' : false}
-            onCheckedChange={allSelected ? clearSelection : selectAll}
-          />
-          <span className="text-muted-foreground flex-1 min-w-0 truncate" data-testid="thread-selection-count">
-            {selectedTids.length > 0 ? `${selectedTids.length} selected` : `${threads.length} threads`}
-          </span>
-          <Button
-            size="icon-xs"
-            variant="outline"
-            title="Suspend selected threads"
-            disabled={actionsDisabled}
-            onClick={() => runThreadAction('suspend_threads', selectedTids)}
-            data-testid="thread-action-suspend"
-          >
-            <Pause />
-          </Button>
-          <Button
-            size="icon-xs"
-            variant="outline"
-            title="Resume selected threads"
-            disabled={actionsDisabled}
-            onClick={() => runThreadAction('resume_threads', selectedTids)}
-            data-testid="thread-action-resume"
-          >
-            <Play />
-          </Button>
-          <Button
-            size="icon-xs"
-            variant="outline"
-            title="Terminate selected threads"
-            disabled={actionsDisabled}
-            onClick={() => requestKill(selectedTids)}
-            data-testid="thread-action-kill"
-          >
-            <Square />
-          </Button>
-        </PanelToolbar>
-      )}
-      {threads.length > 0 ? (
-        <VirtualizedList
-          items={threads}
-          rowHeight={THREAD_ROW_HEIGHT}
-          overscan={15}
-          className="flex-1 min-h-0"
-          getItemKey={(thread) => thread.id}
-          renderItem={(thread) => {
-            const symInfo = threadSymbols.get(thread.id);
-            const displayText = symInfo?.symbol_info ?? thread.start_address;
-            const isFunction = symInfo?.is_function ?? true;
-            const tebAddress = threadTebs.get(thread.id);
-            const isActive = thread.id === activeTid;
-            const isMain = thread.id === mainTid;
-            // Marked only when the user switched away from it.
-            const isEventThread = thread.id === eventTid && eventTid !== activeTid;
-            const isSelected = selected.has(thread.id);
-            // Suspend nesting is shown only when it actually nests.
-            const status = thread.suspend_count > 0 ? 'Suspended' : 'Running';
-            const statusLabel = thread.suspend_count > 1 ? `${status} (${thread.suspend_count})` : status;
-
-            return (
-              <div
-                data-testid="thread-row"
-                data-tid={thread.id}
-                data-active={isActive ? 'true' : undefined}
-                data-main={isMain ? 'true' : undefined}
-                data-status={status}
-                data-selected={isSelected ? 'true' : undefined}
-                onContextMenu={(e) => {
-                  dismissPopover();
-                  openContextMenu(e, { tid: thread.id });
-                }}
-                className={`flex items-center justify-between font-mono px-2 py-1 border-b h-full cursor-pointer border-l-2 ${
-                  isActive
-                    ? 'border-l-primary bg-accent/60'
-                    : 'border-l-transparent hover:bg-gray-50 dark:hover:bg-gray-900'
-                }`}
-                onMouseEnter={(e) => handleThreadMouseEnter(thread.id, e)}
-                onMouseLeave={handleThreadMouseLeave}
-                onClick={(e) => handleThreadClick(thread.id, e)}
-              >
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 mb-1">
-                    <Checkbox
-                      data-testid="thread-checkbox"
-                      checked={isSelected}
-                      onClick={(e) => { e.stopPropagation(); toggleSelect(thread.id, e.shiftKey); }}
-                    />
-                    <h3 className="font-medium text-sm whitespace-nowrap">Thread {thread.id}</h3>
-                    {isMain && (
-                      <Badge variant="outline" size="xs" className="bg-muted text-muted-foreground border-border">
-                        main
-                      </Badge>
-                    )}
-                    {isActive && (
-                      <Badge variant="outline" size="xs" className="bg-primary/15 text-primary border-primary/30">
-                        current
-                      </Badge>
-                    )}
-                    {isEventThread && (
-                      <Badge variant="outline" size="xs" className="bg-muted text-muted-foreground border-border">
-                        event
-                      </Badge>
-                    )}
-                    {thread.suspend_count > 0 && (
-                      <Badge
-                        variant="outline"
-                        size="xs"
-                        className="whitespace-nowrap bg-syn-state/15 text-syn-state border-syn-state/30"
-                      >
-                        {statusLabel}
-                      </Badge>
-                    )}
-                  </div>
-                  <p className="text-xs text-muted-foreground flex items-center gap-1 min-w-0">
-                    <span className="shrink-0">Start:</span>
-                    <TruncatedSymbol
-                      text={displayText}
-                      className={`font-mono ${LINK_VALUE_CLASS}`}
-                      onClick={(e) => { e.stopPropagation(); handleStartAddressClick(thread.start_address, isFunction); }}
-                    />
-                  </p>
-                  {tebAddress && (
-                    <p className="text-xs text-muted-foreground flex items-center gap-1 min-w-0">
-                      <span className="shrink-0">TEB:</span>
-                      <TruncatedSymbol
-                        text={tebAddress}
-                        className={`font-mono ${LINK_VALUE_CLASS}`}
-                        onClick={(e) => { e.stopPropagation(); onNavigateToTypeCtx?.('_TEB', tebAddress); }}
-                      />
-                    </p>
-                  )}
-                </div>
-              </div>
-            );
-          }}
-        />
-      ) : (
-        <div className="flex flex-col items-center justify-center h-full text-muted-foreground p-4">
-          <div className="text-center">
-            <Cpu className="h-12 w-12 mx-auto mb-4 opacity-50" />
-            <p className="text-base font-medium">No threads found</p>
-            <p className="text-sm mt-1">Open, attach to, or run a process to list threads</p>
-          </div>
+      {available && <PanelToolbar stack>
+        <div className="flex items-center gap-1 w-full min-w-0">
+          <Input inputSize="xs" aria-label="Filter threads" placeholder="Filter threads" value={query}
+            onChange={event => setQuery(event.target.value)} className="min-w-0 flex-1" />
+          <Button size="icon-xs" variant="ghost" aria-label="Clear thread filter" disabled={!query} onClick={() => setQuery('')}><X /></Button>
         </div>
-      )}
+        <div className="flex items-center gap-1 flex-wrap w-full text-xs">
+          <Checkbox className="mx-1" data-testid="thread-select-all" aria-label="Select all visible threads"
+            title={allSelected ? 'Clear visible selection' : 'Select all visible threads'}
+            checked={allSelected ? true : selectedRows.length > 0 ? 'indeterminate' : false} onCheckedChange={toggleSelectAll} />
+          <span className="text-muted-foreground flex-1 min-w-0" data-testid="thread-selection-count">
+            {selectedRows.length ? `${selectedRows.length} selected` : `${visibleRows.length} threads`}
+          </span>
+          {hiddenSelected > 0 && <span className="text-muted-foreground" data-testid="thread-hidden-selection-count">{hiddenSelected} hidden selected</span>}
+          <Button size="icon-xs" variant="outline" title="Suspend selected threads" disabled={actionsDisabled}
+            onClick={() => void runThreadAction('suspend_threads', selectedRows.map(row => row.key))} data-testid="thread-action-suspend"><Pause /></Button>
+          <Button size="icon-xs" variant="outline" title="Resume selected threads" disabled={actionsDisabled}
+            onClick={() => void runThreadAction('resume_threads', selectedRows.map(row => row.key))} data-testid="thread-action-resume"><Play /></Button>
+          <Button size="icon-xs" variant="outline" title="Terminate selected threads" disabled={actionsDisabled}
+            onClick={() => requestKill(selectedRows.map(row => row.key))} data-testid="thread-action-kill"><Square /></Button>
+        </div>
+      </PanelToolbar>}
+      {available ? <div className="relative flex-1 min-h-0">
+        <VirtualizedList items={visibleRows} rowHeight={THREAD_ROW_HEIGHT} measureRows overscan={15}
+          className="h-full" getItemKey={row => row.key}
+          renderItem={row => {
+            const { thread, key, ordinal } = row;
+            const symbol = symbolFor(row);
+            const roles = { main: thread.id === mainTid, current: thread.id === activeTid, event: thread.id === eventTid };
+            const isSelected = selected.has(key);
+            const isExpanded = expanded.has(key);
+            const count = thread.suspend_count;
+            const status = count === null ? 'Unknown' : count > 0 ? 'Suspended' : 'Running';
+            const ip = thread.instruction_pointer;
+            const detailsId = `${detailsPrefix}-${key.replace(':', '-')}`;
+            const entry = thread.start_address;
+            const details: Array<[string, React.ReactNode]> = isExpanded ? [
+              ['Number / role', `#${ordinal}${roles.main ? ' · main' : ''}${roles.current ? ' · current' : ''}${roles.event ? ' · event' : ''}`],
+              ['ID', <span title={`0x${thread.id.toString(16)}`}>{thread.id} (0x{thread.id.toString(16)})</span>],
+              ['Entry', <>{addressLink(entry, () => entry && navigateEntry(entry, symbol?.is_function ?? true))}{entry && symbol?.symbol_info && <span className="block">{symbol.symbol_info}</span>}</>],
+              ['TEB', addressLink(thread.teb_address, () => navigateTeb(thread), thread.teb_architecture ?? undefined)],
+              ['Instruction pointer', addressLink(ip, () => ip && navigateIp(thread, ip), thread.instruction_pointer_architecture ?? undefined)],
+              [isWindows ? 'Suspend Count (incl. debug freezes)' : 'Suspend Count', count ?? UNAVAILABLE_THREAD_VALUE],
+              ['Priority', formatThreadPriority(thread.priority)],
+              ['Wait Reason', formatThreadWaitReason(thread.thread_state, thread.wait_reason)],
+              ['Last Error', formatThreadLastError(thread.last_error)],
+              ['User Time', formatThreadTime(thread.user_time_100ns)],
+              ['Kernel Time', formatThreadTime(thread.kernel_time_100ns)],
+              ['Creation Time', formatThreadCreationTime(thread.creation_time_filetime_100ns)],
+              ['CPU Cycles', formatThreadCycles(thread.cpu_cycles)],
+              ['Name', thread.name ?? 'Unnamed'],
+            ] : [];
+            return <div data-testid="thread-row" data-tid={thread.id} data-active={roles.current ? 'true' : undefined}
+              data-main={roles.main ? 'true' : undefined} data-status={status} data-selected={isSelected ? 'true' : 'false'}
+              className={`font-mono border-b border-l-2 ${roles.current ? 'border-l-primary bg-accent/60' : 'border-l-transparent'}`}>
+              <div className="min-h-[68px] px-2 py-1 cursor-pointer hover:bg-accent/30"
+                onMouseEnter={event => enterSummary(row, event)} onMouseLeave={leaveSummary}
+                onClick={event => clickSummary(row, event)}
+                onContextMenu={event => { dismissPopover(); openContextMenu(event, { key, tid: thread.id }); }}>
+                <div className="flex items-start gap-1 min-w-0">
+                  <Checkbox data-testid="thread-checkbox" aria-label={`Select thread ${thread.id}`} checked={isSelected}
+                    onContextMenu={event => event.stopPropagation()}
+                    onMouseEnter={dismissPopover} onClick={event => { event.stopPropagation(); dismissPopover(); toggleSelect(key, event.shiftKey); }} />
+                  <span className="text-xs text-muted-foreground shrink-0" title="Thread number">#{ordinal}</span>
+                  <div className="flex items-center gap-1 flex-wrap min-w-0 flex-1">
+                    <h3 className="font-medium text-sm min-w-0 max-w-full break-words" title={`0x${thread.id.toString(16)}`}>Thread {thread.id}</h3>
+                    {roles.main && <Badge variant="outline" size="xs" className="max-w-full">main</Badge>}
+                    {roles.current && <Badge variant="outline" size="xs" className="max-w-full bg-primary/15 text-primary border-primary/30">current</Badge>}
+                    {roles.event && <Badge variant="outline" size="xs" className="max-w-full">event</Badge>}
+                    {count !== null && count > 0 && <Badge variant="outline" size="xs" className="max-w-full bg-syn-state/15 text-syn-state border-syn-state/30">Suspended{count > 1 ? ` (${count})` : ''}</Badge>}
+                  </div>
+                  <Button variant="ghost" size="icon-xs" className="shrink-0" aria-label={`Thread ${thread.id} details`}
+                    aria-expanded={isExpanded} aria-controls={detailsId} onMouseEnter={dismissPopover}
+                    onContextMenu={event => event.stopPropagation()}
+                    onClick={event => { event.stopPropagation(); dismissPopover(); setExpanded(previous => {
+                      const next = new Set(previous); if (next.has(key)) next.delete(key); else next.add(key); return next;
+                    }); }}>{isExpanded ? <ChevronDown /> : <ChevronRight />}</Button>
+                </div>
+                <p className="truncate text-xs" title={thread.name ?? 'Unnamed'}>{thread.name ?? 'Unnamed'}</p>
+                <p className="text-xs text-muted-foreground flex items-center gap-1 min-w-0">
+                  <span className="shrink-0">Entry:</span>
+                  {entry === null ? UNAVAILABLE_THREAD_VALUE : <TruncatedSymbol text={symbol?.symbol_info ?? entry}
+                    className={`font-mono ${LINK_VALUE_CLASS}`} title={entry}
+                    onContextMenu={event => event.stopPropagation()}
+                    onMouseEnter={dismissPopover} onClick={event => { event.stopPropagation(); dismissPopover(); navigateEntry(entry, symbol?.is_function ?? true); }} />}
+                </p>
+              </div>
+              {isExpanded && <dl id={detailsId} className="grid gap-x-4 gap-y-2 px-3 pb-3 pt-1 text-xs select-text"
+                style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 14rem), 1fr))' }}
+                onMouseEnter={dismissPopover} onClick={event => event.stopPropagation()} onContextMenu={event => event.stopPropagation()}>
+                {details.map(([label, value]) => <div key={label} className="min-w-0">
+                  <dt className="text-muted-foreground">{label}</dt><dd className="whitespace-pre-wrap break-all">{value}</dd>
+                </div>)}
+              </dl>}
+            </div>;
+          }} />
+        {visibleRows.length === 0 && <div className="absolute inset-0 pointer-events-none">
+          <EmptyState icon={<Cpu className={STATE_ICON_CLASS} />} title={query.trim() ? 'No matching threads' : 'No threads found'}
+            subtitle={query.trim() ? 'Clear or change the filter to show threads' : 'Threads will appear when available'} />
+        </div>}
+      </div> : <div className="flex-1 min-h-0"><ProcessUnavailableState icon={Cpu} what="Threads" /></div>}
 
-      {contextMenu && (
-        <ContextMenu x={contextMenu.x} y={contextMenu.y} onClose={closeContextMenu} className="min-w-[180px]">
-          {isPaused && (
-            <>
-              <ContextMenuItem onClick={() => switchToThread(contextMenu.data.tid)}>
-                Switch to thread
-              </ContextMenuItem>
-              <ContextMenuSeparator />
-            </>
-          )}
-          <ContextMenuItem
-            icon={<Pause />}
-            disabled={!canUse}
-            onClick={() => runThreadAction('suspend_threads', targetsFor(contextMenu.data.tid))}
-          >
-            Suspend
-          </ContextMenuItem>
-          <ContextMenuItem
-            icon={<Play />}
-            disabled={!canUse}
-            onClick={() => runThreadAction('resume_threads', targetsFor(contextMenu.data.tid))}
-          >
-            Resume
-          </ContextMenuItem>
-          <ContextMenuSeparator />
-          <ContextMenuItem
-            icon={<Square />}
-            destructive
-            disabled={!canUse}
-            onClick={() => requestKill(targetsFor(contextMenu.data.tid))}
-          >
-            Kill
-          </ContextMenuItem>
-        </ContextMenu>
-      )}
-
-      <Dialog open={killPending !== null} onOpenChange={(o) => !o && setKillPending(null)}>
+      {contextMenu && visibleKeys.has(contextMenu.data.key) && <ContextMenu x={contextMenu.x} y={contextMenu.y} onClose={closeContextMenu} className="min-w-[180px]">
+        {isPaused && <><ContextMenuItem onClick={() => switchToThread(contextMenu.data.key)}>Switch to thread</ContextMenuItem><ContextMenuSeparator /></>}
+        <ContextMenuItem icon={<Pause />} disabled={!available} onClick={() => void runThreadAction('suspend_threads', targetsFor(contextMenu.data.key))}>Suspend</ContextMenuItem>
+        <ContextMenuItem icon={<Play />} disabled={!available} onClick={() => void runThreadAction('resume_threads', targetsFor(contextMenu.data.key))}>Resume</ContextMenuItem>
+        <ContextMenuSeparator />
+        <ContextMenuItem icon={<Square />} destructive disabled={!available} onClick={() => requestKill(targetsFor(contextMenu.data.key))}>Kill</ContextMenuItem>
+      </ContextMenu>}
+      <Dialog open={killPending !== null} onOpenChange={open => !open && setKillPending(null)}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>
-              Terminate {killPending?.length === 1 ? `thread ${killPending[0]}` : `${killPending?.length ?? 0} threads`}?
-            </DialogTitle>
-            <DialogDescription>
-              TerminateThread ends the thread immediately without unwinding: locks it holds stay
-              held and its stack is never freed. This cannot be undone.
-            </DialogDescription>
+            <DialogTitle>Terminate {killPending?.length === 1 ? `thread ${rows.find(row => row.key === killPending[0])?.thread.id ?? ''}` : `${killPending?.length ?? 0} threads`}?</DialogTitle>
+            <DialogDescription>TerminateThread ends the thread immediately without unwinding: locks it holds stay held and its stack is never freed. This cannot be undone.</DialogDescription>
           </DialogHeader>
           <DialogFooter>
             <Button variant="outline" onClick={() => setKillPending(null)}>Cancel</Button>
@@ -657,37 +480,17 @@ export const ContextThreadsView = ({ onNavigateToDisassembly, onNavigateToMemory
           </DialogFooter>
         </DialogContent>
       </Dialog>
-
-      {/* Hover popover - portaled to body to escape rc-dock transforms */}
-      {hoveredThreadId !== null && popoverPos && createPortal(
-        <div
-          className="fixed z-50 bg-popover border border-border rounded-md shadow-lg p-3 min-w-[320px] max-w-[480px] overflow-hidden"
-          style={{ left: popoverPos.x, top: popoverPos.y }}
-          onMouseEnter={handlePopoverMouseEnter}
-          onMouseLeave={handlePopoverMouseLeave}
-        >
-          <div className="text-sm font-medium mb-2">Thread {hoveredThreadId} Call Stack</div>
-          {isLoadingPopover ? (
-            <div className="flex items-center gap-2 text-muted-foreground py-2">
-              <Loader2 className="h-4 w-4 animate-spin" />
-              <span className="text-sm">Loading call stack...</span>
-            </div>
-          ) : popoverError ? (
-            <div className="text-sm text-destructive py-1">{popoverError}</div>
-          ) : cachedFrames && cachedFrames.length > 0 ? (
-            <CallStackFrameList
-              frames={cachedFrames}
-              onClickAddress={onNavigateToDisassembly}
-              onClickMemory={onNavigateToMemoryPointer}
-              compact
-              maxHeight={250}
-            />
-          ) : cachedFrames ? (
-            <div className="text-sm text-muted-foreground py-1">No frames</div>
-          ) : null}
-        </div>,
-        document.body
-      )}
+      {hoveredRow && popoverPos && createPortal(<div
+        className="fixed z-50 bg-popover border border-border rounded-md shadow-lg p-3 min-w-[320px] max-w-[480px] overflow-hidden"
+        style={{ left: popoverPos.x, top: popoverPos.y }}
+        onMouseEnter={() => { popoverHoveredRef.current = true; window.clearTimeout(hideTimerRef.current); }}
+        onMouseLeave={() => { popoverHoveredRef.current = false; startHideTimer(); }}>
+        <div className="text-sm font-medium mb-2">Thread {hoveredRow.thread.id} Call Stack</div>
+        {loadingKey === hoveredKey && !cachedFrames ? <div className="flex items-center gap-2 text-muted-foreground py-2"><Loader2 className="h-4 w-4 animate-spin" /><span className="text-sm">Loading call stack...</span></div>
+          : popoverError ? <div className="text-sm text-destructive py-1">{popoverError}</div>
+            : cachedFrames?.length ? <CallStackFrameList frames={cachedFrames} onClickAddress={onNavigateToDisassembly} onClickMemory={onNavigateToMemoryPointer} compact maxHeight={250} />
+              : cachedFrames ? <div className="text-sm text-muted-foreground py-1">No frames</div> : null}
+      </div>, document.body)}
     </DockPanel>
   );
-};
+}

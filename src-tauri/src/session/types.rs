@@ -50,8 +50,8 @@ pub enum UICommand {
     StopWatchpointTrace { breakpoint_id: String },
     // `preview` marks a hover-preview fetch (Threads popover); the Call Stack
     // panel only follows non-preview (explicit selection) results.
-    GetThreadCallStack { tid: u32, preview: bool },
-    ResolveThreadSymbols,
+    GetThreadCallStack { tid: u32, preview: bool, request_id: String },
+    ResolveThreadSymbols { threads: Vec<(u32, u64)>, request_id: String },
     /// Switch the UI context thread (registers/call stack) to `tid`.
     SelectThread { tid: u32 },
     GetModuleExtraInfo { module_base: u64 },

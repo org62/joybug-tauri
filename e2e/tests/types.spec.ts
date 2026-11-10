@@ -183,22 +183,19 @@ test.describe("Type System", () => {
       const tebType = await waitForTypeResolved(page, sessionId, "_TEB");
       expect(tebType.members.some((m) => m.name === "ThreadLocalStoragePointer")).toBeTruthy();
 
-      // Backend: each thread reports a TEB base (non-null for the live thread).
-      const tebs = (await invoke(page, "get_session_thread_tebs", {
-        sessionId,
-      })) as { tid: number; teb: string | null }[];
-      expect(tebs.length).toBeGreaterThan(0);
-      const withTeb = tebs.find((t) => t.teb);
-      expect(withTeb?.teb).toMatch(/^0x[0-9A-Fa-f]+$/);
-      const tebAddr = withTeb!.teb!;
+      const threads = (await invoke(page, "get_session_threads", { sessionId })) as {
+        id: number; teb_address: string | null; teb_architecture: string | null;
+      }[];
+      const session = await invoke(page, "get_debug_session", { sessionId });
+      const withTeb = threads.find((t) => t.teb_address && t.teb_architecture === session.arch);
+      expect(withTeb?.teb_address).toMatch(/^0x[0-9A-Fa-f]+$/);
+      const tebAddr = withTeb!.teb_address!;
 
-      // UI: the Threads window renders a clickable "TEB: 0x…" line per thread.
       await goToWindow(page, "Threads");
-      const tebLine = page.locator("p", { hasText: /^TEB:/ }).first();
-      await expect(tebLine).toBeVisible({ timeout: 15_000 });
-
-      // Clicking it opens the Types tab with _TEB overlaid on that TEB base.
-      await tebLine.locator(".cursor-pointer").first().click();
+      const row = page.locator(`[data-testid="thread-row"][data-tid="${withTeb!.id}"]`);
+      await row.getByRole("button", { name: `Thread ${withTeb!.id} details` }).click();
+      // Matching architectures retain the typed _TEB overlay, not raw memory.
+      await row.locator("dl").getByText(tebAddr, { exact: true }).click();
       await expect(page.getByText("_TEB", { exact: true }).first()).toBeVisible({
         timeout: 15_000,
       });

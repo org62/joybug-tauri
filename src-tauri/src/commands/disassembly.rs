@@ -3,7 +3,7 @@ use crate::session::disassembly::{process_disassembly_backward_request, process_
 use crate::session::symbols::process_module_extra_info_request;
 use crate::session::UICommand;
 use crate::state::SessionStatesMap;
-use super::types::{ModuleData, ThreadData, ThreadTebData};
+use super::types::{ModuleData, ThreadData};
 use tauri::State;
 use tracing::debug;
 
@@ -102,15 +102,25 @@ pub fn get_session_threads(
     oob_pool: State<'_, super::OobPool>,
 ) -> Result<Vec<ThreadData>> {
     let session_arc = super::get_session_arc(&session_id, &session_states)?;
-    // Always ask the debugger over OOB: the cached event-driven list has no
-    // live suspend counts. Fall back to the cache when OOB is unavailable
-    // (e.g. the session is between runs).
-    let live = super::with_oob_client(&session_arc, &session_id, &oob_pool, |oob, pid| oob.list_threads(pid).unwrap_or_default())
-        .unwrap_or_default();
-    let mut threads: Vec<ThreadData> = if live.is_empty() {
-        session_arc.lock().unwrap().threads.iter().map(ThreadData::from).collect()
-    } else {
-        live.iter().map(ThreadData::from).collect()
+    // Keep transport failure distinct from a target-side query failure. A
+    // successful empty inventory is authoritative, never a reason to use cache.
+    use joybug_core::protocol::{DebuggerRequest, DebuggerResponse};
+    let response = super::with_oob_client(&session_arc, &session_id, &oob_pool, |oob, pid| {
+        oob.send_and_receive(&DebuggerRequest::ListThreads { pid })
+    });
+    let mut threads: Vec<ThreadData> = match response {
+        Ok(Ok(DebuggerResponse::ThreadList { threads })) => threads.iter().map(ThreadData::from).collect(),
+        Ok(Ok(DebuggerResponse::Error { message })) => return Err(crate::error::Error::TargetOperation(message)),
+        Ok(Ok(_)) => return Err(crate::error::Error::InternalCommunication("Unexpected ListThreads response".into())),
+        // No connection/answer: retain cached identities and actual Entry only.
+        // Every sampled field must be unavailable rather than a stale value.
+        Ok(Err(_)) | Err(_) => session_arc.lock().unwrap().threads.iter().map(|t| {
+            ThreadData::from(&joybug_core::protocol_io::ThreadInfo {
+                tid: t.tid,
+                start_address: t.start_address,
+                ..Default::default()
+            })
+        }).collect(),
     };
     // Sort by tid: the OOB list comes from a `HashMap` on the core side, so its
     // order is arbitrary and reshuffles as threads come and go. Rows would then
@@ -120,40 +130,6 @@ pub fn get_session_threads(
     Ok(threads)
 }
 
-/// Per-thread TEB base addresses — anchors for overlaying `_TEB` on a specific thread.
-/// Runs over OOB (like `get_session_teb_peb`), so it works while Paused, Running, or
-/// non-invasively Open. Threads whose TEB can't be read (e.g. terminated) yield `teb: None`.
-#[tauri::command]
-pub fn get_session_thread_tebs(
-    session_id: String,
-    session_states: State<'_, SessionStatesMap>,
-    oob_pool: State<'_, super::OobPool>,
-) -> Result<Vec<ThreadTebData>> {
-    let session_arc = super::get_session_arc(&session_id, &session_states)?;
-    let tids: Vec<u32> = { session_arc.lock().unwrap().threads.iter().map(|t| t.tid).collect() };
-    super::with_oob_client(&session_arc, &session_id, &oob_pool, move |client, pid| {
-        // Non-invasive Open sessions never populate the cached thread list —
-        // same OOB fallback as get_session_threads.
-        let mut tids: Vec<u32> = if tids.is_empty() {
-            client
-                .list_threads(pid)
-                .map(|ts| ts.iter().map(|t| t.tid).collect())
-                .unwrap_or_default()
-        } else {
-            tids
-        };
-        // Same tid order as `get_session_threads`, so the Nth entry here and the
-        // Nth row in the Threads panel are the same thread whichever source
-        // (cached list / OOB `HashMap`) each of them ended up using.
-        tids.sort_unstable();
-        tids.into_iter()
-            .map(|tid| ThreadTebData {
-                tid,
-                teb: client.get_teb_address(pid, tid).ok().map(|a| format!("0x{:X}", a)),
-            })
-            .collect()
-    })
-}
 
 #[tauri::command]
 pub fn request_module_extra_info(

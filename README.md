@@ -49,6 +49,7 @@
 - **Breakpoints** — software, single-shot, hardware (Execute / Write / ReadWrite, 1/2/4/8 bytes), and source-line, with naming, grouping, bulk enable/disable, and persistence across restarts.
 - **Memory** — a hex editor you can open several of at once, with byte/word/dword/qword/float/pointer views, in-place writes, copy-as-hex/text/dump, and a region map with **semantic annotations** (module, section, TEB, PEB, heap, stack, `KUSER_SHARED_DATA`) instead of a wall of undifferentiated VADs.
 - **Registers & stacks** — inline register editing, XMM / NEON / debug-register views, pointer dereference chains, and symbolized call stacks for any thread.
+- **Threads** — compact rows with expandable Windows thread names (legacy notifications and modern descriptions), Entry, TEB, sampled instruction pointer, queried suspend count (including debug freezes), priority, wait reason, Last Error, precise CPU times, creation time, and cycles. Windows listings never suspend or resume threads. Filter by name, ID, Entry/symbol, or main/current/event role without switching context; bulk actions affect only visible selected threads.
 - **Symbols & types** — symbol-server integration with a configurable cache path, `_NT_SYMBOL_PATH` fallback, and an offline mode for air-gapped work. Manual PDB load with GUID/age validation and a force-override. PDB source-line view that warns when the on-disk source doesn't match the build. A live struct overlay across PDB UDTs, built-in `_TEB` / `_PEB` / `KUSER_SHARED_DATA` anchors, and **user-defined types you paste in as C**.
 - **Patching** — an inline Keystone assembler (type `mov eax, 1` at an instruction), with NOP padding, undo, and grouped enable/disable.
 
@@ -201,6 +202,8 @@ npm run lint           # ESLint, including the UI layout guardrails
 npm run test:e2e:build # Build the debug binary used by the E2E suite
 npm run test:e2e       # WebdriverIO suite against the app's real webview
 ```
+
+CI runs only on self-hosted runners: Windows ARM64/X64 and Linux X64. The Linux job requires Ubuntu/Debian with passwordless `sudo apt-get`; when its runner is offline, the job queues rather than using a GitHub-hosted machine.
 
 See [`CLAUDE.md`](CLAUDE.md) for architecture notes and project conventions.
 

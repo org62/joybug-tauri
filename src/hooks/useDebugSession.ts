@@ -1,10 +1,10 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { save as saveFileDialog } from '@tauri-apps/plugin-dialog';
 import { toast } from 'sonner';
 import { DebugSession, Module, ModuleSymbolStatus, PdbLoadResult, Thread, Symbol, hasUsableSymbols } from '@/contexts/SessionContext';
-import { isProcessAvailable, isPausedSession, isTargetLive, canStopSession, formatTauriError, sessionDisplayName, dumpMenuLabels } from '@/lib/sessionHelpers';
+import { isProcessAvailable, isPausedSession, isTargetLive, canStopSession, formatTauriError, reportSessionError, sessionDisplayName, dumpMenuLabels } from '@/lib/sessionHelpers';
 import { useDisplayStatus } from '@/hooks/useDisplayStatus';
 import { usePlatform } from '@/hooks/usePlatform';
 import { perfInvoke, perfSessionUpdate, perfStepIssued } from "@/lib/perf";
@@ -17,8 +17,25 @@ function sameModules(a: Module[], b: Module[]): boolean {
 }
 
 function sameThreads(a: Thread[], b: Thread[]): boolean {
-  return a.length === b.length && a.every((t, i) =>
-    t.id === b[i].id && t.start_address === b[i].start_address && t.suspend_count === b[i].suspend_count);
+  return a.length === b.length && a.every((t, i) => {
+    const other = b[i];
+    return t.id === other.id
+      && t.start_address === other.start_address
+      && t.suspend_count === other.suspend_count
+      && t.name === other.name
+      && t.teb_address === other.teb_address
+      && t.teb_architecture === other.teb_architecture
+      && t.instruction_pointer === other.instruction_pointer
+      && t.instruction_pointer_architecture === other.instruction_pointer_architecture
+      && t.priority === other.priority
+      && t.thread_state === other.thread_state
+      && t.wait_reason === other.wait_reason
+      && t.last_error === other.last_error
+      && t.user_time_100ns === other.user_time_100ns
+      && t.kernel_time_100ns === other.kernel_time_100ns
+      && t.creation_time_filetime_100ns === other.creation_time_filetime_100ns
+      && t.cpu_cycles === other.cpu_cycles;
+  });
 }
 
 // `line_info` is deliberately not compared: line tables land one module at a
@@ -38,6 +55,26 @@ export function useDebugSession(sessionId: string | undefined) {
   >(null);
   const [modules, setModules] = useState<Module[]>([]);
   const [threads, setThreads] = useState<Thread[]>([]);
+  // Advance before committing session events, not in a later effect: an IPC
+  // response can arrive between the event and React's next render.
+  const targetRef = useRef({
+    sessionId,
+    processId: undefined as number | undefined,
+    generation: 0,
+    threadRequest: 0,
+    sessionRevision: 0,
+    status: undefined as DebugSession["status"] | undefined,
+  });
+  if (targetRef.current.sessionId !== sessionId) {
+    targetRef.current = {
+      sessionId,
+      processId: undefined,
+      generation: targetRef.current.generation + 1,
+      threadRequest: 0,
+      sessionRevision: targetRef.current.sessionRevision + 1,
+      status: undefined,
+    };
+  }
   const [symbolStatuses, setSymbolStatuses] = useState<ModuleSymbolStatus[]>([]);
   // Line tables are parsed in the background, after the symbols. The key names
   // the modules whose table is ready (the source view asks again when it
@@ -86,15 +123,21 @@ export function useDebugSession(sessionId: string | undefined) {
   }, [sessionId]);
 
   const loadThreads = useCallback(async () => {
-    if (!sessionId) return [];
+    const target = targetRef.current;
+    if (!sessionId || target.sessionId !== sessionId || target.processId == null) return [];
+    const generation = target.generation;
+    const request = ++target.threadRequest;
+    const isCurrent = () => targetRef.current.sessionId === sessionId
+      && targetRef.current.generation === generation
+      && targetRef.current.processId === target.processId
+      && targetRef.current.threadRequest === request;
     try {
       const thrs = await perfInvoke<Thread[]>("threads", "get_session_threads", { sessionId }, sessionId);
-      setThreads(prev => sameThreads(prev, thrs) ? prev : thrs);
+      if (!isCurrent()) return [];
+      setThreads(prev => !isCurrent() || sameThreads(prev, thrs) ? prev : thrs);
       return thrs;
     } catch (error) {
-      const errorMessage = `Failed to load threads: ${error}`;
-      toast.error(errorMessage);
-      console.error(errorMessage);
+      if (isCurrent()) reportSessionError("load threads", error, sessionId);
       return [];
     }
   }, [sessionId]);
@@ -224,6 +267,29 @@ export function useDebugSession(sessionId: string | undefined) {
   }, [sessionId]);
 
   const handleSessionUpdate = useCallback((newSession: DebugSession) => {
+    if (newSession.id !== sessionId || targetRef.current.sessionId !== sessionId) return;
+    const target = targetRef.current;
+    const processId = isProcessAvailable(newSession.status)
+      ? newSession.current_event?.process_id ?? newSession.attach_pid ?? undefined
+      : undefined;
+    target.sessionRevision++;
+    if (target.processId !== processId) {
+      target.generation++;
+      target.threadRequest++;
+      target.processId = processId;
+      setThreads([]);
+    } else if (target.status !== newSession.status) {
+      // Counts include the debug freeze on Windows. Neither that count nor a
+      // stopped IP sample remains valid across a pause/resume transition.
+      target.threadRequest++;
+      setThreads(previous => previous.map(thread => ({
+        ...thread,
+        suspend_count: null,
+        instruction_pointer: null,
+        instruction_pointer_architecture: null,
+      })));
+    }
+    target.status = newSession.status;
     // Before React sees it: the pause must be on record when the views commit.
     perfSessionUpdate(newSession);
     setSession(newSession);
@@ -233,26 +299,31 @@ export function useDebugSession(sessionId: string | undefined) {
     if (exc?.event_type === "Exception" && exc.exception_code != null) {
       localStorage.setItem("joybug_last_exception_code", String(exc.exception_code));
     }
-  }, []);
+  }, [sessionId]);
 
   useEffect(() => {
     // Track fetch ordering to prevent stale responses from overwriting fresh data.
     // Each fetch increments the counter; only the latest fetch applies its result.
     let fetchSeq = 0;
+    let active = true;
     const fetchSession = async () => {
       if (!sessionId) return;
       const mySeq = ++fetchSeq;
+      const revision = targetRef.current.sessionRevision;
       try {
         const result = await invoke<DebugSession>("get_debug_session", { sessionId });
-        if (mySeq === fetchSeq) {
-          setSession(result);
-          setIsLoading(false);
+        if (active && mySeq === fetchSeq && revision === targetRef.current.sessionRevision) {
+          handleSessionUpdate(result);
         }
       } catch (error) {
-        if (mySeq === fetchSeq) {
+        if (active && mySeq === fetchSeq && revision === targetRef.current.sessionRevision) {
           const errorMessage = `Failed to load session: ${error}`;
           toast.error(errorMessage);
           console.error(errorMessage);
+          targetRef.current.generation++;
+          targetRef.current.threadRequest++;
+          targetRef.current.processId = undefined;
+          setThreads([]);
           setSession(null);
           setIsLoading(false);
         }
@@ -265,20 +336,24 @@ export function useDebugSession(sessionId: string | undefined) {
       const unlisten = await listen<DebugSession>(
         "session-updated",
         (event) => {
-          if (event.payload.id === sessionId) {
+          if (active && event.payload.id === sessionId) {
             handleSessionUpdate(event.payload);
           }
         }
       );
       // Re-fetch after listener is active to catch events that fired
       // between the initial fetch and listener setup
-      fetchSession();
+      if (active) fetchSession();
       return unlisten;
     };
 
     const unlistenPromise = listenToSessionUpdates();
 
     return () => {
+      active = false;
+      fetchSeq++;
+      targetRef.current.generation++;
+      targetRef.current.threadRequest++;
       unlistenPromise.then(unlisten => {
         if (unlisten) unlisten();
       });
@@ -286,18 +361,18 @@ export function useDebugSession(sessionId: string | undefined) {
   }, [sessionId, handleSessionUpdate]);
 
   useEffect(() => {
-    if (isProcessAvailable(session?.status)) {
+    if (session?.id === sessionId && isProcessAvailable(session?.status)) {
       loadModules();
       loadThreads();
       loadSymbolStatuses();
-    } else if (session?.status === "Stopped" || typeof session?.status === 'object') {
+    } else {
       setModules([]);
       setThreads([]);
       setSymbolStatuses([]);
       setLineTablesReadyKey('');
       setLineTablesLoading(false);
     }
-  }, [session?.status, loadModules, loadThreads, loadSymbolStatuses]);
+  }, [sessionId, session?.id, session?.current_event?.process_id, session?.attach_pid, session?.status, loadModules, loadThreads, loadSymbolStatuses]);
 
   // Poll modules/threads while the target runs live (Running or non-invasive
   // Open): thread/module churn produces no status transition to re-trigger the
@@ -311,10 +386,13 @@ export function useDebugSession(sessionId: string | undefined) {
   // second; the effect stops as soon as the status is no longer live.
   useEffect(() => {
     if (!isTargetLive(session?.status)) return;
+    let active = true;
     const interval = setInterval(() => {
       loadModules();
       loadThreads();
       if (sessionId) {
+        const generation = targetRef.current.generation;
+        const revision = targetRef.current.sessionRevision;
         invoke<DebugSession>("get_debug_session", { sessionId })
           .then((s) => {
             // Commit ONLY the transition the self-heal exists for: live → not
@@ -323,12 +401,15 @@ export function useDebugSession(sessionId: string | undefined) {
             // object-identity effects); and a stale still-"Running" response
             // arriving after a real `session-updated` Paused event must never
             // overwrite it — this direction check makes that impossible.
-            if (s && !isTargetLive(s.status)) handleSessionUpdate(s);
+            if (active && targetRef.current.sessionId === sessionId
+              && targetRef.current.generation === generation
+              && targetRef.current.sessionRevision === revision
+              && s && !isTargetLive(s.status)) handleSessionUpdate(s);
           })
           .catch(() => {});
       }
     }, 1000);
-    return () => clearInterval(interval);
+    return () => { active = false; clearInterval(interval); };
   }, [session?.status, sessionId, loadModules, loadThreads, handleSessionUpdate]);
 
   // Poll symbol statuses while PDB downloads or line-table parses are in flight
@@ -498,6 +579,11 @@ export function useDebugSession(sessionId: string | undefined) {
   const handleRestart = useCallback(async () => {
     if (!sessionId || !canStop) return;
     setBusyAction("restart");
+    targetRef.current.generation++;
+    targetRef.current.threadRequest++;
+    targetRef.current.processId = undefined;
+    setThreads([]);
+    const generation = targetRef.current.generation;
     try {
       await invoke("restart_debug_session", { sessionId });
       toast.success("Restarting session…");
@@ -505,10 +591,20 @@ export function useDebugSession(sessionId: string | undefined) {
       const errorMessage = `Failed to restart session: ${formatTauriError(error)}`;
       toast.error(errorMessage);
       console.error(errorMessage);
+      if (targetRef.current.sessionId === sessionId && targetRef.current.generation === generation) {
+        try {
+          const current = await invoke<DebugSession>("get_debug_session", { sessionId });
+          if (targetRef.current.sessionId === sessionId && targetRef.current.generation === generation) {
+            handleSessionUpdate(current);
+          }
+        } catch (refreshError) {
+          reportSessionError("refresh session", refreshError, sessionId);
+        }
+      }
     } finally {
       setBusyAction(null);
     }
-  }, [sessionId, canStop]);
+  }, [sessionId, canStop, handleSessionUpdate]);
 
   const handlePause = useCallback(async () => {
     if (!sessionId || !canPause) return;

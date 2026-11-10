@@ -121,6 +121,7 @@ export function ContextCallStackView({ onNavigateToDisassembly, onNavigateToMemo
 
   // Listen for callstack updates
   useEffect(() => {
+    let active = true;
     const unlistenUpdated = listen('callstack-updated', (event: any) => {
       if (event.payload.session_id === sessionData?.session?.id) {
         setCallStack(event.payload.frames);
@@ -139,10 +140,11 @@ export function ContextCallStackView({ onNavigateToDisassembly, onNavigateToMemo
     // thread "redirects" its call stack here (the primary path in non-invasive mode,
     // which has no single current thread). Hover-preview fetches (the Threads
     // popover) carry preview=true and must NOT retarget this panel.
-    const unlistenThread = listen<{ session_id: string; tid: number; preview: boolean; frames: CallStackFrame[] }>(
+    const unlistenThread = listen<{ session_id: string; process_id: number; tid: number; preview: boolean; frames: CallStackFrame[] }>(
       'thread-callstack-updated',
       (event) => {
-        if (event.payload.session_id === sessionData?.session?.id && !event.payload.preview) {
+        if (active && event.payload.session_id === sessionData?.session?.id
+          && event.payload.process_id === sessionData.processId && !event.payload.preview) {
           setRedirectedTid(event.payload.tid);
           setCallStack(event.payload.frames);
           setError(null);
@@ -151,11 +153,12 @@ export function ContextCallStackView({ onNavigateToDisassembly, onNavigateToMemo
     );
 
     return () => {
+      active = false;
       unlistenUpdated.then(f => f());
       unlistenError.then(f => f());
       unlistenThread.then(f => f());
     };
-  }, [sessionData?.session?.id]);
+  }, [sessionData?.session?.id, sessionData.processId]);
 
   // Track if component is visible (mounted)
   useEffect(() => {

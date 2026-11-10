@@ -261,11 +261,9 @@ pub(crate) fn update_session_from_event(state: &mut SessionStateUI, event: &joyb
                 info!("Added main executable module: {} at 0x{:X}", module_name, base_of_image);
             }
 
-            // The OS may report no start address for the initial thread; the
-            // image base is the honest fallback the Threads panel can show.
             let thread = joybug_core::protocol_io::ThreadInfo {
                 tid: *tid,
-                start_address: if *start_address != 0 { *start_address } else { *base_of_image },
+                start_address: *start_address,
                 ..Default::default()
             };
             if !state.threads.iter().any(|t| t.tid == thread.tid) {

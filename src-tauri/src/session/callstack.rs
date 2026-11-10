@@ -144,6 +144,7 @@ pub(crate) fn process_thread_callstack_request(
     pid: u32,
     tid: u32,
     preview: bool,
+    request_id: &str,
 ) {
     debug!("📤 Processing thread callstack request: pid={}, tid={}", pid, tid);
 
@@ -158,6 +159,8 @@ pub(crate) fn process_thread_callstack_request(
                 #[derive(serde::Serialize, Clone)]
                 struct ThreadCallStackResult<'a> {
                     session_id: String,
+                    process_id: u32,
+                    request_id: &'a str,
                     tid: u32,
                     preview: bool,
                     frames: &'a Vec<CallStackData>,
@@ -165,6 +168,8 @@ pub(crate) fn process_thread_callstack_request(
 
                 let result = ThreadCallStackResult {
                     session_id,
+                    process_id: pid,
+                    request_id,
                     tid,
                     preview,
                     frames: &call_stack,
@@ -187,14 +192,18 @@ pub(crate) fn process_thread_callstack_request(
                 };
 
                 #[derive(serde::Serialize, Clone)]
-                struct ThreadCallStackError {
+                struct ThreadCallStackError<'a> {
                     session_id: String,
+                    process_id: u32,
+                    request_id: &'a str,
                     tid: u32,
                     error: String,
                 }
 
                 let error_result = ThreadCallStackError {
                     session_id,
+                    process_id: pid,
+                    request_id,
                     tid,
                     error: e.to_string(),
                 };

@@ -11,18 +11,44 @@ pub struct ModuleData {
 #[derive(serde::Serialize)]
 pub struct ThreadData {
     pub id: u32,
-    pub start_address: String,
-    /// Live user-mode suspend count (see core `ThreadInfo::suspend_count`).
-    /// 0 = runnable; the view derives the "Running"/"Suspended" label from it.
-    pub suspend_count: u32,
+    pub start_address: Option<String>,
+    /// Windows kernel count including debug freezes; Linux logical count; unavailable queries are null.
+    pub suspend_count: Option<u32>,
+    pub name: Option<String>,
+    pub teb_address: Option<String>,
+    pub teb_architecture: Option<joybug_core::interfaces::Architecture>,
+    pub instruction_pointer: Option<String>,
+    pub instruction_pointer_architecture: Option<joybug_core::interfaces::Architecture>,
+    pub priority: Option<i32>,
+    pub thread_state: Option<u32>,
+    pub wait_reason: Option<u32>,
+    pub last_error: Option<u32>,
+    /// Decimal strings preserve all 64 bits across JSON/JavaScript.
+    pub user_time_100ns: Option<String>,
+    pub kernel_time_100ns: Option<String>,
+    pub creation_time_filetime_100ns: Option<String>,
+    pub cpu_cycles: Option<String>,
 }
 
 impl From<&joybug_core::protocol_io::ThreadInfo> for ThreadData {
     fn from(t: &joybug_core::protocol_io::ThreadInfo) -> Self {
         ThreadData {
             id: t.tid,
-            start_address: format!("0x{:X}", t.start_address),
+            start_address: (t.start_address != 0).then(|| format!("0x{:X}", t.start_address)),
             suspend_count: t.suspend_count,
+            name: t.name.clone(),
+            teb_address: t.teb_address.map(|a| format!("0x{:X}", a)),
+            teb_architecture: t.teb_architecture,
+            instruction_pointer: t.instruction_pointer.map(|a| format!("0x{:X}", a)),
+            instruction_pointer_architecture: t.instruction_pointer_architecture,
+            priority: t.priority,
+            thread_state: t.thread_state,
+            wait_reason: t.wait_reason,
+            last_error: t.last_error,
+            user_time_100ns: t.user_time_100ns.map(|v| v.to_string()),
+            kernel_time_100ns: t.kernel_time_100ns.map(|v| v.to_string()),
+            creation_time_filetime_100ns: t.creation_time_filetime_100ns.map(|v| v.to_string()),
+            cpu_cycles: t.cpu_cycles.map(|v| v.to_string()),
         }
     }
 }
@@ -52,12 +78,6 @@ pub struct ProtectResult {
     pub error: Option<String>,
 }
 
-#[derive(serde::Serialize)]
-pub struct ThreadTebData {
-    pub tid: u32,
-    /// TEB base (hex), or `None` for threads whose TEB couldn't be read (e.g. terminated).
-    pub teb: Option<String>,
-}
 
 #[derive(serde::Serialize)]
 pub struct ModuleSymbolStatusData {

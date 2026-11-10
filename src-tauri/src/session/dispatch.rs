@@ -96,7 +96,7 @@ fn dedup_commands(commands: Vec<UICommand>) -> Vec<UICommand> {
                     seen_deref_batch = true;
                 }
             }
-            UICommand::ResolveThreadSymbols => {
+            UICommand::ResolveThreadSymbols { .. } => {
                 if seen_resolve_thread_symbols {
                     keep[i] = false;
                     debug!("Dedup: dropping duplicate ResolveThreadSymbols");
@@ -542,12 +542,12 @@ fn process_command(
             process_stop_watchpoint_trace(session, app_handle_clone, event.pid(), breakpoint_id);
             CommandResult::Continue
         }
-        UICommand::GetThreadCallStack { tid, preview } => {
-            process_thread_callstack_request(session, app_handle_clone, event.pid(), tid, preview);
+        UICommand::GetThreadCallStack { tid, preview, ref request_id } => {
+            process_thread_callstack_request(session, app_handle_clone, event.pid(), tid, preview, request_id);
             CommandResult::Continue
         }
-        UICommand::ResolveThreadSymbols => {
-            process_resolve_thread_symbols(session, app_handle_clone, event);
+        UICommand::ResolveThreadSymbols { ref threads, ref request_id } => {
+            process_resolve_thread_symbols(session, app_handle_clone, event, threads, request_id);
             CommandResult::Continue
         }
         UICommand::SelectThread { tid } => {

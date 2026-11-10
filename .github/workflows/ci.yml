@@ -26,7 +26,7 @@ jobs:
       !startsWith(github.event.head_commit.message, 'Merge pull request ')
     uses: ./.github/workflows/_build.yml
 
-  # Hosted Linux job: core + app build and tests, then the E2E suite against
+  # Self-hosted Linux x64 job: core + app build and tests, then the E2E suite against
   # the app's real WebKitGTK webview through tauri-driver (see the "E2E on
   # Linux" section of CLAUDE.md). Debug build on purpose: the frontend comes
   # from the Vite dev server, and a release build would double the job.
@@ -34,7 +34,7 @@ jobs:
     if: >-
       github.event_name != 'push' ||
       !startsWith(github.event.head_commit.message, 'Merge pull request ')
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, Linux, X64]
     steps:
     - uses: actions/checkout@v4
       with:

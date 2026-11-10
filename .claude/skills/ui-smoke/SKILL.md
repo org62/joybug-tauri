@@ -1,9 +1,9 @@
 ---
-name: verify
+name: ui-smoke
 description: Launch the Joybug Tauri app and drive it over CDP to verify a change end-to-end (real debug session, real UI interaction, screenshots).
 ---
 
-# Verify Joybug UI changes at runtime
+# Smoke-test Joybug UI at runtime
 
 Build/launch recipe (mirrors `e2e/global-setup.ts`; frontend-only changes don't need a rebuild — Vite serves `src/` live):
 

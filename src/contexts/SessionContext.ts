@@ -181,10 +181,23 @@ export interface PdbLoadResult {
 
 export interface Thread {
   id: number;
-  start_address: string;
-  /** Live SuspendThread nesting count; 0 = runnable. The view derives the
-   *  "Running"/"Suspended" label from it. */
-  suspend_count: number;
+  start_address: string | null;
+  /** Windows kernel count including debug freezes; Linux logical count; null when unavailable. */
+  suspend_count: number | null;
+  name: string | null;
+  teb_address: string | null;
+  teb_architecture: NonNullable<DebugSession["arch"]> | null;
+  instruction_pointer: string | null;
+  instruction_pointer_architecture: NonNullable<DebugSession["arch"]> | null;
+  priority: number | null;
+  thread_state: number | null;
+  wait_reason: number | null;
+  last_error: number | null;
+  /** Decimal strings retain the complete 64-bit values. */
+  user_time_100ns: string | null;
+  kernel_time_100ns: string | null;
+  creation_time_filetime_100ns: string | null;
+  cpu_cycles: string | null;
 }
 
 export interface Symbol {

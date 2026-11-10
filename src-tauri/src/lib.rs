@@ -155,7 +155,6 @@ pub fn run() {
             commands::close_process_handle,
             commands::set_process_privilege,
             commands::set_process_window_enabled,
-            commands::get_session_thread_tebs,
             commands::search_session_symbols,
             commands::disassemble_preview_batch,
             commands::get_symbols_in_range,
