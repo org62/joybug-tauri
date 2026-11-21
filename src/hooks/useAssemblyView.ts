@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef, useSyncExternalStore } from 'react';
+import { useState, useCallback, useEffect, useLayoutEffect, useRef, useSyncExternalStore } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { toastError } from '@/lib/logger';
@@ -114,6 +114,7 @@ export function countAsmRows(insns: Instruction[]): number {
 interface FunctionDisassemblyResult {
   session_id: string;
   address: number;
+  request_id: number;
   instructions: Instruction[];
   function_start: string | null;
   function_end: string | null;
@@ -123,6 +124,7 @@ interface FunctionDisassemblyResult {
 interface FunctionDisassemblyError {
   session_id: string;
   address: number;
+  request_id: number;
   error: string;
 }
 
@@ -138,6 +140,8 @@ const SETTINGS_KEY = 'assembly-view-settings';
 // Fallback limit when function bounds aren't available
 // The backend will use actual function bounds when possible
 const DEFAULT_MAX_INSTRUCTIONS = 2000;
+// Session events can outlive a mounted view. IDs never restart on remount.
+let nextDecodeRequest = 0;
 
 // Image-patch comparison defaults OFF: it adds a per-request cost (build an
 // on-disk image snapshot, then for every decoded instruction re-read + compare
@@ -192,12 +196,16 @@ export interface AssemblyViewState {
    *  scroll extension. The view gates its PC-follow/jump auto-scroll on this so
    *  prepend/append don't re-fire it. */
   loadGeneration: number;
+  /** Changes synchronously when a new viewport-centering intent starts. */
+  listingRequest: { readonly current: number };
   /** Signals a just-completed prepend of `count` DISPLAY rows at the top —
    *  instructions plus their derived label rows (`buildAsmRows`), matching what
    *  the view actually inserts. A fresh object per prepend, so an effect keyed
    *  on it re-fires even for equal counts. The view compensates the scroll
    *  offset so the viewport stays visually stable. */
   prependSignal: { count: number };
+  /** Forward context can make a previously clamped anchor centerable. */
+  appendSeq: number;
   /** Bumps when the rows were updated in place (same instructions, fresher
    *  names). Label rows may have appeared or gone above the viewport: the view
    *  keeps the row at the top of the viewport where it was. */
@@ -217,9 +225,6 @@ export interface GoToOptions {
   auto?: boolean;
   record?: boolean;
   departedAddress?: bigint;
-  /** Prefetch adjacent-code context around the loaded function (real steps).
-   *  Gotos/restores stay bare so history identity is exact. */
-  prefetchContext?: boolean;
 }
 
 export interface AssemblyViewActions {
@@ -236,8 +241,7 @@ export interface AssemblyViewActions {
    *  function (with context) unless the PC row is already loaded. Records the
    *  departed location so "back" undoes the jump. */
   goToPC: () => void;
-  /** Fetch & prepend earlier instructions (scroll-up). No-op in file mode, while a
-   *  request is in flight, or once the top of mapped code is reached. */
+  /** Fetch & prepend earlier instructions unless pending or at the range limit. */
   loadMoreAbove: () => void;
   /** Fetch & append later instructions (scroll-down). Same guards as loadMoreAbove. */
   loadMoreBelow: () => void;
@@ -247,7 +251,7 @@ export interface AssemblyViewActions {
 /// provided, the hook disassembles through this callback instead of the
 /// session's `request_function_disassembly` command + events. Addresses are
 /// VAs (load base + RVA). PC-following, breakpoints, and patches do not apply.
-export type AsmDisassembleFn = (va: number, count: number) => Promise<Instruction[]>;
+export type AsmDisassembleFn = (kind: 'anchor' | 'forward' | 'backward', va: bigint, count: number) => Promise<Instruction[]>;
 
 export interface UseAssemblyViewOptions {
   sessionId: string | undefined;
@@ -348,6 +352,7 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
   // (keep the viewport visually stable).
   const [loadGeneration, setLoadGeneration] = useState(0);
   const [prependSignal, setPrependSignal] = useState<{ count: number }>({ count: 0 });
+  const [appendSeq, setAppendSeq] = useState(0);
   const [annotationSeq, setAnnotationSeq] = useState(0);
   const [followSeq, setFollowSeq] = useState(0);
 
@@ -367,6 +372,10 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
   // Refs
   const lastRequestedAddress = useRef<bigint | null>(null);
   const requestInFlight = useRef(false);
+  const listingRequest = useRef(0);
+  const decodeRequest = useRef(0);
+  const invalidatedBy = useRef<AsmLoadReason | null>(null);
+  const pendingAnnotation = useRef<string | null>(null);
   // Mirror of `instructions` for use inside event listeners (avoids stale closures
   // and keeps the setInstructions updater pure).
   const instructionsRef = useRef<Instruction[]>([]);
@@ -380,15 +389,6 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
   // new anchor's rows.
   const pendingAppendTarget = useRef<bigint | null>(null);
   const pendingBackwardTarget = useRef<bigint | null>(null);
-  // Context-prefetch plumbing: PC-follow loads (stepping) arm it at request
-  // time; the replace listener queues it; an effect fires it once the new rows
-  // are in. Explicit goto/back keep their exact anchor view — only automatic
-  // PC-follow surrounds the PC with adjacent code.
-  const prefetchArmed = useRef(false);
-  const prefetchQueued = useRef(false);
-  // Whether the current view is a context view (function + adjacent code) or a
-  // bare anchor view. Refreshes preserve this shape instead of changing it.
-  const contextActive = useRef(false);
   // Track the last PC we auto-navigated to, to detect when PC actually changes (stepping)
   const lastAutoPcAddress = useRef<bigint | null>(null);
   // Track if user manually navigated away from PC
@@ -412,15 +412,12 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
   // that late rejection must not surface as an error on a panel that has
   // already cleared itself.
   const canLoadRef = useRef(canLoad);
-  useEffect(() => { canLoadRef.current = canLoad; }, [canLoad]);
+  useLayoutEffect(() => { canLoadRef.current = canLoad; }, [canLoad]);
 
   // Mirror compareImage for the disassembly-request calls so they read the
   // current value without carrying it in every callback's dependency list.
   const compareImageRef = useRef(compareImage);
   useEffect(() => { compareImageRef.current = compareImage; }, [compareImage]);
-
-  // Keep the listener-visible mirror in sync.
-  useEffect(() => { instructionsRef.current = instructions; }, [instructions]);
 
   // Reset scroll-extension bookkeeping. Called on every full replace (new anchor):
   // a fresh anchor can scroll both ways again, and any in-flight extension is stale.
@@ -429,6 +426,7 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
     reachedBottom.current = false;
     pendingAppendTarget.current = null;
     pendingBackwardTarget.current = null;
+    pendingAnnotation.current = null;
   }, []);
 
   // Apply an edge-extension response: verify it echoes the pending request
@@ -440,12 +438,16 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
     if (pending.current === null || echoed === null || echoed !== pending.current) return;
     pending.current = null;
     const prev = instructionsRef.current;
-    const fresh = freshBeyondEdge(prev, incoming, edge);
+    const room = Math.max(0, MAX_LOADED_INSTRUCTIONS - prev.length);
+    const fresh = room === 0 ? [] : freshBeyondEdge(prev, incoming, edge);
     if (fresh.length === 0) {
       (edge === 'above' ? reachedTop : reachedBottom).current = true;
       return;
     }
+    // Both edges may have been in flight when the cap was nearly reached.
+    if (fresh.length > room) fresh.splice(edge === 'above' ? 0 : room, fresh.length - room);
     const next = edge === 'above' ? [...fresh, ...prev] : [...prev, ...fresh];
+    if (edge === 'below') setAppendSeq((n) => n + 1);
     // Sync the mirror NOW, not in the effect: the opposite edge's response
     // often arrives in the same tick (context prefetch fires both), and it
     // must build on these rows or its setInstructions clobbers them.
@@ -465,52 +467,105 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
   // more precise than the view's anchor address.
   useEffect(() => {
     navHistory.currentDisasmAddress =
-      !userNavigatedAway.current && pcAddress !== null ? pcAddress : currentAddress;
-  }, [navHistory, currentAddress, pcAddress]);
+      !disassemble && !userNavigatedAway.current && pcAddress !== null ? pcAddress : currentAddress;
+  }, [navHistory, currentAddress, pcAddress, disassemble]);
 
   // Why the next function load is requested, for the telemetry (`ui.asm.load.<reason>`).
   // Set by a caller right before it triggers a load; anything unset is a
   // user navigation.
   const loadReason = useRef<AsmLoadReason | null>(null);
 
-  // Load disassembly for an address. `prefetchContext` (PC-follow loads only)
-  // arms an automatic one-chunk extension on both sides once the replace lands.
-  const loadDisassembly = useCallback(async (address: bigint, prefetchContext = false) => {
-    // Consumed here, before any early return, so it never labels a later load.
+  const loadEdge = useCallback((edge: 'above' | 'below') => {
+    if (requestInFlight.current || (!disassemble && (!sessionId || !canLoadRef.current))) return;
+    const above = edge === 'above';
+    const pending = above ? pendingBackwardTarget : pendingAppendTarget;
+    const reached = above ? reachedTop : reachedBottom;
+    if (pending.current !== null || reached.current) return;
+    const cur = instructionsRef.current;
+    if (cur.length === 0 || cur.length >= MAX_LOADED_INSTRUCTIONS) return;
+    // Start at the first/last known instruction boundary. Forward includes
+    // the last row, which applyEdgeExtension drops; backward excludes the first.
+    const target = parseAddress((above ? cur[0] : cur[cur.length - 1]).address);
+    if (target === null) return;
+    if (above && target === 0n) { reached.current = true; return; }
+    pending.current = target;
+    const request = decodeRequest.current;
+    if (disassemble) {
+      void disassemble(above ? 'backward' : 'forward', target, EXTEND_CHUNK).then(
+        (rows) => {
+          if (request === decodeRequest.current) applyEdgeExtension(edge, target, rows);
+        },
+        () => {
+          if (request === decodeRequest.current) applyEdgeExtension(edge, target, []);
+        },
+      );
+      return;
+    }
+    const compareImage = compareImageRef.current;
+    void (above
+      ? invoke('request_disassembly_backward', { sessionId, target: Number(target), count: EXTEND_CHUNK, compareImage })
+      : invoke('request_disassembly', { sessionId, address: Number(target), count: EXTEND_CHUNK, compareImage })
+    ).catch(() => {
+      if (request === decodeRequest.current && pending.current === target) pending.current = null;
+    });
+  }, [disassemble, sessionId, applyEdgeExtension]);
+
+  const loadMoreAbove = useCallback(() => loadEdge('above'), [loadEdge]);
+  const loadMoreBelow = useCallback(() => loadEdge('below'), [loadEdge]);
+
+  const acceptReplacement = useCallback((address: bigint, rows: Instruction[]) => {
+    resetExtension();
+    instructionsRef.current = rows;
+    setInstructions(rows);
+    setLoadGeneration((g) => g + 1);
+    requestInFlight.current = false;
+    invalidatedBy.current = null;
+    setIsLoading(false);
+    setError(null);
+
+    // The decoded anchor is ready now. Seed each short side once, using the
+    // same guards and merge path as scrolling; edge merges do not seed again.
+    const key = `0X${address.toString(16).toUpperCase()}`;
+    const index = rows.findIndex((row) => row.address.toUpperCase() === key);
+    if (index < 0) return;
+    if (index < EXTEND_CHUNK) loadMoreAbove();
+    if (rows.length - index - 1 < EXTEND_CHUNK) loadMoreBelow();
+  }, [resetExtension, loadMoreAbove, loadMoreBelow]);
+
+  const isPendingLiveRequest = useCallback((address: bigint, request: number) =>
+    canLoadRef.current && requestInFlight.current && request === decodeRequest.current
+      && address === lastRequestedAddress.current, []);
+
+  const loadDisassembly = useCallback(async (address: bigint) => {
     const reason = loadReason.current ?? "navigation";
     loadReason.current = null;
-    if (!sessionId && !disassemble) return;
-    // Session mode with no live target (stopped/exited): nothing can serve the
-    // request — don't enter the loading state at all.
-    if (!disassemble && !canLoad) return;
-
-    // Skip duplicate request if already loading the same address
-    if (lastRequestedAddress.current === address && requestInFlight.current) return;
-
+    if (!disassemble && (!sessionId || !canLoadRef.current)) return;
+    const samePending = requestInFlight.current && lastRequestedAddress.current === address;
+    if (!disassemble && samePending && (reason === "navigation" || reason === "pc_follow")) return;
+    // A newer decode of the same pending anchor (e.g. patches changed during
+    // Refresh) supersedes the bytes, not a wheel gesture on that viewport.
+    if (!samePending) listingRequest.current++;
     lastRequestedAddress.current = address;
+    const request = decodeRequest.current = ++nextDecodeRequest;
     requestInFlight.current = true;
+    setCurrentAddress(address);
     setIsLoading(true);
     setError(null);
-    // New anchor: reset scroll-extension state (a replace supersedes any extension).
     resetExtension();
-    prefetchArmed.current = !disassemble && prefetchContext;
 
-    // File data-source: disassemble inline (no function bounds).
     if (disassemble) {
       try {
-        const insns = await disassemble(Number(address), FILE_DISASM_COUNT);
-        setInstructions(insns);
-        setLoadGeneration((g) => g + 1);
-        setFunctionStart(null);
-        setFunctionEnd(null);
-        setFunctionName(null);
-        setCurrentAddress(address);
-        setError(null);
+        const rows = await disassemble('anchor', address, FILE_DISASM_COUNT);
+        if (request === decodeRequest.current) acceptReplacement(address, rows);
       } catch (err) {
+        if (request !== decodeRequest.current) return;
+        instructionsRef.current = [];
+        setInstructions([]);
         setError(formatTauriError(err));
+        requestInFlight.current = false;
+        invalidatedBy.current = null;
+        setIsLoading(false);
       }
-      requestInFlight.current = false;
-      setIsLoading(false);
       return;
     }
 
@@ -521,81 +576,38 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
         address: Number(address),
         maxInstructions: DEFAULT_MAX_INSTRUCTIONS,
         compareImage: compareImageRef.current,
+        requestId: request,
       });
-      setCurrentAddress(address);
     } catch (err) {
+      if (!isPendingLiveRequest(address, request)) return;
+      requestInFlight.current = false;
+      setIsLoading(false);
       const errorMessage = formatTauriError(err);
-      // Stale (the process went away, or a newer request superseded this one)
-      // or benign (session running / mid-teardown): not a user-facing failure —
-      // the view clears itself on process exit.
-      const stale = !canLoadRef.current || lastRequestedAddress.current !== address;
-      if (!stale && !isBenignSessionError(errorMessage)) {
+      if (!isBenignSessionError(errorMessage)) {
         console.error('Failed to request function disassembly:', err);
         setError(errorMessage);
         toastError(`Failed to request disassembly: ${errorMessage}`, sessionId);
       }
+    }
+  }, [sessionId, disassemble, resetExtension, acceptReplacement, isPendingLiveRequest]);
+
+  // In-view moves don't re-decode unless the loaded bytes/options are already
+  // invalid. Carry that invalidation to the new anchor before canceling a load.
+  const moveWithinListing = useCallback((address: bigint) => {
+    if (requestInFlight.current && lastRequestedAddress.current !== address) {
+      if (invalidatedBy.current !== null) {
+        loadReason.current = invalidatedBy.current;
+        loadDisassembly(address);
+        return;
+      }
+      listingRequest.current++;
+      decodeRequest.current = 0;
       requestInFlight.current = false;
       setIsLoading(false);
     }
-  }, [sessionId, disassemble, canLoad, resetExtension]);
-
-  // Prepend earlier instructions (scroll-up). Requests backward disassembly of the
-  // rows immediately before the current top; the `disassembly-backward-updated`
-  // listener dedups and prepends. Single-in-flight + latched top-reached guard.
-  const loadMoreAbove = useCallback(() => {
-    if (disassemble || !sessionId || !canLoad) return;
-    if (pendingBackwardTarget.current !== null || reachedTop.current) return;
-    const cur = instructionsRef.current;
-    if (cur.length === 0 || cur.length >= MAX_LOADED_INSTRUCTIONS) return;
-    const topAddr = parseAddress(cur[0].address);
-    if (topAddr === null) return;
-    if (topAddr === 0n) { reachedTop.current = true; return; }
-    pendingBackwardTarget.current = topAddr;
-    invoke('request_disassembly_backward', {
-      sessionId,
-      target: Number(topAddr),
-      count: EXTEND_CHUNK,
-      compareImage: compareImageRef.current,
-    }).catch(() => {
-      pendingBackwardTarget.current = null;
-    });
-  }, [disassemble, sessionId, canLoad]);
-
-  // Append later instructions (scroll-down). Forward-disassembles from the current
-  // bottom row (no alignment needed); the shared `disassembly-updated` listener
-  // appends the rows past the bottom. Single-in-flight + latched bottom-reached guard.
-  const loadMoreBelow = useCallback(() => {
-    if (disassemble || !sessionId || !canLoad) return;
-    if (pendingAppendTarget.current !== null || reachedBottom.current) return;
-    const cur = instructionsRef.current;
-    if (cur.length === 0 || cur.length >= MAX_LOADED_INSTRUCTIONS) return;
-    const bottomStart = parseAddress(cur[cur.length - 1].address);
-    if (bottomStart === null) return;
-    pendingAppendTarget.current = bottomStart;
-    // Start at the last row so its known-good boundary anchors the forward decode;
-    // dedup drops everything up to and including it, keeping only new rows below.
-    invoke('request_disassembly', {
-      sessionId,
-      address: Number(bottomStart),
-      count: EXTEND_CHUNK,
-      compareImage: compareImageRef.current,
-    }).catch(() => {
-      pendingAppendTarget.current = null;
-    });
-  }, [disassemble, sessionId, canLoad]);
-
-  // Context prefetch: after a PC-follow replace (stepping), pull in one chunk
-  // of adjacent code on each side. A function-only view around the PC is
-  // disorienting — nearby code should be visible without a manual scroll.
-  // Runs after the instructionsRef sync effect above, so the extensions anchor
-  // on the freshly replaced rows; prepends/appends don't bump loadGeneration,
-  // so this fires at most once per replace.
-  useEffect(() => {
-    if (!prefetchQueued.current) return;
-    prefetchQueued.current = false;
-    loadMoreAbove();
-    loadMoreBelow();
-  }, [loadGeneration, loadMoreAbove, loadMoreBelow]);
+    lastRequestedAddress.current = address;
+    setCurrentAddress(address);
+  }, [loadDisassembly]);
 
   // Go to address with history management
   const goToAddressDirect = useCallback((address: bigint, opts?: GoToOptions) => {
@@ -621,7 +633,7 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
       navHistory.push({ tabId: navHistory.disasmTabId, disasmAddress: departed });
     }
 
-    loadDisassembly(address, opts?.prefetchContext ?? false);
+    loadDisassembly(address);
   }, [navHistory, loadDisassembly]);
 
   // Follow a jump/call target from a source row. Records the departed row so
@@ -630,14 +642,16 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
   // becoming the target so later snapshots (tab switches, forward) are
   // row-accurate.
   const followJump = useCallback((target: bigint, source: bigint) => {
-    if (isAddressInView(instructions, target)) {
+    if (isAddressInView(instructionsRef.current, target)) {
+      userNavigatedAway.current = true;
       navHistory.push({ tabId: navHistory.disasmTabId, disasmAddress: source });
       navHistory.currentDisasmAddress = target;
       setJumpTargetAddress(target);
+      moveWithinListing(target);
     } else {
       goToAddressDirect(target, { departedAddress: source });
     }
-  }, [instructions, navHistory, goToAddressDirect]);
+  }, [navHistory, goToAddressDirect, moveWithinListing]);
 
   // Go to address with expression parsing
   const goToAddress = useCallback(async (expression: string, opts?: GoToOptions) => {
@@ -652,25 +666,11 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
     goToAddressDirect(result.address, opts);
   }, [registers, resolveSymbol, goToAddressDirect, sessionId]);
 
-  // Refresh current view, preserving its shape: a context view (stepping) gets
-  // its adjacent code re-prefetched after the replace; a bare anchor view
-  // (goto/restore) stays bare, so refreshes never change what's on screen.
-  //
-  // Anchor on `lastRequestedAddress` (a ref, always the newest full-replace
-  // target), NOT the `currentAddress` state. A background refresh — symbols
-  // finished loading, patches changed, image-compare toggled — can fire during
-  // the async gap of a step's in-flight load, when `currentAddress` still holds
-  // the PREVIOUS function. Reloading that stale address would reset
-  // `lastRequestedAddress` to the old value, so the in-flight step's response
-  // fails its echo check and is dropped — leaving the view stuck on the old
-  // function (the PC row never appears). The ref is already the new target, so
-  // a refresh re-requests it and the dup-guard collapses the redundant load.
   // Re-decode the rows on screen and update them in place: same instructions,
   // fresher annotations (symbol labels, named operands). This is what a symbol
   // load calls for — not a reload: the view keeps its rows, its extended
   // context and its scroll position, so nothing flickers. The whole loaded
   // range is asked for in one tagged request and matched back by address.
-  const pendingAnnotation = useRef<string | null>(null);
   const annotationRequestSeq = useRef(0);
   const refreshAnnotations = useCallback(() => {
     if (disassemble || !sessionId || !canLoad) return;
@@ -718,13 +718,19 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
   }, []);
 
   const refresh = useCallback(() => {
-    loadReason.current ??= "refresh";
-    const keepContext = contextActive.current;
-    const target = lastRequestedAddress.current ?? currentAddress ?? pcAddress;
-    if (target !== null) {
-      loadDisassembly(target, keepContext);
-    }
-  }, [currentAddress, pcAddress, loadDisassembly]);
+    const target = lastRequestedAddress.current;
+    if (target === null) return;
+    loadReason.current = "refresh";
+    loadDisassembly(target);
+  }, [loadDisassembly]);
+
+  const invalidateListing = useCallback((reason: AsmLoadReason) => {
+    const target = lastRequestedAddress.current;
+    if (target === null) return;
+    invalidatedBy.current = reason;
+    loadReason.current = reason;
+    loadDisassembly(target);
+  }, [loadDisassembly]);
 
   // Toggle bytes column
   const toggleBytesColumn = useCallback(() => {
@@ -752,8 +758,8 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
   useEffect(() => {
     if (compareImage === prevCompareImage.current) return;
     prevCompareImage.current = compareImage;
-    refresh();
-  }, [compareImage, refresh]);
+    invalidateListing("refresh");
+  }, [compareImage, invalidateListing]);
 
   // Jump back to the current PC (toolbar button; also the recovery path when
   // the view is stranded elsewhere). Behaves like a user navigation (recorded
@@ -767,12 +773,12 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
     userNavigatedAway.current = false;
     setJumpTargetAddress(null);
     navHistory.currentDisasmAddress = pcAddress;
-    // Already loaded — the component re-centers the PC row; otherwise reload
-    // the PC's function with adjacent context (same shape as a step landing).
-    if (!isAddressInView(instructionsRef.current, pcAddress)) {
-      loadDisassembly(pcAddress, true);
+    if (isAddressInView(instructionsRef.current, pcAddress)) {
+      moveWithinListing(pcAddress);
+    } else {
+      loadDisassembly(pcAddress);
     }
-  }, [pcAddress, navHistory, loadDisassembly]);
+  }, [pcAddress, navHistory, loadDisassembly, moveWithinListing]);
 
   // Re-request the current view when background symbol loading completes so raw
   // addresses upgrade to symbol names. The ref starts at the mount value, so no
@@ -791,10 +797,6 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
   symbolStatusesRef.current = symbolStatuses;
   const modulesRef = useRef(modules);
   modulesRef.current = modules;
-  // `refresh` changes identity with every step; the effects below must not
-  // re-run (or re-subscribe) for that.
-  const refreshRef = useRef(refresh);
-  refreshRef.current = refresh;
   useEffect(() => {
     if (symbolsRefreshKey === prevSymbolsKey.current) return;
     prevSymbolsKey.current = symbolsRefreshKey;
@@ -803,8 +805,7 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
     prevSymbolStatuses.current = now;
     if (disassemble) {
       // File mode: symbols come from one explicitly loaded file; reload.
-      loadReason.current = "symbols_loaded";
-      refreshRef.current();
+      invalidateListing("symbols_loaded");
       return;
     }
     // The modules whose symbols just became usable, or upgraded from export
@@ -818,15 +819,15 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
       return listingTouchesRange(instructionsRef.current, Number(base), Number(base) + module.size);
     });
     if (relevant) refreshAnnotations();
-  }, [symbolsRefreshKey, disassemble, refreshAnnotations]);
+  }, [symbolsRefreshKey, disassemble, invalidateListing, refreshAnnotations]);
 
   // The diagnostic disassembly switches (Settings -> Diagnostics) changed what
   // a listing contains: re-request the current one.
   useEffect(() => {
     if (!sessionId || disassemble) return;
-    const unlisten = listen('disasm-options-changed', () => refreshRef.current());
+    const unlisten = listen('disasm-options-changed', () => invalidateListing("refresh"));
     return () => { void unlisten.then((fn) => fn()); };
-  }, [sessionId, disassemble]);
+  }, [sessionId, disassemble, invalidateListing]);
 
   // Listen for disassembly events (session mode only; file mode resolves inline)
   useEffect(() => {
@@ -835,35 +836,16 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
     const unlistenSuccess = listen<FunctionDisassemblyResult>(
       'function-disassembly-updated',
       (event) => {
-        if (event.payload.session_id === sessionId) {
-          // Replace responses must echo the last requested anchor. A mismatch
-          // is a stale response — e.g. the slow OOB fallback serving a request
-          // that raced a resume (an auto-continued event's PC) and lands after
-          // a newer replace — and must never hijack the current view.
-          let echoed: bigint | null = null;
-          try { echoed = BigInt(event.payload.address); } catch { echoed = null; }
-          if (echoed === null || echoed !== lastRequestedAddress.current) return;
-          // Sync the mirror immediately so extension responses landing in the
-          // same tick anchor on the new rows (their pending guards discard
-          // stale ones, but the mirror must never lag a full replace).
-          instructionsRef.current = event.payload.instructions;
-          setInstructions(event.payload.instructions);
-          perfAsmLoadEnd(event.payload.instructions.length);
-          setLoadGeneration((g) => g + 1);
-          resetExtension();
-          // An armed replace produces a context view; anything else is bare.
-          contextActive.current = prefetchArmed.current;
-          if (prefetchArmed.current) {
-            prefetchArmed.current = false;
-            prefetchQueued.current = true;
-          }
-          setFunctionStart(event.payload.function_start ? BigInt(event.payload.function_start) : null);
-          setFunctionEnd(event.payload.function_end ? BigInt(event.payload.function_end) : null);
-          setFunctionName(event.payload.function_name);
-          requestInFlight.current = false;
-          setIsLoading(false);
-          setError(null);
-        }
+        const { payload } = event;
+        if (payload.session_id !== sessionId) return;
+        let echoed: bigint;
+        try { echoed = BigInt(payload.address); } catch { return; }
+        if (!isPendingLiveRequest(echoed, payload.request_id)) return;
+        perfAsmLoadEnd(payload.instructions.length);
+        setFunctionStart(payload.function_start ? BigInt(payload.function_start) : null);
+        setFunctionEnd(payload.function_end ? BigInt(payload.function_end) : null);
+        setFunctionName(payload.function_name);
+        acceptReplacement(echoed, payload.instructions);
       }
     );
 
@@ -882,45 +864,33 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
       'disassembly-backward-error',
       (event) => {
         if (event.payload.session_id !== sessionId) return;
-        if (pendingBackwardTarget.current === null || BigInt(event.payload.target) !== pendingBackwardTarget.current) return;
-        pendingBackwardTarget.current = null;
-        // Undecodable / unmapped window above — latch so we don't respin every scroll.
-        reachedTop.current = true;
+        applyEdgeExtension('above', BigInt(event.payload.target), []);
       }
     );
 
     const unlistenError = listen<FunctionDisassemblyError>(
       'function-disassembly-error',
       (event) => {
-        if (event.payload.session_id === sessionId) {
-          // Same echo rule as the success channel: a stale error must not
-          // clobber a fresher view's state.
-          let echoed: bigint | null = null;
-          try { echoed = BigInt(event.payload.address); } catch { echoed = null; }
-          if (echoed === null || echoed !== lastRequestedAddress.current) return;
-          const msg = event.payload.error || '';
-          if (canLoadRef.current && !isBenignSessionError(msg)) {
-            setError(msg);
-            // Drop the previous view's rows: this is a full-replace navigation
-            // that failed (e.g. unreadable/unmapped target), so keeping the old
-            // instructions would show stale code as if it were the requested
-            // address. Clearing lets the error surface instead.
-            instructionsRef.current = [];
-            setInstructions([]);
-            toastError(`Disassembly failed: ${msg}`, sessionId);
-          }
-          requestInFlight.current = false;
-          setIsLoading(false);
+        if (event.payload.session_id !== sessionId) return;
+        let echoed: bigint;
+        try { echoed = BigInt(event.payload.address); } catch { return; }
+        if (!isPendingLiveRequest(echoed, event.payload.request_id)) return;
+        requestInFlight.current = false;
+        invalidatedBy.current = null;
+        setIsLoading(false);
+        const msg = event.payload.error || '';
+        if (!isBenignSessionError(msg)) {
+          setError(msg);
+          instructionsRef.current = [];
+          setInstructions([]);
+          toastError(`Disassembly failed: ${msg}`, sessionId);
         }
       }
     );
 
     // Forward disassembly result — strictly the scroll-down APPEND channel
-    // (`loadMoreBelow` is the only requester of forward `request_disassembly`).
-    // A stale payload here — one whose request was orphaned by a full replace —
-    // must never be treated as a replace: that would hijack the fresh view with
-    // an old-edge chunk, which is exactly the "goto/step lands on the wrong
-    // rows" bug. `applyEdgeExtension`'s echo check discards it.
+    // An orphaned forward payload must never replace the listing. Only a
+    // matching pending edge can append it, and tagged reads are annotations.
     const unlistenOldSuccess = listen<{session_id: string, address: number, instructions: Instruction[], request_id?: string | null}>(
       'disassembly-updated',
       (event) => {
@@ -931,7 +901,7 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
         if (event.payload.request_id) {
           if (event.payload.request_id !== pendingAnnotation.current) return;
           pendingAnnotation.current = null;
-          if (!applyAnnotations(event.payload.instructions)) refresh();
+          if (!applyAnnotations(event.payload.instructions)) invalidateListing("refresh");
           return;
         }
         let echoed: bigint | null = null;
@@ -956,9 +926,7 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
         }
         let echoed: bigint | null = null;
         try { echoed = BigInt(event.payload.address); } catch { echoed = null; }
-        if (pendingAppendTarget.current === null || echoed !== pendingAppendTarget.current) return;
-        pendingAppendTarget.current = null;
-        reachedBottom.current = true;
+        applyEdgeExtension('below', echoed, []);
       }
     );
 
@@ -977,18 +945,7 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
         const changed = event.payload.changed ?? event.payload.revision !== lastPatchRevision.current;
         lastPatchRevision.current = event.payload.revision;
         if (!changed) return; // the per-pause re-broadcast — nothing to re-decode
-        // Re-request the current disassembly to pick up is_patched flags and
-        // new bytes. Context views get their surrounding code back.
-        if (contextActive.current) prefetchArmed.current = true;
-        perfAsmLoadStart("patches_updated", sessionId);
-        invoke('request_function_disassembly', {
-          sessionId,
-          address: Number(lastRequestedAddress.current),
-          maxInstructions: DEFAULT_MAX_INSTRUCTIONS,
-          compareImage: compareImageRef.current,
-        }).catch(() => {
-          // Ignore errors (e.g., session ended between patch and refresh)
-        });
+        invalidateListing("patches_updated");
       }
     );
 
@@ -1001,7 +958,7 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
       unlistenForwardError.then(unlisten => unlisten());
       unlistenPatches.then(unlisten => unlisten());
     };
-  }, [sessionId, disassemble, resetExtension, applyEdgeExtension]);
+  }, [sessionId, disassemble, acceptReplacement, applyAnnotations, applyEdgeExtension, invalidateListing, isPendingLiveRequest]);
 
   // External navigation (e.g., symbol click). MUST be declared before the
   // PC-following effect so it runs first on mount and sets userNavigatedAway.
@@ -1019,7 +976,8 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
     userNavigatedAway.current = true;
     setJumpTargetAddress(addr);
     navHistory.currentDisasmAddress = addr;
-    if (!isAddressInView(instructions, addr)) loadDisassembly(addr);
+    if (isAddressInView(instructionsRef.current, addr)) moveWithinListing(addr);
+    else loadDisassembly(addr);
   });
 
   // Auto-load when PC changes (stepping) or a new pause event lands (breakpoint
@@ -1089,13 +1047,9 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
           // PC left the decoded window — load a fresh view around it, with
           // adjacent-code context so it's never an isolated view.
           loadReason.current = "pc_follow";
-          goToAddressDirect(pcAddress, { auto: true, prefetchContext: isRealStep });
-        } else if (!contextActive.current && isRealStep) {
-          // In-window step on a bare view (e.g. right after a goto): pull in
-          // surrounding code once so nearby instructions are visible.
-          contextActive.current = true;
-          loadMoreAbove();
-          loadMoreBelow();
+          goToAddressDirect(pcAddress, { auto: true });
+        } else {
+          moveWithinListing(pcAddress);
         }
         // PC already in the window: the scroll effect centers it — no re-decode.
       }
@@ -1103,14 +1057,26 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
     }
     // If PC didn't change and no new pause landed, user can freely navigate
     // without being pulled back
-  }, [pcAddress, pauseTick, sessionId, canLoad, currentAddress, functionStart, functionEnd, goToAddressDirect, navHistory, loadMoreAbove, loadMoreBelow]);
+  }, [pcAddress, pauseTick, sessionId, canLoad, currentAddress, goToAddressDirect, navHistory, moveWithinListing]);
+
+  // Invalidate every file promise on unmount/source change, including edge
+  // reads that reject after the image is closed and reopened at the same VA.
+  useLayoutEffect(() => {
+    if (!disassemble) return;
+    return () => {
+      listingRequest.current++;
+      decodeRequest.current = 0;
+      lastRequestedAddress.current = null;
+      requestInFlight.current = false;
+    };
+  }, [disassemble]);
 
   // File mode: disassemble the initial offset once on mount.
   useEffect(() => {
     if (!disassemble) return;
-    if (currentAddress !== null || instructions.length > 0) return;
+    if (lastRequestedAddress.current !== null) return;
     goToAddressDirect(initialAddress ?? 0n, { auto: true });
-  }, [disassemble, initialAddress, currentAddress, instructions.length, goToAddressDirect]);
+  }, [disassemble, initialAddress, goToAddressDirect]);
 
   // Clear state when the session ends or its process goes away (session mode
   // only). Keyed on `canLoad`, not `isPaused`: a running target is still a
@@ -1119,6 +1085,9 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
   useEffect(() => {
     if (disassemble) return;
     if (!sessionId || !canLoad) {
+      listingRequest.current++;
+      decodeRequest.current = 0;
+      instructionsRef.current = [];
       setInstructions([]);
       setCurrentAddress(null);
       setFunctionStart(null);
@@ -1130,9 +1099,7 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
       lastRequestedAddress.current = null;
       requestInFlight.current = false;
       userNavigatedAway.current = false;
-      contextActive.current = false;
-      prefetchArmed.current = false;
-      prefetchQueued.current = false;
+      invalidatedBy.current = null;
       lastPatchRevision.current = null;
       resetExtension();
     }
@@ -1153,9 +1120,11 @@ export function useAssemblyView(options: UseAssemblyViewOptions): AssemblyViewSt
     canGoBack,
     canGoForward,
     jumpTarget,
+    listingRequest,
     // Infinite-scroll extension
     loadGeneration,
     prependSignal,
+    appendSeq,
     annotationSeq,
     followSeq,
     // Actions

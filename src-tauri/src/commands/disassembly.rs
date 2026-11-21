@@ -37,6 +37,7 @@ pub fn request_function_disassembly(
     address: u64,
     max_instructions: usize,
     compare_image: bool,
+    request_id: u64,
     session_states: State<'_, SessionStatesMap>,
     oob_pool: State<'_, super::OobPool>,
     app_handle: tauri::AppHandle,
@@ -46,8 +47,8 @@ pub fn request_function_disassembly(
     let handle = Some(app_handle);
     super::paused_or_oob(
         &session_id, &session_states, &oob_pool,
-        UICommand::DisassembleFunction { arch, address, max_instructions: max_instructions as u32, compare_image },
-        |client, pid| process_function_disassembly_request(client, &handle, pid, arch, address, max_instructions as u32, compare_image),
+        UICommand::DisassembleFunction { arch, address, max_instructions: max_instructions as u32, compare_image, request_id },
+        |client, pid| process_function_disassembly_request(client, &handle, pid, arch, address, max_instructions as u32, compare_image, request_id),
     )
 }
 

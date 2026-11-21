@@ -1,10 +1,10 @@
 import type { Locator } from "../helpers/test-fixtures";
 import { test, expect } from "../helpers/test-fixtures";
-import { ASM_PANEL, ASM_ROW, PC_ROW } from "../helpers/selectors";
-import { openPe } from "../helpers/pe-helpers";
-import { fixtureExe } from "../helpers/session-helpers";
+import { ASM_PANEL, ASM_ROW, PC_ROW, SELECTED_ROW } from "../helpers/selectors";
+import { openPe, leafLink, pick } from "../helpers/pe-helpers";
+import { fixtureExe, rowAddress } from "../helpers/session-helpers";
 
-const ROW_TRACE = `${ASM_PANEL} [data-testid="asm-row-trace"]`;
+const ROW_TRACE = '[data-testid="asm-row-trace"]';
 const XREF_ROW = '[data-testid="pe-xref-row"]';
 const IMPORT_ROW = '[data-testid="pe-import-row"]';
 
@@ -12,12 +12,12 @@ const IMPORT_ROW = '[data-testid="pe-import-row"]';
 // entry the linker kept is referenced by code, so xrefs to an import exist.
 const HELLO_C32 = () => fixtureExe("hello_c32");
 
-/** First `0x…` token of a listing row: its address, formatted per the viewer's mode. */
-async function rowAddress(row: Locator): Promise<string> {
+/** The first hex token in an xref row is its source VA when VA mode is selected. */
+async function xrefSourceVa(row: Locator): Promise<bigint> {
   const text = await row.innerText();
   const m = text.match(/0x[0-9A-F]+/i);
   expect(m, `row has an address: ${text}`).not.toBeNull();
-  return m![0];
+  return BigInt(m![0]);
 }
 
 test.describe("PE Viewer static analysis", () => {
@@ -25,18 +25,19 @@ test.describe("PE Viewer static analysis", () => {
     tauriPage: page,
   }) => {
     await openPe(page, HELLO_C32());
+    await pick(page, "pe-addr-mode", "VA");
+    const entryVa = (await leafLink(page, "AddressOfEntryPoint").innerText()).trim();
 
     // The Xrefs tab is part of the default layout.
     await expect(page.getByText("Xrefs", { exact: true }).first()).toBeVisible();
 
-    // Right-click the first instruction → the Xrefs tab shows it as the target.
-    const firstRow = page.locator(ASM_ROW).first();
-    await expect(firstRow).toBeVisible({ timeout: 15_000 });
-    const entryAddr = await rowAddress(firstRow);
-    await firstRow.click({ button: "right" });
+    // Right-click the instruction at the actual image entry.
+    const entryRow = page.locator(`${ASM_ROW}[data-address="${rowAddress(BigInt(entryVa))}"]`);
+    await expect(entryRow).toBeVisible({ timeout: 15_000 });
+    await entryRow.click({ button: "right" });
     await page.getByRole("menuitem", { name: "Xrefs to This Address" }).click();
     await expect(page.getByTestId("pe-xrefs-panel")).toBeVisible({ timeout: 10_000 });
-    await expect(page.getByTestId("pe-xrefs-target")).toHaveText(new RegExp(entryAddr, "i"));
+    await expect(page.getByTestId("pe-xrefs-target")).toHaveText(entryVa);
     // The sweep finishes and reports a count (the entry point itself may well
     // have none — it is reached by the loader, not by code).
     await expect(page.getByTestId("pe-xrefs-count")).toHaveText(/^\d+$/, { timeout: 20_000 });
@@ -69,30 +70,34 @@ test.describe("PE Viewer static analysis", () => {
     const xref = page.locator(XREF_ROW).first();
     await expect(xref).toBeVisible();
     await expect(xref).toContainText(/call|jmp|mov|push|lea/i);
-    const from = await rowAddress(xref);
+    const from = await xrefSourceVa(xref);
     await xref.click();
-    await expect(
-      page.locator(ASM_ROW).filter({ hasText: new RegExp(from, "i") }).first(),
-    ).toBeVisible({ timeout: 10_000 });
+    await expect(page.locator(SELECTED_ROW)).toHaveAttribute("data-address", rowAddress(from), { timeout: 10_000 });
   });
 
   test("emulate from here runs the file with no process and annotates the listing", async ({
     tauriPage: page,
   }) => {
     await openPe(page, HELLO_C32());
+    await pick(page, "pe-addr-mode", "VA");
 
     const panel = page.locator(ASM_PANEL);
-    const firstRow = page.locator(ASM_ROW).first();
-    await expect(firstRow).toBeVisible({ timeout: 15_000 });
-    const origin = await rowAddress(firstRow);
-    await firstRow.click({ button: "right" });
+    const origin = rowAddress(BigInt((await leafLink(page, "AddressOfEntryPoint").innerText()).trim()));
+    const entryRow = page.locator(`${ASM_ROW}[data-address="${origin}"]`);
+    await expect(entryRow).toBeVisible({ timeout: 15_000 });
+    await entryRow.click({ button: "right" });
     await page.getByRole("menuitem", { name: "Emulate from Here" }).click();
 
     // The origin plays the PC. Right-clicking selected it, and selection
     // outranks the PC tint, so move the selection to another row first.
-    await page.locator(ASM_ROW).nth(3).click();
+    const nextAddress = await page.locator(ASM_ROW).evaluateAll((rows, entry) => {
+      const index = rows.findIndex((row) => row.dataset.address === entry);
+      return index >= 0 ? rows[index + 1]?.dataset.address : undefined;
+    }, origin);
+    expect(nextAddress).toBeDefined();
+    await page.locator(`${ASM_ROW}[data-address="${nextAddress}"]`).click();
     await expect(page.locator(PC_ROW)).toHaveCount(1, { timeout: 10_000 });
-    await expect(page.locator(PC_ROW)).toContainText(new RegExp(origin, "i"));
+    await expect(page.locator(PC_ROW)).toHaveAttribute("data-address", origin);
 
     // The fixture disables lightning for every other spec, and the PE page was
     // already mounted with that setting, so switch it on through the "…" menu
@@ -109,7 +114,7 @@ test.describe("PE Viewer static analysis", () => {
     // away on its first instruction, so the origin row is the one in view
     // that ran: it keeps the PC tint (which outranks "executed") but carries
     // the per-row trace annotation.
-    await expect(page.locator(ROW_TRACE).first()).toHaveText(/\S/, { timeout: 30_000 });
+    await expect(entryRow.locator(ROW_TRACE)).toHaveText(/\S/, { timeout: 30_000 });
     // Anything else the run touched in view is tinted as executed — 0 or more
     // rows; never the PC row, which must keep its own highlight.
     await expect(page.locator(PC_ROW)).toHaveCount(1);

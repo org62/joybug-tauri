@@ -5,6 +5,7 @@ import {
   invoke,
   debuggeeArch,
   pcRegister,
+  rowAddress,
 } from "../helpers/session-helpers";
 import {
   waitForPaused,
@@ -14,6 +15,7 @@ import {
   restoreDefaultSettings,
   continueSession,
   pauseMidFunction,
+  getPcAddress,
 } from "../helpers/wait-helpers";
 import {
   installEventCapture,
@@ -145,55 +147,48 @@ test.describe("Disassembly View", () => {
         "function-disassembly-updated",
       ]);
 
-      // The race's damaging order, reproduced deterministically: a full-replace
-      // request followed by a forward chunk request anchored at RIP (the shape
-      // loadMoreBelow sends) whose pending marker the replace has already
-      // cleared. The session channel is FIFO (sequential awaited invokes), so
-      // the orphaned chunk response arrives LAST — it used to be misread as a
-      // full replace and hijack the fresh view, putting the RIP row at the
-      // very top.
-      const s = await invoke(page, "get_debug_session", { sessionId });
-      const pc = s.current_event.address;
-      await invoke(page, "request_function_disassembly", {
-        sessionId,
-        address: pc,
-        maxInstructions: 2000,
-        compareImage: true,
-      });
-      await invoke(page, "request_disassembly", {
-        sessionId,
-        address: pc,
-        count: 64,
-        compareImage: true,
+      const pc = await getPcAddress(page, sessionId);
+      if (pc === null) throw new Error("Expected a paused PC");
+      const pcVa = rowAddress(pc);
+      const pcRow = page.locator(`${PC_ROW}[data-address="${pcVa}"]`);
+      await expect(pcRow).toBeVisible();
+
+      // Get a full replacement through the view so its pending request is real.
+      // Identify the predecessor in the replacement itself: the orphaned
+      // forward chunk starts at the PC and cannot contain that instruction.
+      await page.locator(`${ASM_PANEL} button[title="Refresh"]`).click();
+      let predecessor = "";
+      await expect(async () => {
+        const events = await getCapturedEvents(page, "function-disassembly-updated");
+        const listing = events.find((e) => e.session_id === sessionId && e.address === pc);
+        const pcIndex = listing?.instructions.findIndex((i: { address: string }) => i.address === pcVa) ?? -1;
+        expect(pcIndex).toBeGreaterThan(0);
+        predecessor = listing.instructions[pcIndex - 1].address;
+      }).toPass({ timeout: 10_000, intervals: [50, 100] });
+      const predecessorRow = page.locator(`${ASM_ROW}[data-address="${predecessor}"]`);
+      await expect(predecessorRow).toBeVisible();
+
+      // An untagged orphan with a unique sentinel cannot be mistaken for the
+      // automatic forward seed at the same address.
+      await invoke(page, "plugin:event|emit", {
+        event: "disassembly-updated",
+        payload: { session_id: sessionId, address: pc, instructions: [
+          { address: pcVa, bytes: "90", mnemonic: "stalechunk", op_str: "", is_jump: false, is_call: false, is_ret: false, jump_target: null },
+        ] },
       });
 
-      // Wait until both responses have been delivered...
       await expect(async () => {
-        expect(
-          (await getCapturedEvents(page, "function-disassembly-updated")).length,
-        ).toBeGreaterThan(0);
-        expect(
-          (await getCapturedEvents(page, "disassembly-updated")).length,
-        ).toBeGreaterThan(0);
+        const events = await getCapturedEvents(page, "disassembly-updated");
+        expect(events.some((e) =>
+          e.session_id === sessionId && e.address === pc && !e.request_id &&
+          e.instructions[0]?.address === pcVa && e.instructions[0]?.mnemonic === "stalechunk",
+        )).toBe(true);
       }).toPass({ timeout: 10_000, intervals: [50, 100] });
 
-      // ...and the view must still be the function view (first row = function
-      // head), NOT the stale 64-row chunk anchored at RIP. The PC row itself
-      // must still exist further down.
-      await expect(async () => {
-        const state = await page.evaluate(
-          ({ row, pcRow }) => {
-            const first = document.querySelector(row) as HTMLElement | null;
-            return {
-              firstIsPc: first ? first.dataset.highlight === "pc" : null,
-              hasPcRow: !!document.querySelector(pcRow),
-            };
-          },
-          { row: ASM_ROW, pcRow: PC_ROW },
-        );
-        expect(state.firstIsPc).toBe(false);
-        expect(state.hasPcRow).toBe(true);
-      }).toPass({ timeout: 5_000, intervals: [50, 100] });
+      // Neither the PC nor its predecessor should have been displaced.
+      await expect(pcRow).toBeVisible();
+      await expect(predecessorRow).toBeVisible();
+      await expect(page.getByText("stalechunk")).toHaveCount(0);
 
       await cleanupSession(page, sessionId);
     } finally {
@@ -211,7 +206,10 @@ test.describe("Disassembly View", () => {
       await waitForPaused(page, sessionId);
       await waitForDisassemblyLoaded(page, ASM_PANEL);
 
-      const firstRowBefore = await page.locator(ASM_ROW).first().innerText();
+      const pc = await getPcAddress(page, sessionId);
+      if (pc === null) throw new Error("Expected a paused PC");
+      const pcRow = page.locator(`${PC_ROW}[data-address="${rowAddress(pc)}"]`);
+      await expect(pcRow).toBeVisible();
 
       // Forge a late replace response for an address the view never requested —
       // the shape the slow OOB fallback produces when its request raced a
@@ -226,6 +224,7 @@ test.describe("Disassembly View", () => {
             payload: {
               session_id: id,
               address,
+              request_id: 0,
               instructions: [
                 {
                   address: "0x1000",
@@ -251,72 +250,15 @@ test.describe("Disassembly View", () => {
       // Wait until the forged event has demonstrably reached the webview...
       await expect(async () => {
         const events = await getCapturedEvents(page, "function-disassembly-updated");
-        expect(events.some((e: any) => e.address === staleAddress)).toBe(true);
+        expect(events.some((e) =>
+          e.session_id === sessionId && e.address === staleAddress &&
+          e.instructions[0]?.mnemonic === "stalehijack",
+        )).toBe(true);
       }).toPass({ timeout: 5_000, intervals: [50, 100] });
 
       // ...and the view must be untouched.
-      expect(await page.locator(ASM_ROW).first().innerText()).toBe(firstRowBefore);
+      await expect(pcRow).toBeVisible();
       await expect(page.getByText("stalehijack")).toHaveCount(0);
-
-      await cleanupSession(page, sessionId);
-    } finally {
-      await restoreDefaultSettings(page);
-    }
-  });
-
-  test("an undecodable byte renders as a db row and disassembly continues below it", async ({
-    tauriPage: page,
-  }) => {
-    await configureMinimalStopSettings(page);
-
-    try {
-      const sessionId = await createAndStartSession(page, "Disasm Invalid Byte");
-      await waitForPaused(page, sessionId);
-      await waitForDisassemblyLoaded(page, ASM_PANEL);
-
-      // The backend's resilient decode (a real undecodable byte becomes a
-      // `db 0xXX` row and decoding resumes after it) is covered by a joybug-core
-      // unit test. Here we assert the user-visible outcome deterministically:
-      // a replace payload carrying an invalid row sandwiched between valid rows
-      // must render the invalid row distinctly (data-invalid, mnemonic "db") AND
-      // still show the valid instruction BELOW it. The payload echoes the view's
-      // requested anchor (the PC) so the echo guard accepts it as a replace.
-      const s = await invoke(page, "get_debug_session", { sessionId });
-      const pc: number = s.current_event.address;
-
-      const forge = async () => {
-        await page.evaluate(
-          async ({ id, pcAddr }) => {
-            const hex = (n: number) => "0x" + n.toString(16).toUpperCase();
-            await (window as any).__TAURI_INTERNALS__.invoke("plugin:event|emit", {
-              event: "function-disassembly-updated",
-              payload: {
-                session_id: id,
-                address: pcAddr,
-                instructions: [
-                  { address: hex(pcAddr), bytes: "48 89 C8", mnemonic: "mov", op_str: "rax, rcx", is_jump: false, is_call: false, is_ret: false, jump_target: null, is_invalid: false },
-                  { address: hex(pcAddr + 3), bytes: "06", mnemonic: "db", op_str: "0x06", is_jump: false, is_call: false, is_ret: false, jump_target: null, is_invalid: true },
-                  { address: hex(pcAddr + 4), bytes: "90", mnemonic: "nop", op_str: "", is_jump: false, is_call: false, is_ret: false, jump_target: null, is_invalid: false },
-                ],
-                function_start: hex(pcAddr),
-                function_end: hex(pcAddr + 5),
-                function_name: null,
-              },
-            });
-          },
-          { id: sessionId, pcAddr: pc },
-        );
-      };
-
-      // Re-forge each poll so a late symbol-load refresh can't leave the check
-      // racing a replaced view; the invalid-row render is idempotent.
-      await expect(async () => {
-        await forge();
-        const state = await readInvalidRowState(page, /nop/);
-        expect(state.invalidCount).toBeGreaterThan(0);
-        expect(state.invalidText).toContain("db");
-        expect(state.validBelow).toBe(true);
-      }).toPass({ timeout: 10_000, intervals: [50, 100, 200] });
 
       await cleanupSession(page, sessionId);
     } finally {
@@ -348,8 +290,6 @@ test.describe("Disassembly View", () => {
       expect(targetAddr).toBeTruthy();
       const addrNum = Number(BigInt(targetAddr!));
 
-      const s = await invoke(page, "get_debug_session", { sessionId });
-      const pc = s.current_event.address;
       const arch = await debuggeeArch(page, sessionId);
 
       // Corrupt the picked instruction with an undecodable pattern. On x64
@@ -364,15 +304,9 @@ test.describe("Disassembly View", () => {
       const invalidBytes = arch === "Arm64" ? [0x00, 0x00, 0x00, 0x00] : [0x06];
       await invoke(page, "request_memory_write", { sessionId, address: addrNum, data: invalidBytes });
 
-      // Re-request the PC's function so the corrupted byte is re-read (FIFO after
-      // the write on the same session channel). Poll the rendered rows.
+      // Refresh through the view after the write (FIFO on the pause channel).
+      await page.locator(`${ASM_PANEL} button[title="Refresh"]`).click();
       await expect(async () => {
-        await invoke(page, "request_function_disassembly", {
-          sessionId,
-          address: pc,
-          maxInstructions: 2000,
-          compareImage: true,
-        });
         const state = await readInvalidRowState(page);
         expect(state.invalidCount).toBeGreaterThan(0);
         expect(state.invalidText).toContain("db");
@@ -395,44 +329,20 @@ test.describe("Disassembly View", () => {
       await waitForPaused(page, sessionId);
       await waitForDisassemblyLoaded(page, ASM_PANEL);
 
-      // Backend mem_ref extraction (RIP-relative / absolute displacement) is
-      // covered by a joybug-core unit test; here we assert the user-visible
-      // contract deterministically: a row carrying `mem_ref` renders its
-      // bracketed operand as a link, and clicking it opens the Memory view at
-      // that address. The forged payload echoes the view's anchor (the PC) so
-      // the echo guard accepts it, and uses the PC itself as the referenced
-      // address — guaranteed-readable memory for the hex view to land on.
-      const s = await invoke(page, "get_debug_session", { sessionId });
-      const pc: number = s.current_event.address;
-
-      const forge = () =>
-        page.evaluate(
-          async ({ id, pcAddr }) => {
-            const hex = (n: number) => "0x" + n.toString(16).toUpperCase();
-            await (window as any).__TAURI_INTERNALS__.invoke("plugin:event|emit", {
-              event: "function-disassembly-updated",
-              payload: {
-                session_id: id,
-                address: pcAddr,
-                instructions: [
-                  { address: hex(pcAddr), bytes: "48 8B 05 F9 0F 00 00", mnemonic: "mov", op_str: "rax, qword ptr [rip + 0xff9]", is_jump: false, is_call: false, is_ret: false, jump_target: null, mem_ref: hex(pcAddr), is_invalid: false },
-                ],
-                function_start: hex(pcAddr),
-                function_end: hex(pcAddr + 7),
-                function_name: null,
-              },
-            });
-          },
-          { id: sessionId, pcAddr: pc },
-        );
-
-      // Re-forge per poll (a late symbol-load refresh can replace the view),
-      // then click the bracketed link. Re-clicking on retry is idempotent.
-      const memLink = page.locator(`${ASM_ROW} span[title^="Open memory at "]`).first();
-      await expect(async () => {
-        await forge();
-        await memLink.click({ timeout: 1_000 });
-      }).toPass({ timeout: 10_000, intervals: [50, 100, 200] });
+      test.skip(await debuggeeArch(page, sessionId) !== "X64", "Static RIP-relative operands require x64");
+      const pc = (await getPcAddress(page, sessionId))!;
+      // mov rax, [rip - 7] references the instruction's own readable address.
+      // Decode at the literal PC in case a function bound crosses the edit.
+      await invoke(page, "request_memory_write", {
+        sessionId, address: pc, data: [0x48, 0x8b, 0x05, 0xf9, 0xff, 0xff, 0xff],
+      });
+      const input = page.locator(`${ASM_PANEL} input`).first();
+      const pcVa = rowAddress(pc);
+      await input.fill(pcVa);
+      await input.press("Enter");
+      const memLink = page.locator(`${SELECTED_ROW}[data-address="${pcVa}"] span[title="Open memory at ${pcVa}"]`);
+      await expect(memLink).toBeVisible({ timeout: 10_000 });
+      await memLink.click();
 
       // Memory tab activates and its hex gutter lands on the referenced
       // address (gutter rows are 16-byte aligned, 0x + 16 uppercase digits).

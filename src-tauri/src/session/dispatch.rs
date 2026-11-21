@@ -24,7 +24,6 @@ use crate::state::SessionStatusUI;
 /// Multiple `DereferenceBatch` commands are merged (addresses combined) rather than dropped.
 fn dedup_commands(commands: Vec<UICommand>) -> Vec<UICommand> {
     // Track which idempotent command types we've seen (scanning from the end)
-    let mut seen_fn_disasm: Option<u64> = None;
     let mut seen_disasm: Vec<(u64, Option<String>)> = Vec::new();
     let mut seen_disasm_backward: Option<(u64, u32)> = None;
     let mut seen_callstack = false;
@@ -50,14 +49,6 @@ fn dedup_commands(commands: Vec<UICommand>) -> Vec<UICommand> {
     let mut keep = vec![true; commands.len()];
     for i in (0..commands.len()).rev() {
         match &commands[i] {
-            UICommand::DisassembleFunction { address, .. } => {
-                if seen_fn_disasm == Some(*address) {
-                    keep[i] = false;
-                    debug!("Dedup: dropping duplicate DisassembleFunction for 0x{:X}", address);
-                } else {
-                    seen_fn_disasm = Some(*address);
-                }
-            }
             // Keyed on the request id too: a tagged request (an annotation
             // refresh of the whole listing) and an untagged one (a scroll
             // extension) for the same address are different questions.
@@ -436,8 +427,8 @@ fn process_command(
             process_disassembly_request(session, app_handle_clone, event.pid(), arch, address, count, compare_image, request_id);
             CommandResult::Continue
         }
-        UICommand::DisassembleFunction { arch, address, max_instructions, compare_image } => {
-            process_function_disassembly_request(session, app_handle_clone, event.pid(), arch, address, max_instructions, compare_image);
+        UICommand::DisassembleFunction { arch, address, max_instructions, compare_image, request_id } => {
+            process_function_disassembly_request(session, app_handle_clone, event.pid(), arch, address, max_instructions, compare_image, request_id);
             CommandResult::Continue
         }
         UICommand::DisassembleBackward { arch, target, count, compare_image } => {

@@ -70,6 +70,9 @@ export interface FunctionListing {
 }
 
 export const FN_DISASM_EVENT = "function-disassembly-updated";
+// Function-listing probes share the event stream with UI requests. Allocate
+// from the opposite end of the JS-safe range so they cannot claim a UI reply.
+let nextListingProbe = Number.MAX_SAFE_INTEGER;
 
 /**
  * Request a function listing anchored at `address` and return that response
@@ -84,13 +87,15 @@ export async function listFunction(
   { maxInstructions = 200, compareImage = false } = {},
 ): Promise<FunctionListing> {
   await clearCapturedEvents(page, FN_DISASM_EVENT);
-  await invoke(page, "request_function_disassembly", { sessionId, address, maxInstructions, compareImage });
+  const requestId = nextListingProbe--;
+  await invoke(page, "request_function_disassembly", { sessionId, address, maxInstructions, compareImage, requestId });
   return waitForCapturedEvent(
     page,
     FN_DISASM_EVENT,
     (p) =>
       p.session_id === sessionId &&
       p.address === address &&
+      p.request_id === requestId &&
       Array.isArray(p.instructions) &&
       p.instructions.length > 0,
   );

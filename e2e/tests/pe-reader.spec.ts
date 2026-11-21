@@ -1,6 +1,6 @@
 import { test, expect, navigateTo, gotoFreshPe } from "../helpers/test-fixtures";
 import { ASM_PANEL, ASM_ROW, HEX_ADDRESS, SELECTED_ROW, hexPanelFor } from "../helpers/selectors";
-import { fixtureExe } from "../helpers/session-helpers";
+import { fixtureExe, rowAddress } from "../helpers/session-helpers";
 import { openPe, leaf, leafLink, pick } from "../helpers/pe-helpers";
 import type { Page } from "../helpers/test-fixtures";
 
@@ -119,9 +119,12 @@ test.describe("PE Viewer", () => {
     await goto.fill("overlap_asm!main");
     await goto.press("Enter");
     // The real main starts with a stack adjustment; the incremental-link thunk doesn't.
-    await expect(page.locator(SELECTED_ROW)).toContainText(/sub\s*rsp/i);
-    const call = page.locator(ASM_ROW).filter({ hasText: /call[^[]*\[/i });
-    await expect(call).toHaveCount(1);
+    const main = page.locator(SELECTED_ROW);
+    await expect(main).toContainText(/sub\s*rsp/i);
+    // In overlap_asm.asm, sub/call/xor occupy 4 + 5 + 2 bytes before the import call.
+    const importCall = rowAddress(BigInt((await main.getAttribute("data-address"))!) + 11n);
+    const call = page.locator(`${ASM_ROW}[data-address="${importCall}"]`);
+    await expect(call).toContainText(/call[^[]*\[/i);
     await expect(call.locator('[title^="Jump to "]')).toHaveCount(0);
     const operand = call.locator('[title^="Open memory at "]');
     await expect(operand).toHaveAttribute("title", new RegExp(`^Open memory at 0x0*${slot.toString(16)}$`, "i"));
@@ -149,16 +152,15 @@ test.describe("PE Viewer", () => {
 
   test("disassembly of a 32-bit PE decodes in 32-bit mode", async ({ tauriPage: page }) => {
     await openPe(page, KERNEL32_X86);
+    await pickAddrMode(page, "VA");
+    const entry = BigInt((await leafLink(page, "AddressOfEntryPoint").innerText()).trim());
     await page.getByText("Disassembly", { exact: true }).first().click();
     // The view opens at the entry point, a hot-patchable x86 prologue. In
     // 64-bit mode `55` would read as `push rbp`; 32-bit registers prove the
     // Mode32 decoder was picked from the file's machine field.
-    await expect(async () => {
-      const texts = await page.locator(ASM_ROW).allInnerTexts();
-      expect(texts.length).toBeGreaterThan(2);
-      expect(texts[0]).toMatch(/mov\s+edi,\s*edi/);
-      expect(texts[1]).toMatch(/push\s+ebp/);
-      expect(texts[2]).toMatch(/mov\s+ebp,\s*esp/);
-    }).toPass({ timeout: 10_000, intervals: [50, 100] });
+    const at = (offset: bigint) => page.locator(`${ASM_ROW}[data-address="${rowAddress(entry + offset)}"]`);
+    await expect(at(0n)).toContainText(/mov\s*edi,\s*edi/, { timeout: 10_000 });
+    await expect(at(2n)).toContainText(/push\s*ebp/);
+    await expect(at(3n)).toContainText(/mov\s*ebp,\s*esp/);
   });
 });

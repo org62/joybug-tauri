@@ -475,8 +475,9 @@ export default function PeReader() {
 
   const disassemble: AsmDisassembleFn | null = useMemo(() => {
     if (!path) return null;
-    // AssemblyView passes a VA; the backend maps it to a file offset to read bytes.
-    return (va, count) => invoke<Instruction[]>("pe_disassemble", { path, va: Number(va), count });
+    return (kind, va, count) => invoke<Instruction[]>("pe_disassemble", {
+      path, kind, va: `0x${va.toString(16)}`, count,
+    });
   }, [path]);
 
   // App-wide back/forward history, scoped by the opened file: addresses from

@@ -382,6 +382,7 @@ pub(crate) fn process_function_disassembly_request(
     address: u64,
     max_instructions: u32,
     compare_image: bool,
+    request_id: u64,
 ) {
     debug!("📤 Processing function disassembly request: pid={}, address=0x{:X}, max_instructions={}", pid, address, max_instructions);
 
@@ -409,6 +410,7 @@ pub(crate) fn process_function_disassembly_request(
                 struct FunctionDisassemblyResult {
                     session_id: String,
                     address: u64,
+                    request_id: u64,
                     instructions: Vec<SerializableInstruction>,
                     function_start: Option<String>,
                     function_end: Option<String>,
@@ -418,6 +420,7 @@ pub(crate) fn process_function_disassembly_request(
                 let result = FunctionDisassemblyResult {
                     session_id,
                     address,
+                    request_id,
                     instructions: serializable_instructions,
                     function_start: function_start.map(|a| format!("{:#X}", a)),
                     function_end: function_end.map(|a| format!("{:#X}", a)),
@@ -447,12 +450,14 @@ pub(crate) fn process_function_disassembly_request(
                 struct FunctionDisassemblyError {
                     session_id: String,
                     address: u64,
+                    request_id: u64,
                     error: String,
                 }
 
                 let error_result = FunctionDisassemblyError {
                     session_id,
                     address,
+                    request_id,
                     error: e.to_string(),
                 };
 

@@ -5,7 +5,7 @@ import {
   cleanupSession,
   goToWindow,
   runPaletteCommand,
-  pcRegister,
+  rowAddress,
 } from "../helpers/session-helpers";
 import {
   waitForPaused,
@@ -13,8 +13,9 @@ import {
   configureMinimalStopSettings,
   restoreDefaultSettings,
   stepAndWaitForNewPc,
+  getPcAddress,
 } from "../helpers/wait-helpers";
-import { ASM_PANEL, ASM_ROW } from "../helpers/selectors";
+import { ASM_PANEL, PC_ROW, SELECTED_ROW } from "../helpers/selectors";
 import { IS_WINDOWS } from "../helpers/launch-commands";
 
 // Unified back/forward navigation history: one app-wide chronological stack
@@ -28,21 +29,16 @@ async function resetNavHistory(page: Page): Promise<void> {
   await page.evaluate(() => window.dispatchEvent(new Event("joybug:reset-nav-history")));
 }
 
-async function firstRowText(page: Page): Promise<string> {
-  return page.locator(ASM_ROW).first().innerText();
+/** The initial listing follows the paused PC; an explicit history replay selects its target. */
+async function expectInitialPc(page: Page, sessionId: string): Promise<bigint> {
+  const pc = await getPcAddress(page, sessionId);
+  if (pc === null) throw new Error("Expected a paused PC");
+  await expect(page.locator(`${PC_ROW}[data-address="${rowAddress(pc)}"]`)).toBeVisible({ timeout: 10_000 });
+  return BigInt(pc);
 }
 
-/** Poll until the first visible instruction row matches (or stops matching)
- *  the given text — how these tests observe a completed address navigation. */
-async function expectFirstRow(
-  page: Page,
-  text: string,
-  opts: { not?: boolean } = {},
-): Promise<void> {
-  await expect(async () => {
-    if (opts.not) expect(await firstRowText(page)).not.toBe(text);
-    else expect(await firstRowText(page)).toBe(text);
-  }).toPass({ timeout: 10_000, intervals: [100, 250] });
+function expectSelectedAddress(page: Page, address: bigint) {
+  return expect(page.locator(`${SELECTED_ROW}[data-address="${rowAddress(address)}"]`)).toBeVisible({ timeout: 10_000 });
 }
 
 /** Synthetic mouse back button (XButton1) press. */
@@ -90,23 +86,23 @@ test.describe("Unified navigation history", () => {
       await page.keyboard.press("Alt+ArrowLeft");
       await waitForDisassemblyLoaded(page, ASM_PANEL);
 
-      const original = await firstRowText(page);
+      const original = await expectInitialPc(page, sessionId);
 
       // Navigate somewhere else within the module (different function).
-      await gotoAddress(page, `${await pcRegister(page, sessionId)}+0x2000`);
-      await expectFirstRow(page, original, { not: true });
-      const jumped = await firstRowText(page);
+      const jumped = original + 0x2000n;
+      await gotoAddress(page, rowAddress(jumped));
+      await expectSelectedAddress(page, jumped);
       await expect(backButton(page)).toBeEnabled();
 
       // Back restores the departed address.
       await backButton(page).click();
-      await expectFirstRow(page, original);
+      await expectSelectedAddress(page, original);
       await expect(backButton(page)).toBeDisabled();
       await expect(forwardButton(page)).toBeEnabled();
 
       // Forward re-applies the undone navigation.
       await forwardButton(page).click();
-      await expectFirstRow(page, jumped);
+      await expectSelectedAddress(page, jumped);
       await expect(forwardButton(page)).toBeDisabled();
       await expect(backButton(page)).toBeEnabled();
 
@@ -202,7 +198,8 @@ test.describe("Unified navigation history", () => {
       await waitForPaused(page, sessionId);
       await waitForDisassemblyLoaded(page, ASM_PANEL);
       await resetNavHistory(page);
-      const original = await firstRowText(page);
+      const original = await expectInitialPc(page, sessionId);
+      const jumped = original + 0x2000n;
 
       // Leave Disassembly for Source (records the departed disasm location).
       await goToWindow(page, "Source");
@@ -215,11 +212,11 @@ test.describe("Unified navigation history", () => {
         "Enter address or symbol (e.g. 0x00007FF...)",
       );
       await addrInput.waitFor({ state: "visible" });
-      await addrInput.fill(`${await pcRegister(page, sessionId)}+0x2000`);
+      await addrInput.fill(rowAddress(jumped));
       await addrInput.press("Enter");
 
       await expect(page.locator(ASM_PANEL)).toBeVisible();
-      await expectFirstRow(page, original, { not: true });
+      await expectSelectedAddress(page, jumped);
 
       // Back #1: undo the jump — return to the Source window, NOT to a
       // previous disassembly address (the original bug).
@@ -229,7 +226,7 @@ test.describe("Unified navigation history", () => {
       // Back #2: undo the earlier tab switch — Disassembly at its original address.
       await page.keyboard.press("Alt+ArrowLeft");
       await expect(page.locator(ASM_PANEL)).toBeVisible();
-      await expectFirstRow(page, original);
+      await expectSelectedAddress(page, original);
 
       await cleanupSession(page, sessionId);
     } finally {
@@ -253,15 +250,15 @@ test.describe("Unified navigation history", () => {
       await resetNavHistory(page);
       await navigateTo(page, `/session/${sessionId}`);
       await waitForDisassemblyLoaded(page, ASM_PANEL);
-      const original = await firstRowText(page);
+      const original = await expectInitialPc(page, sessionId);
 
-      await gotoAddress(page, `${await pcRegister(page, sessionId)}+0x2000`);
-      await expectFirstRow(page, original, { not: true });
-      const jumped = await firstRowText(page);
+      const jumped = original + 0x2000n;
+      await gotoAddress(page, rowAddress(jumped));
+      await expectSelectedAddress(page, jumped);
 
       // Back #1: undo the goto (most recent action) — still on the session page.
       await page.keyboard.press("Alt+ArrowLeft");
-      await expectFirstRow(page, original);
+      await expectSelectedAddress(page, original);
       await expect(page).toHaveURL(new RegExp(`/session/${sessionId}`));
 
       // Back #2: the page change before it — Logs, not older disassembly history.
@@ -278,9 +275,9 @@ test.describe("Unified navigation history", () => {
       await page.keyboard.press("Alt+ArrowRight");
       await expect(page).toHaveURL(new RegExp(`/session/${sessionId}`));
       await waitForDisassemblyLoaded(page, ASM_PANEL);
-      await expectFirstRow(page, original);
+      await expectSelectedAddress(page, original);
       await page.keyboard.press("Alt+ArrowRight");
-      await expectFirstRow(page, jumped);
+      await expectSelectedAddress(page, jumped);
 
       await cleanupSession(page, sessionId);
     } finally {
@@ -307,7 +304,7 @@ test.describe("Unified navigation history", () => {
       await waitForPaused(page, sessionId);
       await waitForDisassemblyLoaded(page, ASM_PANEL);
       await resetNavHistory(page);
-      const original = await firstRowText(page);
+      const original = await expectInitialPc(page, sessionId);
       const entries = () => page.evaluate(() => window.history.length);
       const atStart = await entries();
 
@@ -320,7 +317,7 @@ test.describe("Unified navigation history", () => {
       await pressMouseBack(page);
       await expect(page).toHaveURL(new RegExp(`/session/${sessionId}`));
       await waitForDisassemblyLoaded(page, ASM_PANEL);
-      await expectFirstRow(page, original);
+      await expectSelectedAddress(page, original);
       expect(await entries()).toBe(atStart);
 
       await cleanupSession(page, sessionId);

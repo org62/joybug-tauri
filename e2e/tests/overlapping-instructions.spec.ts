@@ -102,6 +102,7 @@ test.describe("Overlapping instructions", () => {
         expect(hidden?.is_patched).toBe(true);
         expect(hidden?.original_disasm ?? "").toContain("rdtsc");
       }).toPass({ timeout: 15_000, intervals: [50, 100, 200] });
+      await page.locator(`${ASM_PANEL} button[title="Refresh"]`).click();
 
       // That row is the goto's landing spot, so it is also `selected` — the
       // state that used to swallow the patch highlight whole.
@@ -151,9 +152,10 @@ test.describe("Overlapping instructions", () => {
       const selected = page.locator(SELECTED_ROW);
       await expect(selected).toHaveAttribute("data-address", rowAddress(BigInt(main)), { timeout: 15_000 });
 
-      const call = page.locator(`${ASM_ROW}:has([title^="FF 15 " i])`);
+      // In overlap_asm.asm, sub/call/xor occupy 4 + 5 + 2 bytes before the import call.
+      const callAddress = rowAddress(BigInt(main) + 11n);
+      const call = page.locator(`${ASM_ROW}[data-address="${callAddress}"]:has([title^="FF 15 " i])`);
       await expect(call).toHaveCount(1);
-      const callAddress = (await call.getAttribute("data-address"))!;
 
       // Compute the destination from process bytes, independently of the listing.
       const readBytes = async (address: string, size: number) => {

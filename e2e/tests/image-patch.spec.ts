@@ -17,7 +17,7 @@ import {
   disassembleFunction,
   FN_DISASM_EVENT,
 } from "../helpers/event-helpers";
-import { ASM_ROW } from "../helpers/selectors";
+import { ASM_PANEL, ASM_ROW } from "../helpers/selectors";
 import type { Page } from "../helpers/test-fixtures";
 
 /** Current RIP as a number, from session state. */
@@ -81,18 +81,19 @@ test.describe("Image patch detection", () => {
         expect(t?.original_bytes).toBeTruthy();
       }).toPass({ timeout: 10_000 });
 
-      // DOM: the row renders with the patched highlight.
-      const patchedRow = page.locator(`${ASM_ROW}[data-highlight="patched"]`).first();
+      // The raw write has no tracked patch event. Refresh the view explicitly;
+      // test probes above return independent responses and cannot replace it.
+      await page.locator(`${ASM_PANEL} button[title="Refresh"]`).click();
+      const patchedRow = page.locator(`${ASM_ROW}[data-address="${targetAddrHex}"][data-highlight="patched"]`);
+      // DOM: the edited row, not another nearby difference, is highlighted.
       await expect(patchedRow).toBeVisible({ timeout: 10_000 });
 
       // Hover shows the original instruction in a tooltip. Scope the locator to
       // the patch tooltip by its heading: operands render via TruncatedSymbol,
       // which mounts its own copy tooltip, so a bare getByRole("tooltip") is
       // ambiguous whenever the row's centre-point hover lands on an operand.
-      // The view is still settling here: the disassembly requests above each
-      // echo into it, and a refresh remounts the rows (and may scroll them)
-      // under a pointer that then sits still — Radix opens a tooltip on
-      // pointer *move* only. So re-approach the row until the tooltip is up.
+      // A refreshed listing may move under a stationary pointer. Re-approach
+      // until Radix receives pointer movement on the patched row.
       const tooltip = page.getByRole("tooltip").filter({ hasText: "Original (on disk)" });
       await expect(async () => {
         await page.mouse.move(0, 0);

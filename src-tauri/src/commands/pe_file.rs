@@ -16,7 +16,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, RwLock};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::State;
 use tracing::info;
 
@@ -24,6 +24,7 @@ use crate::error::{Error, Result};
 use crate::session::helpers::effective_op_str;
 use crate::session::types::{EmulationResultPayload, SerializableInstruction, SymbolData};
 use crate::session::{instruction_info, EmulationOutcome};
+use joybug_core::interfaces::decode_function_listing;
 use joybug_core::pe_types::ModuleExtraInfo;
 use joybug_core::protocol::{EmulationMode, StringEncodingFilter, StringHit};
 use joybug_core::static_image::{EmulateSpec, StaticFile, SymbolLoad as PeSymbolLoad};
@@ -205,21 +206,45 @@ pub fn pe_write_bytes(
     with_file_mut(&pe_files, &path, |file| file.write_bytes(offset, &data).map_err(Error::InvalidParameter))
 }
 
-/// Disassemble `count` instructions starting at virtual address `va`. Symbolized
-/// when a PDB is loaded. Instructions are labeled by VA (base + RVA) so operands
-/// and branch targets resolve correctly.
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FileListingKind {
+    Anchor,
+    Forward,
+    Backward,
+}
+
+/// Decode the mapped image at an absolute VA. Only anchor reads align to
+/// cheap unwind bounds; edge reads continue the existing instruction stream.
 #[tauri::command]
 pub async fn pe_disassemble(
     path: String,
-    va: u64,
+    va: String,
+    kind: FileListingKind,
     count: usize,
     pe_files: State<'_, PeFilesState>,
 ) -> Result<Vec<SerializableInstruction>> {
+    let va = super::parse_hex_u64(&va, "va")?;
+    let count = count.min(4096);
+    if count == 0 {
+        return Ok(Vec::new());
+    }
     let pe_files = pe_files.inner().clone();
     run_blocking(move || with_file(&pe_files, &path, |file| {
-        let instructions = file
-            .disassemble(va, count)
-            .map_err(|e| Error::InvalidParameter(format!("Disassembly failed: {:?}", e)))?;
+        let instructions = match kind {
+            FileListingKind::Anchor => {
+                let Some(rva) = file.mapped().rva_of(va) else {
+                    return Ok(Vec::new());
+                };
+                let base = file.base();
+                let bounds = file.info().runtime_function_bounds(rva)
+                    .map(|(start, end)| (base + u64::from(start), base + u64::from(end)));
+                decode_function_listing(bounds, va, count, |start, n| file.disassemble(start, n))
+            }
+            FileListingKind::Forward => file.disassemble(va, count),
+            FileListingKind::Backward => file.disassemble_backward(va, count),
+        }
+        .map_err(|e| Error::InvalidParameter(format!("Disassembly failed: {:?}", e)))?;
         // No round trip needed here: the opened image already holds the parsed
         // headers the entry-point / TLS-callback labels come from.
         let anchors = crate::session::pe_anchors::anchors_from_info(file.module_name(), file.base(), file.info());

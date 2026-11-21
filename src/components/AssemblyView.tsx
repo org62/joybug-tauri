@@ -118,6 +118,7 @@ export function AssemblyView({ sessionId, pseudocodeScope, isPaused, canLoad, ad
   });
   const assembleInputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const columnHeadingRef = useRef<HTMLDivElement>(null);
   const virtualizerRef = useRef<Virtualizer<HTMLDivElement, Element>>(null);
   // Multi-row selection (see the Selection type above). Gestures: click =
   // single row, drag / shift-click = contiguous range, ctrl-click = toggle a
@@ -145,7 +146,9 @@ export function AssemblyView({ sessionId, pseudocodeScope, isPaused, canLoad, ad
     canGoForward,
     jumpTarget,
     loadGeneration,
+    listingRequest,
     prependSignal,
+    appendSeq,
     annotationSeq,
     followSeq,
     goToAddressDirect,
@@ -173,6 +176,7 @@ export function AssemblyView({ sessionId, pseudocodeScope, isPaused, canLoad, ad
 
   // Display rows: instructions plus a label row above each exact-symbol hit.
   const rows = useMemo(() => buildAsmRows(instructions), [instructions]);
+  const hasRows = rows.length > 0;
 
   // Uppercased instruction addresses, computed once per listing change. The
   // selection set is keyed on these, and range expansion slices from this array
@@ -337,10 +341,22 @@ export function AssemblyView({ sessionId, pseudocodeScope, isPaused, canLoad, ad
   // Last requested centering target — re-applied when a hidden dock tab
   // becomes visible again (see the ResizeObserver effect below).
   const centerTargetRef = useRef<bigint | null>(null);
+  const centerSequence = useRef(0);
+  const gestureRequest = useRef<number | null>(null);
+  const anchor = jumpTarget?.address ?? pcAddress ?? initialAddress ?? null;
+
+  const markScrollGesture = useCallback(() => {
+    gestureRequest.current = listingRequest.current;
+    centerTargetRef.current = null;
+    centerSequence.current++;
+  }, [listingRequest]);
 
   const scrollToInstruction = useCallback((addr: bigint) => {
     centerTargetRef.current = addr;
+    const sequence = ++centerSequence.current;
+    const request = listingRequest.current;
     const apply = () => {
+      if (sequence !== centerSequence.current || request !== listingRequest.current) return;
       // rc-dock keeps inactive tabs mounted at zero size; scrolling a 0-height
       // viewport computes a clamped offset of 0 and "succeeds". Bail instead —
       // the visibility observer re-centers when the tab is shown.
@@ -365,71 +381,71 @@ export function AssemblyView({ sessionId, pseudocodeScope, isPaused, canLoad, ad
       }
     };
     applyOverFrames(apply);
-  }, []);
+  }, [listingRequest]);
 
   // Go-to-PC button: hand control back to PC-follow, then re-center the PC row
   // if it's already loaded (a reload re-centers via the PC scroll effect).
   const handleGoToPC = useCallback(() => {
     goToPC();
+    gestureRequest.current = null;
     if (pcAddress !== null) scrollToInstruction(pcAddress);
   }, [goToPC, pcAddress, scrollToInstruction]);
 
-  // Scroll to PC on a fresh load / PC change / new pause event (never on a
-  // scroll extension). `followSeq` re-fires this for pauses where nothing else
-  // changed — a re-hit of the same breakpoint address must still re-center.
-  // Only if there's no jump target (user navigation takes priority).
-  useEffect(() => {
-    if (jumpTarget === null && pcAddress !== null) {
-      scrollToInstruction(pcAddress);
+  // A new navigation outranks old scrolling, even if it stays in the listing.
+  useLayoutEffect(() => {
+    gestureRequest.current = null;
+    if (anchor !== null) scrollToInstruction(anchor);
+    else {
+      centerTargetRef.current = null;
+      centerSequence.current++;
     }
-  }, [pcAddress, jumpTarget, loadGeneration, followSeq, scrollToInstruction]);
+  }, [anchor, jumpTarget, followSeq, scrollToInstruction]);
+
+  // A replacement can arrive after the user has wheeled on the old rows.
+  const handledLoad = useRef(loadGeneration);
+  // Center the new listing only if that request still owns the viewport.
+  useLayoutEffect(() => {
+    if (handledLoad.current === loadGeneration) return;
+    handledLoad.current = loadGeneration;
+    if (anchor !== null && gestureRequest.current !== listingRequest.current) {
+      scrollToInstruction(anchor);
+    }
+  }, [anchor, loadGeneration, listingRequest, scrollToInstruction]);
 
   // A PC move (or goto) that lands while the Disassembly tab is hidden scrolls
   // a 0-height viewport into nowhere — re-center once the panel is shown.
-  useRecenterOnReveal(virtualizerRef, rows.length > 0, centerTargetRef, scrollToInstruction);
+  useRecenterOnReveal(virtualizerRef, hasRows, centerTargetRef, scrollToInstruction);
 
-  // Scroll to and select the jump target when navigating (fresh load or in-view
-  // jump). Selection, not a transient flash: it marks where the navigation
-  // landed until the user moves on, and can't be missed the way a timed fade
-  // can. jumpTarget is a fresh object on every navigation, so re-navigating to
-  // the same address still re-fires; loadGeneration re-asserts scroll +
-  // selection when the replace that fulfils the navigation lands.
+  // Selection marks the exact navigation target, not the file's entry or PC.
+  // Re-assert it when the replacement that fulfills the navigation arrives.
   useEffect(() => {
     if (jumpTarget !== null) {
-      scrollToInstruction(jumpTarget.address);
       const key = `0X${jumpTarget.address.toString(16).toUpperCase()}`;
       setSelection({ addrs: new Set([key]), anchor: key });
     }
-  }, [jumpTarget, loadGeneration, scrollToInstruction]);
-
-  // Edge extension and prepend handling key off user intent. A full replace
-  // moves scrollTop synthetically — the browser clamps it when content shrinks
-  // (big function → small one on step-in) and the PC/jump centering calls
-  // scrollToIndex — and those scroll events must not auto-extend the fresh
-  // view. Latch on a real gesture (wheel, pointer down for scrollbar drags);
-  // reset on every full replace, synchronously so the clamp event can't sneak
-  // in first.
-  const userGestureSinceLoadRef = useRef(false);
-  useLayoutEffect(() => { userGestureSinceLoadRef.current = false; }, [loadGeneration]);
+  }, [jumpTarget, loadGeneration]);
 
   // After a prepend, content grew by `count` rows above the viewport. Bump the
   // scroll element's offset by the same amount, synchronously (pre-paint), so the
   // rows the user was looking at stay put — no visible jump. Direct scrollTop
   // adjustment sidesteps the virtualizer's pending-scroll logic.
-  // A prepend BEFORE any user gesture is the load's context prefetch — there,
-  // re-center the navigation anchor (jump target or PC) instead, so the
-  // freshly loaded context surrounds it rather than pushing it off-center.
+  // Either initial context edge can free a clamped anchor. Re-center only
+  // while navigation still owns the viewport, never against a wheel gesture.
   const handledPrependRef = useRef(prependSignal);
+  const handledAppend = useRef(appendSeq);
   useLayoutEffect(() => {
-    if (prependSignal === handledPrependRef.current) return;
+    const prepended = prependSignal !== handledPrependRef.current;
+    if (!prepended && appendSeq === handledAppend.current) return;
     handledPrependRef.current = prependSignal;
-    const el = virtualizerRef.current?.scrollElement;
-    if (el) el.scrollTop += prependSignal.count * ASSEMBLY_ROW_HEIGHT;
-    if (!userGestureSinceLoadRef.current) {
-      const anchor = jumpTarget?.address ?? pcAddress;
-      if (anchor !== null) scrollToInstruction(anchor);
+    handledAppend.current = appendSeq;
+    if (prepended) {
+      const el = virtualizerRef.current?.scrollElement;
+      if (el) el.scrollTop += prependSignal.count * ASSEMBLY_ROW_HEIGHT;
     }
-  }, [prependSignal, jumpTarget, pcAddress, scrollToInstruction]);
+    if (anchor !== null && gestureRequest.current !== listingRequest.current) {
+      scrollToInstruction(anchor);
+    }
+  }, [prependSignal, appendSeq, anchor, listingRequest, scrollToInstruction]);
 
   // An in-place annotation refresh (symbols landed) can add or remove label
   // rows above the viewport. Keep the instruction at the top of the viewport
@@ -452,24 +468,13 @@ export function AssemblyView({ sessionId, pseudocodeScope, isPaused, canLoad, ad
     if (now >= 0 && now !== top) el.scrollTop += (now - top) * ASSEMBLY_ROW_HEIGHT;
   }, [rows, annotationSeq]);
 
-  // Shared edge check for the scroll and wheel handlers. `only` restricts the
-  // check to one edge (the wheel direction), so an up-wheel on content that fits
-  // the viewport doesn't also pull in rows below. The hook's single-in-flight +
-  // end-of-range guards keep this from spamming requests, and the prepend
-  // scroll-compensation moves the viewport off the top edge so it won't
-  // immediately re-trigger.
-  //
-  // Prefetch a FULL viewport ahead (not a few rows): the backward decode is a
-  // round-trip, and if the user reaches the true top edge (scrollTop 0) before
-  // it lands, the prepend's scroll-compensation pins them in place — the rows
-  // load but the viewport doesn't move ("scrollbar grows but the line is stuck
-  // until I scroll down then up again"). Firing a screen early keeps a decoded
-  // buffer above/below the viewport so scrolling reveals it seamlessly. Only ever
-  // called on a real user gesture, so bare gotos/restores never auto-extend.
-  const maybeExtendAtEdges = useCallback((el: HTMLElement, only?: 'above' | 'below') => {
+  // Leave a viewport of runway so an extension can land before the user
+  // reaches the hard edge. Only wheel input and actual scrollbar drags call
+  // this; centering, clamping, and prepend compensation do not chain reads.
+  const maybeExtendAtEdges = useCallback((el: HTMLElement, offset: number, only?: 'above' | 'below') => {
     const threshold = Math.max(ASSEMBLY_ROW_HEIGHT * 8, el.clientHeight);
-    if (only !== 'below' && el.scrollTop <= threshold) loadMoreAbove();
-    if (only !== 'above' && el.scrollHeight - (el.scrollTop + el.clientHeight) <= threshold) loadMoreBelow();
+    if (only !== 'below' && offset <= threshold) loadMoreAbove();
+    if (only !== 'above' && el.scrollHeight - (offset + el.clientHeight) <= threshold) loadMoreBelow();
   }, [loadMoreAbove, loadMoreBelow]);
 
   // Minimum row width: below this the panel scrolls horizontally instead of
@@ -492,37 +497,68 @@ export function AssemblyView({ sessionId, pseudocodeScope, isPaused, canLoad, ad
     () => virtualizerRef.current?.scrollElement,
   );
 
-  // Extend the loaded range as the user scrolls to either edge, and mirror
-  // horizontal scrolling onto the fixed header.
+  const scrollbarPointer = useRef<number | null>(null);
   const handleViewportScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
-    syncScrollLeft(e.currentTarget.scrollLeft);
-    if (!userGestureSinceLoadRef.current) return;
-    maybeExtendAtEdges(e.currentTarget);
+    const el = e.currentTarget;
+    syncScrollLeft(el.scrollLeft);
+    if (scrollbarPointer.current !== null) maybeExtendAtEdges(el, el.scrollTop);
   }, [syncScrollLeft, maybeExtendAtEdges]);
 
-  // Wheel-driven extension. The scroll handler above only fires when the content
-  // overflows the viewport; when the whole loaded range fits (e.g. a short function,
-  // or the user landed at `func+9` with nothing above), there's no scrollbar and
-  // wheeling produces no scroll event. A native wheel listener still fires, so an
-  // up-wheel at the top / down-wheel at the bottom pulls in more — this is what
-  // makes scroll-up work at all when there's nothing yet above the anchor.
   useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
-    const markGesture = () => { userGestureSinceLoadRef.current = true; };
-    const onWheel = (e: WheelEvent) => {
-      if (e.deltaY === 0) return;
-      markGesture();
-      const sc = virtualizerRef.current?.scrollElement;
-      if (sc) maybeExtendAtEdges(sc, e.deltaY < 0 ? 'above' : 'below');
+    const panel = containerRef.current;
+    const toolbar = panel?.querySelector<HTMLElement>(':scope > [data-slot="panel-toolbar"]');
+    const heading = columnHeadingRef.current;
+    if (!panel) return;
+    const ownsVerticalScrollbar = (target: Node, viewport: HTMLElement) =>
+      target instanceof Element &&
+      target.closest('[data-slot="scroll-area-scrollbar"][data-orientation="vertical"]')?.parentElement === viewport.parentElement;
+
+    const wheel = (e: WheelEvent, fromChrome: boolean) => {
+      if (e.defaultPrevented || e.shiftKey || e.ctrlKey || e.deltaY === 0 ||
+          Math.abs(e.deltaX) >= Math.abs(e.deltaY)) return;
+      const el = virtualizerRef.current?.scrollElement;
+      if (!el || el.clientHeight === 0 || !(e.target instanceof Node)) return;
+      // Radix also scrolls natively over the viewport's sibling scrollbar.
+      if (fromChrome ? !e.cancelable : !el.contains(e.target) && !ownsVerticalScrollbar(e.target, el)) return;
+      const mode = e.deltaMode;
+      const delta = e.deltaY * (mode === WheelEvent.DOM_DELTA_LINE ? ASSEMBLY_ROW_HEIGHT
+        : mode === WheelEvent.DOM_DELTA_PAGE ? el.clientHeight : 1);
+      markScrollGesture();
+      if (fromChrome) {
+        e.preventDefault();
+        el.scrollTop += delta;
+      }
+      // A wheel at the hard edge may not fire scroll at all. For native
+      // scrolling, look ahead by the delta without writing the offset.
+      maybeExtendAtEdges(el, el.scrollTop + (fromChrome ? 0 : delta), delta < 0 ? 'above' : 'below');
     };
-    el.addEventListener('wheel', onWheel, { passive: true });
-    el.addEventListener('pointerdown', markGesture);
+    const nativeWheel = (e: WheelEvent) => wheel(e, false);
+    const chromeWheel = (e: WheelEvent) => wheel(e, true);
+    const startDrag = (e: PointerEvent) => {
+      const el = virtualizerRef.current?.scrollElement;
+      if (e.button !== 0 || !el || !(e.target instanceof Node) || !ownsVerticalScrollbar(e.target, el)) return;
+      scrollbarPointer.current = e.pointerId;
+      markScrollGesture();
+    };
+    const endDrag = (e: PointerEvent) => {
+      if (scrollbarPointer.current === e.pointerId) scrollbarPointer.current = null;
+    };
+    panel.addEventListener('wheel', nativeWheel, { passive: true });
+    toolbar?.addEventListener('wheel', chromeWheel, { passive: false });
+    heading?.addEventListener('wheel', chromeWheel, { passive: false });
+    panel.addEventListener('pointerdown', startDrag, true);
+    window.addEventListener('pointerup', endDrag);
+    window.addEventListener('pointercancel', endDrag);
     return () => {
-      el.removeEventListener('wheel', onWheel);
-      el.removeEventListener('pointerdown', markGesture);
+      panel.removeEventListener('wheel', nativeWheel);
+      toolbar?.removeEventListener('wheel', chromeWheel);
+      heading?.removeEventListener('wheel', chromeWheel);
+      panel.removeEventListener('pointerdown', startDrag, true);
+      window.removeEventListener('pointerup', endDrag);
+      window.removeEventListener('pointercancel', endDrag);
+      scrollbarPointer.current = null;
     };
-  }, [maybeExtendAtEdges]);
+  }, [hasRows, markScrollGesture, maybeExtendAtEdges]);
 
   // Keyboard shortcuts — chord-based lookup via keybinding context
   const { reverseLookup, getKeybinding } = useKeybindingContext();
@@ -558,7 +594,7 @@ export function AssemblyView({ sessionId, pseudocodeScope, isPaused, canLoad, ad
   // available") rather than a red error box (e.g. in non-invasive Open sessions
   // before an address is chosen).
   const benignUnavailable = error !== null && isBenignSessionError(error);
-  const showInstructions = instructions.length > 0;
+  const showInstructions = hasRows;
   const showErrorState = error !== null && !benignUnavailable;
   // The loading state replaces the empty state only for a load slow enough to
   // be worth announcing. A view with nothing to show re-asks on every pause
@@ -763,7 +799,7 @@ export function AssemblyView({ sessionId, pseudocodeScope, isPaused, canLoad, ad
 
       {/* Column header - fixed vertically, follows horizontal scroll */}
       {showInstructions && (
-        <div className="shrink-0 overflow-hidden border-b border-border">
+        <div ref={columnHeadingRef} className="shrink-0 overflow-hidden border-b border-border">
           <div
             ref={headerInnerRef}
             style={{ minWidth: rowMinWidth }}

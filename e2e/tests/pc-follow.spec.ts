@@ -1,5 +1,5 @@
 import { test, expect } from "../helpers/test-fixtures";
-import { createAndStartSession, cleanupSession, pcRegister, goToWindow } from "../helpers/session-helpers";
+import { createAndStartSession, cleanupSession, pcRegister, goToWindow, fixtureExe } from "../helpers/session-helpers";
 import {
   waitForPaused,
   waitForDisassemblyLoaded,
@@ -7,39 +7,54 @@ import {
   restoreDefaultSettings,
   stepAndWaitForNewPc,
   runToNestedFunction,
+  waitForSymbolVa,
+  getPcAddress,
 } from "../helpers/wait-helpers";
-import { ASM_PANEL, ASM_ROW, PC_ROW } from "../helpers/selectors";
+import { ASM_PANEL } from "../helpers/selectors";
+import { IS_WINDOWS } from "../helpers/launch-commands";
+import { assemblyViewport, expectAssemblyContext, expectAssemblyWheel, refreshUnderPointer } from "../helpers/assembly-viewport";
 import type { Page } from "../helpers/test-fixtures";
 
-/** True when the PC row is rendered and geometrically inside the scroll viewport. */
-function pcInViewport(page: Page): Promise<boolean> {
-  return page.evaluate(
-    ({ panel, pcRow }) => {
-      const pc = document.querySelector(pcRow);
-      const vp = document
-        .querySelector(panel)
-        ?.querySelector("[data-radix-scroll-area-viewport]");
-      if (!pc || !vp) return false;
-      const p = pc.getBoundingClientRect();
-      const v = vp.getBoundingClientRect();
-      return p.bottom > v.top && p.top < v.bottom;
-    },
-    { panel: ASM_PANEL, pcRow: PC_ROW },
-  );
-}
-
-/** Total loaded content height — grows when a scroll extension lands. */
-function contentHeight(page: Page): Promise<number> {
-  return page.evaluate(
-    (panel) =>
-      document
-        .querySelector(panel)
-        ?.querySelector("[data-radix-scroll-area-viewport]")?.scrollHeight ?? 0,
-    ASM_PANEL,
-  );
+async function pcInViewport(page: Page): Promise<boolean> {
+  return (await assemblyViewport(page))?.rows.some((row) => row.highlight === "pc") ?? false;
 }
 
 test.describe("PC follow across steps", () => {
+  test("first pause opens with instructions visible on both sides of the PC", async ({ tauriPage: page }) => {
+    await configureMinimalStopSettings(page);
+    const sessionId = await createAndStartSession(page, "First PC Context", `"${fixtureExe("echo_c")}"`);
+    try {
+      await waitForPaused(page, sessionId);
+      const pc = await getPcAddress(page, sessionId);
+      expect(pc).not.toBeNull();
+      await expectAssemblyContext(page, BigInt(pc!), { highlight: "pc" });
+    } finally {
+      await cleanupSession(page, sessionId);
+      await restoreDefaultSettings(page);
+    }
+  });
+
+  test("short function goto and Refresh keep context; wheel works from Refresh", async ({ tauriPage: page }) => {
+    test.skip(!IS_WINDOWS, "Requires the MASM overlap fixture");
+    await configureMinimalStopSettings(page);
+    const sessionId = await createAndStartSession(page, "Short Function Context", `"${fixtureExe("overlap_asm")}"`);
+    try {
+      await waitForPaused(page, sessionId);
+      const address = BigInt(await waitForSymbolVa(page, sessionId, "overlap_asm", "overlap_fn"));
+      const input = page.locator(`${ASM_PANEL} input`).first();
+      await input.fill("overlap_asm!overlap_fn");
+      await input.press("Enter");
+      const context = { highlight: "selected", after: address + 0xCn } as const; // past ret
+      await expectAssemblyContext(page, address, context);
+      await refreshUnderPointer(page);
+      await expectAssemblyContext(page, address, context);
+      await expectAssemblyWheel(page, 1);
+    } finally {
+      await cleanupSession(page, sessionId);
+      await restoreDefaultSettings(page);
+    }
+  });
+
   test("step out then step in keeps RIP visible; extensions stay user-driven", async ({
     tauriPage: page,
   }) => {
@@ -62,32 +77,14 @@ test.describe("PC follow across steps", () => {
       // prefetch pulls in adjacent code on both sides. The PC row must stay
       // visible through the prefetch prepend (the view re-centers on it), with
       // context rows loaded ABOVE it — never an isolated function-only view.
-      await stepAndWaitForNewPc(page, sessionId, "step_in_debug_session");
-      await expect(async () => {
-        const state = await page.evaluate(
-          ({ row, pcRow }) => {
-            const first = document.querySelector(row) as HTMLElement | null;
-            return {
-              hasContextAbove: !!first && first.dataset.highlight !== "pc",
-              hasPcRow: !!document.querySelector(pcRow),
-            };
-          },
-          { row: ASM_ROW, pcRow: PC_ROW },
-        );
-        expect(state.hasPcRow).toBe(true);
-        expect(state.hasContextAbove).toBe(true);
-        expect(await pcInViewport(page)).toBe(true);
-      }).toPass({ timeout: 10_000, intervals: [50, 100] });
+      const pc = await stepAndWaitForNewPc(page, sessionId, "step_in_debug_session");
+      await expectAssemblyContext(page, BigInt(pc), { highlight: "pc" });
 
-      // A real user gesture still extends further: wheel up to the top of the
-      // prefetched context prepends more rows, and the scroll compensation
-      // keeps the viewport stable (PC may scroll off — that's user intent).
-      const before = await contentHeight(page);
-      await page.locator(ASM_PANEL).hover();
-      await expect(async () => {
-        await page.mouse.wheel(0, -2000);
-        expect(await contentHeight(page)).toBeGreaterThan(before);
-      }).toPass({ timeout: 10_000, intervals: [50, 100] });
+      // Keep the native wheel-over-listing path covered separately from the
+      // forwarded toolbar input. Move to the actual instruction viewport.
+      const view = (await assemblyViewport(page))!;
+      await page.mouse.move(view.x, view.y);
+      await expectAssemblyWheel(page, -1);
 
       await cleanupSession(page, sessionId);
     } finally {

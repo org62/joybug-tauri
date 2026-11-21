@@ -18,7 +18,7 @@ pub enum UICommand {
     /// `request_id` is echoed in the result: the caller's way to tell its
     /// own answer from another request for the same address.
     Disassembly{ arch: joybug_core::interfaces::Architecture, address: u64, count: u32, compare_image: bool, request_id: Option<String> },
-    DisassembleFunction{ arch: joybug_core::interfaces::Architecture, address: u64, max_instructions: u32, compare_image: bool },
+    DisassembleFunction{ arch: joybug_core::interfaces::Architecture, address: u64, max_instructions: u32, compare_image: bool, request_id: u64 },
     DisassembleBackward{ arch: joybug_core::interfaces::Architecture, target: u64, count: u32, compare_image: bool },
     GetCallStack,
     SearchSymbols{ pattern: String, limit: u32 },

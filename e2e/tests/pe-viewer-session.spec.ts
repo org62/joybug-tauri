@@ -4,6 +4,7 @@ import {
   cleanupSession,
   goToWindow,
   moduleBase,
+  rowAddress,
 } from "../helpers/session-helpers";
 import {
   waitForPaused,
@@ -11,7 +12,7 @@ import {
   configureMinimalStopSettings,
   restoreDefaultSettings,
 } from "../helpers/wait-helpers";
-import { ASM_PANEL, ASM_ROW } from "../helpers/selectors";
+import { ASM_PANEL, SELECTED_ROW } from "../helpers/selectors";
 import { leaf, leafLink, pick } from "../helpers/pe-helpers";
 
 test.describe("PE Viewer (session)", () => {
@@ -65,12 +66,8 @@ test.describe("PE Viewer (session)", () => {
 
       // Clicking a code address navigates the session's Disassembly tab to it.
       await entry.click();
-      await expect(async () => {
-        const first = (await page.locator(ASM_ROW).first().innerText()).trim();
-        const addr = first.match(/^0x[0-9a-f]+/i)?.[0];
-        expect(addr, `first row: ${JSON.stringify(first)}`).toBeTruthy();
-        expect(BigInt(addr!)).toBe(BigInt(entryVa));
-      }).toPass({ timeout: 10_000, intervals: [50, 100] });
+      const entryRow = page.locator(`${SELECTED_ROW}[data-address="${rowAddress(BigInt(entryVa))}"]`);
+      await expect(entryRow).toBeVisible({ timeout: 10_000 });
       // PE Viewer is a wide view, so it shares the center panel with
       // Disassembly — the navigation above hid it behind that tab.
       await goToWindow(page, "PE Viewer");
