@@ -15,9 +15,13 @@ cd src-tauri && cargo build   # Rust-only build (useful for checking compilation
 npm run test:e2e       # E2E tests (WebdriverIO + tauri-driver on the real webview; build the debug binary first)
 ```
 
-### Review after major changes
+### Independent review before testing
 
-Before delivering a major feature, refactor, or bug fix, read `.claude/skills/review/SKILL.md` and run its joint review-and-fix workflow across this repository and `external/joybug-core`. For this post-change review, select the current task's uncommitted changes; explicit staged-review requests select staged mode. This is an assistant workflow, not a Git hook or CI job; never stage changes automatically.
+Every plan that changes code, even a small fix, must list these steps in order: **implement → independent maintainability review → address findings → run tests**. Planning schedules the review; execution starts it only after the patch is written. Major features, refactors and bug fixes made without a plan use the same workflow.
+
+Assign the review to a fresh, read-only reviewer agent that did not write the patch. Give it the task requirements and the current task's uncommitted changes in this repository and `external/joybug-core`. Have it use `.claude/skills/review/SKILL.md` to inspect the diff and its callers for duplicated behavior, dead code, symptom-only workarounds, and abstractions or ownership choices that make later changes harder. Require a location and concrete consequence for each finding; “no findings” is valid. An implementer's self-review is not a substitute, even for a small patch.
+
+The implementer resolves confirmed findings or records why a recommendation does not apply, then tests the reviewed code. Explicit staged-review requests still use the skill's staged mode. This is an assistant workflow, not a Git hook or CI job; never stage changes automatically.
 
 ### E2E Tests
 
