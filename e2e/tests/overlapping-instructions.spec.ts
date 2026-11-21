@@ -9,6 +9,7 @@ import {
 import {
   waitForPaused,
   waitForDisassemblyLoaded,
+  waitForSymbolVa,
   configureMinimalStopSettings,
   restoreDefaultSettings,
   enableImagePatchLens,
@@ -128,6 +129,51 @@ test.describe("Overlapping instructions", () => {
 
       await cleanupSession(page, sessionId);
     } finally {
+      await restoreDefaultSettings(page);
+    }
+  });
+
+  test("follows a RIP-relative import call to the live callee and back", async ({
+    tauriPage: page,
+  }) => {
+    test.setTimeout(120_000);
+    await configureMinimalStopSettings(page);
+    const sessionId = await createAndStartSession(
+      page, "Follow import call", `"${fixtureExe("overlap_asm")}" follow`,
+    );
+    try {
+      await waitForPaused(page, sessionId);
+      await waitForDisassemblyLoaded(page, ASM_PANEL);
+      const main = await waitForSymbolVa(page, sessionId, "overlap_asm", "main");
+      const input = page.locator(`${ASM_PANEL} input`).first();
+      await input.fill(main);
+      await input.press("Enter");
+      const selected = page.locator(SELECTED_ROW);
+      await expect(selected).toHaveAttribute("data-address", rowAddress(BigInt(main)), { timeout: 15_000 });
+
+      const call = page.locator(`${ASM_ROW}:has([title^="FF 15 " i])`);
+      await expect(call).toHaveCount(1);
+      const callAddress = (await call.getAttribute("data-address"))!;
+
+      // Compute the destination from process bytes, independently of the listing.
+      const readBytes = async (address: string, size: number) => {
+        const bytes: number[] = await invoke(page, "read_memory_sync", { sessionId, address, size });
+        expect(bytes).toHaveLength(size);
+        return Buffer.from(bytes);
+      };
+      const opcode = await readBytes(callAddress, 6);
+      expect([...opcode.subarray(0, 2)]).toEqual([0xff, 0x15]);
+      const slot = BigInt(callAddress) + 6n + BigInt(opcode.readInt32LE(2));
+      const expected = (await readBytes(rowAddress(slot), 8)).readBigUInt64LE();
+      expect(expected).not.toBe(0n);
+      expect(expected).not.toBe(slot);
+
+      await call.locator('[title^="Jump to "]').click();
+      await expect(selected).toHaveAttribute("data-address", rowAddress(expected), { timeout: 15_000 });
+      await page.locator(`${ASM_PANEL} button[title^="Go back"]`).click();
+      await expect(selected).toHaveAttribute("data-address", callAddress, { timeout: 15_000 });
+    } finally {
+      await cleanupSession(page, sessionId);
       await restoreDefaultSettings(page);
     }
   });

@@ -1,5 +1,6 @@
 import { test, expect, navigateTo, gotoFreshPe } from "../helpers/test-fixtures";
-import { ASM_ROW } from "../helpers/selectors";
+import { ASM_PANEL, ASM_ROW, HEX_ADDRESS, SELECTED_ROW, hexPanelFor } from "../helpers/selectors";
+import { fixtureExe } from "../helpers/session-helpers";
 import { openPe, leaf, leafLink, pick } from "../helpers/pe-helpers";
 import type { Page } from "../helpers/test-fixtures";
 
@@ -94,6 +95,42 @@ test.describe("PE Viewer", () => {
     const second = BigInt((await rows.nth(1).locator("button").first().innerText()).trim());
     expect(first > base && first < base + 0x1000000n).toBe(true);
     expect(second - first).toBe(4n);
+  });
+
+  test("an offline indirect call opens its import slot in Hex, not as code", async ({
+    tauriPage: page,
+  }) => {
+    await openPe(page, fixtureExe("overlap_asm"));
+    await pickAddrMode(page, "VA");
+
+    // Take the expected slot from the import table, independently of the decoder.
+    await page.getByText("Imports", { exact: false }).first().click();
+    const entry = page.getByTestId("pe-import-row").filter({ hasText: "ExitProcess" });
+    await expect(entry).toBeVisible();
+    const slot = BigInt((await entry.locator("button").first().innerText()).trim());
+
+    // Hex normally has its own panel and is already active. Close it so a
+    // successful click must open it, not just leave the existing tab visible.
+    const hexTab = page.locator(".dock-tab", { hasText: /^Hex$/ });
+    await hexTab.locator(".dock-tab-close-btn").click();
+    await expect(hexTab).toHaveCount(0);
+    await page.getByText("Disassembly", { exact: true }).first().click();
+    const goto = page.locator(`${ASM_PANEL} input`).first();
+    await goto.fill("overlap_asm!main");
+    await goto.press("Enter");
+    // The real main starts with a stack adjustment; the incremental-link thunk doesn't.
+    await expect(page.locator(SELECTED_ROW)).toContainText(/sub\s*rsp/i);
+    const call = page.locator(ASM_ROW).filter({ hasText: /call[^[]*\[/i });
+    await expect(call).toHaveCount(1);
+    await expect(call.locator('[title^="Jump to "]')).toHaveCount(0);
+    const operand = call.locator('[title^="Open memory at "]');
+    await expect(operand).toHaveAttribute("title", new RegExp(`^Open memory at 0x0*${slot.toString(16)}$`, "i"));
+    await operand.click();
+
+    await expect(hexTab).toHaveClass(/dock-tab-active/);
+    const rowVA = slot & ~15n;
+    const gutter = page.locator(`${hexPanelFor("pe-hex")} ${HEX_ADDRESS}`);
+    await expect(gutter.filter({ hasText: new RegExp(`^0x${rowVA.toString(16)}$`, "i") }).first()).toBeVisible();
   });
 
   test("hex goto accepts a 32-bit VA", async ({ tauriPage: page }) => {

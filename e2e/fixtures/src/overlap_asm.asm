@@ -12,7 +12,7 @@
 ; This fixture is only ever inspected, never run or stepped: it is x64-pinned, so
 ; on an ARM64 host it would execute emulated (see the arch note in build.mjs).
 
-EXTERN ExitProcess:PROC
+EXTERN __imp_ExitProcess:QWORD
 
 .code
 
@@ -43,7 +43,7 @@ main PROC
     sub     rsp, 28h          ; shadow space + 16-byte alignment for calls
     call    overlap_fn        ; keeps overlap_fn referenced; harmless to run
     xor     ecx, ecx
-    call    ExitProcess
+    call    QWORD PTR [__imp_ExitProcess]
     add     rsp, 28h
     ret
 main ENDP
