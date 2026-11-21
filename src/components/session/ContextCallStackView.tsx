@@ -4,7 +4,7 @@ import { listen } from '@tauri-apps/api/event';
 import { useSessionContext } from '@/contexts/SessionContext';
 import { AlertCircle, List } from 'lucide-react';
 import { CallStackFrameList, CallStackFrame } from '@/components/CallStackFrameList';
-import { DockPanel, PanelToolbar } from '@/components/ui/panel';
+import { DockPanel, PanelBody, PanelToolbar } from '@/components/ui/panel';
 import { EmptyState, ProcessUnavailableState } from '@/components/ui/empty-state';
 import { Button } from '@/components/ui/button';
 import { ContextHexView } from '@/components/session/ContextHexView';
@@ -203,13 +203,13 @@ export function ContextCallStackView({ onNavigateToDisassembly, onNavigateToMemo
           />
         </div>
       ) : hasFrames ? (
-        <div className="flex-1 min-h-0">
+        <PanelBody>
           <CallStackFrameList
             frames={callStack}
             onClickAddress={onNavigateToDisassembly}
             onClickMemory={onNavigateToMemoryPointer}
           />
-        </div>
+        </PanelBody>
       ) : error ? (
         <EmptyState
           icon={<AlertCircle className="h-12 w-12 mx-auto mb-4 opacity-50" />}
