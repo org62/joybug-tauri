@@ -10,12 +10,18 @@ import type { CallStackFrame } from "@/components/CallStackFrameList";
 // Re-export for convenience in other components
 export { type SerializableThreadContext } from "@/components/RegisterView";
 
+export type ModuleBreakpointTarget =
+  | { kind: "symbol"; name: string }
+  | { kind: "rva"; hex: string };
+
 export interface RawBreakpoint {
   id: string;
   address: number;
   module_name: string;
   module_offset: number;
   name: string | null;
+  module_target?: ModuleBreakpointTarget | null;
+  binding_error?: string | null;
   group: string | null;
   symbol: string | null;
   enabled: boolean;

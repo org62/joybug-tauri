@@ -1,4 +1,4 @@
-use crate::state::SessionStateUI;
+use crate::state::{ModuleBreakpointTarget, SessionStateUI};
 use joybug_core::protocol::MinidumpKind;
 use std::sync::{Arc, Mutex};
 
@@ -37,6 +37,7 @@ pub enum UICommand {
     SetRegister { register_name: String, value: u64 },
     ToggleBreakpoint { address: u64, single_shot: bool },
     SetBreakpoints { addresses: Vec<u64>, group: Option<String>, single_shot: bool },
+    AddModuleBreakpoint { module_name: String, target: ModuleBreakpointTarget },
     SyncAutoBreakpoints,
     /// Push the diagnostic disassembly switches to the debug server.
     SetDisasmOptions { options: joybug_core::protocol::DisasmOptions },

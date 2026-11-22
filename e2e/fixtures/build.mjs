@@ -137,9 +137,23 @@ function mainUnix() {
     console.log(`[fixtures] compiling ${name}`);
     execFileSync(
       cc,
-      ["-g", "-gdwarf-5", "-O0", "-fno-omit-frame-pointer", "-no-pie", "-pthread", "-o", exe, src],
+      ["-g", "-gdwarf-5", "-O0", "-fno-omit-frame-pointer", "-no-pie", "-pthread", "-o", exe, src,
+        ...(name === "hello_c" ? ["-ldl"] : [])],
       { stdio: "inherit" },
     );
+  }
+
+  const deferredSrc = path.join(SRC, "deferred_c.c");
+  const deferredSo = path.join(BIN, "deferred_c.so");
+  const deferredDebug = path.join(BIN, "deferred_c.debug");
+  if (isStale([deferredSo, deferredDebug], [deferredSrc, path.join(SRC, "portable.h")])) {
+    console.log("[fixtures] compiling deferred_c.so with separate debug info");
+    execFileSync(cc, ["-g", "-gdwarf-5", "-O0", "-shared", "-fPIC", "-Wl,--build-id",
+      "-o", deferredDebug, deferredSrc], { stdio: "inherit" });
+    // Keep a complete unstripped ELF for the manual-symbol-load path. Do not
+    // add a .gnu_debuglink: the target copy must never auto-discover this file.
+    execFileSync(process.env.STRIP || "strip", ["--strip-unneeded", "-o", deferredSo, deferredDebug],
+      { stdio: "inherit" });
   }
   console.log("[fixtures] done:", readdirSync(BIN).filter((f) => !f.includes(".")).join(", "));
 }
@@ -173,6 +187,20 @@ function main() {
   compileC("sleeper_c");
   // 32-bit build of the same program for the WOW64 spec.
   compileC("hello_c", C_WOW64, "hello_c32");
+
+  const deferredSrc = path.join(SRC, "deferred_c.c");
+  const deferredDll = path.join(BIN, "deferred_c.dll");
+  const deferredPdb = path.join(BIN, "deferred_c.pdb");
+  const deferredStamp = path.join(BIN, "deferred_c.arch");
+  if (archStale([deferredDll, deferredPdb], [deferredSrc, path.join(SRC, "portable.h")], deferredStamp, C_HOST)) {
+    console.log(`[fixtures] compiling deferred_c.dll (${C_HOST})`);
+    runTool(C_HOST, "cl.exe", [
+      "/nologo", "/LD", "/Od", "/Zi", `/Fe:${deferredDll}`,
+      "/Fd:deferred_c.compile.pdb", "/Fo:deferred_c.obj", deferredSrc,
+      "/link", "/DEBUG:FULL", "/INCREMENTAL:NO", `/PDB:${deferredPdb}`, "/PDBALTPATH:%_PDB%",
+    ]);
+    writeFileSync(deferredStamp, C_HOST);
+  }
 
   // --- MASM fixtures (x64 only) ---
   // The .asm sources are x64 MASM (ml64). On an ARM64 host these build x64

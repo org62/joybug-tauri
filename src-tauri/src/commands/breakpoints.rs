@@ -6,7 +6,8 @@ use crate::session::breakpoints::{
     process_set_hardware_breakpoint, process_toggle_breakpoint,
     remove_breakpoint_rows_offline, set_breakpoint_enabled_offline, update_breakpoint_offline,
 };
-use crate::state::SessionStatesMap;
+use crate::session::module_breakpoints;
+use crate::state::{ModuleBreakpointTarget, SessionStatesMap};
 use tauri::State;
 use tracing::info;
 
@@ -63,6 +64,37 @@ pub fn set_breakpoints(
             })?;
             info!("OOB set breakpoints for session {}, {} addresses", session_id, addresses.len());
         }
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn add_module_breakpoint(
+    session_id: String,
+    module_name: String,
+    target: ModuleBreakpointTarget,
+    session_states: State<'_, SessionStatesMap>,
+    oob_pool: State<'_, super::OobPool>,
+    app_handle: tauri::AppHandle,
+) -> Result<()> {
+    let session = super::get_session_arc(&session_id, &session_states)?;
+    let target_os = module_breakpoints::target_windows(&session.lock().unwrap());
+    let (module_name, target) = module_breakpoints::validate_request(&module_name, target, target_os)?;
+    if !module_breakpoints::add_saved(&session, &app_handle, &module_name, &target) {
+        return Ok(());
+    }
+    let handle = Some(app_handle.clone());
+    let command = UICommand::AddModuleBreakpoint {
+        module_name: module_name.clone(),
+        target: target.clone(),
+    };
+    if let Err(error) = super::paused_or_offline_or_oob(
+        &session, &session_id, &oob_pool, command, || {},
+        |client, pid| module_breakpoints::reconcile_saved(client, &handle, pid, &module_name, &target),
+    ) {
+        // Intent is already saved. A target starting or exiting has no live
+        // mapping to reconcile yet; the next loader event will consider it.
+        tracing::debug!("Module breakpoint saved without a live client: {error}");
     }
     Ok(())
 }

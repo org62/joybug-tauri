@@ -196,6 +196,11 @@ pub(crate) fn handle_ui_commands(
             match result {
                 CommandResult::Continue => {}
                 CommandResult::ResumeExecution => {
+                    super::module_breakpoints::reconcile_adds_before_resume(session, app_handle_clone, event.pid());
+                    // A worker that observed Paused may be finishing a deferred
+                    // auto one-shot; serialize physical continuation after it.
+                    let gate = super::module_breakpoints::gate(&session.state);
+                    let _guard = gate.lock().unwrap();
                     telemetry::mark_resume();
                     return Ok(true);
                 }
@@ -491,6 +496,10 @@ fn process_command(
             process_set_breakpoints(session, app_handle_clone, event.pid(), addresses, group.clone(), single_shot);
             CommandResult::Continue
         }
+        UICommand::AddModuleBreakpoint { ref module_name, ref target } => {
+            super::module_breakpoints::reconcile_saved(session, app_handle_clone, event.pid(), module_name, target);
+            CommandResult::Continue
+        }
         UICommand::SyncAutoBreakpoints => {
             process_sync_auto_breakpoints(session, app_handle_clone, event.pid());
             CommandResult::Continue
@@ -615,6 +624,9 @@ fn process_command(
         }
         UICommand::Detach => {
             let pid = event.pid();
+            let gate = super::module_breakpoints::gate(&session.state);
+            let _guard = gate.lock().unwrap();
+            session.state.lock().unwrap().breakpoint_modules.clear();
             info!("Detach command received for pid {}", pid);
             let session_id = session.state.lock().unwrap().id.clone();
             match session.send_and_receive(&joybug_core::protocol::DebuggerRequest::Detach { pid }) {
@@ -638,6 +650,9 @@ fn process_command(
         }
         UICommand::Stop => {
             info!("Stop command received, terminating session");
+            let gate = super::module_breakpoints::gate(&session.state);
+            let _guard = gate.lock().unwrap();
+            session.state.lock().unwrap().breakpoint_modules.clear();
             let mut state = session.state.lock().unwrap();
             state.status = SessionStatusUI::Stopped;
             CommandResult::StopSession

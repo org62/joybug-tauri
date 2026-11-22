@@ -3,9 +3,10 @@ use tauri::{AppHandle, Emitter, Manager};
 use tracing::{error, info, warn};
 
 use super::helpers::{format_symbol, is_system_module_path, module_containing, module_short_name};
+use super::module_breakpoints;
 use super::source::FileLine;
 use super::types::DebugSession;
-use crate::state::SessionStateUI;
+use crate::state::{BreakpointInfo, SessionStateUI, SessionStatusUI};
 
 /// Convert hw_type string to joybug-core HardwareBreakpointType
 fn parse_hw_type(hw_type: &str) -> Option<joybug_core::protocol::HardwareBreakpointType> {
@@ -105,7 +106,10 @@ fn arm_software_breakpoint(session: &mut DebugSession, pid: u32, address: u64, s
 /// Arm a breakpoint of any kind at `address` in the debuggee: a fresh silent access
 /// trace for watchpoints, a Keep-handler hardware breakpoint for `"hardware"`, and a
 /// software breakpoint (single-shot or persistent) otherwise.
-fn arm_bp_of_kind(session: &mut DebugSession, pid: u32, address: u64, bp_kind: &str, hw_type: Option<&str>, hw_size: Option<u8>, single_shot: bool) -> Result<(), String> {
+pub(super) fn arm_bp_of_kind(
+    session: &mut DebugSession, pid: u32, address: u64, bp_kind: &str, hw_type: Option<&str>,
+    hw_size: Option<u8>, single_shot: bool, mapping: Option<(u64, u64)>,
+) -> Result<(), String> {
     match bp_kind {
         "hardware" | "watchpoint" => {
             let t = hw_type.and_then(parse_hw_type)
@@ -122,7 +126,14 @@ fn arm_bp_of_kind(session: &mut DebugSession, pid: u32, address: u64, bp_kind: &
                 .map_err(|e| e.to_string())
             }
         }
-        _ => arm_software_breakpoint(session, pid, address, single_shot),
+        _ => match mapping {
+            Some((base, token)) => match session.arm_module_breakpoint(pid, base, token, address) {
+                Ok(true) => Ok(()),
+                Ok(false) => Err("Module mapping no longer exists".into()),
+                Err(error) => Err(format!("Could not arm breakpoint: {error}")),
+            },
+            None => arm_software_breakpoint(session, pid, address, single_shot),
+        },
     }
 }
 
@@ -199,6 +210,8 @@ fn edit_and_publish(
     handle: &AppHandle,
     edit: impl FnOnce(&mut SessionStateUI),
 ) {
+    let gate = module_breakpoints::gate(session_state);
+    let _guard = gate.lock().unwrap();
     edit(&mut session_state.lock().unwrap());
     emit_breakpoints_event_from_state(session_state, handle);
     persist_breakpoints(session_state);
@@ -212,7 +225,7 @@ pub(crate) fn remove_breakpoint_rows_offline(
     ids: &[String],
 ) {
     edit_and_publish(session_state, handle, |state| {
-        state.breakpoints.retain(|b| !ids.contains(&b.id));
+        state.breakpoints.retain(|b| b.is_active || !ids.contains(&b.id));
     });
     info!("Removed {} breakpoint row(s) offline", ids.len());
 }
@@ -227,9 +240,9 @@ pub(crate) fn set_breakpoint_enabled_offline(
     enabled: bool,
 ) {
     edit_and_publish(session_state, handle, |state| {
-        for bp in state.breakpoints.iter_mut().filter(|b| pred(b)) {
+        for bp in state.breakpoints.iter_mut().filter(|b| !b.is_active && pred(b)) {
             bp.enabled = enabled;
-            bp.is_active = false;
+            bp.binding_error = None;
         }
     });
 }
@@ -280,7 +293,13 @@ pub(crate) fn remove_single_shot_row_on_hit(session: &mut DebugSession, address:
 /// stays O(N) without re-scanning (and re-locking) the growing list per address.
 fn existing_breakpoint_addresses(session: &DebugSession) -> std::collections::HashSet<u64> {
     let state = session.state.lock().unwrap();
-    state.breakpoints.iter().map(|bp| bp.address).collect()
+    state.breakpoints.iter().filter_map(|bp| (bp.address != 0).then_some(bp.address)).collect()
+}
+
+fn display_symbols(session: &mut DebugSession, pid: u32, addresses: Vec<u64>) -> impl Iterator<Item = Option<String>> + use<> {
+    session.try_resolve_addresses_to_symbols(pid, addresses).unwrap_or_default().into_iter()
+        .map(|result| result.map(|(module, symbol, offset)| format_symbol(&module, &symbol.name, offset)))
+        .chain(std::iter::repeat(None))
 }
 
 /// Arm a software breakpoint at `address` and push a new `BreakpointInfo` row (tagged
@@ -296,6 +315,7 @@ fn add_software_breakpoint(
     name: Option<String>,
     auto: bool,
     single_shot: bool,
+    symbol: Option<String>,
 ) {
     let (module_name, module_offset, module_path) = {
         let state = session.state.lock().unwrap();
@@ -329,22 +349,10 @@ fn add_software_breakpoint(
         }
     }
 
-    // Symbol/source are display-only. Auto rows are planted from the module-load
-    // event, while the module's PDB load (kicked off by that same event) is still
-    // in flight — the server-side resolvers block on pending symbol loads, which
-    // would stall the event loop once per module. Skip resolution for them; the
-    // row still shows module+offset and its group name.
-    let (symbol, source_file, source_line) = if auto {
-        (None, None, None)
+    let (source_file, source_line) = if auto {
+        (None, None)
     } else {
-        let symbol = match session.resolve_address_to_symbol(pid, address) {
-            Ok((Some(m), Some(sym), Some(offset))) => {
-                Some(format_symbol(&m, &sym.name, offset))
-            }
-            _ => None,
-        };
-        let (source_file, source_line) = resolve_source_line(session, app_handle_clone, pid, address);
-        (symbol, source_file, source_line)
+        resolve_source_line(session, app_handle_clone, pid, address)
     };
 
     let module_fingerprint = module_path.as_deref().and_then(module_file_fingerprint);
@@ -368,6 +376,9 @@ fn add_software_breakpoint(
         auto,
         single_shot,
         module_fingerprint,
+        module_target: None,
+        binding_error: None,
+        trap_mapping: None,
     });
 }
 
@@ -464,10 +475,10 @@ pub(crate) fn apply_auto_module_breakpoints(
     app_handle_clone: &Option<AppHandle>,
     pid: u32,
     module_base: u64,
-) {
+) -> bool {
     let toggles = read_auto_settings(app_handle_clone);
     if !toggles.any() {
-        return;
+        return false;
     }
 
     let path = {
@@ -476,12 +487,12 @@ pub(crate) fn apply_auto_module_breakpoints(
     };
     let path = match path {
         Some(p) => p,
-        None => return,
+        None => return false,
     };
 
     let targets = module_auto_targets(session, pid, module_base, &path, toggles);
     if targets.is_empty() {
-        return;
+        return false;
     }
 
     // Skip addresses already covered (user breakpoints, or rows just re-armed by
@@ -493,14 +504,11 @@ pub(crate) fn apply_auto_module_breakpoints(
         if !seen.insert(address) {
             continue;
         }
-        add_software_breakpoint(session, app_handle_clone, pid, address, Some(group.to_string()), Some(name), true, true);
+        add_software_breakpoint(session, app_handle_clone, pid, address, Some(group.to_string()), Some(name), true, true, None);
         planted = true;
     }
 
-    if planted {
-        emit_breakpoints_event(session, app_handle_clone);
-        // Not persisted: auto rows are regenerated from settings on each run.
-    }
+    planted
 }
 
 /// Reconcile the settings-driven auto breakpoints across ALL loaded modules against the
@@ -513,6 +521,9 @@ pub(crate) fn process_sync_auto_breakpoints(
     app_handle_clone: &Option<AppHandle>,
     pid: u32,
 ) {
+    let gate = module_breakpoints::gate(&session.state);
+    let _guard = gate.lock().unwrap();
+    if !can_mutate_live(session, pid) { return; }
     let toggles = read_auto_settings(app_handle_clone);
 
     // Desired address -> (group, name) across every loaded module. Empty when all
@@ -521,7 +532,8 @@ pub(crate) fn process_sync_auto_breakpoints(
     if toggles.any() {
         let modules: Vec<(u64, String)> = {
             let state = session.state.lock().unwrap();
-            state.modules.iter().map(|m| (m.base, m.name.clone())).collect()
+            state.modules.iter().filter(|m| !state.breakpoint_modules.auto_is_deferred(m.base))
+                .map(|m| (m.base, m.name.clone())).collect()
         };
         for (base, path) in &modules {
             for (address, group, name) in module_auto_targets(session, pid, *base, path, toggles) {
@@ -549,7 +561,7 @@ pub(crate) fn process_sync_auto_breakpoints(
         if !seen.insert(address) {
             continue;
         }
-        add_software_breakpoint(session, app_handle_clone, pid, address, Some(group.to_string()), Some(name), true, true);
+        add_software_breakpoint(session, app_handle_clone, pid, address, Some(group.to_string()), Some(name), true, true, None);
         changed = true;
     }
 
@@ -567,29 +579,19 @@ pub(crate) fn process_toggle_breakpoint(
     address: u64,
     single_shot: bool,
 ) {
-
-    let existing_bp_id = {
+    if address == 0 { return; }
+    let gate = module_breakpoints::gate(&session.state);
+    let _guard = gate.lock().unwrap();
+    if !can_mutate_live(session, pid) { return; }
+    let owner = {
         let state = session.state.lock().unwrap();
         state.breakpoints.iter().find(|bp| bp.address == address).map(|bp| bp.id.clone())
     };
-
-    if let Some(bp_id) = existing_bp_id {
-        let is_active = {
-            let state = session.state.lock().unwrap();
-            state.breakpoints.iter().find(|bp| bp.id == bp_id).map(|bp| bp.is_active).unwrap_or(false)
-        };
-        if is_active {
-            if let Err(e) = session.remove_breakpoint(pid, address) {
-                warn!("Failed to remove breakpoint at 0x{:X}: {}", address, e);
-            }
-        }
-        {
-            let mut state = session.state.lock().unwrap();
-            state.breakpoints.retain(|bp| bp.id != bp_id);
-        }
-        info!("Removed breakpoint at 0x{:X}", address);
+    if let Some(id) = owner {
+        apply_remove_breakpoint(session, pid, &id);
     } else {
-        add_software_breakpoint(session, app_handle_clone, pid, address, None, None, false, single_shot);
+        let symbol = display_symbols(session, pid, vec![address]).next().flatten();
+        add_software_breakpoint(session, app_handle_clone, pid, address, None, None, false, single_shot, symbol);
     }
 
     emit_breakpoints_event(session, app_handle_clone);
@@ -607,18 +609,53 @@ pub(crate) fn process_set_breakpoints(
     group: Option<String>,
     single_shot: bool,
 ) {
-    // Addresses that already have a breakpoint are skipped; inserting each armed
-    // address as we go also skips duplicates within this batch.
     let mut seen = existing_breakpoint_addresses(session);
-    for &address in addresses {
-        if !seen.insert(address) {
-            continue;
+    let pending: Vec<_> = addresses.iter().copied().filter(|&addr| addr != 0 && seen.insert(addr)).collect();
+    let symbols = display_symbols(session, pid, pending.clone());
+    let gate = module_breakpoints::gate(&session.state);
+    let _guard = gate.lock().unwrap();
+    if !can_mutate_live(session, pid) { return; }
+    let mut seen = existing_breakpoint_addresses(session);
+    for (address, symbol) in pending.into_iter().zip(symbols) {
+        if seen.insert(address) {
+            add_software_breakpoint(session, app_handle_clone, pid, address, group.clone(), None, false, single_shot, symbol);
         }
-        add_software_breakpoint(session, app_handle_clone, pid, address, group.clone(), None, false, single_shot);
     }
 
     emit_breakpoints_event(session, app_handle_clone);
     persist_breakpoints(&session.state);
+}
+
+fn can_mutate_live(session: &DebugSession, pid: u32) -> bool {
+    let state = session.state.lock().unwrap();
+    matches!(state.status, SessionStatusUI::Running | SessionStatusUI::Paused | SessionStatusUI::Open)
+        && state.current_event.as_ref().map(|event| event.pid()).or(state.open_pid) == Some(pid)
+}
+
+pub(super) fn disarm_software(
+    session: &mut DebugSession, pid: u32, address: u64, mapping: Option<(u64, u64)>,
+) -> Result<bool, String> {
+    if let Some((base, token)) = mapping {
+        session.remove_module_breakpoint(pid, base, token, address).map_err(|error| error.to_string())
+    } else {
+        remove_bp_of_kind(session, pid, address, "software").map(|()| true)
+    }
+}
+
+fn disarm_row(session: &mut DebugSession, pid: u32, bp: &BreakpointInfo) -> Result<(), String> {
+    if bp.bp_kind == "software" {
+        disarm_software(session, pid, bp.address, bp.trap_mapping).map(|_| ())
+    } else {
+        remove_bp_of_kind(session, pid, bp.address, &bp.bp_kind)
+    }
+}
+
+fn disarm_failed(session: &DebugSession, id: &str, error: &str) {
+    warn!("Could not disarm breakpoint {id}: {error}");
+    let mut state = session.state.lock().unwrap();
+    if let Some(bp) = state.breakpoints.iter_mut().find(|bp| bp.id == id) {
+        bp.binding_error = Some(format!("Could not disarm breakpoint: {error}"));
+    }
 }
 
 /// Processes a remove breakpoint request
@@ -636,8 +673,9 @@ fn apply_remove_breakpoint(session: &mut DebugSession, pid: u32, breakpoint_id: 
     };
 
     if bp.is_active {
-        if let Err(e) = remove_bp_of_kind(session, pid, bp.address, &bp.bp_kind) {
-            warn!("Failed to remove breakpoint at 0x{:X}: {}", bp.address, e);
+        if let Err(e) = disarm_row(session, pid, &bp) {
+            disarm_failed(session, breakpoint_id, &e);
+            return false;
         }
     }
     {
@@ -654,6 +692,9 @@ pub(crate) fn process_remove_breakpoint(
     pid: u32,
     breakpoint_id: &str,
 ) {
+    let gate = module_breakpoints::gate(&session.state);
+    let _guard = gate.lock().unwrap();
+    if !can_mutate_live(session, pid) { return; }
     apply_remove_breakpoint(session, pid, breakpoint_id);
 
     emit_breakpoints_event(session, app_handle_clone);
@@ -667,6 +708,9 @@ pub(crate) fn process_remove_breakpoints(
     pid: u32,
     breakpoint_ids: &[String],
 ) {
+    let gate = module_breakpoints::gate(&session.state);
+    let _guard = gate.lock().unwrap();
+    if !can_mutate_live(session, pid) { return; }
     for breakpoint_id in breakpoint_ids {
         apply_remove_breakpoint(session, pid, breakpoint_id);
     }
@@ -676,30 +720,52 @@ pub(crate) fn process_remove_breakpoints(
 }
 
 /// Core logic for enabling/disabling a single breakpoint (no emit/persist).
-pub(crate) fn apply_enable_breakpoint(
+fn apply_enable_breakpoint(
     session: &mut DebugSession,
     app_handle_clone: &Option<AppHandle>,
     pid: u32,
     breakpoint_id: &str,
     enabled: bool,
-) {
+) -> bool {
     let bp_info = {
         let state = session.state.lock().unwrap();
         state.breakpoints.iter().find(|bp| bp.id == breakpoint_id).cloned()
     };
 
     if let Some(bp) = bp_info {
+        if bp.module_target.is_some() {
+            if !enabled && bp.is_active {
+                if let Err(error) = disarm_row(session, pid, &bp) {
+                    disarm_failed(session, breakpoint_id, &error);
+                    return false;
+                }
+            }
+            let mut state = session.state.lock().unwrap();
+            if let Some(b) = state.breakpoints.iter_mut().find(|b| b.id == breakpoint_id) {
+                b.enabled = enabled;
+                if !enabled {
+                    b.is_active = false;
+                    b.binding_error = None;
+                }
+            }
+            return enabled && !bp.is_active;
+        }
         let address = if bp.address == 0 && enabled {
             let state = session.state.lock().unwrap();
             super::helpers::find_module_by_name(&state.modules, &bp.module_name)
-                .map(|m| m.base + bp.module_offset)
+                .and_then(|m| m.base.checked_add(bp.module_offset))
                 .unwrap_or(0)
         } else {
             bp.address
         };
 
         if enabled && !bp.is_active && address != 0 {
-            let set_result = arm_bp_of_kind(session, pid, address, &bp.bp_kind, bp.hw_type.as_deref(), bp.hw_size, bp.single_shot);
+            let collision = session.state.lock().unwrap().breakpoints.iter().any(|b| b.id != breakpoint_id && b.address == address);
+            let set_result = if collision {
+                Err("Address already has a breakpoint".into())
+            } else {
+                arm_bp_of_kind(session, pid, address, &bp.bp_kind, bp.hw_type.as_deref(), bp.hw_size, bp.single_shot, None)
+            };
             match set_result {
                 Ok(()) => {
                     // An explicit enable accepts the module file as it is now —
@@ -710,6 +776,7 @@ pub(crate) fn apply_enable_breakpoint(
                         b.enabled = true;
                         b.is_active = true;
                         b.address = address;
+                        b.binding_error = None;
                         if module_fingerprint.is_some() {
                             b.module_fingerprint = module_fingerprint;
                         }
@@ -725,12 +792,14 @@ pub(crate) fn apply_enable_breakpoint(
                     let mut state = session.state.lock().unwrap();
                     if let Some(b) = state.breakpoints.iter_mut().find(|b| b.id == breakpoint_id) {
                         b.enabled = true;
+                        b.binding_error = Some(e);
                     }
                 }
             }
         } else if !enabled && bp.is_active {
-            if let Err(e) = remove_bp_of_kind(session, pid, address, &bp.bp_kind) {
-                warn!("Failed to disable breakpoint: {}", e);
+            if let Err(error) = disarm_row(session, pid, &bp) {
+                disarm_failed(session, breakpoint_id, &error);
+                return false;
             }
             let mut state = session.state.lock().unwrap();
             if let Some(b) = state.breakpoints.iter_mut().find(|b| b.id == breakpoint_id) {
@@ -744,6 +813,7 @@ pub(crate) fn apply_enable_breakpoint(
             }
         }
     }
+    false
 }
 
 /// Processes an enable/disable breakpoint request
@@ -754,9 +824,16 @@ pub(crate) fn process_enable_breakpoint(
     breakpoint_id: &str,
     enabled: bool,
 ) {
-    apply_enable_breakpoint(session, app_handle_clone, pid, breakpoint_id, enabled);
+    let gate = module_breakpoints::gate(&session.state);
+    let guard = gate.lock().unwrap();
+    if !can_mutate_live(session, pid) { return; }
+    let deferred = apply_enable_breakpoint(session, app_handle_clone, pid, breakpoint_id, enabled);
     emit_breakpoints_event(session, app_handle_clone);
     persist_breakpoints(&session.state);
+    drop(guard);
+    if deferred {
+        module_breakpoints::reconcile_enabled(session, app_handle_clone, pid, &[breakpoint_id.into()], true);
+    }
 }
 
 /// Processes an enable/disable breakpoint group request
@@ -767,6 +844,9 @@ pub(crate) fn process_enable_breakpoint_group(
     group: &str,
     enabled: bool,
 ) {
+    let gate = module_breakpoints::gate(&session.state);
+    let guard = gate.lock().unwrap();
+    if !can_mutate_live(session, pid) { return; }
     let bp_ids: Vec<String> = {
         let state = session.state.lock().unwrap();
         state.breakpoints.iter()
@@ -774,12 +854,14 @@ pub(crate) fn process_enable_breakpoint_group(
             .map(|bp| bp.id.clone())
             .collect()
     };
-    for bp_id in bp_ids {
-        apply_enable_breakpoint(session, app_handle_clone, pid, &bp_id, enabled);
-    }
+    let deferred: Vec<_> = bp_ids.into_iter().filter(|id| apply_enable_breakpoint(session, app_handle_clone, pid, id, enabled)).collect();
 
     emit_breakpoints_event(session, app_handle_clone);
     persist_breakpoints(&session.state);
+    drop(guard);
+    if !deferred.is_empty() {
+        module_breakpoints::reconcile_enabled(session, app_handle_clone, pid, &deferred, true);
+    }
 }
 
 /// Processes an update breakpoint (name/group) request
@@ -821,14 +903,19 @@ pub(crate) fn refresh_breakpoint_source_lines_for_module(
         return;
     }
 
-    let mut changed = false;
-    for (bp_id, addr) in targets {
+    let lines: Vec<_> = targets.into_iter().map(|(bp_id, addr)| {
         let (source_file, source_line) = match session.resolve_address_to_line(pid, addr) {
             Ok(Some(info)) => (Some(info.file.path), Some(info.line_entry.line_start)),
             _ => (None, None),
         };
-        let mut state = session.state.lock().unwrap();
-        if let Some(bp) = state.breakpoints.iter_mut().find(|b| b.id == bp_id) {
+        (bp_id, addr, source_file, source_line)
+    }).collect();
+    let gate = module_breakpoints::gate(&session.state);
+    let _guard = gate.lock().unwrap();
+    let mut state = session.state.lock().unwrap();
+    let mut changed = false;
+    for (bp_id, addr, source_file, source_line) in lines {
+        if let Some(bp) = state.breakpoints.iter_mut().find(|b| b.id == bp_id && b.is_active && b.address == addr) {
             if bp.source_file != source_file || bp.source_line != source_line {
                 bp.source_file = source_file;
                 bp.source_line = source_line;
@@ -836,6 +923,7 @@ pub(crate) fn refresh_breakpoint_source_lines_for_module(
             }
         }
     }
+    drop(state);
 
     if changed {
         emit_breakpoints_event(session, app_handle_clone);
@@ -857,30 +945,37 @@ pub(crate) fn reapply_breakpoints_for_module(
     pid: u32,
     module_name: &str,
     module_base: u64,
-) {
-    let module_path: Option<String> = {
+) -> bool {
+    let (breakpoints_to_apply, module_path) = {
         let state = session.state.lock().unwrap();
-        state.modules.iter().find(|m| m.base == module_base).map(|m| m.name.clone())
+        let rows = state.breakpoints.iter()
+            .filter(|bp| bp.module_target.is_none() && !bp.is_active
+                && (bp.address == 0 || bp.address.checked_sub(bp.module_offset) == Some(module_base))
+                && bp.module_name.eq_ignore_ascii_case(module_name))
+            .cloned()
+            .collect::<Vec<_>>();
+        if rows.is_empty() {
+            return false;
+        }
+        let path = state.modules.iter().find(|m| m.base == module_base).map(|m| m.name.clone());
+        (rows, path)
     };
     let current_fp = module_path.as_deref().and_then(module_file_fingerprint);
 
-    let breakpoints_to_apply: Vec<crate::state::BreakpointInfo> = {
-        let state = session.state.lock().unwrap();
-        state.breakpoints.iter()
-            .filter(|bp| !bp.is_active && bp.module_name.eq_ignore_ascii_case(module_name))
-            .cloned()
-            .collect()
-    };
-
     let mut invalidated: usize = 0;
+    let mut changed = false;
+    let mut fingerprints_changed = false;
     for snap in breakpoints_to_apply {
-        let addr = module_base + snap.module_offset;
+        let Some(addr) = module_base.checked_add(snap.module_offset).filter(|addr| *addr != 0) else { continue };
         // Only a definite mismatch invalidates; an unknown side (legacy entry,
         // uninspectable file) keeps today's trust-the-RVA behavior.
         let stale = matches!((&snap.module_fingerprint, &current_fp), (Some(s), Some(c)) if s != c);
         if stale {
             let mut state = session.state.lock().unwrap();
             if let Some(bp) = state.breakpoints.iter_mut().find(|b| b.id == snap.id) {
+                changed |= bp.enabled || bp.is_active || bp.address != addr
+                    || bp.module_fingerprint != current_fp;
+                fingerprints_changed = true;
                 if bp.enabled {
                     invalidated += 1;
                 }
@@ -896,18 +991,37 @@ pub(crate) fn reapply_breakpoints_for_module(
             continue;
         }
 
-        let armed = snap.enabled
-            && arm_bp_of_kind(session, pid, addr, &snap.bp_kind, snap.hw_type.as_deref(), snap.hw_size, snap.single_shot).is_ok();
-        if snap.enabled && !armed {
-            continue;
-        }
+        let armed = if snap.enabled {
+            let collision = session.state.lock().unwrap().breakpoints.iter().any(|bp| bp.id != snap.id && bp.address == addr && addr != 0);
+            let result = if collision {
+                Err("Address already has a breakpoint".into())
+            } else {
+                arm_bp_of_kind(session, pid, addr, &snap.bp_kind, snap.hw_type.as_deref(), snap.hw_size, snap.single_shot, None)
+            };
+            if let Err(error) = result {
+                let mut state = session.state.lock().unwrap();
+                if let Some(bp) = state.breakpoints.iter_mut().find(|bp| bp.id == snap.id) {
+                    changed |= bp.binding_error.as_deref() != Some(error.as_str());
+                    bp.binding_error = Some(error);
+                }
+                continue;
+            }
+            true
+        } else {
+            false
+        };
         let (source_file, source_line) = resolve_source_line(session, app_handle_clone, pid, addr);
         let mut state = session.state.lock().unwrap();
         if let Some(bp) = state.breakpoints.iter_mut().find(|b| b.id == snap.id) {
+            changed |= bp.address != addr || bp.is_active != armed
+                || bp.source_file != source_file || bp.source_line != source_line;
             bp.address = addr;
             bp.source_file = source_file;
             bp.source_line = source_line;
-            if bp.module_fingerprint.is_none() {
+            changed |= bp.binding_error.take().is_some();
+            if bp.module_fingerprint.is_none() && current_fp.is_some() {
+                fingerprints_changed = true;
+                changed = true;
                 bp.module_fingerprint = current_fp.clone();
             }
             if armed {
@@ -932,8 +1046,11 @@ pub(crate) fn reapply_breakpoints_for_module(
             crate::ui_logger::log_warn(handle, &msg, None);
             crate::ui_logger::toast_error(handle, &msg);
         }
+    }
+    if fingerprints_changed {
         persist_breakpoints(&session.state);
     }
+    changed
 }
 
 /// Processes a set hardware breakpoint request (breaks into the debugger on hit).
@@ -977,20 +1094,24 @@ fn arm_hardware_at(
 ) {
     let kind_label = if is_trace { "access trace" } else { "hardware breakpoint" };
 
-    // If a breakpoint already exists at this address, remove it first
-    let existing_bp_id = {
-        let state = session.state.lock().unwrap();
-        state.breakpoints.iter().find(|bp| bp.address == address).map(|bp| (bp.id.clone(), bp.bp_kind.clone(), bp.is_active))
-    };
-    if let Some((bp_id, bp_kind, is_active)) = existing_bp_id {
-        if is_active {
-            if let Err(e) = remove_bp_of_kind(session, pid, address, &bp_kind) {
-                warn!("Failed to remove existing breakpoint at 0x{:X}: {}", address, e);
+    if address == 0 { return; }
+    let symbol = display_symbols(session, pid, vec![address]).next().flatten();
+    let gate = module_breakpoints::gate(&session.state);
+    let _guard = gate.lock().unwrap();
+    if !can_mutate_live(session, pid) { return; }
+    let owner = session.state.lock().unwrap().breakpoints.iter()
+        .find(|bp| bp.address == address).map(|bp| (bp.id.clone(), bp.module_target.is_some()));
+    if let Some((id, deferred)) = owner {
+        if deferred {
+            if let Some(handle) = app_handle_clone {
+                crate::ui_logger::toast_error(handle, "Address already has a module breakpoint");
             }
+            return;
         }
-        let mut state = session.state.lock().unwrap();
-        state.breakpoints.retain(|bp| bp.id != bp_id);
-        info!("Removed existing breakpoint at 0x{:X} before setting {}", address, kind_label);
+        if !apply_remove_breakpoint(session, pid, &id) {
+            emit_breakpoints_event(session, app_handle_clone);
+            return;
+        }
     }
 
     let hw_type = match parse_hw_type(hw_type_str) {
@@ -1054,12 +1175,6 @@ fn arm_hardware_at(
         }
     }
 
-    let symbol = match session.resolve_address_to_symbol(pid, address) {
-        Ok((Some(m), Some(sym), Some(offset))) => {
-            Some(format_symbol(&m, &sym.name, offset))
-        }
-        _ => None,
-    };
     let (source_file, source_line) = resolve_source_line(session, app_handle_clone, pid, address);
 
     let module_fingerprint = module_fingerprint_at(session, address);
@@ -1084,6 +1199,9 @@ fn arm_hardware_at(
             auto: false,
             single_shot: false,
             module_fingerprint,
+            module_target: None,
+            binding_error: None,
+            trap_mapping: None,
         });
     }
 
@@ -1100,6 +1218,9 @@ pub(crate) fn process_stop_watchpoint_trace(
     pid: u32,
     breakpoint_id: &str,
 ) {
+    let gate = module_breakpoints::gate(&session.state);
+    let _guard = gate.lock().unwrap();
+    if !can_mutate_live(session, pid) { return; }
     let address = {
         let state = session.state.lock().unwrap();
         state.breakpoints.iter()
@@ -1135,13 +1256,18 @@ pub(crate) fn process_stop_watchpoint_trace(
 /// Mark breakpoints as inactive when their module is unloaded
 pub(crate) fn deactivate_breakpoints_for_module(
     state: &mut SessionStateUI,
-    module_name: &str,
-) {
+    module_base: u64,
+) -> bool {
+    let mut changed = false;
     for bp in &mut state.breakpoints {
-        if bp.module_name.eq_ignore_ascii_case(module_name) && bp.is_active {
+        if bp.address != 0 && bp.address.checked_sub(bp.module_offset) == Some(module_base) {
             bp.is_active = false;
             bp.address = 0;
-            info!("Deactivated breakpoint {} (module {} unloaded)", bp.id, module_name);
+            bp.binding_error = None;
+            bp.trap_mapping = None;
+            changed = true;
+            info!("Deactivated breakpoint {} (module at 0x{:X} unloaded)", bp.id, module_base);
         }
     }
+    changed
 }

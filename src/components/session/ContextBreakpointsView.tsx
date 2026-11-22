@@ -12,6 +12,7 @@ export function ContextBreakpointsView() {
     breakpoints,
     toggleBreakpoint,
     addBreakpoints,
+    addModuleBreakpoint,
     removeBreakpoint,
     removeBreakpoints,
     enableBreakpoint,
@@ -30,6 +31,9 @@ export function ContextBreakpointsView() {
       breakpoints={breakpoints}
       onToggleBreakpoint={toggleBreakpoint}
       onAddBreakpoints={addBreakpoints}
+      onAddModuleBreakpoint={sessionData.session ? addModuleBreakpoint : undefined}
+      onRetryModuleBreakpoint={sessionData.canUseMemoryOps && !sessionData.session?.non_invasive
+        ? (id) => enableBreakpoint(id, true) : undefined}
       onRemoveBreakpoint={removeBreakpoint}
       onRemoveBreakpoints={removeBreakpoints}
       onEnableBreakpoint={enableBreakpoint}

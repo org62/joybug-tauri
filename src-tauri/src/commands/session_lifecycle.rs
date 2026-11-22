@@ -296,6 +296,8 @@ pub fn start_debug_session(
     };
 
     {
+        let gate = crate::session::module_breakpoints::gate(&session_state);
+        let _guard = gate.lock().unwrap();
         let mut state = session_state.lock().unwrap();
         if matches!(state.status, SessionStatusUI::Stopped | SessionStatusUI::Error(_)) {
             state.reset();
@@ -493,6 +495,8 @@ fn spawn_debug_loop(
             let result = run_debug_session(session_state.clone(), Some(app_handle.clone()));
 
             {
+                let gate = crate::session::module_breakpoints::gate(&session_state);
+                let _guard = gate.lock().unwrap();
                 let mut state = session_state.lock().unwrap();
                 match &result {
                     Ok(_) => {
@@ -515,6 +519,7 @@ fn spawn_debug_loop(
                             crate::ui_logger::log_error(&app_handle, &error_message, Some(session_id.clone()));
                             crate::ui_logger::toast_error(&app_handle, &error_message);
                         }
+                        state.clear_breakpoint_bindings();
                     }
                 }
                 state.debug_result = Some(match &state.status {
@@ -791,6 +796,8 @@ pub fn stop_debug_session(
     oob_pool.remove(&session_id);
 
     if let Some(session_state) = session_state {
+        let bp_gate = crate::session::module_breakpoints::gate(&session_state);
+        let bp_guard = bp_gate.lock().unwrap();
         // Snapshot the target before teardown.
         let (pid, server_url, non_invasive, already_stopped) = {
             let state = session_state.lock().unwrap();
@@ -819,6 +826,8 @@ pub fn stop_debug_session(
             state.clear_runtime_caches();
         }
         emit_session_event(&session_state, &app_handle);
+        crate::session::breakpoints::emit_breakpoints_event_from_state(&session_state, &app_handle);
+        drop(bp_guard);
 
         // Terminate an invasive target so stopping a *running* session doesn't
         // leak the debuggee, and so a debug loop blocked in WaitForDebugEvent

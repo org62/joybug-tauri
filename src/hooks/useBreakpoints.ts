@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import { RawBreakpoint } from '@/contexts/SessionContext';
+import type { ModuleBreakpointTarget, RawBreakpoint } from '@/contexts/SessionContext';
 import { invokeToggleBreakpoint, invokeSetBreakpoints, reportSessionError } from '@/lib/sessionHelpers';
 
 export type { RawBreakpoint } from '@/contexts/SessionContext';
@@ -11,6 +11,8 @@ export interface Breakpoint {
   address: string;       // hex string "0x..."
   module_name: string;
   module_offset: string;  // hex string "0x..."
+  module_target: ModuleBreakpointTarget | null;
+  binding_error: string | null;
   name: string | null;
   group: string | null;
   symbol: string | null;
@@ -36,6 +38,8 @@ function convertBreakpoints(raw: RawBreakpoint[]): Breakpoint[] {
     address: `0x${bp.address.toString(16).toUpperCase()}`,
     module_name: bp.module_name,
     module_offset: `0x${bp.module_offset.toString(16).toUpperCase()}`,
+    module_target: bp.module_target ?? null,
+    binding_error: bp.binding_error ?? null,
     name: bp.name,
     group: bp.group,
     symbol: bp.symbol,
@@ -110,6 +114,12 @@ export function useBreakpoints(sessionId?: string, canUseMemoryOps?: boolean, se
     }
   }, [sessionId]);
 
+  // Let the dialog show validation or command errors inline without losing input.
+  const addModuleBreakpoint = useCallback(async (moduleName: string, target: ModuleBreakpointTarget) => {
+    if (!sessionId) throw new Error('No debug session is available.');
+    await invoke('add_module_breakpoint', { sessionId, moduleName, target });
+  }, [sessionId]);
+
   const removeBreakpoint = useCallback(async (breakpointId: string) => {
     if (!sessionId) return;
     try {
@@ -168,13 +178,14 @@ export function useBreakpoints(sessionId?: string, canUseMemoryOps?: boolean, se
     breakpoints,
     toggleBreakpoint,
     addBreakpoints,
+    addModuleBreakpoint,
     removeBreakpoint,
     removeBreakpoints,
     enableBreakpoint,
     enableBreakpointGroup,
     updateBreakpoint,
     setHardwareBreakpoint,
-  }), [breakpoints, toggleBreakpoint, addBreakpoints, removeBreakpoint, removeBreakpoints, enableBreakpoint, enableBreakpointGroup, updateBreakpoint, setHardwareBreakpoint]);
+  }), [breakpoints, toggleBreakpoint, addBreakpoints, addModuleBreakpoint, removeBreakpoint, removeBreakpoints, enableBreakpoint, enableBreakpointGroup, updateBreakpoint, setHardwareBreakpoint]);
 }
 
 export type BreakpointState = ReturnType<typeof useBreakpoints>;

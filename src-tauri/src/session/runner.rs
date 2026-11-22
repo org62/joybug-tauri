@@ -10,57 +10,125 @@ use super::breakpoints::{apply_auto_module_breakpoints, deactivate_breakpoints_f
 use super::patches::{deactivate_patches_for_module, emit_patches_event, reapply_patches_for_module};
 use super::dispatch::handle_ui_commands;
 use super::helpers::{module_short_name, update_session_from_event};
-use super::symbols::reapply_symbols_for_module;
+use super::module_breakpoints::{self, Instance, Pass};
+use super::symbols::{override_for_image, reapply_symbols_for_module};
 use super::types::DebugSession;
 
-/// Reapply a manual PDB, patches, breakpoints, bookmarks, and settings-driven auto
-/// breakpoints for a freshly loaded module. Patches must come BEFORE breakpoints so
-/// patches read real binary bytes (not 0xCC) and breakpoints store patched bytes as
-/// originals. A persisted manual PDB is kicked off first but loads asynchronously
-/// (off the debug loop); breakpoints re-resolve their source lines here without it
-/// and again when the async load lands (see `reapply_symbols_for_module`).
-/// `state` must NOT be locked when calling this.
-fn reapply_for_loaded_module(
-    session: &mut DebugSession,
-    app_handle_clone: &Option<AppHandle>,
-    pid: u32,
-    name: &str,
-    base: u64,
-) {
-    let short = module_short_name(name);
-    reapply_symbols_for_module(session, app_handle_clone, pid, &short, base);
-    reapply_patches_for_module(session, pid, &short, base);
-    reapply_breakpoints_for_module(session, app_handle_clone, pid, &short, base);
-    reapply_bookmarks_for_module(session, pid, &short);
-    apply_auto_module_breakpoints(session, app_handle_clone, pid, base);
+/// Module work runs once per event, before the pause decision. A persisted
+/// override is marked in flight before any lookup can use the fallback table.
+#[derive(Default)]
+struct ModuleEventBreakpoints {
+    pass: Pass,
+    unloaded: Option<String>,
+    follow_up: Option<(Instance, Option<crate::state::SymbolOverrideInfo>)>,
 }
 
-/// Reapply or deactivate breakpoints and patches in response to module load/unload events.
-/// `state` must NOT be locked when calling this.
+impl ModuleEventBreakpoints {
+    fn start_symbol_work(&self, session: &DebugSession, handle: &AppHandle) {
+        let Some((instance, manual)) = &self.follow_up else { return };
+        if let Some(manual) = manual {
+            reapply_symbols_for_module(&session.state, handle, *instance, manual.clone());
+        } else if self.pass.loading {
+            module_breakpoints::schedule(&session.state, Some(handle), *instance, true);
+        }
+    }
+}
+
 fn handle_event_breakpoints(
     session: &mut DebugSession,
     app_handle_clone: &Option<AppHandle>,
     event: &joybug_core::protocol_io::DebugEvent,
-    unloaded_module_name: &Option<String>,
-) {
-    match event {
-        joybug_core::protocol_io::DebugEvent::DllLoaded { dll_name, base_of_dll, .. } => {
-            let name = dll_name.as_deref().unwrap_or("<unknown>");
-            reapply_for_loaded_module(session, app_handle_clone, event.pid(), name, *base_of_dll);
-        }
-        joybug_core::protocol_io::DebugEvent::ProcessCreated { image_file_name, base_of_image, .. } => {
-            let name = image_file_name.as_deref().unwrap_or("<unknown>");
-            reapply_for_loaded_module(session, app_handle_clone, event.pid(), name, *base_of_image);
-        }
-        joybug_core::protocol_io::DebugEvent::DllUnloaded { .. } => {
-            if let Some(ref name) = unloaded_module_name {
-                let mut state = session.state.lock().unwrap();
-                deactivate_breakpoints_for_module(&mut state, &module_short_name(name));
+) -> Option<ModuleEventBreakpoints> {
+    use joybug_core::protocol_io::DebugEvent;
+    let (name, base) = match event {
+        DebugEvent::DllLoaded { dll_name, base_of_dll, .. } => (dll_name.as_deref(), *base_of_dll),
+        DebugEvent::ProcessCreated { image_file_name, base_of_image, .. } => (image_file_name.as_deref(), *base_of_image),
+        DebugEvent::DllUnloaded { base_of_dll, .. } => {
+            let gate = module_breakpoints::gate(&session.state);
+            let guard = gate.lock().unwrap();
+            let mut state = session.state.lock().unwrap();
+            if matches!(state.status, SessionStatusUI::Stopped) {
+                return None;
+            }
+            let unloaded = get_unloaded_module_name(&state, event);
+            state.breakpoint_modules.unloaded(*base_of_dll);
+            let mut changed = deactivate_breakpoints_for_module(&mut state, *base_of_dll);
+            if let Some(name) = &unloaded {
                 deactivate_patches_for_module(&mut state, &module_short_name(name));
             }
+            state.current_event = Some(event.clone());
+            update_session_from_event(&mut state, event);
+            let (diagnostics_changed, unambiguous) = unloaded.as_deref()
+                .map(|path| module_breakpoints::unloaded_diagnostics(&mut state, path))
+                .unwrap_or_default();
+            changed |= diagnostics_changed;
+            drop(state);
+            drop(guard);
+            let (mut pass, follow_up) = if let Some((instance, ids)) = unambiguous {
+                let pass = module_breakpoints::on_unique_after_unload(session, app_handle_clone.as_ref(), instance, &ids);
+                (pass, Some((instance, None)))
+            } else {
+                (Pass::default(), None)
+            };
+            pass.changed |= changed;
+            return Some(ModuleEventBreakpoints { pass, unloaded, follow_up });
         }
-        _ => {}
+        _ => return None,
+    };
+    let pid = event.pid();
+    let short = module_short_name(name.unwrap_or("<unknown>"));
+    // Capture the server token while this exact loader event holds the target.
+    // A later OOB lookup must not adopt a reused base, even for the same file.
+    let server_mapping = session.get_module_mapping(pid, base).unwrap_or_else(|error| {
+        debug!("Could not identify module mapping at {base:#x}: {error}");
+        None
+    });
+    let attached = matches!(event, DebugEvent::ProcessCreated { .. }) && {
+        let state = session.state.lock().unwrap();
+        state.attach_pid.is_some() && state.breakpoints.iter().any(|bp| bp.module_target.is_some())
+    };
+    let inventory = attached.then(|| session.list_mapped_modules(pid)).transpose().unwrap_or_else(|error| {
+        warn!("Could not inspect attached module inventory: {error}");
+        None
+    });
+    let gate = module_breakpoints::gate(&session.state);
+    let guard = gate.lock().unwrap();
+    let (instance, manual) = {
+        let mut state = session.state.lock().unwrap();
+        if matches!(state.status, SessionStatusUI::Stopped) {
+            return None;
+        }
+        state.current_event = Some(event.clone());
+        update_session_from_event(&mut state, event);
+        if let Some(inventory) = inventory {
+            state.breakpoint_modules.attach_inventory = inventory;
+        }
+        let path = server_mapping.as_ref().map(|(module, _, _)| module.name.as_str()).or(name);
+        let windows = server_mapping.as_ref().map(|(_, _, windows)| *windows)
+            .or_else(|| module_breakpoints::target_windows(&state)).unwrap_or(cfg!(windows));
+        let manual = path.and_then(|path| override_for_image(&state, path, &short, windows));
+        let instance = state.breakpoint_modules.loaded(pid, base, name, manual.is_some(), server_mapping);
+        (instance, manual)
+    };
+    // Patches read real binary bytes; traps must save the patched instruction.
+    reapply_patches_for_module(session, pid, &short, base);
+    let changed = reapply_breakpoints_for_module(session, app_handle_clone, pid, &short, base);
+    drop(guard);
+
+    let mut pass = module_breakpoints::on_load(session, app_handle_clone.as_ref(), instance);
+    pass.changed |= changed;
+    {
+        let _guard = gate.lock().unwrap();
+        if module_breakpoints::is_current(&session.state, instance) {
+            if pass.unresolved_enabled_name.is_some() && (pass.loading || manual.is_some()) {
+                module_breakpoints::defer_auto(&session.state, instance);
+            } else {
+                pass.changed |= apply_auto_module_breakpoints(session, app_handle_clone, pid, base);
+            }
+        }
     }
+    reapply_bookmarks_for_module(session, pid, &short);
+    Some(ModuleEventBreakpoints { pass, unloaded: None, follow_up: Some((instance, manual)) })
 }
 
 /// Emit module loaded/unloaded frontend events with logging.
@@ -69,6 +137,7 @@ fn emit_dll_events(
     session_id: &str,
     event: &joybug_core::protocol_io::DebugEvent,
     unloaded_module_name: Option<String>,
+    pause_notice: bool,
 ) {
     match event {
         joybug_core::protocol_io::DebugEvent::DllUnloaded { pid, tid, base_of_dll } => {
@@ -130,7 +199,9 @@ fn emit_dll_events(
             };
             crate::ui_logger::log_info(handle, &message, Some(session_id.to_string()));
             // The frontend dispatcher coalesces bursts of these into a summary toast.
-            crate::ui_logger::toast_info(handle, &message);
+            if !pause_notice {
+                crate::ui_logger::toast_info(handle, &message);
+            }
         }
         _ => {}
     }
@@ -493,6 +564,7 @@ pub fn run_debug_session(
                 joybug_core::protocol_io::DebugEvent::Output { .. }
                     | joybug_core::protocol_io::DebugEvent::DllLoaded { .. }
                     | joybug_core::protocol_io::DebugEvent::DllUnloaded { .. }
+                    | joybug_core::protocol_io::DebugEvent::ProcessCreated { .. }
                     | joybug_core::protocol_io::DebugEvent::ProcessExited { .. }
             ) {
                 // For breakpoint hits, name the group + module (entry/TLS) or the user's
@@ -523,6 +595,8 @@ pub fn run_debug_session(
             // A single-shot breakpoint is auto-removed server-side on its one hit; drop
             // its UI row too so the list stays in sync (whether we pause or continue).
             if let joybug_core::protocol_io::DebugEvent::SingleShotBreakpoint { address, .. } = event {
+                let gate = module_breakpoints::gate(&session.state);
+                let _guard = gate.lock().unwrap();
                 if super::breakpoints::remove_single_shot_row_on_hit(session, *address) {
                     emit_breakpoints_event(session, &app_handle_clone);
                 }
@@ -601,7 +675,17 @@ pub fn run_debug_session(
                 }
             }
 
-            // Decide whether this event should pause or auto-continue based on user settings
+            // Run loader work before deciding whether this event should pause.
+            let module_event = {
+                let _span = crate::telemetry::span("app.event_breakpoints");
+                handle_event_breakpoints(session, &app_handle_clone, event)
+            };
+            let pass = module_event.as_ref().map(|work| &work.pass);
+            let deferred_pause = pass.and_then(|pass| pass.unresolved_enabled_name.as_deref());
+            if matches!(event, joybug_core::protocol_io::DebugEvent::ProcessCreated { .. }) && deferred_pause.is_none() {
+                crate::ui_logger::toast_info(handle, &event.to_string());
+            }
+            let bp_gate = module_breakpoints::gate(&session.state);
             {
                 let settings = handle.state::<SettingsState>().inner().lock().unwrap().clone();
                 let should_pause = match event {
@@ -631,11 +715,17 @@ pub fn run_debug_session(
 
                 let is_process_exit = matches!(event, joybug_core::protocol_io::DebugEvent::ProcessExited { .. });
 
-                if !should_pause {
+                if is_process_exit {
+                    let _guard = bp_gate.lock().unwrap();
+                    session.state.lock().unwrap().breakpoint_modules.clear();
+                }
+                let unloaded_module_name = module_event.as_ref().and_then(|work| work.unloaded.clone());
+                if !should_pause && deferred_pause.is_none() {
                     // A non-pausing ProcessExited ends the run rather than
                     // auto-continuing: record the event, tear the live state
                     // down, and let the debug loop unwind.
                     if is_process_exit {
+                        let _guard = bp_gate.lock().unwrap();
                         {
                             let mut state = session.state.lock().unwrap();
                             let stopped = matches!(state.status, SessionStatusUI::Stopped);
@@ -648,24 +738,31 @@ pub fn run_debug_session(
                                 }
                             }
                         }
+                        emit_breakpoints_event(session, &app_handle_clone);
                         emit_session_event(&session.state, handle);
                         return Ok(true);
                     }
 
-                    let unloaded_module_name;
+                    let guard = bp_gate.lock().unwrap();
                     {
                         let mut state = session.state.lock().unwrap();
-                        unloaded_module_name = get_unloaded_module_name(&state, event);
+                        if matches!(state.status, SessionStatusUI::Stopped) {
+                            return Ok(false);
+                        }
                         state.current_event = Some(event.clone());
                         state.events.push(event.clone());
-                        update_session_from_event(&mut state, event);
+                        if module_event.is_none() {
+                            update_session_from_event(&mut state, event);
+                        }
                         state.status = SessionStatusUI::Running;
                     }
 
-                    handle_event_breakpoints(session, &app_handle_clone, event, &unloaded_module_name);
+                    if pass.is_some_and(|pass| pass.changed) {
+                        emit_breakpoints_event(session, &app_handle_clone);
+                    }
 
                     let session_id = session.state.lock().unwrap().id.clone();
-                    emit_dll_events(handle, &session_id, event, unloaded_module_name);
+                    emit_dll_events(handle, &session_id, event, unloaded_module_name, false);
 
                     // Skip full session-updated event for DLL events during auto-continue.
                     // The frontend already receives dll-loaded/dll-unloaded events directly
@@ -677,6 +774,10 @@ pub fn run_debug_session(
                     );
                     if !is_dll_event {
                         emit_session_event(&session.state, handle);
+                    }
+                    drop(guard);
+                    if let Some(work) = &module_event {
+                        work.start_symbol_work(session, handle);
                     }
                     return Ok(true);
                 }
@@ -701,49 +802,46 @@ pub fn run_debug_session(
                     }
                     Err(e) => {
                         error!("Failed to get thread context: {}", e);
-                        let mut state = session.state.lock().unwrap();
-                        state.status = SessionStatusUI::Error(format!("GetThreadContext failed: {}", e));
+                        session.state.lock().unwrap().status = SessionStatusUI::Error(format!("GetThreadContext failed: {}", e));
                         emit_session_event(&session.state, handle);
                         return Ok(false);
                     }
                 };
 
-                let unloaded_module_name;
+                let _guard = bp_gate.lock().unwrap();
                 {
                     let mut state = session.state.lock().unwrap();
+                    if matches!(state.status, SessionStatusUI::Stopped) {
+                        return Ok(false);
+                    }
                     state.current_event = Some(event.clone());
                     state.events.push(event.clone());
                     state.status = SessionStatusUI::Paused;
                     state.current_context = context.map(crate::events::convert_raw_context_to_serializable);
                     state.selected_tid = None;
 
-                    unloaded_module_name = get_unloaded_module_name(&state, event);
-                    if let Some(ref name) = unloaded_module_name {
-                        deactivate_breakpoints_for_module(&mut state, &module_short_name(name));
-                        deactivate_patches_for_module(&mut state, &module_short_name(name));
+                    if module_event.is_none() {
+                        update_session_from_event(&mut state, event);
                     }
-
-                    update_session_from_event(&mut state, event);
                 }
-
-                // Reapply patches then breakpoints for newly loaded modules. Passing
-                // `&None` makes the DllUnloaded arm a no-op — deactivation already
-                // happened above with the state locked.
-                {
-                    let _span = crate::telemetry::span("app.event_breakpoints");
-                    handle_event_breakpoints(session, &app_handle_clone, event, &None);
-                }
+                module_breakpoints::apply_ready_auto(session, &app_handle_clone, event.pid());
 
                 let session_id = session.state.lock().unwrap().id.clone();
-                emit_dll_events(handle, &session_id, event, unloaded_module_name);
+                emit_dll_events(handle, &session_id, event, unloaded_module_name, deferred_pause.is_some());
+                if let Some(message) = deferred_pause {
+                    crate::ui_logger::log_info(handle, message, Some(session_id));
+                    crate::ui_logger::toast_info(handle, message);
+                }
 
+                emit_session_event(&session.state, handle);
+                emit_breakpoints_event(session, &app_handle_clone);
+            }
+            if let Some(work) = &module_event {
+                work.start_symbol_work(session, handle);
             }
 
-            // Emit session events
-            emit_session_event(&session.state, handle);
             {
                 let _span = crate::telemetry::span("app.emit.pause_lists");
-                emit_breakpoints_event(session, &app_handle_clone);
                 emit_patches_event(session, &app_handle_clone, false);
                 super::bookmarks::emit_bookmarks_event(session, event.pid(), &app_handle_clone);
             }
@@ -829,6 +927,8 @@ pub fn run_debug_session(
     };
 
     // Mark session as finished
+    let gate = module_breakpoints::gate(&session_state);
+    let _guard = gate.lock().unwrap();
     {
         let mut state = session_state.lock().unwrap();
         if !matches!(state.status, SessionStatusUI::Error(_)) {

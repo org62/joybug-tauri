@@ -1,4 +1,5 @@
 use crate::error::{Error, Result};
+use crate::session::module_breakpoints;
 use crate::session::{UICommand, SymbolData};
 use crate::state::SessionStatesMap;
 use joybug_core::interfaces::DisassemblerProvider;
@@ -67,41 +68,63 @@ pub fn get_session_symbol_status(
 /// A GUID/age mismatch is reported in the result (not as an error) so the UI can
 /// offer "Load anyway" (re-invoke with force=true).
 #[tauri::command]
-pub fn load_module_pdb(
+pub async fn load_module_pdb(
     session_id: String,
     module_base: String,
     pdb_path: String,
     force: bool,
     session_states: State<'_, SessionStatesMap>,
-    oob_pool: State<'_, super::OobPool>,
+    app_handle: tauri::AppHandle,
 ) -> Result<PdbLoadResultData> {
     let base = super::parse_hex_u64(&module_base, "module base")?;
     let session_arc = super::get_session_arc(&session_id, &session_states)?;
-    let outcome = super::with_oob_client(&session_arc, &session_id, &oob_pool, |oob, pid| {
-        oob.load_pdb_from_path(pid, base, &pdb_path, force)
-    });
-    match super::flatten_oob(outcome) {
-        Ok(PdbLoadOutcome::Loaded { symbol_count }) => {
-            info!("Loaded PDB '{}' for module {} in session {} ({} symbols)", pdb_path, module_base, session_id, symbol_count);
-            // Remember this manual load so a session restart re-applies it.
-            crate::session::symbols::record_symbol_override(&session_arc, base, &pdb_path, force);
-            Ok(PdbLoadResultData { loaded: true, symbol_count: Some(symbol_count), mismatch: None })
+    let pid = super::oob_pid(&session_arc)?;
+    let instance = module_breakpoints::begin_manual_symbols(&session_arc, base, pid);
+    super::run_blocking(move || {
+        let outcome = (|| {
+            let (mut client, connected_pid) = super::create_oob_client(&session_arc)?;
+            if connected_pid != pid || instance.is_some_and(|instance| !module_breakpoints::is_current(&session_arc, instance)) {
+                return Err(Error::InvalidSessionState("Module mapping no longer exists".into()));
+            }
+            let token = match instance {
+                Some(instance) => Some(module_breakpoints::server_token(&session_arc, instance)
+                    .ok_or_else(|| Error::InvalidSessionState("Module mapping no longer exists".into()))?),
+                None => None,
+            };
+            client.load_pdb_from_path(pid, base, &pdb_path, force, token)
+                .map_err(|e| Error::InternalCommunication(e.to_string()))
+        })();
+        if matches!(&outcome, Ok(PdbLoadOutcome::Loaded { .. })) {
+            let gate = module_breakpoints::gate(&session_arc);
+            let _guard = gate.lock().unwrap();
+            if instance.is_none_or(|instance| module_breakpoints::is_current(&session_arc, instance)) {
+                crate::session::symbols::record_symbol_override(&session_arc, base, &pdb_path, force);
+            }
         }
-        Ok(PdbLoadOutcome::Mismatch(m)) => {
-            info!("PDB '{}' mismatches module {} in session {}", pdb_path, module_base, session_id);
-            Ok(PdbLoadResultData {
-                loaded: false,
-                symbol_count: None,
-                mismatch: Some(PdbMismatchData {
-                    pe_guid: m.pe_guid,
-                    pe_age: m.pe_age,
-                    pdb_guid: m.pdb_guid,
-                    pdb_age: m.pdb_age,
-                }),
-            })
+        if let Some(instance) = instance {
+            module_breakpoints::finish_manual_symbols(&session_arc, Some(&app_handle), instance);
         }
-        Err(e) => Err(Error::InternalCommunication(e)),
-    }
+        match outcome {
+            Ok(PdbLoadOutcome::Loaded { symbol_count }) => {
+                info!("Loaded '{}' for module {} in session {} ({} symbols)", pdb_path, module_base, session_id, symbol_count);
+                Ok(PdbLoadResultData { loaded: true, symbol_count: Some(symbol_count), mismatch: None })
+            }
+            Ok(PdbLoadOutcome::Mismatch(m)) => {
+                info!("'{}' mismatches module {} in session {}", pdb_path, module_base, session_id);
+                Ok(PdbLoadResultData {
+                    loaded: false,
+                    symbol_count: None,
+                    mismatch: Some(PdbMismatchData {
+                        pe_guid: m.pe_guid,
+                        pe_age: m.pe_age,
+                        pdb_guid: m.pdb_guid,
+                        pdb_age: m.pdb_age,
+                    }),
+                })
+            }
+            Err(error) => Err(error),
+        }
+    }).await
 }
 
 /// Retry a failed symbol download for a module.
@@ -111,6 +134,7 @@ pub fn retry_module_symbols(
     module_base: String,
     session_states: State<'_, SessionStatesMap>,
     oob_pool: State<'_, super::OobPool>,
+    app_handle: tauri::AppHandle,
 ) -> Result<()> {
     let base = super::parse_hex_u64(&module_base, "module base")?;
     let session_arc = super::get_session_arc(&session_id, &session_states)?;
@@ -121,6 +145,7 @@ pub fn retry_module_symbols(
         oob.retry_symbol_load(pid, base)
     });
     super::flatten_oob(result).map_err(Error::InternalCommunication)?;
+    module_breakpoints::retry_symbols(&session_arc, &app_handle, base);
     info!("Symbol retry requested for module {} in session {}", module_base, session_id);
     Ok(())
 }

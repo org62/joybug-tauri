@@ -2,6 +2,8 @@ use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter};
 use tracing::{debug, error, info, warn};
 
+use super::breakpoints::{arm_bp_of_kind, disarm_software, emit_breakpoints_event};
+use super::module_breakpoints;
 use super::helpers::module_short_name;
 use super::types::DebugSession;
 use crate::state::{PatchInfo, SessionStateUI};
@@ -121,48 +123,45 @@ pub(crate) fn update_patch_offline(
     });
 }
 
-/// Active software breakpoint addresses that fall inside `[address, address+size)`.
-/// Software breakpoints overwrite memory with int3/BRK, so they must be temporarily
-/// suspended before reading or writing real patch bytes in that range.
-fn get_overlapping_software_breakpoints(
-    state: &SessionStateUI,
+struct SuspendedTrap {
+    id: String,
     address: u64,
-    size: usize,
-) -> Vec<u64> {
-    let range_end = address + size as u64;
-    state
-        .breakpoints
-        .iter()
-        .filter(|bp| {
-            bp.is_active
-                && bp.bp_kind == "software"
-                && bp.address != 0
-                && bp.address >= address
-                && bp.address < range_end
+    single_shot: bool,
+    mapping: Option<(u64, u64)>,
+}
+
+/// All callers hold the breakpoint mutation gate through suspend/write/restore.
+/// ARM64 traps can overlap a patch even if their first byte precedes it.
+fn overlapping_traps(state: &SessionStateUI, address: u64, size: usize) -> Vec<SuspendedTrap> {
+    let end = address.saturating_add(size as u64);
+    let trap_width = if matches!(state.target_arch(), joybug_core::interfaces::Architecture::Arm64) { 4 } else { 1 };
+    state.breakpoints.iter()
+        .filter(|bp| bp.is_active && bp.bp_kind == "software" && bp.address != 0
+            && bp.address < end && address < bp.address.saturating_add(trap_width))
+        .map(|bp| SuspendedTrap {
+            id: bp.id.clone(), address: bp.address, single_shot: bp.single_shot, mapping: bp.trap_mapping,
         })
-        .map(|bp| bp.address)
         .collect()
 }
 
 fn suspend_overlapping_breakpoints(
     session: &mut DebugSession,
+    handle: &Option<AppHandle>,
     pid: u32,
     address: u64,
     size: usize,
-) -> Vec<u64> {
-    let bp_addrs = {
-        let state = session.state.lock().unwrap();
-        get_overlapping_software_breakpoints(&state, address, size)
-    };
-    for &addr in &bp_addrs {
-        if let Err(e) = session.remove_breakpoint(pid, addr) {
-            warn!(
-                "Failed to suspend breakpoint at 0x{:X} for patch operation: {}",
-                addr, e
-            );
-        }
+) -> Result<Vec<SuspendedTrap>, String> {
+    let traps = overlapping_traps(&session.state.lock().unwrap(), address, size);
+    for (i, trap) in traps.iter().enumerate() {
+        let error = match disarm_software(session, pid, trap.address, trap.mapping) {
+            Ok(true) => continue,
+            Ok(false) => "Module mapping no longer exists".into(),
+            Err(error) => error,
+        };
+        restore_suspended_breakpoints(session, handle, pid, &traps[..i]);
+        return Err(format!("Could not suspend breakpoint at {:#x}: {error}", trap.address));
     }
-    bp_addrs
+    Ok(traps)
 }
 
 /// Re-arm previously suspended breakpoints. The re-arm path reads current memory
@@ -170,16 +169,24 @@ fn suspend_overlapping_breakpoints(
 /// writing the breakpoint instruction on top, letting patches and BPs coexist.
 fn restore_suspended_breakpoints(
     session: &mut DebugSession,
+    handle: &Option<AppHandle>,
     pid: u32,
-    bp_addrs: &[u64],
+    traps: &[SuspendedTrap],
 ) {
-    for &addr in bp_addrs {
-        if let Err(e) = session.rearm_breakpoint(pid, addr) {
-            warn!(
-                "Failed to restore breakpoint at 0x{:X} after patch operation: {}",
-                addr, e
-            );
+    let mut changed = false;
+    for trap in traps {
+        if let Err(error) = arm_bp_of_kind(session, pid, trap.address, "software", None, None, trap.single_shot, trap.mapping) {
+            warn!("Could not restore breakpoint at {:#x} after patch: {error}", trap.address);
+            let mut state = session.state.lock().unwrap();
+            if let Some(bp) = state.breakpoints.iter_mut().find(|bp| bp.id == trap.id) {
+                bp.is_active = false;
+                bp.binding_error = Some(format!("Could not re-arm breakpoint after patch: {error}"));
+                changed = true;
+            }
         }
+    }
+    if changed {
+        emit_breakpoints_event(session, handle);
     }
 }
 
@@ -286,13 +293,21 @@ pub(crate) fn process_assemble_patch(
         (assembled.bytes.clone(), assembled_len)
     };
 
-    let suspended_bps = suspend_overlapping_breakpoints(session, pid, address, patch_len);
+    let gate = module_breakpoints::gate(&session.state);
+    let _guard = gate.lock().unwrap();
+    let suspended_bps = match suspend_overlapping_breakpoints(session, app_handle_clone, pid, address, patch_len) {
+        Ok(traps) => traps,
+        Err(error) => {
+            emit_assemble_patch_error(session, app_handle_clone, error);
+            return;
+        }
+    };
 
     let original_bytes = match session.read_memory(pid, address, patch_len) {
         Ok(b) => b,
         Err(e) => {
             error!("Failed to read original bytes at 0x{:X}: {}", address, e);
-            restore_suspended_breakpoints(session, pid, &suspended_bps);
+            restore_suspended_breakpoints(session, app_handle_clone, pid, &suspended_bps);
             emit_assemble_patch_error(
                 session,
                 app_handle_clone,
@@ -309,7 +324,7 @@ pub(crate) fn process_assemble_patch(
 
     if let Err(e) = session.write_memory(pid, address, patched_bytes.clone()) {
         error!("Failed to write patched bytes at 0x{:X}: {}", address, e);
-        restore_suspended_breakpoints(session, pid, &suspended_bps);
+        restore_suspended_breakpoints(session, app_handle_clone, pid, &suspended_bps);
         emit_assemble_patch_error(
             session,
             app_handle_clone,
@@ -318,7 +333,7 @@ pub(crate) fn process_assemble_patch(
         return;
     }
 
-    restore_suspended_breakpoints(session, pid, &suspended_bps);
+    restore_suspended_breakpoints(session, app_handle_clone, pid, &suspended_bps);
 
     let patch = PatchInfo {
         id: uuid::Uuid::new_v4().to_string(),
@@ -370,6 +385,8 @@ pub(crate) fn process_undo_patches(
     pid: u32,
     patch_ids: &[String],
 ) {
+    let gate = module_breakpoints::gate(&session.state);
+    let _guard = gate.lock().unwrap();
     let patches_to_undo: Vec<PatchInfo> = {
         let state = session.state.lock().unwrap();
         state.patches.iter()
@@ -378,22 +395,30 @@ pub(crate) fn process_undo_patches(
             .collect()
     };
 
+    let mut removed = Vec::with_capacity(patches_to_undo.len());
     for patch in &patches_to_undo {
         if patch.is_applied && patch.address != 0 {
             let size = patch.original_bytes.len();
-            let suspended_bps = suspend_overlapping_breakpoints(session, pid, patch.address, size);
+            let suspended_bps = match suspend_overlapping_breakpoints(session, app_handle_clone, pid, patch.address, size) {
+                Ok(traps) => traps,
+                Err(error) => {
+                    warn!("{error}");
+                    continue;
+                }
+            };
             if let Err(e) = session.write_memory(pid, patch.address, patch.original_bytes.clone()) {
                 warn!("Failed to restore original bytes at 0x{:X}: {}", patch.address, e);
             } else {
                 info!("Restored original bytes at 0x{:X}", patch.address);
             }
-            restore_suspended_breakpoints(session, pid, &suspended_bps);
+            restore_suspended_breakpoints(session, app_handle_clone, pid, &suspended_bps);
         }
+        removed.push(&patch.id);
     }
 
     {
         let mut state = session.state.lock().unwrap();
-        state.patches.retain(|p| !patch_ids.contains(&p.id));
+        state.patches.retain(|p| !removed.contains(&&p.id));
     }
 
     persist_patches(&session.state);
@@ -404,6 +429,7 @@ pub(crate) fn process_undo_patches(
 /// and inside the group flow, which persists/emits once at the end.
 fn apply_enable_patch(
     session: &mut DebugSession,
+    app_handle_clone: &Option<AppHandle>,
     pid: u32,
     patch_id: &str,
     enabled: bool,
@@ -426,9 +452,15 @@ fn apply_enable_patch(
 
     let bytes_to_write = if enabled { &patch.patched_bytes } else { &patch.original_bytes };
     let size = bytes_to_write.len();
-    let suspended_bps = suspend_overlapping_breakpoints(session, pid, patch.address, size);
+    let suspended_bps = match suspend_overlapping_breakpoints(session, app_handle_clone, pid, patch.address, size) {
+        Ok(traps) => traps,
+        Err(error) => {
+            warn!("{error}");
+            return;
+        }
+    };
     let write_result = session.write_memory(pid, patch.address, bytes_to_write.clone());
-    restore_suspended_breakpoints(session, pid, &suspended_bps);
+    restore_suspended_breakpoints(session, app_handle_clone, pid, &suspended_bps);
 
     let mut state = session.state.lock().unwrap();
     let Some(p) = state.patches.iter_mut().find(|p| p.id == patch_id) else { return; };
@@ -451,7 +483,9 @@ pub(crate) fn process_enable_patch(
     patch_id: &str,
     enabled: bool,
 ) {
-    apply_enable_patch(session, event.pid(), patch_id, enabled);
+    let gate = module_breakpoints::gate(&session.state);
+    let _guard = gate.lock().unwrap();
+    apply_enable_patch(session, app_handle_clone, event.pid(), patch_id, enabled);
     persist_patches(&session.state);
     emit_patches_event(session, app_handle_clone, true);
 }
@@ -475,6 +509,8 @@ pub(crate) fn process_enable_patch_group(
     group: &str,
     enabled: bool,
 ) {
+    let gate = module_breakpoints::gate(&session.state);
+    let _guard = gate.lock().unwrap();
     let patch_ids: Vec<String> = {
         let state = session.state.lock().unwrap();
         state.patches.iter()
@@ -484,7 +520,7 @@ pub(crate) fn process_enable_patch_group(
     };
     let pid = event.pid();
     for patch_id in patch_ids {
-        apply_enable_patch(session, pid, &patch_id, enabled);
+        apply_enable_patch(session, app_handle_clone, pid, &patch_id, enabled);
     }
     persist_patches(&session.state);
     emit_patches_event(session, app_handle_clone, true);
@@ -626,6 +662,8 @@ pub(crate) fn process_restore_image_bytes(
         window_end = window_end.min(hi);
     }
     let window_len = (window_end - window_start) as usize;
+    let gate = module_breakpoints::gate(&session.state);
+    let _guard = gate.lock().unwrap();
     let live = match session.read_memory(pid, window_start, window_len) {
         Ok(b) => b,
         Err(e) => {
@@ -660,12 +698,18 @@ pub(crate) fn process_restore_image_bytes(
     let restore_bytes = orig_window[start..end].to_vec();
     let size = restore_bytes.len();
 
-    let suspended_bps = suspend_overlapping_breakpoints(session, pid, restore_addr, size);
+    let suspended_bps = match suspend_overlapping_breakpoints(session, app_handle_clone, pid, restore_addr, size) {
+        Ok(traps) => traps,
+        Err(error) => {
+            emit_assemble_patch_error(session, app_handle_clone, error);
+            return;
+        }
+    };
     match session.write_memory(pid, restore_addr, restore_bytes) {
         Ok(()) => info!("Restored {} original image bytes at 0x{:X}", size, restore_addr),
         Err(e) => warn!("Failed to restore image bytes at 0x{:X}: {}", restore_addr, e),
     }
-    restore_suspended_breakpoints(session, pid, &suspended_bps);
+    restore_suspended_breakpoints(session, app_handle_clone, pid, &suspended_bps);
 
     // The patch list is unchanged, but patches-updated is the event the assembly
     // view already listens to for a disassembly refresh — reuse it so the

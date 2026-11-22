@@ -3,14 +3,16 @@ import { Button } from "./ui/button";
 import { InlineEditInput } from "./ui/inline-edit-input";
 import { ResizableHeaderCell } from "./ui/resizable-header-cell";
 import { Badge } from "./ui/badge";
-import { Trash2, Plus, ListPlus } from "lucide-react";
+import { Trash2, Plus, ListPlus, PackagePlus } from "lucide-react";
 import { cn, LINK_VALUE_CLASS } from "@/lib/utils";
 import { Breakpoint } from "@/hooks/useBreakpoints";
+import type { ModuleBreakpointTarget } from "@/contexts/SessionContext";
 import { useContextMenu } from "@/hooks/useContextMenu";
 import { useColumnWidths } from "@/hooks/useColumnWidths";
 import { RegisterContext, SymbolResolver } from "@/lib/hexUtils";
 import { AddressExpressionInput } from "@/components/AddressExpressionInput";
 import { BreakpointListDialog } from "@/components/BreakpointListDialog";
+import { ModuleBreakpointDialog } from "@/components/ModuleBreakpointDialog";
 import { GroupedItemList } from "./GroupedItemList";
 import { DockPanel, PanelToolbar } from "./ui/panel";
 import { ContextMenu, ContextMenuItem, ContextMenuSeparator } from "./ui/context-menu";
@@ -30,6 +32,8 @@ interface BreakpointsViewProps {
   onToggleBreakpoint: (address: string) => void;
   /** Batch set from a pasted list; omit to hide the list affordance. */
   onAddBreakpoints?: (addresses: string[], group?: string, singleShot?: boolean) => Promise<boolean>;
+  onAddModuleBreakpoint?: (moduleName: string, target: ModuleBreakpointTarget) => Promise<void>;
+  onRetryModuleBreakpoint?: (id: string) => void;
   onRemoveBreakpoint: (id: string) => void;
   onRemoveBreakpoints: (ids: string[]) => void;
   onEnableBreakpoint: (id: string, enabled: boolean) => void;
@@ -77,6 +81,8 @@ export function BreakpointsView({
   breakpoints,
   onToggleBreakpoint,
   onAddBreakpoints,
+  onAddModuleBreakpoint,
+  onRetryModuleBreakpoint,
   onRemoveBreakpoint,
   onRemoveBreakpoints,
   onEnableBreakpoint,
@@ -99,6 +105,7 @@ export function BreakpointsView({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
   const [listOpen, setListOpen] = useState(false);
+  const [moduleOpen, setModuleOpen] = useState(false);
   const [removeAllOpen, setRemoveAllOpen] = useState(false);
 
   const handleAddBreakpoint = useCallback((address: bigint) => {
@@ -155,7 +162,12 @@ export function BreakpointsView({
     const isHardware = bp.bp_kind === "hardware";
     const isWatchpoint = bp.bp_kind === "watchpoint";
     const hwInfo = hwLabel(bp);
-    const symbolText = bp.symbol || `${bp.module_name}+${bp.module_offset}`;
+    const target = bp.module_target;
+    const symbolText = target?.kind === "symbol" ? `${bp.module_name}!${target.name}`
+      : target?.kind === "rva" ? `${bp.module_name}+${target.hex}`
+      : bp.symbol || `${bp.module_name}+${bp.module_offset}`;
+    const unresolved = bp.address === "0x0";
+    const canNavigate = !unresolved && !!onNavigateToDisassembly;
     const sourceLabel = bp.source_file
       ? `${bp.source_file.split(/[\\/]/).pop()}:${bp.source_line ?? "?"}`
       : null;
@@ -167,6 +179,7 @@ export function BreakpointsView({
           !bp.enabled && "opacity-50",
         )}
         onContextMenu={(e) => { if (!isDragOverlay) openContextMenu(e, { breakpointId: bp.id }); }}
+        data-testid={isDragOverlay ? undefined : "breakpoint-row"}
       >
         {/* Dot indicator */}
         <span className="w-6 shrink-0 flex items-center justify-center">
@@ -204,12 +217,12 @@ export function BreakpointsView({
           <span
             className={cn(
               "block truncate",
-              onNavigateToDisassembly ? LINK_VALUE_CLASS : "text-muted-foreground",
+              canNavigate ? LINK_VALUE_CLASS : "text-muted-foreground",
             )}
-            title={bp.address}
-            onClick={() => onNavigateToDisassembly?.(bp.address)}
+            title={unresolved ? undefined : bp.address}
+            onClick={canNavigate ? () => onNavigateToDisassembly?.(bp.address) : undefined}
           >
-            {bp.address}
+            {unresolved ? "Unresolved" : bp.address}
           </span>
         </span>
 
@@ -245,10 +258,22 @@ export function BreakpointsView({
               {sourceLabel}
             </Badge>
           )}
-          <TruncatedSymbol
-            text={symbolText}
-            className={cn("flex-1", !bp.symbol && "text-muted-foreground/50 italic")}
-          />
+          {bp.enabled && !bp.is_active && (
+            <Badge size="xs" variant="outline" className="shrink-0">Pending</Badge>
+          )}
+          <span className="flex-1 min-w-0">
+            {target ? (
+              <span className="block break-all">{symbolText}</span>
+            ) : (
+              <TruncatedSymbol
+                text={symbolText}
+                className={cn(!bp.symbol && "text-muted-foreground/50 italic")}
+              />
+            )}
+            {bp.binding_error && (
+              <span className="block whitespace-normal break-words">{bp.binding_error}</span>
+            )}
+          </span>
         </span>
 
         {/* Delete button (visible on hover) */}
@@ -310,6 +335,19 @@ export function BreakpointsView({
                 <ListPlus />
               </Button>
             )}
+            {onAddModuleBreakpoint && (
+              <Button
+                variant="outline"
+                size="icon-xs"
+                className="shrink-0"
+                title="Add module breakpoint"
+                aria-label="Add module breakpoint"
+                data-testid="breakpoints-add-module"
+                onClick={() => setModuleOpen(true)}
+              >
+                <PackagePlus />
+              </Button>
+            )}
             {/* Not gated on the process: removal is a persisted-config edit. */}
             <Button
               variant="ghost"
@@ -369,6 +407,11 @@ export function BreakpointsView({
             >
               {bp?.enabled ? "Disable" : "Enable"}
             </ContextMenuItem>
+            {onRetryModuleBreakpoint && bp?.module_target && bp.enabled && !bp.is_active && (
+              <ContextMenuItem onClick={() => onRetryModuleBreakpoint(bp.id)}>
+                Retry binding
+              </ContextMenuItem>
+            )}
             <ContextMenuItem
               onClick={() => {
                 if (bp) startRename(bp.id, bp.name);
@@ -405,6 +448,10 @@ export function BreakpointsView({
           registers={registers}
           resolveSymbol={resolveSymbol}
         />
+      )}
+
+      {moduleOpen && onAddModuleBreakpoint && (
+        <ModuleBreakpointDialog onClose={() => setModuleOpen(false)} onAdd={onAddModuleBreakpoint} />
       )}
 
       <Dialog open={removeAllOpen} onOpenChange={setRemoveAllOpen}>

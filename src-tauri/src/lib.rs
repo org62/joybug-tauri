@@ -208,6 +208,7 @@ pub fn run() {
             commands::get_startup_attach,
             commands::toggle_breakpoint,
             commands::set_breakpoints,
+            commands::add_module_breakpoint,
             commands::remove_breakpoint,
             commands::remove_breakpoints,
             commands::enable_breakpoint,

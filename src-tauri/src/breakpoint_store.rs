@@ -31,6 +31,9 @@ pub fn load_breakpoints(launch_command: &str) -> Vec<BreakpointInfo> {
                 auto: false,
                 single_shot: false,
                 module_fingerprint: bp.module_fingerprint.clone(),
+                module_target: bp.module_target.clone(),
+                binding_error: None,
+                trap_mapping: None,
             })
             .collect(),
         None => Vec::new(),
@@ -43,7 +46,17 @@ pub fn save_breakpoints(launch_command: &str, breakpoints: &[BreakpointInfo]) {
 
     // Auto-planted rows (module entry / TLS callbacks) are regenerated from settings
     // on each run, and single-shot rows are session-only — never persist either.
-    let persistable: Vec<BreakpointInfo> = breakpoints.iter().filter(|b| !b.auto && !b.single_shot).cloned().collect();
+    let persistable: Vec<_> = breakpoints.iter()
+        .filter(|b| !b.auto && !b.single_shot)
+        .cloned()
+        .map(|mut bp| {
+            bp.address = 0;
+            bp.is_active = false;
+            bp.binding_error = None;
+            bp.trap_mapping = None;
+            bp
+        })
+        .collect();
 
     if persistable.is_empty() {
         map.remove(launch_command);

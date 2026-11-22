@@ -5,17 +5,25 @@ use tauri::{AppHandle, Emitter};
 use tracing::{debug, error, info, warn};
 
 use super::helpers::{module_key_at_base, module_short_name};
+use super::module_breakpoints::{self, Instance};
 use super::types::{DebugSession, SymbolData};
 use crate::state::{SessionStateUI, SymbolOverrideInfo};
 use joybug_core::protocol_io::{ModuleSymbolStatus, SymbolLoadState};
 
-/// Remember a manually-loaded PDB so a session restart re-applies it. Keyed by
-/// the module's lowercased short name (the base changes with ASLR). Upserts the
-/// entry for that module and persists the whole set for the target.
-///
-/// `module_base` is resolved to a module short name via the live module list;
-/// if no module matches (shouldn't happen for a base the UI just loaded), the
-/// override isn't recorded.
+fn same_override_image(over: &SymbolOverrideInfo, path: &str, windows: bool) -> bool {
+    over.module_path.as_deref().is_some_and(|saved| module_breakpoints::equal_selector(saved, path, windows))
+}
+
+pub(super) fn override_for_image(state: &SessionStateUI, path: &str, short: &str, windows: bool) -> Option<SymbolOverrideInfo> {
+    state.symbol_overrides.iter().find(|over| same_override_image(over, path, windows))
+        .or_else(|| state.symbol_overrides.iter().find(|over| {
+            over.module_path.is_none() && !over.force
+                && module_breakpoints::equal_selector(&over.module_name, short, windows)
+        }))
+        .cloned()
+}
+
+/// Remember a manually loaded PDB for this image, not for every same-named DLL.
 pub(crate) fn record_symbol_override(
     state_arc: &Arc<Mutex<SessionStateUI>>,
     module_base: u64,
@@ -24,13 +32,17 @@ pub(crate) fn record_symbol_override(
 ) {
     let (launch_command, overrides) = {
         let mut state = state_arc.lock().unwrap();
-        let Some(name) = module_key_at_base(&state, module_base) else {
+        let Some(path) = state.modules.iter().find(|module| module.base == module_base).map(|module| module.name.clone()) else {
             warn!("record_symbol_override: no module at base 0x{:X}", module_base);
             return;
         };
-        state.symbol_overrides.retain(|o| !o.module_name.eq_ignore_ascii_case(&name));
+        let name = module_short_name(&path);
+        let windows = module_breakpoints::target_windows(&state).unwrap_or(cfg!(windows));
+        state.symbol_overrides.retain(|over| !same_override_image(over, &path, windows)
+            && !(over.module_path.is_none() && module_breakpoints::equal_selector(&over.module_name, &name, windows)));
         state.symbol_overrides.push(SymbolOverrideInfo {
             module_name: name,
+            module_path: Some(path),
             pdb_path: pdb_path.to_string(),
             force,
         });
@@ -44,11 +56,14 @@ pub(crate) fn record_symbol_override(
 pub(crate) fn remove_symbol_override(state_arc: &Arc<Mutex<SessionStateUI>>, module_base: u64) {
     let saved = {
         let mut state = state_arc.lock().unwrap();
-        let Some(name) = module_key_at_base(&state, module_base) else {
+        let Some(path) = state.modules.iter().find(|module| module.base == module_base).map(|module| module.name.clone()) else {
             return;
         };
+        let name = module_short_name(&path);
+        let windows = module_breakpoints::target_windows(&state).unwrap_or(cfg!(windows));
         let before = state.symbol_overrides.len();
-        state.symbol_overrides.retain(|o| !o.module_name.eq_ignore_ascii_case(&name));
+        state.symbol_overrides.retain(|over| !same_override_image(over, &path, windows)
+            && !(over.module_path.is_none() && module_breakpoints::equal_selector(&over.module_name, &name, windows)));
         if state.symbol_overrides.len() == before {
             None
         } else {
@@ -136,64 +151,41 @@ pub(crate) fn forget_failed_symbol(state_arc: &Arc<Mutex<SessionStateUI>>, modul
     });
 }
 
-/// Re-apply a persisted manual PDB when its module (re)loads. Looks up the
-/// override by short name and, if present, loads the PDB at the module's current
-/// base **on a background thread** so the debug event loop isn't blocked while
-/// the server parses the PDB (seconds for a large one).
-///
-/// The load runs over a fresh OOB connection; the server's symbol state is shared
-/// across connections, so the debug-loop client sees the result. When it lands,
-/// symbol status flips to `loaded` (the UI polls this and refreshes symbol-derived
-/// views on its own), and we re-resolve source lines for this module's breakpoints
-/// — the one thing the old synchronous "symbols before breakpoints" ordering gave
-/// us for free.
+/// Reload a persisted override off the session thread. Its mapping was marked
+/// pending before the loader event could look at the automatic fallback table.
 pub(crate) fn reapply_symbols_for_module(
-    session: &mut DebugSession,
-    app_handle_clone: &Option<AppHandle>,
-    pid: u32,
-    module_name: &str,
-    module_base: u64,
+    state: &Arc<Mutex<SessionStateUI>>,
+    handle: &AppHandle,
+    instance: Instance,
+    over: SymbolOverrideInfo,
 ) {
-    let over = {
-        let state = session.state.lock().unwrap();
-        state
-            .symbol_overrides
-            .iter()
-            .find(|o| o.module_name.eq_ignore_ascii_case(module_name))
-            .map(|o| (o.pdb_path.clone(), o.force))
-    };
-    let Some((pdb_path, force)) = over else { return };
-
-    let state_arc = session.state.clone();
-    let handle = app_handle_clone.clone();
-    let module_name = module_name.to_string();
+    let state = state.clone();
+    let handle = handle.clone();
     std::thread::spawn(move || {
-        let (mut client, _) = match crate::commands::create_oob_client(&state_arc) {
-            Ok(c) => c,
-            Err(e) => {
-                warn!("Async PDB reapply for {}: no OOB client: {}", module_name, e);
-                return;
+        let result = (|| {
+            let (mut client, pid) = crate::commands::create_oob_client(&state).map_err(|e| e.to_string())?;
+            let Some(token) = module_breakpoints::server_token(&state, instance).filter(|_| pid == instance.pid) else {
+                return Ok(None);
+            };
+            let outcome = client.load_pdb_from_path(pid, instance.base, &over.pdb_path, over.force, Some(token))
+                .map_err(|e| e.to_string())?;
+            Ok::<_, String>(Some((client, outcome)))
+        })();
+        module_breakpoints::finish_manual_symbols(&state, Some(&handle), instance);
+        match result {
+            Ok(Some((mut client, PdbLoadOutcome::Loaded { symbol_count }))) => {
+                info!("Re-applied '{}' for {} ({} symbols)", over.pdb_path, over.module_name, symbol_count);
+                if module_breakpoints::is_current(&state, instance) {
+                    super::breakpoints::refresh_breakpoint_source_lines_for_module(
+                        &mut client, &Some(handle), instance.pid, &over.module_name,
+                    );
+                }
             }
-        };
-        match client.load_pdb_from_path(pid, module_base, &pdb_path, force) {
-            Ok(PdbLoadOutcome::Loaded { symbol_count }) => {
-                info!(
-                    "Re-applied manual PDB '{}' for {} at 0x{:X} ({} symbols)",
-                    pdb_path, module_name, module_base, symbol_count
-                );
-                // Symbols now exist — re-resolve source lines for breakpoints in
-                // this module (they were reapplied before the async load finished).
-                super::breakpoints::refresh_breakpoint_source_lines_for_module(
-                    &mut client, &handle, pid, &module_name,
-                );
+            Ok(Some((_, PdbLoadOutcome::Mismatch(_)))) => {
+                warn!("Manual PDB '{}' for {} mismatched on restart; not loaded (force={})", over.pdb_path, over.module_name, over.force);
             }
-            Ok(PdbLoadOutcome::Mismatch(_)) => {
-                warn!(
-                    "Manual PDB '{}' for {} mismatched on restart; not loaded (force={})",
-                    pdb_path, module_name, force
-                );
-            }
-            Err(e) => warn!("Failed to re-apply manual PDB '{}' for {}: {}", pdb_path, module_name, e),
+            Ok(None) => {}
+            Err(e) => warn!("Failed to re-apply manual PDB '{}' for {}: {}", over.pdb_path, over.module_name, e),
         }
     });
 }

@@ -303,6 +303,7 @@ pub(crate) fn update_session_from_event(state: &mut SessionStateUI, event: &joyb
 /// resumes.
 pub(crate) fn finalize_process_exit(state: &mut SessionStateUI) {
     state.modules.clear();
+    state.clear_breakpoint_bindings();
     state.threads.clear();
     state.original_images.clear();
     state.region_annotation_cache = Default::default();

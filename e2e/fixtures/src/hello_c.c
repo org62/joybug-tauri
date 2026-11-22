@@ -147,6 +147,7 @@ static void start_parked_worker(void)
 #else
 #include <pthread.h>
 #include <unistd.h>
+#include <dlfcn.h>
 #include <sys/syscall.h>
 #include <sched.h>
 static void *parked_worker(void *arg)
@@ -187,14 +188,74 @@ static void stay_alive(unsigned ms)
 #endif
 }
 
+static unsigned long long monotonic_ms(void)
+{
+#ifdef _WIN32
+    return GetTickCount64();
+#else
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    return (unsigned long long)now.tv_sec * 1000 + now.tv_nsec / 1000000;
+#endif
+}
+
+/* The test holds load and call independently. Acknowledgements are written
+ * outside the library, after dlopen/LoadLibrary and dlclose/FreeLibrary return. */
+static int deferred_gate(const char *dir, const char *phase, int pass, int signal)
+{
+    char file[4096];
+    const int length = snprintf(file, sizeof(file), "%s/%s-%d", dir, phase, pass);
+    if (length < 0 || (size_t)length >= sizeof(file)) return 0;
+    if (signal) {
+        FILE *ack = fopen(file, "wb");
+        return ack && fclose(ack) == 0;
+    }
+
+    const unsigned long long deadline = monotonic_ms() + 60000;
+    do {
+        FILE *gate = fopen(file, "rb");
+        if (gate) {
+            fclose(gate);
+            return 1;
+        }
+        sleep_ms(10);
+    } while (monotonic_ms() < deadline);
+    return 0;
+}
+
+static int run_deferred_breakpoints(const char *dir, const char *library)
+{
+    for (int pass = 1; pass <= 2; ++pass) {
+        if (!deferred_gate(dir, "load", pass, 0)) return 80;
+#ifdef _WIN32
+        HMODULE module = LoadLibraryA(library);
+        int (*entry)(void) = module ? (int (*)(void))GetProcAddress(module, "deferred_exported") : NULL;
+#else
+        void *module = dlopen(library, RTLD_NOW | RTLD_LOCAL);
+        int (*entry)(void) = module ? (int (*)(void))dlsym(module, "deferred_exported") : NULL;
+#endif
+        if (!entry || !deferred_gate(dir, "loaded", pass, 1)) return 81;
+        if (!deferred_gate(dir, "call", pass, 0)) return 82;
+        if (entry() != 42) return 83;
+#ifdef _WIN32
+        if (!FreeLibrary(module)) return 84;
+#else
+        if (dlclose(module) != 0) return 84;
+#endif
+        /* This name belongs to the executable, not the library being tested. */
+        hello_c_marker(1);
+        if (!deferred_gate(dir, "unloaded", pass, 1)) return 85;
+    }
+    return deferred_gate(dir, "finish", 2, 0) ? 0 : 86;
+}
+
 int main(int argc, char **argv)
 {
+    if (argc == 4 && strcmp(argv[1], "--deferred-breakpoints") == 0)
+        return run_deferred_breakpoints(argv[2], argv[3]);
 #ifdef _WIN32
     if (argc > 1 && strcmp(argv[1], "--thread-info") == 0)
         return run_thread_information_mode();
-#else
-    (void)argc;
-    (void)argv;
 #endif
     start_parked_worker();
     int value = hello_c_marker(41);

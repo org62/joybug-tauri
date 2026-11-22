@@ -212,7 +212,7 @@ export async function createAndStartSession(
 export async function createSession(
   page: Page,
   name = "E2E Test Session",
-  opts: CreateSessionOptions = {},
+  opts: CreateSessionOptions & { launchCommand?: string } = {},
 ): Promise<string> {
   const before = new Set(
     ((await invoke(page, "get_debug_sessions")) as Array<{ id: string }>).map((s) => s.id),
@@ -222,7 +222,7 @@ export async function createSession(
 
   // Naming was removed from the dialog; a unique launch command keeps the new
   // session identifiable and avoids loading persisted breakpoints.
-  await page.getByLabel("Launch Command").fill(echoCmd(name));
+  await page.getByLabel("Launch Command").fill(opts.launchCommand ?? echoCmd(name));
 
   await fillOptionalSessionFields(page, opts);
 

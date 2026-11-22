@@ -3,12 +3,29 @@ use std::collections::HashMap;
 use std::sync::{mpsc, Arc, Mutex};
 use crate::session::types::QueuedCommand;
 
+/// User intent, independent of any image or address the debugger has seen.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ModuleBreakpointTarget {
+    Symbol { name: String },
+    Rva { hex: String },
+}
+
+impl std::fmt::Display for ModuleBreakpointTarget {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Symbol { name } => f.write_str(name),
+            Self::Rva { hex } => f.write_str(hex),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BreakpointInfo {
     pub id: String,              // UUID
     pub address: u64,            // current resolved absolute address (0 if unresolved)
-    pub module_name: String,     // e.g. "ntdll.dll" (lowercase for matching)
-    pub module_offset: u64,      // RVA within module
+    pub module_name: String,     // requested selector, or legacy module short name
+    pub module_offset: u64,      // last resolved RVA for a module target
     pub name: Option<String>,    // user-assigned label
     pub group: Option<String>,   // group name
     pub symbol: Option<String>,  // resolved symbol e.g. "kernel32!CreateFileW+0x10"
@@ -40,6 +57,14 @@ pub struct BreakpointInfo {
     /// file wasn't inspectable (remote target, pre-existing entries).
     #[serde(default)]
     pub module_fingerprint: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub module_target: Option<ModuleBreakpointTarget>,
+    /// A live binding diagnostic, never written to the breakpoint store.
+    #[serde(default, skip_deserializing, skip_serializing_if = "Option::is_none")]
+    pub binding_error: Option<String>,
+    /// Server mapping identity for guarded software trap removal.
+    #[serde(skip)]
+    pub(crate) trap_mapping: Option<(u64, u64)>,
 }
 
 fn default_bp_kind() -> String {
@@ -62,12 +87,13 @@ pub struct PatchInfo {
     pub group: Option<String>,         // group name
 }
 
-/// A manually-loaded PDB for a module, remembered per target so a restart
-/// re-applies it automatically. Keyed by module short name (base changes with
-/// ASLR), like breakpoints and patches.
+/// A manually loaded debug file, remembered for the exact image path across
+/// target restarts. Legacy basename-only rows can be replayed only with validation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SymbolOverrideInfo {
     pub module_name: String, // lowercased module short name (incl. extension)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub module_path: Option<String>,
     pub pdb_path: String,    // user-chosen PDB file path
     pub force: bool,         // loaded despite a GUID/age mismatch ("Load anyway")
 }
@@ -524,6 +550,10 @@ pub struct SessionStateUI {
     pub status: SessionStatusUI,
     pub events: Vec<joybug_core::protocol_io::DebugEvent>,
     pub modules: Vec<joybug_core::protocol_io::ModuleInfo>,
+    /// Acquire this gate before the session mutex on mutation paths. Never
+    /// hold either lock across a waiting symbol request.
+    pub(crate) breakpoint_gate: Arc<Mutex<()>>,
+    pub(crate) breakpoint_modules: crate::session::module_breakpoints::Mappings,
     pub threads: Vec<joybug_core::protocol_io::ThreadInfo>,
     pub current_event: Option<joybug_core::protocol_io::DebugEvent>,
     pub current_context: Option<SerializableThreadContext>,
@@ -676,6 +706,8 @@ impl SessionStateUI {
             status: SessionStatusUI::Stopped,
             events: Vec::new(),
             modules: Vec::new(),
+            breakpoint_gate: Default::default(),
+            breakpoint_modules: Default::default(),
             threads: Vec::new(),
             current_event: None,
             current_context: None,
@@ -712,6 +744,7 @@ impl SessionStateUI {
     pub fn clear_runtime_caches(&mut self) {
         self.events.clear();
         self.modules.clear();
+        self.clear_breakpoint_bindings();
         self.threads.clear();
         self.current_event = None;
         self.current_context = None;
@@ -741,6 +774,17 @@ impl SessionStateUI {
         }
     }
 
+    pub(crate) fn clear_breakpoint_bindings(&mut self) {
+        self.breakpoint_modules.clear();
+        self.breakpoints.retain(|bp| !bp.auto && !bp.single_shot);
+        for bp in &mut self.breakpoints {
+            bp.is_active = false;
+            bp.address = 0;
+            bp.trap_mapping = None;
+            bp.binding_error = None;
+        }
+    }
+
     // Reset the state of a session to be ready for a new run
     pub fn reset(&mut self) {
         self.clear_runtime_caches();
@@ -751,11 +795,7 @@ impl SessionStateUI {
         self.is_registers_window_open = false;
         self.is_callstack_window_open = false;
 
-        // Keep breakpoints but mark all as inactive/unresolved
-        for bp in &mut self.breakpoints {
-            bp.is_active = false;
-            bp.address = 0;
-        }
+        // Breakpoint intents survived clear_runtime_caches; live bindings did not.
 
         // Keep patches but mark all as unapplied/unresolved
         for patch in &mut self.patches {
