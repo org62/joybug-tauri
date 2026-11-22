@@ -2,9 +2,11 @@ import { useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { CustomTypeDef, TypeLayout, TypeSummary } from "@/lib/typeSystem";
 
-export interface TebPeb {
-  teb: string | null;
-  peb: string | null;
+export type NtBlockKind = "teb" | "peb";
+
+interface NtBlockOverlay {
+  address: string | null;
+  layout: TypeLayout | null;
 }
 
 /** Data layer for the type system: PDB type queries, memory reads for overlays,
@@ -52,13 +54,9 @@ export function useTypes(sessionId: string | undefined) {
         }
       },
 
-      async getTebPeb(): Promise<TebPeb> {
-        if (!sessionId) return { teb: null, peb: null };
-        try {
-          return await invoke<TebPeb>("get_session_teb_peb", { sessionId });
-        } catch {
-          return { teb: null, peb: null };
-        }
+      async getNtBlockOverlay(kind: NtBlockKind): Promise<NtBlockOverlay> {
+        if (!sessionId) return { address: null, layout: null };
+        return invoke<NtBlockOverlay>("get_session_nt_block_overlay", { sessionId, kind });
       },
 
       async listCustomTypes(): Promise<CustomTypeDef[]> {

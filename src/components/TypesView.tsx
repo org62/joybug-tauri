@@ -1,15 +1,16 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
-import { useTypes, type UseTypes } from "@/hooks/useTypes";
-import { useNavigationChannel } from "@/hooks/useNavigationChannel";
+import { useTypes, type NtBlockKind, type UseTypes } from "@/hooks/useTypes";
 import { typesNavigation } from "@/lib/navigationStore";
 import { useLiveRefresh } from "@/hooks/useLiveRefresh";
+import { useDelayedFlag } from "@/hooks/useDelayedFlag";
 import {
   usePopoverDismiss,
   computeAnchoredDropdownRect,
   type AnchoredDropdownRect,
 } from "@/hooks/usePopoverDismiss";
 import { usePanelFocus } from "@/hooks/usePanelFocus";
+import { reportSessionError } from "@/lib/sessionHelpers";
 import { cn, CHANGED_VALUE_CLASS } from "@/lib/utils";
 import type { RegisterContext, SymbolResolver } from "@/lib/hexUtils";
 import { AddressExpressionInput } from "@/components/AddressExpressionInput";
@@ -32,13 +33,13 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import { DockPanel, PanelToolbar, PanelBody } from "@/components/ui/panel";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { EmptyState, LoadingState, ProcessUnavailableState, STATE_ICON_CLASS } from "@/components/ui/empty-state";
 import {
   ChevronRight,
   ChevronDown,
   Plus,
   Trash2,
   Boxes,
-  Loader2,
 } from "lucide-react";
 
 // Fixed x64 address of the shared user data page.
@@ -123,6 +124,7 @@ export const TypesView = ({
           resolveSymbol={resolveSymbol}
           onNavigateToMemory={onNavigateToMemory}
           focusTabId={focusTabId}
+          navVersion={navVersion}
         />
       ) : (
         <CustomMode ts={ts} customTypes={customTypes} onChanged={reloadCustom} />
@@ -144,6 +146,14 @@ interface InspectProps {
   resolveSymbol: SymbolResolver;
   onNavigateToMemory?: (address: string) => void;
   focusTabId?: string;
+  navVersion: number;
+}
+
+interface TypeSelection {
+  layout: TypeLayout | null;
+  address?: string;
+  query?: string;
+  emptyTitle?: string;
 }
 
 function InspectMode({
@@ -155,6 +165,7 @@ function InspectMode({
   resolveSymbol,
   onNavigateToMemory,
   focusTabId,
+  navVersion,
 }: InspectProps) {
   const focusRef = usePanelFocus<HTMLInputElement>(focusTabId);
   const [query, setQuery] = useState("");
@@ -167,7 +178,15 @@ function InspectMode({
   const [addressInput, setAddressInput] = useState("");
   const [address, setAddress] = useState("");
   const [loading, setLoading] = useState(false);
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [emptyTitle, setEmptyTitle] = useState<string>();
+  const showLoading = useDelayedFlag(loading, 150);
+  const selectionRef = useRef(0);
+  const queryEditedRef = useRef(false);
+  const debounceRef = useRef<number | undefined>(undefined);
+  const cancelSearch = useCallback(() => {
+    clearTimeout(debounceRef.current);
+    debounceRef.current = undefined;
+  }, []);
 
   // The results dropdown is portaled to <body> with fixed positioning so the
   // DockPanel's overflow-hidden can't clip it; anchored under the search input
@@ -196,74 +215,112 @@ function InspectMode({
     if (rootLayout && address.trim()) setRefreshTick((t) => t + 1);
   });
 
-  // Reset when the session becomes inactive.
-  useEffect(() => {
-    if (!isActive) {
-      setResults([]);
-      setRootLayout(null);
-    }
-  }, [isActive]);
+  useLayoutEffect(() => {
+    setResults([]);
+    setShowResults(false);
+    setRootLayout(null);
+    setQuery("");
+    setAddress("");
+    setAddressInput("");
+    setEmptyTitle(undefined);
+    setLoading(false);
+    return () => {
+      ++selectionRef.current;
+      cancelSearch();
+    };
+  }, [sessionId, isActive, cancelSearch]);
 
   const runSearch = useCallback(
     (q: string) => {
-      if (debounceRef.current) clearTimeout(debounceRef.current);
+      cancelSearch();
       const trimmed = q.trim();
       if (!trimmed) {
         setResults([]);
         setShowResults(false);
         return;
       }
-      debounceRef.current = setTimeout(async () => {
+      const timer = window.setTimeout(async () => {
         // The backend merges custom types into the list (customs first).
-        setResults(isActive ? await ts.searchTypes(trimmed, undefined, 300) : []);
+        const matches = isActive ? await ts.searchTypes(trimmed, undefined, 300) : [];
+        if (debounceRef.current !== timer) return;
+        setResults(matches);
         setShowResults(true);
       }, 250);
+      debounceRef.current = timer;
     },
-    [ts, isActive],
+    [ts, isActive, cancelSearch],
+  );
+
+  const loadSelection = useCallback(
+    async (action: string, request: () => Promise<TypeSelection>) => {
+      const token = ++selectionRef.current;
+      queryEditedRef.current = false;
+      cancelSearch();
+      setLoading(true);
+      setShowResults(false);
+      setRootLayout(null);
+      setEmptyTitle(undefined);
+      try {
+        const selection = await request();
+        if (token !== selectionRef.current) return;
+        setRootLayout(selection.layout);
+        setEmptyTitle(selection.emptyTitle);
+        if (selection.query !== undefined && !queryEditedRef.current) setQuery(selection.query);
+        if (selection.address !== undefined) {
+          setAddress(selection.address);
+          setAddressInput(selection.address);
+        }
+      } catch (e) {
+        if (token === selectionRef.current) reportSessionError(action, e, sessionId);
+      } finally {
+        if (token === selectionRef.current) setLoading(false);
+      }
+    },
+    [sessionId, cancelSearch],
   );
 
   const loadType = useCallback(
-    async (name: string, moduleBase?: string, addr?: string) => {
-      setLoading(true);
-      setShowResults(false);
+    (name: string, moduleBase?: string, address?: string) => {
       setQuery(name);
-      try {
-        const layout = await ts.getType(name, moduleBase);
-        setRootLayout(layout);
-        if (addr !== undefined) {
-          setAddress(addr);
-          setAddressInput(addr);
-        }
-      } catch (e) {
-        console.error("Failed to load type:", e);
-        setRootLayout(null);
-      } finally {
-        setLoading(false);
-      }
+      return loadSelection("load type", async () => ({
+        layout: await ts.getType(name, moduleBase),
+        address,
+      }));
     },
-    [ts],
+    [ts, loadSelection],
   );
 
-  const loadTebPeb = useCallback(
-    async (which: "teb" | "peb") => {
-      const { teb, peb } = await ts.getTebPeb();
-      const addr = which === "teb" ? teb : peb;
-      if (!addr) {
-        console.warn(`${which.toUpperCase()} address unavailable`);
-        return;
-      }
-      await loadType(which === "teb" ? "_TEB" : "_PEB", undefined, addr);
+  const loadNtBlock = useCallback(
+    (kind: NtBlockKind) => {
+      const label = kind.toUpperCase();
+      setQuery("");
+      setAddress("");
+      setAddressInput("");
+      return loadSelection(`load ${label} overlay`, async () => {
+        const { address, layout } = await ts.getNtBlockOverlay(kind);
+        return {
+          layout,
+          address: address ?? "",
+          query: layout?.name,
+          emptyTitle: !address ? `${label} address unavailable`
+            : !layout ? `No matching ${label} layout` : undefined,
+        };
+      });
     },
-    [ts, loadType],
+    [ts, loadSelection],
   );
 
-  // Fulfil an external navigation request (e.g. Threads → "TEB: 0x…"): overlay the
-  // requested type on the requested address. The channel buffers the payload
-  // across the custom→inspect remount, so a fresh mount consumes it here; a
-  // request against an inactive session is dropped, never replayed later.
-  useNavigationChannel(typesNavigation, (req) => {
-    if (isActive) loadType(req.typeName, undefined, req.address);
-  });
+  useEffect(() => {
+    // StrictMode replays mount effects. Consume only after cleanup has canceled
+    // the first pass, or it would invalidate the load and lose the navigation.
+    let canceled = false;
+    queueMicrotask(() => {
+      if (canceled) return;
+      const request = typesNavigation.consume();
+      if (request && isActive) void loadType(request.typeName, undefined, request.address);
+    });
+    return () => { canceled = true; };
+  }, [navVersion, isActive, loadType]);
 
   return (
     <>
@@ -276,6 +333,7 @@ function InspectMode({
             value={query}
             disabled={!isActive}
             onChange={(e) => {
+              queryEditedRef.current = true;
               setQuery(e.target.value);
               runSearch(e.target.value);
             }}
@@ -331,28 +389,26 @@ function InspectMode({
           >
             KUSER
           </Button>
-          <Button size="xs" variant="outline" disabled={!isActive} onClick={() => loadTebPeb("teb")}>
+          <Button size="xs" variant="outline" disabled={!isActive} onClick={() => loadNtBlock("teb")}>
             TEB
           </Button>
-          <Button size="xs" variant="outline" disabled={!isActive} onClick={() => loadTebPeb("peb")}>
+          <Button size="xs" variant="outline" disabled={!isActive} onClick={() => loadNtBlock("peb")}>
             PEB
           </Button>
         </div>
       </PanelToolbar>
       <PanelBody>
-        {loading ? (
-          <div className="flex h-full items-center justify-center text-muted-foreground">
-            <Loader2 className="h-6 w-6 animate-spin" />
-          </div>
+        {sessionId && !isActive ? (
+          <ProcessUnavailableState icon={Boxes} what="Types" />
+        ) : loading ? (
+          showLoading && <LoadingState icon={Boxes} title="Loading type" />
         ) : !rootLayout ? (
-          <div className="flex flex-col items-center justify-center h-full text-muted-foreground p-4 text-center">
-            <Boxes className="h-12 w-12 mb-3 opacity-50" />
-            <p className="text-sm font-medium">Pick a type to inspect its layout</p>
-            <p className="text-xs mt-1">
-              Search by name, or use the KUSER / TEB / PEB shortcuts. Set an address to
-              overlay live values.
-            </p>
-          </div>
+          <EmptyState
+            icon={<Boxes className={STATE_ICON_CLASS} />}
+            title={emptyTitle ?? "Pick a type to inspect its layout"}
+            subtitle={emptyTitle ? undefined : "Search by name, or use the KUSER / TEB / PEB shortcuts. Set an address to overlay live values."}
+            reserveSubtitle
+          />
         ) : (
           // pr-3 keeps ml-auto values clear of the overlay scrollbar (w-2.5).
           <div className="p-1 pr-3 text-xs">

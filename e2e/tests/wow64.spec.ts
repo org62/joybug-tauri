@@ -8,6 +8,7 @@ import {
   invoke,
   contextPc,
   contextSp,
+  type ModuleData,
 } from "../helpers/session-helpers";
 import {
   waitForPaused,
@@ -19,6 +20,7 @@ import {
   goAndWaitForPause,
 } from "../helpers/wait-helpers";
 import { HEX_ADDRESS, hexPanelFor } from "../helpers/selectors";
+import { expectNtBlockShortcuts } from "../helpers/types-helpers";
 
 /** The 32-bit ntdll: SysWOW64 on an x64 host, the CHPE build in SyChpe32 on ARM64. */
 const NTDLL32_RE = /\\(syswow64|sychpe32)\\ntdll\.dll$/i;
@@ -54,7 +56,7 @@ test.describe("WOW64 (32-bit) target", () => {
       // Both ntdlls are mapped; the initial break is the 32-bit one's, not
       // the 64-bit loader's. An x64 host maps it from SysWOW64; an ARM64 host's
       // x86 emulation layer maps the CHPE build from SyChpe32 instead.
-      const mods = (await invoke(page, "get_session_modules", { sessionId })) as Array<{ path: string; base_address: string; size: number }>;
+      const mods: ModuleData[] = await invoke(page, "get_session_modules", { sessionId });
       const ntdll32 = mods.find((m) => NTDLL32_RE.test(m.path));
       expect(ntdll32, `modules: ${mods.map((m) => m.path).join(", ")}`).toBeTruthy();
       expect(mods.some((m) => /\\system32\\ntdll\.dll$/i.test(m.path))).toBe(true);
@@ -62,6 +64,10 @@ test.describe("WOW64 (32-bit) target", () => {
       // Inside the 32-bit ntdll, which by construction is below 4 GB.
       const inNtdll32 = (addr: number) => addr >= ntdll32Base && addr < ntdll32Base + ntdll32!.size;
       expect(inNtdll32(Number(session.current_event.address))).toBe(true);
+
+      const main = mods.find((m) => /hello_c32\.exe$/i.test(m.path));
+      expect(main).toBeTruthy();
+      await expectNtBlockShortcuts(page, sessionId, ntdll32!, main!, 4);
 
       // --- Registers panel: x86 names, 8-digit values ------------------------
       await goToWindow(page, "Registers");
@@ -114,8 +120,6 @@ test.describe("WOW64 (32-bit) target", () => {
       await panel.locator('[data-testid="stack-mode-frames"]').click();
 
       // --- Breakpoint on main + continue: lands in the 32-bit image ------------
-      const main = mods.find((m) => /hello_c32\.exe$/i.test(m.path));
-      expect(main).toBeTruthy();
       await waitForModuleSymbols(page, sessionId, "hello_c32", { accept: ["loaded"], minSymbolCount: 1, timeout: 60_000 });
       const mainSyms = (await invoke(page, "get_symbols_in_range", {
         sessionId,
@@ -132,6 +136,7 @@ test.describe("WOW64 (32-bit) target", () => {
       // Registers at main: esp/eip are 32-bit, and the frame list names main.
       expect(contextPc(at.current_event.context)).toMatch(/^0x[0-9a-f]{8}$/);
     } finally {
+      await closeWindow(page, "Types").catch(() => {});
       await closeWindow(page, "Stack").catch(() => {});
       await closeWindow(page, "Registers").catch(() => {});
       await cleanupSession(page, sessionId);

@@ -165,7 +165,7 @@ pub fn run() {
             commands::list_session_types,
             commands::get_session_type,
             commands::get_session_type_by_index,
-            commands::get_session_teb_peb,
+            commands::get_session_nt_block_overlay,
             commands::list_custom_types,
             commands::save_custom_type,
             commands::delete_custom_type,

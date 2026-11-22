@@ -3,7 +3,8 @@ import { IS_WINDOWS } from "../helpers/launch-commands";
 import { fixtureExe } from "../helpers/session-helpers";
 import { waitForModuleSymbols } from "../helpers/wait-helpers";
 import { test, expect } from "../helpers/test-fixtures";
-import { createAndStartSession, cleanupSession, invoke, goToWindow } from "../helpers/session-helpers";
+import { createAndStartSession, cleanupSession, closeWindow, invoke, goToWindow, type ModuleData } from "../helpers/session-helpers";
+import { expectNtBlockShortcuts } from "../helpers/types-helpers";
 import {
   waitForPaused,
   configureMinimalStopSettings,
@@ -59,6 +60,41 @@ async function waitForTypeResolved(
 }
 
 test.describe("Type System", () => {
+  test("native TEB and PEB shortcuts ignore same-name custom types", async ({ tauriPage: page }) => {
+    test.skip(!IS_WINDOWS, "Windows environment blocks");
+    test.setTimeout(120_000);
+    await configureMinimalStopSettings(page);
+    const ids: string[] = [];
+    let sessionId: string | undefined;
+    try {
+      sessionId = await createAndStartSession(page, "Native NT overlays", `"${fixtureExe("hello_c")}"`);
+      await waitForPaused(page, sessionId);
+      const modules: ModuleData[] = await invoke(page, "get_session_modules", { sessionId });
+      const ntdll = modules.find((m) => /[\\/]system32[\\/]ntdll\.dll$/i.test(m.path));
+      const image = modules.find((m) => /[\\/]hello_c\.exe$/i.test(m.path));
+      expect(ntdll).toBeTruthy();
+      expect(image).toBeTruthy();
+
+      for (const name of ["_TEB", "_PEB"]) {
+        const bogus = `Bogus${name}`;
+        const saved: CustomTypeDef = await invoke(page, "save_custom_type", {
+          def: { id: "", name, fields: [{ name: bogus, type_expr: "u32", offset: 0 }], is_union: false },
+        });
+        ids.push(saved.id);
+        const ordinary: TypeLayout = await invoke(page, "get_session_type", { sessionId, name, moduleBase: null });
+        expect(ordinary.source).toBe("custom");
+        expect(ordinary.members.map((m) => m.name)).toEqual([bogus]);
+      }
+
+      await expectNtBlockShortcuts(page, sessionId, ntdll!, image!, 8);
+    } finally {
+      for (const id of ids) await invoke(page, "delete_custom_type", { id });
+      await closeWindow(page, "Types").catch(() => {});
+      if (sessionId) await cleanupSession(page, sessionId);
+      await restoreDefaultSettings(page);
+    }
+  });
+
   test("reads PDB struct layouts from ntdll and overlays live values", async ({
     tauriPage: page,
   }) => {
@@ -130,12 +166,6 @@ test.describe("Type System", () => {
         expect(nested).toBeTruthy();
       }
 
-      // TEB/PEB anchors resolve, and memory reads at those anchors succeed.
-      const tebPeb = (await invoke(page, "get_session_teb_peb", { sessionId })) as {
-        teb: string | null;
-        peb: string | null;
-      };
-      expect(tebPeb.peb).toBeTruthy();
       const kuserBytes = (await invoke(page, "read_memory_sync", {
         sessionId,
         address: "0x7FFE0000",

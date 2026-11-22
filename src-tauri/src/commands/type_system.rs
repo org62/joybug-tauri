@@ -12,8 +12,9 @@ use crate::custom_types::{
 use crate::error::{Error, Result};
 use crate::session::types::DebugSession;
 use crate::state::SessionStatesMap;
+use joybug_core::protocol::NtBlockKind;
 use std::collections::{HashMap, HashSet};
-use tauri::State;
+use tauri::{Manager, State};
 use tracing::warn;
 
 // -------------------------------------------------------------------------
@@ -107,43 +108,37 @@ pub fn get_session_type(
     }
 }
 
-/// TEB/PEB base addresses (hex) for the session's current thread — anchors for the
-/// `_TEB` / `_PEB` overlays.
+/// A known NT block address may not have a matching symbol layout.
 #[derive(serde::Serialize)]
-pub struct TebPebData {
-    pub teb: Option<String>,
-    pub peb: Option<String>,
+pub struct NtBlockOverlayData {
+    pub address: Option<String>,
+    pub layout: Option<TypeLayoutData>,
 }
 
 #[tauri::command]
-pub fn get_session_teb_peb(
+pub async fn get_session_nt_block_overlay(
     session_id: String,
+    kind: NtBlockKind,
     session_states: State<'_, SessionStatesMap>,
-    oob_pool: State<'_, super::OobPool>,
-) -> Result<TebPebData> {
+    app_handle: tauri::AppHandle,
+) -> Result<NtBlockOverlayData> {
     let session_arc = super::get_session_arc(&session_id, &session_states)?;
     let tid_hint = {
         let state = session_arc.lock().unwrap();
         state.current_event.as_ref().map(|ev| ev.tid())
     };
-    let result = super::with_oob_client(&session_arc, &session_id, &oob_pool, move |client, pid| {
-        let tid = match tid_hint {
-            Some(t) => t,
-            None => client
-                .list_threads(pid)
-                .ok()
-                .and_then(|ts| ts.first().map(|t| t.tid))
-                .unwrap_or(0),
-        };
-        client.get_teb_peb_addresses(pid, tid)
-    });
-    match super::flatten_oob(result) {
-        Ok((teb, peb)) => Ok(TebPebData {
-            teb: teb.map(|a| format!("0x{:X}", a)),
-            peb: peb.map(|a| format!("0x{:X}", a)),
-        }),
-        Err(e) => Err(Error::InternalCommunication(e)),
-    }
+    super::run_blocking(move || {
+        let pool = app_handle.state::<super::OobPool>();
+        let result = super::with_oob_snapshot_client(&session_arc, &session_id, &pool, |client, pid| {
+            client.get_nt_block_overlay(pid, tid_hint, kind)
+        });
+        let (address, layout) = super::flatten_oob(result).map_err(Error::InternalCommunication)?;
+        Ok(NtBlockOverlayData {
+            address: address.map(|a| format!("0x{a:X}")),
+            layout: layout.map(Into::into),
+        })
+    })
+    .await
 }
 
 /// Resolve a type by its TPI index within a specific module (nested expansion).

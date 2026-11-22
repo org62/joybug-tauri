@@ -98,9 +98,9 @@ test.describe("Bookmarks", () => {
       // `data-changed` marker on change.
       let writable: string;
       if (IS_WINDOWS) {
-        const { peb } = await invoke(page, "get_session_teb_peb", { sessionId });
-        expect(peb).toBeTruthy();
-        writable = peb;
+        const { address } = await invoke(page, "get_session_nt_block_overlay", { sessionId, kind: "peb" });
+        expect(address).toBeTruthy();
+        writable = address;
       } else {
         const s = await invoke(page, "get_debug_session", { sessionId });
         writable = contextSp(s.current_event.context)!;
