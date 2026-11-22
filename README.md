@@ -46,6 +46,7 @@
 ### Debugging
 
 - **Stepping** — Go, Step Into / Over / Out, Go-passing-exception-to-the-debuggee, plus source-level Step Over Line and Step Into Line.
+- **Exception rules** — add rules in Settings → Events and Exceptions. New rules default to Pass on first chance and Stop on second chance. Choose first-chance Stop to break on the initial notification.
 - **Disassembly context** — the debugger and image viewer open and refresh at the exact requested instruction, with nearby code on both sides where available. Wheel over the listing, toolbar, or column headings to browse farther without moving the pointer.
 - **Following x64 indirect calls and jumps** — click a RIP-relative operand to follow the pointer stored in the live process. Back returns to the branch instruction. If the pointer is unavailable or null, the operand opens the slot in Memory instead. In the standalone PE reader it opens the slot in Hex; the file does not contain the loader’s resolved address.
 - **Breakpoints** — software, single-shot, hardware (Execute / Write / ReadWrite, 1/2/4/8 bytes), and source-line, with naming, grouping, bulk enable/disable, and persistence across restarts.

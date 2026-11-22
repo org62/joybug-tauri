@@ -111,7 +111,7 @@ test.describe("Signal policy", () => {
       // The rule is saved under the code the backend reports the signal as.
       await expect(async () => {
         const settings = await invoke(page, "get_debug_settings", {});
-        expect(settings.exception_rules).toEqual([SIGUSR1_RULE]);
+        expect(settings.exception_rules).toEqual([{ ...SIGUSR1_RULE, first_chance: "pass" }]);
       }).toPass({ timeout: 5_000, intervals: [50, 100] });
     } finally {
       await navigateTo(page, "/");

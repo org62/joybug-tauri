@@ -43,7 +43,7 @@ export function SettingsEvents({ searchQuery }: SettingsEventsProps) {
     const lastCode = parseInt(localStorage.getItem("joybug_last_exception_code") ?? "0", 10);
     const newRule: ExceptionRule = {
       code: lastCode,
-      first_chance: "stop",
+      first_chance: "pass",
       second_chance: "stop",
     };
     updateExceptionRules([...settings.exception_rules, newRule]);
@@ -96,7 +96,7 @@ export function SettingsEvents({ searchQuery }: SettingsEventsProps) {
           {settings.exception_rules.length === 0 ? (
             <SettingsNote data-testid="exception-rules-empty">
               No exception rules configured. All exceptions will stop the debugger.
-              {signals && " Signals that are not faults (SIGUSR1, SIGINT, SIGTERM, …) reach the target unseen: add a rule for a signal to stop on it."}
+              {signals && " Signals that are not faults (SIGUSR1, SIGINT, SIGTERM, …) reach the target unseen: add a rule for a signal and select Stop for its first-chance action to break on delivery."}
             </SettingsNote>
           ) : (
             <div className="space-y-1.5">
